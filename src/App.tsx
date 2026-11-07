@@ -110,7 +110,7 @@ import {
   decideUnreceivedSpeechOpen, shouldCloseOverlayOnSelection, type UnreceivedOpenResult,
   quakeOverlayChangeLog,
 } from './utils/quakeOverlay'
-import { findEndedTsunami, isTsunamiForecastOnly, tsunamiEventIds, tsunamiOverallGrade } from './utils/tsunami'
+import { findEndedTsunami, isTsunamiForecastOnly, tsunamiOverallGrade } from './utils/tsunami'
 import {
   passesQuakeListFilter, quakeListFilterOf, quakeListFilterSettings, quakeListSortOf, keepIfSame, withLatestPinned,
   type QuakeFilterContext, type QuakeListFilter, type QuakeListSort,
@@ -404,7 +404,20 @@ export function App() {
   // **受け取るのはカードの `eventKey` で、生電文の `id` ではない。** 引数名でそれを示す ——
   // 選択中カードの導出は `quakeEventKey(q)` と突き合わせるので、`id` を渡すとどのカードにも
   // 一致せず、黙って「一覧の最新カード」へ落ちる（例外もログも出ない）。
+  // 選んだときに地震タブの一覧に無かった地震（絞りの例外として一時的に一覧に出す）。通知・津波タブの原因地震の行・読み上げの追従・
+  // 国際津波関連情報の受信のように、絞りで隠れた地震へ飛ぶ口はどれも `selectQuake` を通るので、ここで 1 か所で立てる
+  // （2026-11-08 選択「例外をやめる (Recommended)」の説明「津波タブなどからその地震へ飛んだときだけは、通知から開いたときと同じくその 1 件を一時的に出す」）。
+  // 手で選べるのは一覧に見えている行だけなので、手の操作では立たない。選択が別の地震へ移るか、絞りを変えたら外す（→ 下の effect）
+  const [notificationPinKey, setNotificationPinKey] = useState<string | null>(null)
+  /**
+   * 直近の描画で地震タブの一覧に出ていた地震の鍵と、絞る前の全カードの鍵（`selectQuake` が、隠れた地震を選んだかを見分ける）。
+   * **全カードに無い鍵は固定しない** —— 新しく届いた地震は、カードが状態へ入る前に選ばれる。それは最新の 1 枚として必ず出るので、
+   * 固定すると受信のたびに一覧を余分に作り直すだけになる
+   */
+  const shownQuakeKeysRef = useRef<ReadonlySet<string>>(new Set())
+  const allQuakeKeysRef = useRef<ReadonlySet<string>>(new Set())
   const selectQuake = useCallback((eventKey: string | null, opts?: { explicit?: boolean }) => {
+    if (eventKey !== null && allQuakeKeysRef.current.has(eventKey) && !shownQuakeKeysRef.current.has(eventKey)) setNotificationPinKey(eventKey)
     // **追加表示を閉じるのは、別の地震へ移るときだけ**（判定と理由は `shouldCloseOverlayOnSelection`）。
     const closeOverlay = shouldCloseOverlayOnSelection(selectedQuakeIdRef.current, eventKey)
     selectedQuakeIdRef.current = eventKey
@@ -1159,6 +1172,7 @@ export function App() {
   // selectQuake は上で useCallback 化、setActiveTabByUser も useCallback 化済み。
   // ユーザーが自らリンクをクリックした挙動なので explicit=true で明示選択扱いにし、
   // モード切替（tsunami→quake）で QuakeFitGL がリマウントされた直後でも強制フィットさせる。
+  // 絞りで隠れている地震でも一時的に一覧へ出す（`selectQuake` が立てる。→ `notificationPinKey`）
   const linkTsunamiToEarthquake = useCallback((quakeKey: string) => {
     selectQuake(quakeKey, { explicit: true })
     setActiveTabByUser('earthquake')
@@ -1447,11 +1461,14 @@ export function App() {
   )
   // 期間を「今から遡る時間」で絞っている間だけ、1 分ごとに「今」を進める（時間が経って範囲から出た地震を外すため）
   const quakeListNowMs = useMinuteClock(quakeListFilter.period?.kind === 'hours')
-  // 通知を押して開いた、絞りで隠れていた地震（絞りの例外として一覧に出す。→ `useNotificationOpen` の `pinQuake`）
-  const [notificationPinKey, setNotificationPinKey] = useState<string | null>(null)
+  // 隠れた地震の固定を、選択が別の地震へ移ったら外す（state は `selectQuake` の上）
   useEffect(() => {
     if (notificationPinKey !== null && selectedQuakeId !== notificationPinKey) setNotificationPinKey(null)
   }, [notificationPinKey, selectedQuakeId])
+  // 絞りを変えたときも外す（選んでいる地震を絞りで外したら、その地震も一覧から外れる。→ quake-spec.md §8）
+  // 比べるのは条件の中身（設定の読み直しで配列の参照だけが変わっても外さない）
+  const quakeListFilterSignature = JSON.stringify(quakeListFilter)
+  useEffect(() => { setNotificationPinKey(null) }, [quakeListFilterSignature])
   // filter は毎回新規配列を返すため useMemo で参照を安定化する
   // （EarthquakeTab / TsunamiTab へ props として渡すため。毎レンダー新配列を渡すと
   // shallow compare で常に不一致となり React.memo が実質無効化される）。
@@ -1470,22 +1487,24 @@ export function App() {
   const conditionFiltered = useMemo(() => {
     const ctx: QuakeFilterContext = {
       nowMs: quakeListNowMs,
-      tsunamiSourceIds: new Set(tsunamis.flatMap(t => tsunamiEventIds(t))),
-      internationalTsunamiKeys: new Set(internationalTsunamiIdx.byQuakeKey.keys()),
       pinnedKeys: new Set<string>(notificationPinKey !== null ? [notificationPinKey] : []),
-      eventIdOf: extractQuakeEventId, keyOf: quakeEventKey, areaPrefIndex,
+      keyOf: quakeEventKey, areaPrefIndex,
     }
-    const next = allQuakeCards.filter(q => q.fromInternationalTsunami || passesQuakeListFilter(q, quakeListFilter, ctx))
+    // 津波の原因地震・国際津波関連情報の付いた地震（英文だけのカードも）も絞りどおりに外す（2026-11-08 選択「例外をやめる (Recommended)」）
+    const next = allQuakeCards.filter(q => passesQuakeListFilter(q, quakeListFilter, ctx))
     const kept = keepIfSame(conditionFilteredRef.current, next)
     conditionFilteredRef.current = kept
     return kept
-  }, [allQuakeCards, quakeListFilter, quakeListNowMs, tsunamis, internationalTsunamiIdx, notificationPinKey, areaPrefIndex])
+  }, [allQuakeCards, quakeListFilter, quakeListNowMs, notificationPinKey, areaPrefIndex])
   const filteredEarthquakes = useMemo(
     () => withLatestPinned(conditionFiltered, allQuakeCards, latestNonCancelled),
     [conditionFiltered, allQuakeCards, latestNonCancelled],
   )
   // 地震タブに出ている地震の鍵（波形を取りに行く先を絞る。→ `usePublicQuakeWaves`・`useSeismoQuakeWaves`）
+  const allQuakeKeys = useMemo(() => new Set(allQuakeCards.map(quakeEventKey)), [allQuakeCards])
   const shownQuakeKeys = useMemo(() => new Set(filteredEarthquakes.map(quakeEventKey)), [filteredEarthquakes])
+  shownQuakeKeysRef.current = shownQuakeKeys
+  allQuakeKeysRef.current = allQuakeKeys
   // 地震タブの並べ替えと、条件を書き換える口（設定へまとめて書く。地震タブは memo なので参照を保つ）
   const quakeListSort = useMemo(
     () => quakeListSortOf(settings),
@@ -1634,7 +1653,7 @@ export function App() {
 
   // 通知を押したときの開き先（docs/relay-server-design.md §6.7「押したときの開き先」）。手で選んだのと同じ扱いで
   // タブを移し、地震を選ぶ（2026-11-05 ユーザー選択「手で選んだのと同じ扱い (Recommended)」）
-  useNotificationOpen(filteredEarthquakes, earthquakes, { activeTab, selectionTick: quakeSelectionTick }, {
+  useNotificationOpen(filteredEarthquakes, allQuakeCards, { activeTab, selectionTick: quakeSelectionTick }, {
     openTab: setActiveTabByUser,
     selectQuake: selectQuakeFromCard,
     // 絞りで隠れていた地震は、絞りの例外として一覧にも出して開く（2026-11-07 選択「その地震を一覧にも出して開く (Recommended)」）
@@ -3037,7 +3056,7 @@ export function App() {
     mode: mapMode,
     quake: mapQuake,
     tsunamis,
-    tsunamiSourceQuakes: filteredEarthquakes,
+    tsunamiSourceQuakes: allQuakeCards,
     eews: eewsForMap,
     // 出典に何を挙げるかは「地図に描かれているか」で決まるため、表示の設定をそのまま渡す。
     showBathymetry: settings.showBathymetry,
@@ -3164,7 +3183,7 @@ export function App() {
                 onLegendSourcesChange={setLegendSources}
                 quake={mapQuake}
                 tsunamis={tsunamis}
-                tsunamiSourceQuakes={filteredEarthquakes}
+                tsunamiSourceQuakes={allQuakeCards}
                 observations={latestTsunamiObservations}
                 lpgm={(mapHistoryView && activeLpgm && activeLpgm.eventId === extractQuakeEventId(mapHistoryView.quake) ? mapHistoryView.lpgm : activeLpgm) ?? undefined}
                 distributionMode={mapDistributionMode}
@@ -3460,7 +3479,7 @@ export function App() {
             <ErrorBoundary variant="region" label={TAB_LABELS.tsunami}>
               <TsunamiTab
                 tsunamis={tsunamis}
-                earthquakes={filteredEarthquakes}
+                earthquakes={allQuakeCards /* 原因地震は地震タブの絞りによらず引く */}
                 onEarthquakeLink={linkTsunamiToEarthquake}
                 onObservationClick={focusTsunamiObs}
                 onFocusMap={focusMapPositions}

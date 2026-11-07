@@ -4,7 +4,7 @@ import type { EarthquakePoint, IntensityScale, IssueType, JMAQuake } from '../ty
 import { sanitize } from '../hooks/useSettings'
 import {
   DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SETTINGS, nextQuakeListSort, passesQuakeListFilter, quakeFilterChipLabels,
-  quakeListFilterOf, quakeListFilterSettings, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, quakeRegionGroups, sortQuakeList,
+  quakeListFilterOf, quakeListFilterSettings, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, quakeRegionBlocks, quakeRegionGroups, sortQuakeList,
   type QuakeFilterContext, type QuakeListFilter, keepIfSame, withLatestPinned, observedAreas } from './quakeListView'
 
 interface QuakeOpts {
@@ -46,10 +46,7 @@ const NOW = Date.parse('2026-11-07T06:00:00Z')
 function ctx(over: Partial<QuakeFilterContext> = {}): QuakeFilterContext {
   return {
     nowMs: NOW,
-    tsunamiSourceIds: new Set(),
-    internationalTsunamiKeys: new Set(),
     pinnedKeys: new Set(),
-    eventIdOf: q => q.id,
     keyOf: q => q.id,
     areaPrefIndex: null,
     ...over,
@@ -84,11 +81,13 @@ describe('絞り込み', () => {
     expect(pass([unreceived], filter({ scale: { min: null, max: 40 } }))).toEqual([])
   })
 
-  // 正: 津波の原因地震・国際津波関連情報の付いた地震・ピン留め（最新の 1 枚・通知で開いた地震）はどの絞りでも残す
-  it('津波の原因地震・国際津波関連情報・ピン留めはどの絞りでも残す', () => {
-    const qs = [quake({ id: 't', scale: 10 }), quake({ id: 'i', scale: 10 }), quake({ id: 'n', scale: 10 }), quake({ id: 'x', scale: 10 })]
-    const c = ctx({ tsunamiSourceIds: new Set(['t']), internationalTsunamiKeys: new Set(['i']), pinnedKeys: new Set(['n']) })
-    expect(pass(qs, filter({ scale: { min: 40, max: null }, region: { basis: 'epicenter', names: ['三陸沖'] } }), c)).toEqual(['t', 'i', 'n'])
+  // 正: 固定した地震（通知・津波タブから開いた地震）はどの絞りでも残す。対照: 固定していない地震は絞りどおり外す
+  // （津波の原因地震・国際津波関連情報の付いた地震も例外にしない。2026-11-08 選択「例外をやめる (Recommended)」）
+  it('固定した地震だけはどの絞りでも残す', () => {
+    const qs = [quake({ id: 'n', scale: 10 }), quake({ id: 'x', scale: 10 })]
+    const c = ctx({ pinnedKeys: new Set(['n']) })
+    expect(pass(qs, filter({ scale: { min: 40, max: null }, region: { basis: 'epicenter', names: ['三陸沖'] } }), c)).toEqual(['n'])
+    expect(pass(qs, DEFAULT_QUAKE_LIST_FILTER, c)).toEqual(['n', 'x'])
   })
 
   // 正: 規模・深さが不明の地震は、下限か上限を決めたら外す。対照: 決めていなければ残す
@@ -395,5 +394,34 @@ describe('保存した条件の検め', () => {
   it('暦に無い日は捨てて、日付の範囲ごと外す', () => {
     const s = sanitize({ quakeListPeriodFrom: '2026-13-45', quakeListPeriodTo: '2026-11-07' })
     expect([s.quakeListPeriodFrom, s.quakeListPeriodTo]).toEqual([null, null])
+  })
+})
+
+describe('地域の一覧を地方で束ねる', () => {
+  const g = (label: string) => ({ label, options: [{ name: label + 'の地名', count: 1 }] })
+  const ALL = [
+    { code: '01', name: '北海道' }, { code: '07', name: '福島県' }, { code: '08', name: '茨城県' },
+    { code: '14', name: '神奈川県' }, { code: '15', name: '新潟県' }, { code: '24', name: '三重県' }, { code: '47', name: '沖縄県' },
+  ]
+  // 正: 県は地方へ入り、地方の順に並ぶ。境目の県（福島→東北・茨城→関東・神奈川→関東・新潟→中部・三重→近畿・沖縄→九州沖縄）
+  // 安全弁: 県でない組（海域・遠方）は、それだけの段として元の並びのまま後ろに残る
+  it('県を 8 地方へ束ね、海域・遠方はそのまま後ろに置く', () => {
+    const groups = ['北海道', '福島県', '茨城県', '神奈川県', '新潟県', '三重県', '沖縄県', '海域', '遠方'].map(g)
+    expect(quakeRegionBlocks(groups, ALL).map(b => [b.label, b.groups.map(x => x.label)])).toEqual([
+      ['北海道', ['北海道']],
+      ['東北', ['福島県']],
+      ['関東', ['茨城県', '神奈川県']],
+      ['中部', ['新潟県']],
+      ['近畿', ['三重県']],
+      ['九州沖縄', ['沖縄県']],
+      ['海域', ['海域']],
+      ['遠方', ['遠方']],
+    ])
+  })
+
+  // 対照: 地名の無い地方は段を作らない
+  it('地名の無い地方は出さない', () => {
+    expect(quakeRegionBlocks([], ALL)).toEqual([])
+    expect(quakeRegionBlocks([g('海域')], ALL).map(b => b.label)).toEqual(['海域'])
   })
 })

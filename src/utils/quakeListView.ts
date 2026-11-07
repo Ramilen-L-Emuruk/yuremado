@@ -132,13 +132,12 @@ function inPeriod(q: JMAQuake, p: QuakePeriod, nowMs: number): boolean {
 export interface QuakeFilterContext {
   /** 期間の「今」（サーバーと合わせた時刻）。 */
   readonly nowMs: number
-  /** 津波の原因地震の識別子（`extractQuakeEventId` の値）。どの絞りでも残す。 */
-  readonly tsunamiSourceIds: ReadonlySet<string>
-  /** 国際津波関連情報の付いた地震の鍵（`quakeEventKey`）。どの絞りでも残す。 */
-  readonly internationalTsunamiKeys: ReadonlySet<string>
-  /** 絞りに関係なく出す地震の鍵（通知で開いた地震）。最新の 1 枚は `withLatestPinned` が足す。 */
+  /**
+   * 絞りに関係なく出す地震の鍵（通知や津波タブから開いた地震）。最新の 1 枚は `withLatestPinned` が足す。
+   * 津波の原因地震・国際津波関連情報の付いた地震も、ここに入っていなければ絞りどおり外す
+   * （2026-11-08 選択「例外をやめる (Recommended)」）。
+   */
   readonly pinnedKeys: ReadonlySet<string>
-  readonly eventIdOf: (q: JMAQuake) => string | null
   readonly keyOf: (q: JMAQuake) => string
   /** 一次細分区域名 → 都道府県名（都道府県のまとめの点を区域と見分ける。→ `observedAreas`）。 */
   readonly areaPrefIndex: AreaPrefIndex
@@ -169,12 +168,9 @@ function passesScale(q: JMAQuake, r: QuakeRange): boolean {
   return inRange(s, r)
 }
 
-/** 1 つの地震が条件に通るか（どの絞りでも残す例外を含む）。 */
+/** 1 つの地震が条件に通るか（開いた地震の固定を含む）。 */
 export function passesQuakeListFilter(q: JMAQuake, f: QuakeListFilter, ctx: QuakeFilterContext): boolean {
   if (ctx.pinnedKeys.has(ctx.keyOf(q))) return true
-  if (ctx.internationalTsunamiKeys.has(ctx.keyOf(q))) return true
-  const id = ctx.eventIdOf(q)
-  if (id !== null && ctx.tsunamiSourceIds.has(id)) return true
   if (!passesScale(q, f.scale)) return false
   if (rangeSet(f.magnitude)) {
     const m = magnitudeOf(q)
@@ -451,6 +447,47 @@ export function quakeRegionGroups(
           ? (codeOf.get(a.name) ?? 0) - (codeOf.get(b.name) ?? 0) || a.name.localeCompare(b.name, 'ja')
           : areaRank(a.name) - areaRank(b.name) || a.name.localeCompare(b.name, 'ja')),
     }))
+}
+
+/** 地方（県の組の上の段）。県の名前を束ねる。 */
+export interface QuakeRegionBlock {
+  readonly label: string
+  readonly groups: readonly QuakeRegionGroup[]
+}
+
+/**
+ * 地方の区分と、その地方に入る県のコードの範囲（JIS X 0401。両端を含む）。
+ * 一般の 8 地方区分（2026-11-08 選択「地方ごとにまとめて 2 段で畳む」の説明「北海道・東北・関東・中部・近畿・中国・四国・九州沖縄」）。
+ */
+const QUAKE_REGION_BLOCKS: readonly { label: string; from: number; to: number }[] = [
+  { label: '北海道', from: 1, to: 1 },
+  { label: '東北', from: 2, to: 7 },
+  { label: '関東', from: 8, to: 14 },
+  { label: '中部', from: 15, to: 23 },
+  { label: '近畿', from: 24, to: 30 },
+  { label: '中国', from: 31, to: 35 },
+  { label: '四国', from: 36, to: 39 },
+  { label: '九州沖縄', from: 40, to: 47 },
+]
+
+/**
+ * 県の組を地方ごとに束ねる（地域の窓の一覧を 2 段で畳む）。県でない組（海域・遠方）は、それだけで 1 つの段にする。
+ * 並びは地方の順で、県でない組は `groups` の並びのまま後ろへ置く。
+ */
+export function quakeRegionBlocks(
+  groups: readonly QuakeRegionGroup[],
+  prefectures: readonly { code: string; name: string }[],
+): QuakeRegionBlock[] {
+  const codeOf = new Map(prefectures.map(p => [p.name, Number(p.code)]))
+  const blocks = QUAKE_REGION_BLOCKS.map(b => ({ label: b.label, groups: [] as QuakeRegionGroup[] }))
+  const rest: QuakeRegionBlock[] = []
+  for (const g of groups) {
+    const code = codeOf.get(g.label)
+    const i = code === undefined ? -1 : QUAKE_REGION_BLOCKS.findIndex(b => code >= b.from && code <= b.to)
+    if (i >= 0) blocks[i]!.groups.push(g)
+    else rest.push({ label: g.label, groups: [g] })
+  }
+  return [...blocks.filter(b => b.groups.length > 0), ...rest]
 }
 
 /** 並べ替えの欄（設定の値の一覧にも使う）。 */

@@ -10,7 +10,7 @@ import { serverNow } from '../../utils/clock'
 import { areaPrefIndexOf, getStationCoordsCache, onStationCoordsLoaded, regionOrderIndexOf, regionOrderRank, type StationCoordsData } from '../../utils/stationCoords'
 import {
   DEFAULT_QUAKE_LIST_FILTER, QUAKE_DEPTH_RANGE, QUAKE_LIST_TYPES, QUAKE_MAGNITUDE_RANGE, QUAKE_PERIOD_HOURS, QUAKE_SCALE_STEPS,
-  isQuakeListFiltered, quakeFilterChipLabels, quakeRegionGroups,
+  isQuakeListFiltered, quakeFilterChipLabels, quakeRegionBlocks, quakeRegionGroups, type QuakeRegionOption,
   type QuakeListFilter, type QuakeRange, type QuakeRegionBasis,
 } from '../../utils/quakeListView'
 
@@ -335,12 +335,13 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
 function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; quakes: readonly JMAQuake[]; onChange: (f: QuakeListFilter) => void }) {
   const [mode, setMode] = useState<'list' | 'map'>('list')
   const [query, setQuery] = useState('')
-  // 県の開閉（2026-11-08 ユーザー発言「地名広すぎるからたためるようにして。」）。押して決めた県だけ開／閉を持ち、
-  // 決めていない県は「選んだ地名があれば開く」。地名で探している間は全部開く
+  // 地方と県の開閉（2026-11-08 ユーザー発言「地名広すぎるからたためるようにして。」、同日選択「地方ごとにまとめて 2 段で畳む」）。
+  // 押して決めた段だけ開／閉を持ち、決めていない段は「選んだ地名があれば開く」。地名で探している間は全部開く。
+  // 鍵は地方が `b:`・県が `p:` を頭に付ける（「北海道」は地方と県の両方の名前）
   const [groupOpen, setGroupOpen] = useState<ReadonlyMap<string, boolean>>(() => new Map())
-  const setGroup = (label: string, open: boolean | null) => setGroupOpen(prev => {
+  const setGroup = (key: string, open: boolean | null) => setGroupOpen(prev => {
     const next = new Map(prev)
-    if (open === null) next.delete(label); else next.set(label, open)
+    if (open === null) next.delete(key); else next.set(key, open)
     return next
   })
   const basis = filter.region.basis
@@ -353,13 +354,15 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
     const order = coords ? regionOrderIndexOf(coords) : null
     return quakeRegionGroups(quakes, basis, names, PREFECTURES, coords ? areaPrefIndexOf(coords) : null, name => regionOrderRank(name, order))
   }, [quakes, basis, names, coords])
+  const blocks = useMemo(() => quakeRegionBlocks(groups, PREFECTURES), [groups])
   const toggle = (name: string) => {
     const adding = !names.includes(name)
-    // 地図から選んだときも、選んだ地名のある県が開いて見えるよう、その県の開閉の指定を外す
-    if (adding) {
-      const g = groups.find(x => x.options.some(o => o.name === name))
-      if (g) setGroup(g.label, null)
-    }
+    // 選んだときは、地図から選んだときも選んだ地名のある地方と県が開いて見えるよう、その開閉の指定を外す。
+    // 外したときは、その地方と県を開いたまま固定する（最後の 1 つを外した途端に 2 段とも畳まれ、押した行が消えないように）
+    const b = blocks.find(x => x.groups.some(g => g.options.some(o => o.name === name)))
+    const g = b?.groups.find(x => x.options.some(o => o.name === name))
+    if (b) setGroup(`b:${b.label}`, adding ? null : true)
+    if (g) setGroup(`p:${g.label}`, adding ? null : true)
     onChange({ ...filter, region: { basis, names: adding ? [...names, name] : names.filter(n => n !== name) } })
   }
   // 基準を変えたら選んだ名前は空にする（震央地名と細分区域は別の名前の集まり）
@@ -369,9 +372,37 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
   const q = query.trim()
   const mapOn = basis === 'observed' && mode === 'map'
   const present = useMemo(() => new Set(groups.flatMap(g => g.options.map(o => o.name))), [groups])
-  const shown = groups
-    .map(g => ({ ...g, options: q === '' ? g.options : g.options.filter(o => o.name.includes(q) || g.label.includes(q)) }))
-    .filter(g => g.options.length > 0)
+  const shown = blocks
+    .map(b => ({
+      ...b,
+      groups: b.groups
+        .map(g => ({ ...g, options: q === '' || b.label.includes(q) ? g.options : g.options.filter(o => o.name.includes(q) || g.label.includes(q)) }))
+        .filter(g => g.options.length > 0),
+    }))
+    .filter(b => b.groups.length > 0)
+  const pickedIn = (options: readonly QuakeRegionOption[]) => options.filter(o => names.includes(o.name)).length
+  // 開閉の見出し。探している間は全部開いているので、押しても開閉を変えない（裏で状態だけ変わると、探し終えたときに急に変わる）
+  const header = (key: string, label: string, picked: number, isOpen: boolean, className: string) => (
+    <button
+      type="button" aria-expanded={isOpen}
+      onClick={() => { if (q === '') setGroup(key, !isOpen) }}
+      className={`mb-1 flex w-full items-center gap-1 text-left hover:text-blue-300 ${className}`}
+    >
+      <span aria-hidden="true" className="w-3 text-secondary">{isOpen ? '▾' : '▸'}</span>
+      {label}{picked > 0 && <span className="text-blue-300">（{picked}）</span>}
+    </button>
+  )
+  const optionGrid = (options: readonly QuakeRegionOption[]) => (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-1 pl-4">
+      {options.map(o => (
+        <label key={o.name} className="flex cursor-pointer items-center gap-1.5">
+          <input type="checkbox" checked={names.includes(o.name)} onChange={() => toggle(o.name)} />
+          <span className="min-w-0 flex-1 truncate">{o.name}</span>
+          <span className="tabular-nums">{o.count}</span>
+        </label>
+      ))}
+    </div>
+  )
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -392,32 +423,29 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
         className="rounded-sm border border-border bg-panel px-2 py-1.5 text-white focus:border-blue-500 focus:outline-hidden"
       />
       <div className="flex flex-col gap-2">
-        {shown.map(g => {
-          const picked = g.options.filter(o => names.includes(o.name)).length
-          const isOpen = q !== '' || (groupOpen.get(g.label) ?? picked > 0)
+        {shown.map(b => {
+          const pickedB = b.groups.reduce((n, g) => n + pickedIn(g.options), 0)
+          const openB = q !== '' || (groupOpen.get(`b:${b.label}`) ?? pickedB > 0)
+          // 県が 1 つで地方と同じ名前（北海道）・県でない組（海域・遠方）は、2 段目を挟まずに地名を並べる
+          const flat = b.groups.length === 1 && b.groups[0]!.label === b.label
           return (
-          <div key={g.label}>
-            <button
-              type="button" aria-expanded={isOpen}
-              // 探している間は全部開いているので、押しても開閉を変えない（裏で状態だけ変わると、探し終えたときに急に変わる）
-              onClick={() => { if (q === '') setGroup(g.label, !isOpen) }}
-              className="mb-1 flex w-full items-center gap-1 text-left text-white hover:text-blue-300"
-            >
-              <span aria-hidden="true" className="w-3 text-secondary">{isOpen ? '▾' : '▸'}</span>
-              {g.label}{picked > 0 && <span className="text-blue-300">（{picked}）</span>}
-            </button>
-            {isOpen && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 pl-4">
-              {g.options.map(o => (
-                <label key={o.name} className="flex cursor-pointer items-center gap-1.5">
-                  <input type="checkbox" checked={names.includes(o.name)} onChange={() => toggle(o.name)} />
-                  <span className="min-w-0 flex-1 truncate">{o.name}</span>
-                  <span className="tabular-nums">{o.count}</span>
-                </label>
+            <div key={b.label}>
+              {header(`b:${b.label}`, b.label, pickedB, openB, 'text-white')}
+              {openB && (flat ? optionGrid(b.groups[0]!.options) : (
+                <div className="flex flex-col gap-1 pl-4">
+                  {b.groups.map(g => {
+                    const picked = pickedIn(g.options)
+                    const isOpen = q !== '' || (groupOpen.get(`p:${g.label}`) ?? picked > 0)
+                    return (
+                      <div key={g.label}>
+                        {header(`p:${g.label}`, g.label, picked, isOpen, 'text-white')}
+                        {isOpen && optionGrid(g.options)}
+                      </div>
+                    )
+                  })}
+                </div>
               ))}
             </div>
-            )}
-          </div>
           )
         })}
       </div>

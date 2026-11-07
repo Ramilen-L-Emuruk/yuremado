@@ -30,7 +30,7 @@ export type NotificationOpenTarget =
   | { readonly kind: 'none' }
 
 /**
- * 開き先の地震を引く。`all` は届いた地震カードすべて、`shown` はそのうち地震タブに出ているもの（表示の絞りを通した一覧）。
+ * 開き先の地震を引く。`all` は絞る前の地震カードすべて（英文だけのカードも含む）、`shown` はそのうち地震タブに出ているもの（表示の絞りを通した一覧）。
  * 取り消されたカード（選ぶとすぐ外れる）は、待っても選べないので諦める。
  */
 export function resolveNotificationOpen(
@@ -39,11 +39,12 @@ export function resolveNotificationOpen(
   let candidates: readonly JMAQuake[]
   if ('quake' in open) candidates = all.filter(q => quakeEventKey(q) === open.quake)
   else if ('lpgm' in open) candidates = all.filter(q => extractQuakeEventId(q) === open.lpgm)
-  else if ('estimated' in open) candidates = all.filter(q => matchEstimatedIntensityArrival(q, open.estimated, open.lat, open.lon))
+  // 英文だけのカードは震源の座標を持たず、時刻の分だけで当たってしまうので外す
+  else if ('estimated' in open) candidates = all.filter(q => !q.fromInternationalTsunami && matchEstimatedIntensityArrival(q, open.estimated, open.lat, open.lon))
   else if ('wepa60' in open) {
-    // 画面と同じ選び方で付く先を引く。付く地震カードの無い英文は、英文だけのカードとして `shown` にだけある（届いた地震カードの一覧には無い）
+    // 画面と同じ選び方で付く先を引く。付く地震カードの無い英文は英文だけのカードで、`all`（絞る前の全カード）に入っている
     const key = internationalTsunamiOpenKey(all, open.wepa60, open.lat, open.lon)
-    candidates = [...all, ...shown.filter(q => q.fromInternationalTsunami)].filter(q => quakeEventKey(q) === key)
+    candidates = all.filter(q => quakeEventKey(q) === key)
   } else return { kind: 'none' }
   if (candidates.length === 0) return { kind: 'wait' }
   const live = candidates.filter(q => !q.cancelledAt)

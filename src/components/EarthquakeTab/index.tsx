@@ -408,7 +408,9 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
   return withDialog(
     // 大きさは一覧自身の幅で切り替える（2026-11-02 選択「パネル自身の幅 (Recommended)」。値は src/index.css の quake-list）
     <div ref={listRef} className="quake-list">
-     <div className="quake-list-scope">
+     {/* 区切りを出さない並び（震央地名）では区切りの高さを 0 にする。開いたカードの帯は区切りの下に貼りつくので、
+         高さを残すと見出しとの間に隙間ができ、巻いた中身が透ける */}
+     <div className="quake-list-scope" style={sort.key === 'region' ? ({ '--qk-day-h': '0px' } as React.CSSProperties) : undefined}>
       {notices.length > 0 && (
         <div className="space-y-1.5 p-2 roomy:p-3">
           {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
