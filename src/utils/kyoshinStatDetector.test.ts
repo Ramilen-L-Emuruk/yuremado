@@ -372,3 +372,105 @@ describe('早い段の下限は 9', () => {
     expect(nearBurst(NOISY, THREE, 1, none).flat()).toEqual([])
   })
 })
+
+/** 揺れの並び。`at` 秒から `dur` 秒の間、`pts` の点を `rise` 段上げる（ほかの点と、その前後は段 4 のまま） */
+type Burst = { at: number; pts: number[]; rise: number; dur: number }
+function bursts(tables: QuietTables, list: Burst[], len: number): DetectorReport[][] {
+  const det = createStatDetector(SITES, tables)
+  const out: DetectorReport[][] = []
+  for (let s = 0; s < len; s++) {
+    const v = new Int8Array(SITES.length).fill(4)
+    for (const b of list) if (s >= b.at && s < b.at + b.dur) for (const i of b.pts) v[i] = 4 + b.rise
+    out.push(det.push({ ms: T0 + s * 1000, values: v }))
+  }
+  return out
+}
+
+describe('地震が続いている所では、珍しい点がそろった中心の早い段の下限を下げる', () => {
+  // 近くの組の 36 点が一斉に 3 段上がる地震（確かな段まで上がる）。中ほどの組（約 120 km 先）の 9 点の地震も用意する
+  const NEAR_QUAKE: Burst = { at: 300, pts: NEAR.map((_, i) => i), rise: 3, dur: 60 }
+  const MID_QUAKE: Burst = { at: 300, pts: MID.map((_, i) => NEAR.length + i), rise: 3, dur: 60 }
+  // 1 時間後に、近くの組の隅の 3 点が 1 段だけ上がる。NOISY の表では点数が 8 以上 9 未満で、下限 9 には届かない（「早い段の下限は 9」の安全弁と同じ並び）
+  const SMALL_AT = 300 + 3600
+  const small = (pts = [0, 1, 6]): Burst => ({ at: SMALL_AT, pts, rise: 1, dur: 60 })
+  const after = (out: DetectorReport[][], s: number) => out.slice(s).flat()
+
+  it('前提: 近くの組の地震は確かな段まで上がる', () => {
+    expect(firstConfirmed(bursts(NOISY, [NEAR_QUAKE], 400))).toBeGreaterThanOrEqual(300)
+  })
+
+  it('正: 1 時間前に近くで確かな段があれば、3 点の小さな上がりが早い段に上がる（確かな段へは上がらない）', () => {
+    const out = bursts(NOISY, [NEAR_QUAKE, small()], SMALL_AT + 70)
+    const late = after(out, SMALL_AT)
+    expect(late.some(r => r.tier === 'early')).toBe(true)
+    expect(late.some(r => r.tier === 'confirmed')).toBe(false)
+  })
+
+  it('対照: 前に地震が無ければ、同じ 3 点の上がりは何も出ない', () => {
+    expect(after(bursts(NOISY, [small()], SMALL_AT + 70), SMALL_AT)).toEqual([])
+  })
+
+  it('対照: 確かな段から 6 時間を過ぎていれば、下限は下がらない', () => {
+    const at = 300 + 6 * 3600 + 120
+    const out = bursts(NOISY, [NEAR_QUAKE, { ...small(), at }], at + 70)
+    expect(after(out, at)).toEqual([])
+  })
+
+  it('安全弁: 前の地震が 50 km より遠ければ、下限は下がらない', () => {
+    expect(after(bursts(NOISY, [MID_QUAKE, small()], SMALL_AT + 70), SMALL_AT)).toEqual([])
+  })
+
+  // 隅の点・東へ約 27 km・北へ約 33 km の 3 点。どの 2 点も 25 km より離れていて、いちばん狭い半径の円に 3 点がそろわない。
+  // QUIET の表で 1 段だと点数は 7 以上 9 未満（3 点の条件を外した写しでは早い段に上がる。設計書§80）
+  it('安全弁: 地震が続いている所でも、いちばん狭い半径の円に珍しい点が 3 点そろわなければ、下限は下がらない', () => {
+    expect(after(bursts(QUIET, [NEAR_QUAKE, small([0, 3, 18])], SMALL_AT + 70), SMALL_AT)).toEqual([])
+  })
+
+  // 地震が続いている所の下限だけで作った事象へは、STALE（12 秒）を過ぎたら別の揺れを入れない。前の小さな揺れの事象が後の地震を吸い込まないように。
+  // 10 秒後に近くの組の反対の隅の 4 点が上がる並びは、この決まりが無いと前の事象に入り、早い段の報告の 2 秒（EARLY_MAX）を使い切った事象なので何も出ない（設計書§80）
+  it('正: 下げた下限で生まれた事象に、10 秒後の別の揺れは吸い込まれず、別の事象として早い段が出る', () => {
+    const later: Burst = { at: SMALL_AT + 10, pts: [28, 29, 34, 35], rise: 2, dur: 40 }
+    const out = bursts(NOISY, [NEAR_QUAKE, small(), later], SMALL_AT + 70)
+    const first = new Set(out.slice(SMALL_AT, later.at).flat().map(r => r.id))
+    const second = out.slice(later.at).flat().filter(r => r.sites.some(i => later.pts.includes(i)))
+    expect(first.size).toBeGreaterThan(0)
+    expect(second.some(r => r.tier === 'early')).toBe(true)
+    expect(second.some(r => first.has(r.id))).toBe(false)
+  })
+
+  // 地震が続いている所の下限だけで届いた候補は、既にある事象へ入れない。入れると、早い段の報告を使い切った事象の支えが続き、
+  // 後から近くで起きた揺れまでその事象に入って何も出ない（この並びは、決まりを外した写しで何も出なくなることを確かめた。設計書§80）
+  it('正: 下げた下限で届いた候補は既にある事象を延ばさず、15 秒後の別の揺れは別の事象として早い段が出る', () => {
+    const e: Burst = { at: SMALL_AT, pts: [28, 29, 34, 35], rise: 2, dur: 3 }
+    const later: Burst = { at: SMALL_AT + 15, pts: [22, 23, 16, 17], rise: 2, dur: 30 }
+    const out = bursts(NOISY, [NEAR_QUAKE, e, { ...small(), at: SMALL_AT + 3 }, later], SMALL_AT + 60)
+    const first = new Set(out.slice(SMALL_AT, SMALL_AT + 3).flat().map(r => r.id))
+    const second = out.slice(later.at).flat().filter(r => r.sites.some(i => later.pts.includes(i)))
+    expect(first.size).toBeGreaterThan(0)
+    expect(second.some(r => r.tier === 'early')).toBe(true)
+    expect(second.some(r => first.has(r.id))).toBe(false)
+  })
+
+  // 下げた下限で生まれた事象も、確かな段へ上がった後は普通の事象として扱う。2 秒後に近くの組の地震が来て同じ事象が確かな段へ上がり、
+  // 生まれてから 16 秒後に同じ点がもう一段上がっても（STALE の 12 秒を過ぎた候補）、地震の続きを別の事象へ割らない（設計書§80）
+  it('安全弁: 下げた下限で生まれた事象が確かな段へ上がったら、続く揺れを別の事象へ割らない', () => {
+    const quake: Burst = { ...NEAR_QUAKE, at: SMALL_AT + 2 }
+    const stronger: Burst = { ...NEAR_QUAKE, at: SMALL_AT + 16, rise: 5, dur: 30 }
+    const out = bursts(NOISY, [NEAR_QUAKE, small(), quake, stronger], SMALL_AT + 70)
+    const conf = out.slice(SMALL_AT).flat().filter(r => r.tier === 'confirmed')
+    expect(out.slice(stronger.at, stronger.at + 5).flat().some(r => r.tier === 'confirmed')).toBe(true)
+    expect(new Set(out.slice(SMALL_AT).flat().map(r => r.id))).toEqual(new Set([conf[0].id]))
+  })
+
+  // 20 秒の地震は 328 秒まで報告され、消えかけの事象として 349 秒まで残る。その間の 335〜344 秒に下げた下限で届く小さな上がりがあっても、
+  // 消えかけの事象を生き返らせない。生き返らせると消えかけの事象が 364 秒まで延び、355 秒の別の揺れがそれに入って何も出ない（設計書§80）
+  it('正: 下げた下限で届いた候補は消えかけの事象を生き返らせず、後の別の揺れは早い段が出る', () => {
+    const quake: Burst = { ...NEAR_QUAKE, dur: 20 }
+    const later: Burst = { at: 355, pts: [28, 29, 34, 35], rise: 2, dur: 30 }
+    const out = bursts(NOISY, [quake, { ...small(), at: 335 }, later], 400)
+    const quakeIds = new Set(out.slice(300, 330).flat().map(r => r.id))
+    const second = out.slice(later.at).flat().filter(r => r.sites.some(i => later.pts.includes(i)))
+    expect(second.some(r => r.tier === 'early')).toBe(true)
+    expect(second.some(r => quakeIds.has(r.id))).toBe(false)
+  })
+})
