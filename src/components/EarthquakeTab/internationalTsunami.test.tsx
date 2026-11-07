@@ -80,6 +80,10 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      historyInputs={null}
+      historyPickedId={null}
+      historyView={null}
+      onPickHistory={() => {}}
     />
 )
 

@@ -184,6 +184,10 @@ function earthquakeTabProps() {
     onToggleDistribution: () => {}, unreceivedQuakeKey: null, onToggleUnreceived: () => {}, onFocusMap: () => {},
     speakingTelegramTextSubject: null, seismoWaves: new Map(), seismoWaveFailedKeys: new Set<string>(),
     seismoWaveView: 'composite',
+    historyInputs: null,
+    historyPickedId: null,
+    historyView: null,
+    onPickHistory: () => {},
   } as const
 }
 

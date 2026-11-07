@@ -101,6 +101,10 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      historyInputs={null}
+      historyPickedId={null}
+      historyView={null}
+      onPickHistory={() => {}}
     />,
   )
   await flushDataEffects()
