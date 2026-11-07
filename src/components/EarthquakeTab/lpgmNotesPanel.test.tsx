@@ -9,6 +9,7 @@
 //
 // **ここで捕まえられないもの。** 畳んだことで主要な情報がどれだけ画面に戻るか（実測値）は
 // jsdom では測れない（要素の高さが 0 になる）。押し下げ量の確認は実機で行う。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -109,6 +110,13 @@ const renderTab = async (lpgm: JMALpgm) => {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
   />
   )
   await flushDataEffects()
@@ -151,6 +159,13 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
   />
 )
 const renderSpeaking = async (subject: string | null, lpgm: JMALpgm = makeLpgm()) => {

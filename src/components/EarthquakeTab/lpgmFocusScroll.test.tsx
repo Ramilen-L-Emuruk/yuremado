@@ -6,6 +6,7 @@
 // **ここで確かめるのは「求めが来たら 1 回巻く・同じ求めでは巻き直さない・求め直せば巻く」の配線。**
 // 着地の位置（貼りつく見出し・震度の枠の下）は jsdom では測れない（要素の高さが 0 になる）ので、実機で見る。
 // 巻く関数そのものは長周期の札と共有している（`scrollOpenSectionIntoView`）。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -87,6 +88,13 @@ const tab = (lpgmFocus: LpgmSectionFocus | null, quake: JMAQuake = QUAKE, lpgm: 
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
     />
   </div>
 )

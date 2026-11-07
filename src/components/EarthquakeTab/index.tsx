@@ -1,9 +1,14 @@
-import { memo, useLayoutEffect, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { JMAQuake, JMALpgm, JMAEstimatedIntensity, JMAInternationalTsunami } from '../../types/earthquake'
 import { EarthquakeCard } from './EarthquakeCard'
 import { LoadMoreButton } from './LoadMoreButton'
 import { QuakeListHeader, QuakeListDayLabel } from './QuakeListRow'
-import { quakeListDay } from '../../utils/quakeListDay'
+import { QuakeListFilterBar, QuakeListFilterDialog, type FilterKind } from './QuakeListFilterBar'
+import {
+  DEFAULT_QUAKE_LIST_FILTER, isQuakeListFiltered, nextQuakeListSort, quakeListSection, quakeListUnloadedBefore, sortQuakeList,
+  type QuakeListFilter, type QuakeListSort, type QuakeSortKey,
+} from '../../utils/quakeListView'
+import { serverNow } from '../../utils/clock'
 import { extractQuakeEventId, quakeEventKey } from '../../utils/quakeMerge'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
@@ -20,7 +25,23 @@ import {
 } from '../../utils/telegramLoss'
 
 interface Props {
+  /**
+   * 地震タブが表に出ているか。**離れたら絞り込みの窓を閉じる**（タブは常時マウントで、窓は body の最前面に描く。
+   * 緊急地震速報などで自動で移ったとき、警報の上に窓と幕が残らないように。2026-11-07 選択「地震タブを離れたら閉じる (Recommended)」）。
+   */
+  shown: boolean
+  /** 絞り込みを通した一覧（時刻の新しい順。並べ替えはここで行う）。 */
   earthquakes: JMAQuake[]
+  /** 絞り込みの条件（→ `utils/quakeListView.ts`）。 */
+  filter: QuakeListFilter
+  onFilterChange: (next: QuakeListFilter) => void
+  /** 並べ替え。見出しを押すと変わる。 */
+  sort: QuakeListSort
+  onSortChange: (next: QuakeListSort) => void
+  /** 地域の窓の一覧と件数を作る元（絞る前の、読み込んだ地震すべて）。 */
+  filterSourceQuakes: readonly JMAQuake[]
+  /** 読み込んだ一番古い日（日本時間の `YYYY-MM-DD`）。期間の絞りの「〇〇以前は未読込みです。」に使う。 */
+  historyOldestDay: string | null
   selectedId: string | null
   /**
    * 選択が呼ばれるたびに進む番号（→ App の `quakeSelectSeq`）。選ばれたカードにだけ渡す
@@ -149,9 +170,21 @@ interface Notice { text: string; tone: 'loss' | 'info'; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
+  // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
+  const sorted = useMemo(() => sortQuakeList(earthquakes, sort), [earthquakes, sort])
+  const onSort = (key: QuakeSortKey) => onSortChange(nextQuakeListSort(sort, key))
+  const filtered = isQuakeListFiltered(filter)
+  // 窓の開閉と窓そのものはここで持つ（帯は一覧が空の画面と並んだ画面で置き場所が替わるので、帯の中に持つと
+  // 0 件との行き来で窓が作り直される）。窓はどの画面でも `withDialog` で先頭の同じ位置に描く
+  const [openFilter, setOpenFilter] = useState<FilterKind | null>(null)
+  // 離れた描画で窓を出さず（open に null を渡す）、state は次の描画で掃除する
+  useEffect(() => { if (!shown) setOpenFilter(null) }, [shown])
+  const filterBar = <QuakeListFilterBar filter={filter} onChange={onFilterChange} open={openFilter} setOpen={setOpenFilter} />
+  const filterDialog = <QuakeListFilterDialog filter={filter} onChange={onFilterChange} quakes={filterSourceQuakes} open={shown ? openFilter : null} setOpen={setOpenFilter} />
+  const withDialog = (screen: React.ReactNode) => <>{filterDialog}{screen}</>
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
   const scrollTarget = quakeCardScrollTarget({ earthquakes, selectedKey: selectedId, speakingKey, followSpeech, lpgmFocus })
   // 長周期の節を見せる番なら、巻くのはそのカード（長周期の札と同じ巻き方。→ `EarthquakeCard` の `lpgmFocusSeq`）。
@@ -213,7 +246,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
   // 取れた分から順に流しているので、`isLoading` だけで覆うと**その間ずっとスピナーのままになり、
   // 逐次に出す仕組みが画面へ一度も現れない**。
   if (isLoading && earthquakes.length === 0) {
-    return (
+    return withDialog(
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -226,7 +259,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
   // 全画面の失敗表示には「欠けた」系の帯を重ねない（一部が欠けたのか、まるごと失敗したのか読めなくなる）。
   // **鍵の入れ直しの案内だけは出す** —— 取得の成否と別の話で、中継に繋がらない初回こそ要る
   if (failed && earthquakes.length === 0) {
-    return (
+    return withDialog(
       <div className="flex flex-col h-full">
         {keyReentryNotice !== null && (
           <div className="p-2 roomy:p-3">
@@ -243,18 +276,32 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     )
   }
 
+  // 期間の絞りが、まだ読み込んでいない日にかかるときの注記（文面はユーザー原文「〇〇以前は未読込みです。で」）
+  const unloadedBefore = quakeListUnloadedBefore(filter.period, historyOldestDay, serverNow())
+  const unloadedNotice = unloadedBefore !== null && hasMore
+    ? <p className="px-[var(--qk-pad)] pt-2 text-xs text-secondary roomy:text-sm">{unloadedBefore}以前は未読込みです。</p>
+    : null
+
   if (earthquakes.length === 0) {
-    return (
+    return withDialog(
       <div className="flex flex-col h-full">
+        {filterBar}
         {notices.length > 0 && (
           <div className="p-2 space-y-1.5 roomy:p-3 roomy:space-y-2">
             {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
           </div>
         )}
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-secondary text-sm">地震情報はありません</p>
+        {/* 絞っていて空のときだけ文面を変える（2026-11-07 選択「絞っているときだけ変える (Recommended)」） */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-2">
+          <p className="text-secondary text-sm">{filtered ? '条件に合う地震はありません' : '地震情報はありません'}</p>
+          {filtered && (
+            <button type="button" onClick={() => onFilterChange(DEFAULT_QUAKE_LIST_FILTER)} className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white hover:bg-white/10">
+              すべて解除
+            </button>
+          )}
         </div>
-        {/* **空でも「もっと見る」を出す。** 最低表示震度を上げていて、読んだ範囲にその震度以上の地震が無いと
+        {unloadedNotice}
+        {/* **空でも「もっと見る」を出す。** 絞りを掛けていて、読んだ範囲に条件に合う地震が無いと
             一覧は空になるが、遡れば出る地震はある。出さないと押す口が無くなる（2026-11-03 ユーザー選択
             「空でもボタンを出す (Recommended)」。1 回に読む日数も文面も一覧の末尾と同じ） */}
         {hasMore && (
@@ -266,22 +313,23 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     )
   }
 
-  // 日付が前の行と変わったところに区切りを置く（見本の「11月1日」。年は常に添える）。
-  // 比べる相手は直前に区切りを置いた日（時刻の読めない行を挟んでも同じ日の区切りを二度置かない）
-  // **区切りから次の区切りの手前までを 1 つの束にする。** 日付の行は束の中で一覧の見出しの行の下へ貼りつき、
-  // 束の終わりで次の日の行に押し上げられる（2026-11-05 ユーザー発言「普通にヘッダ(震度 時刻 震央地名 規模 深さ)の下に
-  // 張り付くイメージ」）。束の鍵は日の鍵（区切りより前の時刻の読めない行だけの束は先頭の行の鍵）
-  // 同じ日の束が離れて 2 つできたとき（並びが時刻の降順から外れた行を挟んだとき）だけ、鍵に番号を添える
+  // 並べた欄の値が前の行と変わったところに区切りを置く。時刻の並びは日付（見本の「11月1日」。年は常に添える）、
+  // 震度は階級・規模は整数・深さは幅（2026-11-07 選択「並べた欄の幅ごとに区切る (Recommended)」）、地域の並びは区切らない（→ `quakeListSection`）。
+  // 比べる相手は直前に区切りを置いた値（読めない行を挟んでも同じ区切りを二度置かない）
+  // **区切りから次の区切りの手前までを 1 つの束にする。** 区切りの行は束の中で一覧の見出しの行の下へ貼りつき、
+  // 束の終わりで次の区切りの行に押し上げられる（2026-11-05 ユーザー発言「普通にヘッダ(震度 時刻 震央地名 規模 深さ)の下に
+  // 張り付くイメージ」）。束の鍵は区切りの鍵（区切りより前の行だけの束は先頭の行の鍵）
+  // 同じ区切りの束が離れて 2 つできたとき（並びから外れた行を挟んだとき）だけ、鍵に番号を添える
   const dayGroups: { key: string; label: string | null; quakes: JMAQuake[] }[] = []
   const dayKeyCount = new Map<string, number>()
   let lastDayKey: string | null = null
-  for (const q of earthquakes) {
-    const day = quakeListDay(q.earthquake.time)
+  for (const q of sorted) {
+    const day = quakeListSection(q, sort.key)
     if (day && day.key !== lastDayKey) {
       lastDayKey = day.key
       const n = dayKeyCount.get(day.key) ?? 0
       dayKeyCount.set(day.key, n + 1)
-      dayGroups.push({ key: n === 0 ? `day:${day.key}` : `day:${day.key}:${n}`, label: day.label, quakes: [q] })
+      dayGroups.push({ key: n === 0 ? day.key : `${day.key}:${n}`, label: day.label, quakes: [q] })
     } else if (dayGroups.length === 0) {
       dayGroups.push({ key: `lead:${quakeEventKey(q)}`, label: null, quakes: [q] })
     } else {
@@ -289,16 +337,17 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     }
   }
 
-  return (
+  return withDialog(
     // 大きさは一覧自身の幅で切り替える（2026-11-02 選択「パネル自身の幅 (Recommended)」。値は src/index.css の quake-list）
     <div ref={listRef} className="quake-list">
      <div className="quake-list-scope">
+      {filterBar}
       {notices.length > 0 && (
         <div className="space-y-1.5 p-2 roomy:p-3">
           {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
         </div>
       )}
-      <QuakeListHeader />
+      <QuakeListHeader sort={sort} onSort={onSort} />
       {dayGroups.map(group => (
        <section key={group.key}>
         {group.label && <QuakeListDayLabel label={group.label} />}
@@ -334,11 +383,13 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
           seismoWaves={seismoWaves.get(quakeEventKey(quake))}
           seismoWaveFailed={seismoWaveFailedKeys.has(quakeEventKey(quake))}
           seismoWaveView={seismoWaveView}
+          showListDate={sort.key !== 'time'}
         />
         )
         })}
        </section>
       ))}
+      {unloadedNotice}
       {hasMore && (
         <LoadMoreButton onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
       )}

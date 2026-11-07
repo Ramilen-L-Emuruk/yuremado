@@ -163,7 +163,6 @@ export const USAGE_TOP_LEVEL_SPECS = {
   timeSignalVolume: num('timeSignal', '時報の音量（null は通知音と同じ）', 0, 1, null, true),
   timeSignalSpeakerId: num('timeSignal', '時報の声（null は読み上げと同じ）', 0, 100000, null, true),
   // 表示設定
-  minDisplayScale: choice('display', '最低表示震度', INTENSITY_SCALES, -1),
   uiScale: num('display', 'UI 倍率', 0.5, 3, 1),
   mapIconScale: num('display', '地図アイコンの倍率', 0.5, 3, 1),
   hypocenterDepthScale: num('display', '震源の深さの強調', 1, 20, 1),
@@ -210,6 +209,21 @@ export const USAGE_TOP_LEVEL_SPECS = {
   panelWidthSide: num('state', '左右に分けたときのパネルの幅（PC・rem。null は既定）', 20, 200, null, true),
   panelWidthSideNarrow: num('state', '左右に分けたときのパネルの幅（スマホ横・rem。null は既定）', 20, 200, null, true),
   dmdataKeyReentryNotice: bool('state', 'API キーの入れ直しのお知らせを出しているか', false),
+  // 地震タブの絞り込みと並び替え（地域と種類は数だけ。地域の名前は住んでいる場所に結びつきうるので送らない）
+  quakeListScaleMin: choice('state', '地震タブ: 震度の下限（-1 は決めていない）', INTENSITY_SCALES, -1),
+  quakeListScaleMax: choice('state', '地震タブ: 震度の上限（-1 は決めていない）', INTENSITY_SCALES, -1),
+  quakeListMagnitudeMin: num('state', '地震タブ: 規模の下限（null は決めていない）', 0, 10, null, true),
+  quakeListMagnitudeMax: num('state', '地震タブ: 規模の上限（null は決めていない）', 0, 10, null, true),
+  quakeListDepthMin: num('state', '地震タブ: 深さの下限（km。null は決めていない）', 0, 700, null, true),
+  quakeListDepthMax: num('state', '地震タブ: 深さの上限（km。null は決めていない）', 0, 700, null, true),
+  quakeListRegionBasis: choice('state', '地震タブ: 地域の基準', ['epicenter', 'observed'], 'epicenter'),
+  quakeListRegions: { group: 'state', label: '地震タブ: 選んだ地域の数（0 はすべて）', rule: { kind: 'count', max: 999 }, default: '0' },
+  quakeListTypes: { group: 'state', label: '地震タブ: 選んだ種類の数（0 はすべて）', rule: { kind: 'count', max: 6 }, default: '0' },
+  quakeListPeriodHours: choice('state', '地震タブ: 期間（時間。0 は決めていない）', [0, 24, 72, 168, 720], 0),
+  quakeListPeriodFrom: present('state', '地震タブ: 期間の日付を指定したか（始め）'),
+  quakeListPeriodTo: present('state', '地震タブ: 期間の日付を指定したか（終わり）'),
+  quakeListSortKey: choice('state', '地震タブ: 並び替えの欄', ['time', 'scale', 'magnitude', 'depth', 'region'], 'time'),
+  quakeListSortDir: choice('state', '地震タブ: 並び替えの向き', ['asc', 'desc'], 'desc'),
 } as const satisfies Record<string, UsageSettingSpec>
 
 /** 送る項目のうち、設定の 1 項目そのもの（入れ子を除く）の名前 */

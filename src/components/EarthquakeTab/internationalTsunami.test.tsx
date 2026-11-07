@@ -4,6 +4,7 @@
 // 「受けて英文のまま出す (Recommended)」・2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」）。
 // 結び付けの判定は `utils/internationalTsunami.test.ts`、ここは渡された報がカードに原文のまま出ることと、
 // 英文だけのカードの見出し・時刻の名前・津波の欄を固定する。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -80,6 +81,13 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
     />
 )
 

@@ -92,7 +92,7 @@ export const HISTORY_WINDOW_DAYS = 7
  * 取得が引くのは `telegram.earthquake` だけなのでここでは扱わない
  * （→ `data-sources-spec.md` §2 の契約 B4）。
  */
-const ARCHIVE_START_DAY = '2020-11-18'
+export const ARCHIVE_START_DAY = '2020-11-18'
 
 /**
  * 当日経路が埋めてよい「直近」の日数。

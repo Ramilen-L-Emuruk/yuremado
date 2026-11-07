@@ -38,7 +38,7 @@ function setup(over: Partial<AppSettings> = {}, nankaiActive = false) {
   const settings = { ...DEFAULTS,
     voicevoxEnabled: false, soundEnabled: true, notifyMinScale: 40,
     notifyEEW: true, notifyTsunami: true, notifyDetection: false, notifyNankai: true,
-    nankaiCommentaryAlerts: true, minDisplayScale: -1, ...over,
+    nankaiCommentaryAlerts: true, quakeListScaleMin: -1, ...over,
   } as unknown as AppSettings
   const titleCalls: Array<[string, unknown]> = []
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {

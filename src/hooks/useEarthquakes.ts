@@ -1174,6 +1174,11 @@ export function useEarthquakes(
    */
   const historyCursorRef = useRef<HistoryCursor>(null)
   /**
+   * 読み込み済みの一番古い日（日本時間の `YYYY-MM-DD`。→ `QuakeHistoryResult.oldestLoadedDay`）。まだ読んでいなければ `null`。
+   * 地震タブの期間の絞りが「〇〇以前は未読込みです。」を出すのに使う。ライブ・再生のどちらの遡りでも進める。
+   */
+  const [historyOldestDay, setHistoryOldestDay] = useState<string | null>(null)
+  /**
    * 再生中の「もっと見る」で続きを読む口（→ `ReplayQuakeHistoryResult.loadMore`）。**再生中はこちらだけを使う。**
    *
    * リプレイの開始時の履歴（`restoreQuakeHistory`）が置き、押すたびに次の口へ差し替わる。`null` なら再生中は
@@ -2645,6 +2650,7 @@ export function useEarthquakes(
     // カーソルも初期値へ戻す（戻さないと、接続を張り直したあとの「もっと見る」が
     // 前の時間軸で読んだ位置から続きを読む）
     historyCursorRef.current = null
+    setHistoryOldestDay(null)
     dmdataHistorySettledRef.current = Promise.resolve()
     // 履歴の損失もここで空へ戻す。**これから読み直す範囲の話**なので、前の接続で欠けた分を
     // 持ち越すと直っても表示が消えない。遡り幅と同じ同期ブロックで戻す。
@@ -2959,6 +2965,7 @@ export function useEarthquakes(
           // **`stale` を見たあとに置くこと。** 時間軸が変わった後の結果でカーソルを
           // 進めると、新しい時間軸の「もっと見る」が古い軸で読んだ位置から続きを読む。
           historyCursorRef.current = historyCursorFromOldestDay(history.oldestLoadedDay)
+          setHistoryOldestDay(history.oldestLoadedDay)
           const quakeEvents = history.quakes
           const tsunamiEvents = history.tsunamis
           // 種別横断の生電文を eventId ごとに統合（リアルタイムと同一ロジック）。
@@ -3791,6 +3798,7 @@ export function useEarthquakes(
       if (stale()) return
       // **次の口へ進めるのは成功したときだけ。** 失敗したら同じ口のまま、押し直せば同じ範囲を読み直す
       replayLoadMoreRef.current = history.loadMore
+      if (history.oldestLoadedDay !== null) setHistoryOldestDay(history.oldestLoadedDay)
       applyLoadedHistory(history, history.loadMore !== null)
     } catch (err) {
       // 時間軸が変わった後の失敗は誰も困っていない（ライブの「もっと見る」と同じ扱い）
@@ -3878,8 +3886,10 @@ export function useEarthquakes(
       // 画面には何の痕跡も出ない。取得側は読み切った日をカーソルにするので（地震が 0 件の日も
       // 含む）、通常は在庫がある限り必ず進む。
       const nextCursor = historyCursorFromOldestDay(history.oldestLoadedDay)
-      if (nextCursor) historyCursorRef.current = nextCursor
-      else if (history.hasMore) {
+      if (nextCursor) {
+        historyCursorRef.current = nextCursor
+        setHistoryOldestDay(history.oldestLoadedDay)
+      } else if (history.hasMore) {
         // **429 の待機と本物の不具合を混ぜない。** 窓の最新の日が 429 の窓に入っていると
         // その日は読み切れず、カーソルは進まない —— それは待てば解ける正常な足踏みで、
         // 警告にすると解消するまで押すたび出続けて診断の価値が落ちる。
@@ -4396,6 +4406,7 @@ export function useEarthquakes(
     replayLoadMoreAbortRef.current?.abort()
     replayLoadMoreAbortRef.current = null
     replayLoadMoreRef.current = null
+    setHistoryOldestDay(null)
     clearTestSimulationTimers()
     setState(prev => ({
       ...prev,
@@ -4461,6 +4472,7 @@ export function useEarthquakes(
     replayLoadMoreAbortRef.current?.abort()
     replayLoadMoreAbortRef.current = history.loadMore === null ? null : new AbortController()
     replayLoadMoreRef.current = history.loadMore
+    setHistoryOldestDay(history.oldestLoadedDay)
     const hasMore = history.loadMore !== null
     setState(prev => (prev.hasMore === hasMore ? prev : { ...prev, hasMore }))
     const quakes = history.quakes
@@ -4550,6 +4562,7 @@ export function useEarthquakes(
 
   return {
     ...state,
+    historyOldestDay,
     injectEvent: handleEvent,
     loadMoreEarthquakes,
     clearTelegramLog,

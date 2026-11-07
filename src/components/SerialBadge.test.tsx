@@ -6,6 +6,7 @@
 //
 // 見た目は描いてみないと確かめられないので、クラス名の一致ではなく**両方をレンダーして
 // 突き合わせる**。文字列で書き写すと、写した側だけが古くなる。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../test-utils/flushDataEffects'
@@ -101,6 +102,13 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
     />,
   )
   await flushDataEffects()

@@ -8,6 +8,7 @@
 //
 // ボタンは押した地震を選択したうえで追加表示を切り替える（App 側）。ここではタブの props で
 // 開いた状態・閉じた状態を作り、出るもの／出ないものを固定する。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -89,6 +90,13 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
   />
   )
   await flushDataEffects()
@@ -162,6 +170,13 @@ describe('未入電トグル', () => {
         seismoWaves={new Map()}
         seismoWaveFailedKeys={new Set()}
         seismoWaveView="composite"
+        filter={DEFAULT_QUAKE_LIST_FILTER}
+        onFilterChange={() => {}}
+        sort={DEFAULT_QUAKE_LIST_SORT}
+        onSortChange={() => {}}
+        filterSourceQuakes={[]}
+        shown
+        historyOldestDay={null}
       />,
     )
     expect(findIntensityRow(PREF)).toBeUndefined()

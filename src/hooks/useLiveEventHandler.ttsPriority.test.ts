@@ -261,7 +261,7 @@ function setup(over: Partial<AppSettings> = {}) {
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
     // 解説情報の読み上げはこの設定で切れるため、優先度を見るテストでは明示的に有効にする
     nankaiCommentaryAlerts: true,
     // 気象庁の発表文は既定で読む（ttsReadTelegramText）が、それは本体とは別の最下位の層の発話。

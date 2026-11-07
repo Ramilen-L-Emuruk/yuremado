@@ -6,6 +6,7 @@
 // カードとの配線 —— とくに「カードを畳んでいる間に届いた印」を取りこぼさないこと。あちらは
 // 行の木と印を渡せば答えが出るが、**カードが選択されていない間は行の木そのものが空**なので、
 // 純関数のテストでは原理的に出ない穴がここにある。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -93,6 +94,13 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
   />,
   )
   await flushDataEffects()
@@ -162,6 +170,13 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
         seismoWaves={new Map()}
         seismoWaveFailedKeys={new Set()}
         seismoWaveView="composite"
+        filter={DEFAULT_QUAKE_LIST_FILTER}
+        onFilterChange={() => {}}
+        sort={DEFAULT_QUAKE_LIST_SORT}
+        onSortChange={() => {}}
+        filterSourceQuakes={[]}
+        shown
+        historyOldestDay={null}
       />,
     )
     expect(findIntensityRow(STATION)).toBeDefined()

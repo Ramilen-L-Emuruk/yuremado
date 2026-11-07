@@ -159,7 +159,7 @@ function setup() {
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: 2, ttsMaxRegions: 0, ttsAlwaysReadScale: -1, ttsRegionTolerance: 0,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
   } as unknown as AppSettings
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
     get: (t, k) => (k in t ? t[k as string] : vi.fn()),

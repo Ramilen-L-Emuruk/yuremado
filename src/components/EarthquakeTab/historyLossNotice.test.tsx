@@ -12,6 +12,7 @@
 //
 // 取得がまるごと失敗して `error` が立ったときも、カードがあれば一覧を残し、失敗は帯の先頭で知らせる
 // （カードが 0 件なら全画面の失敗表示）。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -97,6 +98,13 @@ async function renderTab(opts: {
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
     />,
   )
   // 観測点を持たない空の一覧（`earthquakes: []`）ではカードが 1 枚も描かれず、

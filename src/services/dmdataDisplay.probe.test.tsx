@@ -6,6 +6,7 @@
 // 測り方・環境変数・結果の枠の意味・見ない出口・誤検出の型は、docs/spec/telegram-coverage-audit.md の
 // §2「画面と読み上げに出しているかを測る」にある。環境変数を渡したときだけ動く（通常の `npm test` は汚さない）。
 import { describe, it, expect, vi } from 'vitest'
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../utils/quakeListView'
 import fs from 'node:fs'
 import path from 'node:path'
 import { act } from 'react'
@@ -184,6 +185,13 @@ function earthquakeTabProps() {
     onToggleDistribution: () => {}, unreceivedQuakeKey: null, onToggleUnreceived: () => {}, onFocusMap: () => {},
     speakingTelegramTextSubject: null, seismoWaves: new Map(), seismoWaveFailedKeys: new Set<string>(),
     seismoWaveView: 'composite',
+    filter: DEFAULT_QUAKE_LIST_FILTER,
+    onFilterChange: () => {},
+    sort: DEFAULT_QUAKE_LIST_SORT,
+    onSortChange: () => {},
+    filterSourceQuakes: [],
+    shown: true,
+    historyOldestDay: null,
   } as const
 }
 

@@ -2,9 +2,10 @@
 //
 // 一覧が空でも「もっと見る」を出す。
 //
-// 最低表示震度を上げていて、読んだ範囲にその震度以上の地震が無いと一覧は空になる。空のときの画面が
+// 地震タブの絞りを掛けていて、読んだ範囲に条件に合う地震が無いと一覧は空になる。空のときの画面が
 // 「地震情報はありません」だけだと、遡れば出る地震があっても押す口が無い（2026-11-03 ユーザー選択
 // 「空でもボタンを出す (Recommended)」）。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -69,6 +70,13 @@ async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLo
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
     />,
   )
   await flushDataEffects()

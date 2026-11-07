@@ -9,6 +9,7 @@
 //
 // 震度一覧の行は結合した 1 つの文字列（「震度5弱以上」）のままで、そちらは
 // `unreceivedRowMark.test.tsx` が守っている。分けたのは最大震度の欄だけ。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup, within } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -102,6 +103,13 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
   />,
   )
   await flushDataEffects()

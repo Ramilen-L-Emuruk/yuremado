@@ -6,6 +6,7 @@
 // **押せるかどうかと寄り先は、同じ引き当てから出す。** 別々に解決すると、片方だけが引けた
 // ときに「押せるのに動かない」（またはその逆）になる。座標表に無い観測点が押せる見た目に
 // ならないことも、ここで併せて固定する。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, screen } from '@testing-library/react'
 import type { StationCoordsData } from '../../utils/stationCoords'
@@ -144,6 +145,13 @@ function renderCard(
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
     />,
   )
 }

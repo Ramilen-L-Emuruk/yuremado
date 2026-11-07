@@ -41,9 +41,14 @@ vi.mock('../services/seismoWaveHistory', async (importOriginal) => ({
 
 // **トップレベルで一度読む。** テスト本体で初めて解決すると、その待ちが 1 件目の
 // 所要時間に乗って並列実行のときだけ時間切れになる（CLAUDE.md「検証」）。
-const { pickTargets, rememberPicks, useSeismoQuakeWaves, useSeismoQuakeWavesWithStatus, judgeWaveInterrupted, isIntensityWithheld } = await import(
-  './useSeismoQuakeWaves'
-)
+const seismoQuakeWavesModule = await import('./useSeismoQuakeWaves')
+const { pickTargets, rememberPicks, judgeWaveInterrupted, isIntensityWithheld } = seismoQuakeWavesModule
+type SeismoParams = Parameters<typeof seismoQuakeWavesModule.useSeismoQuakeWavesWithStatus>[0]
+/** 地震タブに出ている地震（`shownEventKeys`）。ここのテストは、渡した地震がすべて一覧に出ている前提で書いてある */
+const ALL_SHOWN: ReadonlySet<string> = { has: () => true } as unknown as ReadonlySet<string>
+type SeismoTestParams = Omit<SeismoParams, 'shownEventKeys'> & { shownEventKeys?: ReadonlySet<string> }
+const useSeismoQuakeWaves = (p: SeismoTestParams) => seismoQuakeWavesModule.useSeismoQuakeWaves({ shownEventKeys: ALL_SHOWN, ...p })
+const useSeismoQuakeWavesWithStatus = (p: SeismoTestParams) => seismoQuakeWavesModule.useSeismoQuakeWavesWithStatus({ shownEventKeys: ALL_SHOWN, ...p })
 
 function quake(id: string, time: string, maxScale: number, points: JMAQuake['points']): JMAQuake {
   return {
@@ -386,6 +391,35 @@ describe('useSeismoQuakeWaves', () => {
     await waitFor(() => expect(fetchSeismoStatus).toHaveBeenCalledTimes(1))
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(fetchSeismoWaveHistory).not.toHaveBeenCalled()
+  })
+
+  // 正: 地震タブの絞りで一覧に出ていない地震は、届く見込みでも波形を取りに行かない
+  it('一覧に出ていない地震の波形は取りに行かない', async () => {
+    fetchSeismoStatus.mockResolvedValue({ ...okStatus(), usualIntensities: new Map([['station-1', -1.3]]) })
+    fetchSeismoWaveHistory.mockResolvedValue(history())
+    const { result } = renderHook(() =>
+      useSeismoQuakeWaves({
+        enabled: true, baseUrl: 'http://host:50506', quakes: QUAKES, shownEventKeys: new Set(),
+        scope: NO_SCOPE, readWave: () => null, replayOffsetMs: null, originSeconds: SECONDS, subscribeWaveRevised: NO_REVISED,
+      }),
+    )
+    await waitFor(() => expect(fetchSeismoStatus).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(fetchSeismoWaveHistory).not.toHaveBeenCalled()
+    expect(result.current.size).toBe(0)
+  })
+
+  // 対照: 一覧に出ていれば取る
+  it('一覧に出ている地震の波形は取る', async () => {
+    fetchSeismoStatus.mockResolvedValue({ ...okStatus(), usualIntensities: new Map([['station-1', -1.3]]) })
+    fetchSeismoWaveHistory.mockResolvedValue(history())
+    const { result } = renderHook(() =>
+      useSeismoQuakeWaves({
+        enabled: true, baseUrl: 'http://host:50506', quakes: QUAKES, shownEventKeys: new Set([quakeEventKey(SECONDS_QUAKE)]),
+        scope: NO_SCOPE, readWave: () => null, replayOffsetMs: null, originSeconds: SECONDS, subscribeWaveRevised: NO_REVISED,
+      }),
+    )
+    await waitFor(() => expect(result.current.has(quakeEventKey(SECONDS_QUAKE))).toBe(true))
   })
 
   // 安全弁: 普段が読めた状態で出した波形は、普段が測り直されて届かない見込みになっても消さない。

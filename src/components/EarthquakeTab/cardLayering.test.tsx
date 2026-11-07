@@ -4,6 +4,7 @@
 //
 // - 取消の覆いは角を丸めない（行もカードも四角いので、丸めると四隅だけ暗くならずに残る）
 // - 広い組で貼りつく震度の枠は、見出しの段の下に描く（理由は src/index.css の `.quake-stick`）
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { render, cleanup } from '@testing-library/react'
@@ -75,6 +76,13 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
     />,
   )
   await flushDataEffects()

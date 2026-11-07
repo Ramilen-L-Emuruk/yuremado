@@ -38,7 +38,7 @@ function report(areas: TsunamiArea[], extra: Partial<JMATsunami> = {}): JMATsuna
 function setup(notifyTsunami = true) {
   const settings = { ...DEFAULTS,
     voicevoxEnabled: false, soundEnabled: false, notifyMinScale: 0,
-    notifyEEW: false, notifyTsunami, notifyDetection: false, minDisplayScale: -1,
+    notifyEEW: false, notifyTsunami, notifyDetection: false, quakeListScaleMin: -1,
   } as unknown as AppSettings
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
     get: (t, k) => (k in t ? t[k as string] : vi.fn()),

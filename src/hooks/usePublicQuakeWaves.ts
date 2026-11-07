@@ -140,7 +140,13 @@ interface Slot {
 
 export function usePublicQuakeWaves(params: {
   readonly enabled: boolean
+  /**
+   * 届いた地震すべて（地震タブの絞りを掛ける前）。**右端の打ち切りはここから決める**
+   * （2026-11-07 選択「届いた全部の地震で切る (Recommended)」）。
+   */
   readonly quakes: readonly JMAQuake[]
+  /** 地震タブに出ている地震の鍵。**取りに行くのはここに載った地震だけ**。 */
+  readonly shownEventKeys: ReadonlySet<string>
   readonly originSeconds: ReadonlyMap<string, OriginSeconds>
   /** 開いているカードの地震の鍵。先に取る範囲より古くても、開いたら取る。 */
   readonly openedEventKey: string | null
@@ -151,7 +157,7 @@ export function usePublicQuakeWaves(params: {
   /** 再生中の時刻のずれ（ms）。ライブなら `null`。再生中は再生時刻より先を出さない。 */
   readonly replayOffsetMs: number | null
 }): ReadonlyMap<string, readonly PublicQuakeWave[]> {
-  const { enabled, quakes, originSeconds, openedEventKey, liveNumbers, readLiveRaw, replayOffsetMs } = params
+  const { enabled, quakes, shownEventKeys, originSeconds, openedEventKey, liveNumbers, readLiveRaw, replayOffsetMs } = params
   const replaying = replayOffsetMs !== null
 
   const [file, setFile] = useState<PublicStationsFile | null>(null)
@@ -170,7 +176,11 @@ export function usePublicQuakeWaves(params: {
     }
   }, [enabled])
 
-  const targets = useMemo(() => (enabled ? pickPublicQuakeTargets(quakes, originSeconds) : []), [enabled, quakes, originSeconds])
+  // 選ぶ（と打ち切りを決める）のは届いた地震すべてから、取りに行くのは地震タブに出ている地震だけ
+  const targets = useMemo(
+    () => (enabled ? pickPublicQuakeTargets(quakes, originSeconds).filter(t => shownEventKeys.has(t.eventKey)) : []),
+    [enabled, quakes, shownEventKeys, originSeconds],
+  )
   useEffect(() => {
     if (enabled && file !== null && targets.length > 0) void checkPublicStations()
   }, [enabled, file, targets.length])

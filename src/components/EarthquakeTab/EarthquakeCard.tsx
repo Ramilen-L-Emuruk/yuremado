@@ -602,6 +602,8 @@ interface Props {
   seismoWaveFailed: boolean
   /** 波形を畳んでいるときに出すもの（設定「波形の表示」）。 */
   seismoWaveView: SeismoWaveCollapsedView
+  /** 閉じた行の上の段に日付を添えるか（一覧を時刻以外で並べているとき。→ `QuakeListRow` の `date`）。 */
+  showListDate: boolean
 }
 
 /**
@@ -818,7 +820,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   quake, isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
-  marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
+  marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView, showListDate,
 }: Props) {
   /** このカードの地震を指す鍵。**親へ返すときに使う。** */
   const eventKey = quakeEventKey(quake)
@@ -1348,6 +1350,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       )}
     </>}
     tsunami={quake.fromInternationalTsunami ? null : { text: tsunamiInfo.text, color: tsunamiInfo.color, title: domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined }}
+    date={showListDate && quakeDate ? `${String(quakeDate.getMonth() + 1).padStart(2, '0')}/${String(quakeDate.getDate()).padStart(2, '0')}` : null}
     time={quakeDate ? formatHourMinute(quakeDate) : QUAKE_LIST_TIME_UNKNOWN}
     name={epicenterLabel}
     magnitude={hasFacts ? { text: formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType), value: hypocenter.magnitude } : null}
