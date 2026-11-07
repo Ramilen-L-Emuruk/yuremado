@@ -42,6 +42,7 @@ import { decideFinalReportExpiry, type DetectionSpreadLog, type EewExpiryDecisio
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
+import { recordTsunamiFactStep, type TsunamiFactStep } from '../utils/quakeReportHistory'
 import { internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
 import { fetchFailureReason } from '../utils/fetchFailure'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
@@ -656,6 +657,12 @@ export interface EarthquakeState {
    */
   internationalTsunamis: readonly JMAInternationalTsunami[]
   /**
+   * 地震カードへ値を貸した津波の報の記録（古い順）。津波の状態（`tsunamis`）は地震ごとに最新の 1 件だけなので、報の一覧で
+   * 前の時点を押したときにその時点の借り物を出すため、カードを変えた報ごとに残す（→ `utils/quakeReportHistory.ts` の
+   * `recordTsunamiFactStep`。2026-11-07 ユーザー選択「報ごとに残す (Recommended)」）。値の変わらない続報は積まない。
+   */
+  tsunamiFactSteps: readonly TsunamiFactStep[]
+  /**
    * 地震カードの更新の印（鍵は `quakeEventKey`）。**ライブで受けた続報にだけ付く。**
    *
    * 履歴の取り込み（起動時・「もっと見る」）では付けない —— あちらは何通もまとめて
@@ -827,6 +834,7 @@ export function useEarthquakes(
     earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
     estimatedIntensities: [],
     internationalTsunamis: [],
+    tsunamiFactSteps: [],
     quakeUpdateMarks: new Map(),
     quakeMarkMemory: new Map(),
     connectionStatus: 'connecting',
@@ -2215,8 +2223,15 @@ export function useEarthquakes(
           // 津波の一覧を入れ替えたら、地震カードの上段を当て直す（借りる → 当てる の順。地震情報の受信・履歴の組み直しと同じ）。
           // **津波の続報だけでなく、取消・解除・失効でも通す。** 取消で当てていた値を戻すのも、続報で動いた値に更新の印を付けるのも
           // ここでしか起きない（→ `utils/latestQuakeFacts.ts`）。`seen` は当て込みが見る津波の一覧で、状態に残す一覧と違うことがある
+          // 地震カードを変えた津波の報は、当て込みが見た一覧ごと記録へ積む（報の一覧で前の時点を押したとき、その時点の
+          // 借り物を出すため。→ `recordTsunamiFactStep`）
           const withTsunamiFacts = (tsunamis: JMATsunami[], shown: JMATsunami[] = tsunamis): EarthquakeState => {
             const seen = [...shown, ...retraction]
+            const next = withTsunamiFactsSeen(tsunamis, seen)
+            const tsunamiFactSteps = recordTsunamiFactStep(prev.tsunamiFactSteps, tsunami, seen, prev.earthquakes, next.earthquakes)
+            return tsunamiFactSteps === next.tsunamiFactSteps ? next : { ...next, tsunamiFactSteps }
+          }
+          const withTsunamiFactsSeen = (tsunamis: JMATsunami[], seen: JMATsunami[]): EarthquakeState => {
             const borrowed = borrowFromTsunamiIntoCards(prev.earthquakes, seen)
             // **印付けが投げても一覧の更新は通す**（長周期の経路と同じ。`setState` の更新関数の中で投げると画面ごと落ちる）
             try {
@@ -4410,6 +4425,7 @@ export function useEarthquakes(
       earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
       estimatedIntensities: [],
       internationalTsunamis: [],
+      tsunamiFactSteps: [],
       // 時間軸が変わるので、印とその記憶も落とす（残すと再生開始直後の報が
       // 旧い軸のカードとの差分で光る）。
       quakeUpdateMarks: new Map(),

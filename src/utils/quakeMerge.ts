@@ -410,6 +410,21 @@ export function refoldQuakeCard(
 }
 
 /**
+ * カードの控えの電文（の一部）から、空のカードを当て直す。**取り下げ済みの報は見ない**（取消を当てたカードの控えからは、
+ * 取り下げた報が既に外れている。→ `applyQuakeCancelToCard`）。1 通も無ければ `undefined`。
+ *
+ * 報の一覧で前の報を押したとき、その報までの姿を組むのに使う（→ `utils/quakeReportHistory.ts`）。並べ方と当て方は
+ * {@link refoldQuakeCard} と同じ。
+ */
+export function foldQuakeTelegrams(
+  existing: JMAQuake,
+  telegrams: readonly JMAQuake[],
+  areaPrefIndex: AreaPrefIndex,
+): JMAQuake | undefined {
+  return refoldFromTelegrams(existing, telegrams, [], areaPrefIndex)
+}
+
+/**
  * `telegrams` を発表された順に並べ、空のカードから当て直す（→ `refoldQuakeCard`）。
  * 取り下げ済みの報は飛ばす。**1 通も残らなければ `undefined`。**
  *
@@ -883,6 +898,14 @@ function mergeQuakeIntoBody(
      * 「全期間で 22 件」のように件数を根拠に設計しているので、そこを汚す。
      */
     quiet?: boolean
+    /**
+     * 据え置きの判定（{@link quakeHoldBack}）を飛ばし、カードが採らない報でも採ったときの姿を返す。
+     *
+     * **画面へは使わない。** 報の一覧で捨てた報を押したとき、「採っていたらこうなっていた」カードを組むためだけの口
+     * （→ `utils/quakeReportHistory.ts`）。補う規則（震度の補完・津波区分の持ち越しなど）は採るときと同じ道を通る。
+     * 震源要素更新（VXSE61）は判定より前の分岐で必ず採るので、この指定は効かない。
+     */
+    ignoreHoldBack?: boolean
   },
 ): JMAQuake {
   const quiet = opts?.quiet === true
@@ -1023,7 +1046,7 @@ function mergeQuakeIntoBody(
   //
   // **記録に値するかも述語が決める**（`notable`）。ここで条件を書き下すと、副作用側が同じ
   // 絞り込みを書き写すことになり、片方だけ古くなったときに一方の記録だけが溢れる。
-  const held = quakeHoldBack(existing, incoming)
+  const held = opts?.ignoreHoldBack ? null : quakeHoldBack(existing, incoming)
   if (quiet || !held?.notable) {
     // 記録だけを飛ばす。**判定と戻り値はまったく同じ**（この下の分岐は記録専用）。
   } else if (held.reason === 'noTime') {
@@ -1464,6 +1487,7 @@ export function applyQuakeCancelToCard(
     issueType: cancel.issue.type,
     reportTime: lastRetracted.time,
     ...(cancel.cancelText !== undefined && { cancelText: cancel.cancelText }),
+    cancelTime: cancel.time,
   }
   return {
     kind: 'partial',

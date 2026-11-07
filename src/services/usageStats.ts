@@ -30,7 +30,7 @@ type UsageTab = 'earthquake' | 'realtime' | 'tsunami' | 'catalog' | 'telegrams'
 export const USAGE_INSTALL_KEY = 'yuremado-usage-install-id'
 /**
  * 最後に中継へ送れた設定の全項目の控え（識別子・日本時間の日・値の並び）。同じ日に同じ値なら送らない
- * （2026-11-05 ユーザー選択「変わったときと 1 日 1 回 (Recommended)」。1 回の札で 108 件書くので、札のたびに送ると書き込みが多すぎる）
+ * （2026-11-05 ユーザー選択「変わったときと 1 日 1 回 (Recommended)」。札のたびに送ると器への書き込みが多すぎる）
  */
 export const USAGE_PREFS_SENT_KEY = 'yuremado-usage-prefs-sent'
 /** 同意の窓に答えた（または閉じた）印。あれば二度と窓を出さない（2026-11-03 ユーザー選択「二度と出さない (Recommended)」） */

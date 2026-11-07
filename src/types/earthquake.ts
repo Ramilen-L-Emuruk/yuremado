@@ -249,6 +249,11 @@ export interface QuakeRetractedReport {
   reportTime: string
   /** 取消電文の取消しの概要（`Body/Text`）。気象庁が書いた理由で、そのまま出す。 */
   cancelText?: string
+  /**
+   * 取消電文の発表時刻（`Head/ReportDateTime`）。報の一覧で前の報を押したとき、取消より前の時点では帯を出さないために持つ
+   * （2026-11-07 ユーザー選択「取消より前の時点では出さない (Recommended)」。→ `utils/quakeReportHistory.ts`）
+   */
+  cancelTime?: string
 }
 
 /**
@@ -2319,6 +2324,13 @@ export interface JMAEstimatedIntensity {
    * 前の報も並べられるよう、置き換えるときにここへ引き継ぐ。電文から読む値ではない。
    */
   previousTimes?: readonly string[]
+  /**
+   * この報が置き換えた、同じ地震の前の報そのもの（古い順・{@link previousTimes} と同じ並び）。報の一覧で前の報を
+   * 押したとき、その時点の分布を出すために持つ（→ `utils/quakeReportHistory.ts`）。前の報の引き継ぎ（この欄と
+   * `previousTimes`）は外して積む。セルの型付き配列は参照で持つので、増えるのは置き換えた報の分だけ。
+   * 電文から読む値ではない。
+   */
+  previousVersions?: readonly Omit<JMAEstimatedIntensity, 'previousTimes' | 'previousVersions'>[]
   /**
    * 地震発現時刻（ISO・分まで）。**この電文は `eventId` を持たない**ので、地震カードとの
    * 結び付けはこの時刻で行う。

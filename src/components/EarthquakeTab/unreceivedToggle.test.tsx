@@ -89,6 +89,10 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />
   )
   await flushDataEffects()
@@ -162,6 +166,10 @@ describe('未入電トグル', () => {
         seismoWaves={new Map()}
         seismoWaveFailedKeys={new Set()}
         seismoWaveView="composite"
+        historyInputs={null}
+        historyPickedId={null}
+        historyView={null}
+        onPickHistory={() => {}}
       />,
     )
     expect(findIntensityRow(PREF)).toBeUndefined()

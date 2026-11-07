@@ -35,6 +35,11 @@ function anchorRectFor(label: HTMLElement): DOMRect {
 interface Props {
   label: string
   description: string
+  /**
+   * ラベルの字の色と大きさ（既定は設定の行の `text-white text-sm`）。点線の下線・押せる形はそのまま。
+   * 設定の行でない所（地震カードの報の一覧の行など）で、周りの字に合わせるときに渡す。
+   */
+  labelClassName?: string
 }
 
 /**
@@ -50,7 +55,7 @@ interface Props {
  * ホバーとフォーカスを同じ状態にまとめると、フォーカスで開いている最中にマウスがラベルを
  * 通り過ぎるだけで（pointerleave が来て）フォーカス由来の表示まで消えてしまう。
  */
-export function DescriptionTip({ label, description }: Props) {
+export function DescriptionTip({ label, description, labelClassName = 'text-white text-sm' }: Props) {
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [pinned, setPinned] = useState(false)
@@ -126,7 +131,7 @@ export function DescriptionTip({ label, description }: Props) {
         type="button"
         // 説明を持つ行だけ点線下線を出す。border-b では <button> の幅いっぱいに線が伸びて
         // 文字より長く残るため、テキストに追従する text-decoration を使う。
-        className="text-white text-sm text-left underline decoration-dotted decoration-secondary/60 underline-offset-4 cursor-help focus:outline-hidden focus-visible:ring-1 focus-visible:ring-blue-500 rounded-sm"
+        className={`${labelClassName} text-left underline decoration-dotted decoration-secondary/60 underline-offset-4 cursor-help focus:outline-hidden focus-visible:ring-1 focus-visible:ring-blue-500 rounded-sm`}
         // 紐づけは aria-describedby だけでよい（WAI-ARIA の tooltip パターン）。
         // aria-expanded は disclosure 系の属性で、読み上げが「展開」と「説明」を二重に伝える。
         aria-describedby={open ? tipId : undefined}
