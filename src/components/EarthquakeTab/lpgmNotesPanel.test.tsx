@@ -109,6 +109,10 @@ const renderTab = async (lpgm: JMALpgm) => {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />
   )
   await flushDataEffects()
@@ -151,6 +155,10 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />
 )
 const renderSpeaking = async (subject: string | null, lpgm: JMALpgm = makeLpgm()) => {

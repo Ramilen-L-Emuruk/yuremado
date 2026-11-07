@@ -58,6 +58,8 @@ import { QuakeListRow, TileScaleLabel, quakeTileColors } from './QuakeListRow'
 import { QuakeOpenPin } from './QuakeOpenPin'
 import { DisclosureCaret, Reveal, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
 import { quakeReportTimeline, formatTimelineTime } from '../../utils/quakeReportTimeline'
+import { HELD_BACK_TEXT, quakeHistoryEntries, type QuakeHistoryEntry, type QuakeHistoryInputs } from '../../utils/quakeReportHistory'
+import { DescriptionTip } from '../DescriptionTip'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
 
@@ -602,6 +604,17 @@ interface Props {
   seismoWaveFailed: boolean
   /** 波形を畳んでいるときに出すもの（設定「波形の表示」）。 */
   seismoWaveView: SeismoWaveCollapsedView
+  /**
+   * 報の一覧で押した報の時点のカード（→ `utils/quakeReportHistory.ts`）。あれば `quake` の代わりにこれを出す
+   * （報の一覧は `historyInputs` の最新のカードから組むので変わらない）。押していなければ null。
+   */
+  historyQuake?: JMAQuake | null
+  /** 報の一覧を組む材料。選択中のカードにだけ渡る。無ければ一覧は押せない形で組む。 */
+  historyInputs?: QuakeHistoryInputs | null
+  /** 報の一覧で押している行。 */
+  historyPickedId?: string | null
+  /** 報の一覧の行を押した（`count` はこのカードが組んだ行数）。 */
+  onPickHistory?: (entryId: string, count: number) => void
 }
 
 /**
@@ -815,11 +828,14 @@ function InternationalTsunamiHeading() {
  * 親で包まず、**地震の鍵をこちら側で作って渡す**（→ {@link Props.onSelect}）。
  */
 export const EarthquakeCard = memo(function EarthquakeCard({
-  quake, isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
+  isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
+  quake: latestQuake, historyQuake = null, historyInputs = null, historyPickedId = null, onPickHistory,
 }: Props) {
+  // 報の一覧で前の報を押している間は、その報の時点のカードを出す（→ `historyQuake`）
+  const quake = historyQuake ?? latestQuake
   /** このカードの地震を指す鍵。**親へ返すときに使う。** */
   const eventKey = quakeEventKey(quake)
   // **畳むのはカードだけで、選択は外さない**（2026-11-03 選択「見出しも帯も閉じるだけ (Recommended)」。
@@ -1443,14 +1459,29 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   // 全期間の控え（2020-11〜2026-10・VXSE62 の地震 91 件）で同じ地震の 2 通目は 0 件だった
   // （2026-11-02 に数えた）ので、1 報で届いた報をすべて指している。推計震度分布図は置き換えた
   // 前の報の発表時刻を `previousTimes` に引き継いでいるので、それも並べる。
-  const timeline = useMemo(() => !isSelected ? [] : quakeReportTimeline(quake, [
-    ...(lpgm && !lpgm.cancelled ? [{ label: lpgm.infoName ?? '長周期地震動に関する観測情報', time: lpgm.time }] : []),
-    ...internationalTsunamis.map(x => ({ label: '国際津波関連情報', time: x.time })),
-    ...(estimatedIntensity
-      ? [...(estimatedIntensity.previousTimes ?? []), estimatedIntensity.time].map(time => ({ label: '推計震度分布図', time }))
-      : []),
-    ...borrowedTelegrams,
-  ]), [isSelected, quake, lpgm, internationalTsunamis, estimatedIntensity, borrowedTelegrams])
+  //
+  // **材料（`historyInputs`）があれば、押せる一覧をそこから組む**（→ `utils/quakeReportHistory.ts`）。押した報の時点の
+  // カードを出している間も、一覧は最新のカードから組む（押した行より下の報も並べたままにする）。材料が無いとき
+  // （カードを単独で描くテストなど）は押せない一覧を組む（行の鍵が空）
+  //
+  // **当て直す一覧は「更新 ▾」を開いている間だけ組む**（組むのは控えの電文の当て直しで重い。選ぶ・届くたびに走る経路に載せない）。
+  // 閉じている間は、頭の「更新 hh:mm」に要る時刻だけを、並べるだけの軽い一覧（`quakeReportTimeline`）から取る
+  const plainTimeline = useMemo<QuakeHistoryEntry[]>(() => {
+    if (!isSelected) return []
+    return quakeReportTimeline(latestQuake, [
+      ...(lpgm && !lpgm.cancelled ? [{ label: lpgm.infoName ?? '長周期地震動に関する観測情報', time: lpgm.time }] : []),
+      ...internationalTsunamis.map(x => ({ label: '国際津波関連情報', time: x.time })),
+      ...(estimatedIntensity
+        ? [...(estimatedIntensity.previousTimes ?? []), estimatedIntensity.time].map(time => ({ label: '推計震度分布図', time }))
+        : []),
+      ...borrowedTelegrams,
+    ]).map(e => ({ ...e, id: '', kind: 'quake' as const }))
+  }, [isSelected, latestQuake, lpgm, internationalTsunamis, estimatedIntensity, borrowedTelegrams])
+  const historyTimeline = useMemo<QuakeHistoryEntry[] | null>(
+    () => isSelected && timelineOpen && historyInputs ? quakeHistoryEntries(historyInputs) : null,
+    [isSelected, timelineOpen, historyInputs],
+  )
+  const timeline = historyTimeline ?? plainTimeline
 
   if (isSelected) {
     const magColor = getMagnitudeColor(hypocenter.magnitude)
@@ -1534,12 +1565,33 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           )}
         </div>
         <Reveal open={timelineOpen} className="mt-1.5 mb-0.5 rounded-md border border-border px-2.5 py-1 text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{() => (<>
-            {timeline.map((e, idx) => (
-              <div key={idx} className={`flex justify-between gap-3 py-[3px] ${idx > 0 ? 'border-t border-border/60' : ''}`}>
-                <span>{e.label}</span>
-                <span className="tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms) : QUAKE_LIST_TIME_UNKNOWN}</span>
-              </div>
-            ))}
+            {timeline.map((e, idx) => {
+              // 行を押すと、その報の時点のカードを出す。同じ行をもう一度押すと最新へ戻る（→ App.tsx の `historyPick`）。
+              // カードが採らなかった報（捨てた報）はグレーにし、理由をホバーで出す（2026-11-07 ユーザー発言「どうせなら捨てた報も
+              // 一覧にグレーとかで乗せて選択できるようにして」「＜理由＞ためカードに反映していません。みたいにホバー表示したいかも。」）
+              const pickable = e.id !== '' && !e.noCard && !!onPickHistory
+              const picked = pickable && e.id === historyPickedId
+              const pick = () => onPickHistory?.(e.id, timeline.length)
+              const heldText = e.heldBack ? HELD_BACK_TEXT[e.heldBack] : null
+              return (
+                <div
+                  key={e.id || idx}
+                  role={pickable ? 'button' : undefined}
+                  tabIndex={pickable ? 0 : undefined}
+                  aria-pressed={pickable ? picked : undefined}
+                  data-held-back={e.heldBack ? '' : undefined}
+                  onClick={pickable ? pick : undefined}
+                  onKeyDown={pickable ? (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pick() } } : undefined}
+                  className={`-mx-2.5 flex justify-between gap-3 px-2.5 py-[3px] ${idx > 0 ? 'border-t border-border/60' : ''}${pickable ? ' cursor-pointer hover:bg-white/5' : ''}${picked ? ' bg-white/10 text-white' : ''}${e.heldBack && !picked ? ' text-secondary/50' : ''}`}
+                >
+                  {/* 説明は名前を押したときだけ開き、行は選ばない（2026-11-07 ユーザー選択「説明は名前を押したときだけ」） */}
+                  <span>{heldText
+                    ? <span onClick={ev => ev.stopPropagation()} onKeyDown={ev => ev.stopPropagation()}><DescriptionTip label={e.label} description={heldText} labelClassName="" /></span>
+                    : e.label}</span>
+                  <span className="tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms) : QUAKE_LIST_TIME_UNKNOWN}</span>
+                </div>
+              )
+            })}
           </>)}</Reveal>
 
         {/* 一部の取消（震源情報まで進んだカードに震度速報だけの取消が届いた等）。カードは残し、

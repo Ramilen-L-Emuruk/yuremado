@@ -310,8 +310,8 @@ function countSample(): DeepRequired<JMAEarthquakeCount> {
   }
 }
 
-// `previousTimes` は一覧へ入れるときに受信側が付ける欄（→ `upsertEstimatedIntensity`）。電文には現れない
-function estimatedSample(): DeepRequired<Omit<JMAEstimatedIntensity, 'previousTimes'>> {
+// `previousTimes`・`previousVersions` は一覧へ入れるときに受信側が付ける欄（→ `upsertEstimatedIntensity`）。電文には現れない
+function estimatedSample(): DeepRequired<Omit<JMAEstimatedIntensity, 'previousTimes' | 'previousVersions'>> {
   return {
     id: 'estimated-1', time: iso(), arrivalTime: iso(),
     hypocenter: { lat: 37.5, lon: 137.2, depthKm: 10 },
