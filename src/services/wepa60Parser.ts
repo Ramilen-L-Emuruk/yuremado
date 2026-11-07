@@ -98,6 +98,12 @@ const EVALUATIONS: readonly (readonly [string, InternationalTsunamiEvaluation])[
   ['THERE IS NO POSSIBILITY OF A TSUNAMI', 'none'],
 ]
 
+/** 評価の文（空白を 1 つに詰め、末尾の句点を落としたもの）を 5 種のどれかとして読む。どれでもなければ undefined */
+export function evaluationFromSentence(sentence: string): InternationalTsunamiEvaluation | undefined {
+  const s = sentence.replace(/\s+/g, ' ').trim().replace(/\.$/, '')
+  return EVALUATIONS.find(([e]) => e === s)?.[1]
+}
+
 /** `EVALUATION` の段落（次の空行まで。文が 2 行に折れる報がある）を 5 種のどれかとして読む。どれでもなければ undefined */
 function readEvaluation(lines: readonly string[]): InternationalTsunamiEvaluation | undefined {
   const at = lines.findIndex(line => /^\s*EVALUATION\s*$/.test(line))

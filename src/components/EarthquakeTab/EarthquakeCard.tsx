@@ -56,6 +56,7 @@ import { groupUnreceivedPointNames, type UnreceivedPointGroup } from './unreceiv
 import { QuakeSeismoWave } from './QuakeSeismoWave'
 import { QuakeListRow, TileScaleLabel, quakeTileColors } from './QuakeListRow'
 import { QuakeOpenPin } from './QuakeOpenPin'
+import { InternationalTsunamiText } from './InternationalTsunamiText'
 import { DisclosureCaret, Reveal, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
 import { quakeReportTimeline, formatTimelineTime } from '../../utils/quakeReportTimeline'
 import { HELD_BACK_TEXT, quakeHistoryEntries, type QuakeHistoryEntry, type QuakeHistoryInputs } from '../../utils/quakeReportHistory'
@@ -1784,7 +1785,10 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                     国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span> <DisclosureCaret open={open} />
                   </div>
                   <Reveal open={open}>{() => (
-                    <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
+                    <InternationalTsunamiText
+                      report={x}
+                      {...(!quake.fromInternationalTsunami && !quake.cancelledAt && { quakeName: quake.earthquake.hypocenter.name.trim() })}
+                    />
                   )}</Reveal>
                 </div>
               )
