@@ -63,8 +63,11 @@ const HEADER_COLUMNS: readonly { key: QuakeSortKey; label: string; right: boolea
 /**
  * 一覧の先頭の列の見出し（見本の .hdr）。**押すとその欄で並べ替え、もう一度押すと向きを返す**（→ `nextQuakeListSort`）。
  * 並べている欄には向きの印（▲ 小さい順・▼ 大きい順）を添える。
+ *
+ * `filterButton` は絞り込みのボタン（漏斗の印）。左端の震度の欄に、震度の見出しの前に置く
+ * （2026-11-08 ユーザー発言「震央地名の横じゃなくて普通に左端(震度の横)においてみて。」）。
  */
-export function QuakeListHeader({ sort, onSort }: { sort: QuakeListSort; onSort: (key: QuakeSortKey) => void }) {
+export function QuakeListHeader({ sort, onSort, filterButton }: { sort: QuakeListSort; onSort: (key: QuakeSortKey) => void; filterButton: ReactNode }) {
   return (
     // 巻いても上に残す（日付の区切りがこの下に、開いたカードの帯・枠はさらにその下に貼りつく。高さは index.css の --qk-head-h）
     <div
@@ -73,7 +76,7 @@ export function QuakeListHeader({ sort, onSort }: { sort: QuakeListSort; onSort:
     >
       {HEADER_COLUMNS.map(c => {
         const on = sort.key === c.key
-        return (
+        const head = (
           <button
             key={c.key}
             type="button"
@@ -87,6 +90,9 @@ export function QuakeListHeader({ sort, onSort }: { sort: QuakeListSort; onSort:
             {on && <span aria-hidden="true" className="text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
           </button>
         )
+        return c.key === 'scale'
+          ? <div key={c.key} className="flex min-w-0 items-center gap-1">{filterButton}{head}</div>
+          : head
       })}
     </div>
   )

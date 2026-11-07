@@ -33,7 +33,7 @@ const QUAKE: JMAQuake = {
   points: [{ pref: '石川県', addr: '石川県能登', isArea: true, scale: 45 }],
 }
 
-async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLoadingMore?: boolean; onLoadMore?: () => void }) {
+async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLoadingMore?: boolean; onLoadMore?: () => Promise<void> }) {
   const { earthquakes } = opts
   const result = render(
     <EarthquakeTab
@@ -46,7 +46,7 @@ async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLo
       isLoading={false}
       isLoadingMore={opts.isLoadingMore ?? false}
       hasMore={opts.hasMore}
-      onLoadMore={opts.onLoadMore ?? (() => {})}
+      onLoadMore={opts.onLoadMore ?? (async () => {})}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}
@@ -89,7 +89,7 @@ async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLo
 
 describe('一覧が空のときの「もっと見る」', () => {
   it('正: 空でも遡れるならボタンを出し、押すと続きを読む', async () => {
-    const onLoadMore = vi.fn()
+    const onLoadMore = vi.fn(async () => {})
     await renderTab({ earthquakes: [], hasMore: true, onLoadMore })
 
     expect(screen.getByText('地震情報はありません')).toBeTruthy()

@@ -329,6 +329,32 @@ export function quakeListUnloadedBefore(period: QuakePeriod | null, oldestLoaded
   return `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
 }
 
+/**
+ * 期間に合わせて自動で読み足す範囲。**期間の始まりが今日（日本時間）から 90 日前より新しいときだけ**読み足す
+ * （2026-11-08 ユーザー選択「期間の日だけ取りに行く形を別に作る」の説明「今回は『今日から 90 日前まで』で入れ」）。
+ * 読み足しは「もっと見る」と同じく今日から途切れずに遡るので、90 日より古い期間を選ぶと今日からそこまで全部を読むことになる。
+ * それより古い期間は「もっと見る」で遡る（90 日にした重さの根拠は docs/spec/quake-spec.md §8）。
+ */
+export const QUAKE_LIST_AUTO_LOAD_DAYS = 90
+
+/** 期間の始まりが自動で読み足す範囲（今日から `QUAKE_LIST_AUTO_LOAD_DAYS` 日前の日の頭以降）に入っているか。 */
+export function quakeListAutoLoadAllowed(period: QuakePeriod | null, nowMs: number): boolean {
+  if (period === null) return false
+  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : localDayStartMs(period.from)
+  if (!Number.isFinite(startMs)) return false
+  // 今日の頭は、期間の絞り（`localDayStartMs`）と同じく端末の日付で取る（基準を混ぜると境の 1 日がずれる）
+  const now = new Date(nowMs)
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  return startMs >= todayStart - QUAKE_LIST_AUTO_LOAD_DAYS * 86_400_000
+}
+
+/** 期間の始まり（日本時間の「10月31日」の形）。注記「〇〇まで読み込んでいます…」に使う。 */
+export function quakeListPeriodStartLabel(period: QuakePeriod, nowMs: number): string {
+  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : localDayStartMs(period.from)
+  const d = new Date(startMs + 9 * 3_600_000)
+  return `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
+}
+
 /** 震度の窓で選べる値。 */
 export const QUAKE_SCALE_STEPS: readonly IntensityScale[] = [10, 20, 30, 40, 45, 50, 55, 60, 70]
 

@@ -179,7 +179,7 @@ async function renderText(node: React.ReactElement, opts: { pressButtons?: boole
 function earthquakeTabProps() {
   return {
     speakingKey: null, followSpeech: false, onSelect: () => {}, isLoading: false, isLoadingMore: false,
-    hasMore: false, onLoadMore: () => {}, watchLoadMoreThrottle: false, error: null,
+    hasMore: false, onLoadMore: async () => {}, watchLoadMoreThrottle: false, error: null,
     historyLoss: createEmptyTelegramLoss(), loadMoreFailed: false, reconnectGapLoss: false, fetchThrottled: false, onDismissKeyReentry: null,
     updateMarks: new Map(), onToggleLpgm: () => {}, lpgmFocus: null, estimatedIntensities: [], internationalTsunamisByQuake: new Map(), distributionQuakeKey: null,
     onToggleDistribution: () => {}, unreceivedQuakeKey: null, onToggleUnreceived: () => {}, onFocusMap: () => {},

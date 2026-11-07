@@ -3,12 +3,13 @@ import type { JMAQuake, JMALpgm, JMAEstimatedIntensity, JMAInternationalTsunami 
 import { EarthquakeCard } from './EarthquakeCard'
 import { LoadMoreButton } from './LoadMoreButton'
 import { QuakeListHeader, QuakeListDayLabel } from './QuakeListRow'
-import { QuakeListFilterBar, QuakeListFilterDialog, type FilterKind } from './QuakeListFilterBar'
+import { QuakeListFilterButton, QuakeListFilterDialog } from './QuakeListFilterBar'
 import {
-  DEFAULT_QUAKE_LIST_FILTER, isQuakeListFiltered, nextQuakeListSort, quakeListSection, quakeListUnloadedBefore, sortQuakeList,
+  DEFAULT_QUAKE_LIST_FILTER, isQuakeListFiltered, nextQuakeListSort, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, sortQuakeList,
   type QuakeListFilter, type QuakeListSort, type QuakeSortKey,
 } from '../../utils/quakeListView'
 import { serverNow } from '../../utils/clock'
+import { log } from '../../utils/logger'
 import { extractQuakeEventId, quakeEventKey } from '../../utils/quakeMerge'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
@@ -60,7 +61,8 @@ interface Props {
   isLoading: boolean
   isLoadingMore: boolean
   hasMore: boolean
-  onLoadMore: () => void
+  /** 「もっと見る」の取得。返る promise は取得が終わったら解決する（期間に合わせた自動の読み足しが、終わったかをこれで見る） */
+  onLoadMore: () => Promise<void>
   /**
    * 「もっと見る」が取得制限で待たされている間、ボタンに残り時間を出すか（→ `LoadMoreButton`）。
    */
@@ -189,13 +191,65 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
   const sorted = useMemo(() => sortQuakeList(earthquakes, sort), [earthquakes, sort])
   const onSort = (key: QuakeSortKey) => onSortChange(nextQuakeListSort(sort, key))
   const filtered = isQuakeListFiltered(filter)
-  // 窓の開閉と窓そのものはここで持つ（帯は一覧が空の画面と並んだ画面で置き場所が替わるので、帯の中に持つと
-  // 0 件との行き来で窓が作り直される）。窓はどの画面でも `withDialog` で先頭の同じ位置に描く
-  const [openFilter, setOpenFilter] = useState<FilterKind | null>(null)
-  // 離れた描画で窓を出さず（open に null を渡す）、state は次の描画で掃除する
-  useEffect(() => { if (!shown) setOpenFilter(null) }, [shown])
-  const filterBar = <QuakeListFilterBar filter={filter} onChange={onFilterChange} open={openFilter} setOpen={setOpenFilter} />
-  const filterDialog = <QuakeListFilterDialog filter={filter} onChange={onFilterChange} quakes={filterSourceQuakes} open={shown ? openFilter : null} setOpen={setOpenFilter} />
+  // 窓の開閉と窓そのものはここで持つ（ボタンを置く見出しの行は一覧が空の画面には無く、並んだ画面でも作り直されるので、
+  // そちらに持つと 0 件との行き来で窓が作り直される）。窓はどの画面でも `withDialog` で先頭の同じ位置に描く
+  const [openFilter, setOpenFilter] = useState(false)
+  // 離れた描画で窓を出さず（open に false を渡す）、state は次の描画で掃除する
+  useEffect(() => { if (!shown) setOpenFilter(false) }, [shown])
+  const filterButton = <QuakeListFilterButton filter={filter} open={openFilter} onOpen={() => setOpenFilter(true)} />
+  // **期間の始まりが読み込んだ範囲より前なら、届くまで読み足す**（2026-11-08 ユーザー発言「期間で取得してない日付を設定できるのは
+  // おかしい」の後、選択「選んだら足りない日を読み込む (Recommended)」）。「もっと見る」と同じ口で 1 回 7 日ずつ進み、
+  // 読み込んだ一番古い日が動くたびにもう一度見る。地震タブを見ている間だけ走る。
+  // **止まる条件は 2 つ**: 読み込みに失敗した（`loadMoreFailed`）・読み込みが終わったのに一番古い日が動かなかった
+  // （429 の足踏み・カーソルが進まない日。失敗として現れないので、見ないと間隔なしに呼び続ける）。押し直しは「もっと見る」、
+  // 期間を選び直すか一番古い日が動けば自動に戻る
+  // 自動で読み足すのは期間の始まりが今日から 90 日前より新しいときだけ（→ `QUAKE_LIST_AUTO_LOAD_DAYS`）
+  const nowMs = serverNow()
+  const unloadedBefore = quakeListUnloadedBefore(filter.period, historyOldestDay, nowMs)
+  const periodNeedsMore = unloadedBefore !== null && quakeListAutoLoadAllowed(filter.period, nowMs)
+  // 自動で呼んだときの一番古い日（呼んでいなければ undefined）。**終わりは呼んだ promise の解決で知る** —— 読み込み中の印
+  // （isLoadingMore）の移り変わりで見ると、印を立てずに返る経路（再生で続きの口が無い等）で控えが外れず、自動が止まったまま
+  // 「読み込んでいます…」を出し続ける。解決したら autoDoneSeq を進め、次の描画（取得で変わった一番古い日が載った後）で判定する
+  const autoFromRef = useRef<string | null | undefined>(undefined)
+  const [autoDoneSeq, setAutoDoneSeq] = useState(0)
+  const seenDoneSeqRef = useRef(0)
+  // 自動で呼んだ後に読み込み中の印が立ったか。立たずに返った呼び出し（時間軸の切り替え・手で押した「もっと見る」と重なった等で
+  // 読まずに返った）は、進まなかったとは見なさない
+  const autoStartedRef = useRef(false)
+  if (autoFromRef.current !== undefined && isLoadingMore) autoStartedRef.current = true
+  const [autoStalled, setAutoStalled] = useState(false)
+  useEffect(() => { setAutoStalled(false) }, [filter.period, historyOldestDay])
+  useEffect(() => {
+    if (autoDoneSeq !== seenDoneSeqRef.current) {
+      seenDoneSeqRef.current = autoDoneSeq
+      const from = autoFromRef.current
+      const started = autoStartedRef.current
+      autoFromRef.current = undefined
+      autoStartedRef.current = false
+      // 止めるのは「まだ読む必要があり、失敗でもないのに一番古い日が動かなかった」ときだけ（失敗は loadMoreFailed が止める。
+      // 期間を外した・90 日より古くした後に返ったなら止める理由が無い）
+      if (started && from !== undefined && from === historyOldestDay && periodNeedsMore && hasMore && !loadMoreFailed) {
+        log.warn(`[地震タブ] 期間に合わせた読み足しで、読み込んだ一番古い日が ${historyOldestDay ?? '（なし）'} から動かなかったので止めた`)
+        setAutoStalled(true)
+        return
+      }
+    }
+    // 呼んだ結果がまだ返っていない間は呼ばない（StrictMode の二度目の effect でも二重に呼ばない）
+    if (autoFromRef.current !== undefined) return
+    if (!shown || !periodNeedsMore || !hasMore || isLoadingMore || loadMoreFailed || autoStalled) return
+    autoFromRef.current = historyOldestDay
+    onLoadMore().catch(() => { /* 失敗は onLoadMore が loadMoreFailed と記録に残す */ }).finally(() => setAutoDoneSeq(s => s + 1))
+  }, [shown, periodNeedsMore, historyOldestDay, hasMore, isLoadingMore, loadMoreFailed, autoStalled, autoDoneSeq, onLoadMore])
+  // 読み足しの様子（2026-11-08 選択「読み込み中と止まった後を分けて出す (Recommended)」）。読み込み中は期間の始まりまで読んでいる途中、
+  // 止まった後（失敗・進まない・90 日より古い期間）は読めた範囲を添える。どちらでもなければ出さない。もう遡れない（hasMore が偽）なら注記も出さない
+  const autoLoading = shown && periodNeedsMore && hasMore && !loadMoreFailed && !autoStalled
+  const oldestLabel = historyOldestDay === null ? null : `${Number(historyOldestDay.slice(5, 7))}月${Number(historyOldestDay.slice(8, 10))}日`
+  const loadNote = unloadedBefore === null || !hasMore || filter.period === null
+    ? null
+    : autoLoading
+      ? { note: `${quakeListPeriodStartLabel(filter.period, nowMs)}まで読み込んでいます…`, countSuffix: '（読み込み中）' }
+      : { note: `${unloadedBefore}以前は未読込みです。`, countSuffix: oldestLabel === null ? '' : `（${oldestLabel}以降を読込済み）` }
+  const filterDialog = <QuakeListFilterDialog filter={filter} onChange={onFilterChange} quakes={filterSourceQuakes} open={shown && openFilter} onClose={() => setOpenFilter(false)} shownCount={earthquakes.length} totalCount={filterSourceQuakes.length} loadNote={loadNote} />
   const withDialog = (screen: React.ReactNode) => <>{filterDialog}{screen}</>
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
   const scrollTarget = quakeCardScrollTarget({ earthquakes, selectedKey: selectedId, speakingKey, followSpeech, lpgmFocus })
@@ -288,16 +342,15 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
     )
   }
 
-  // 期間の絞りが、まだ読み込んでいない日にかかるときの注記（文面はユーザー原文「〇〇以前は未読込みです。で」）
-  const unloadedBefore = quakeListUnloadedBefore(filter.period, historyOldestDay, serverNow())
-  const unloadedNotice = unloadedBefore !== null && hasMore
-    ? <p className="px-[var(--qk-pad)] pt-2 text-xs text-secondary roomy:text-sm">{unloadedBefore}以前は未読込みです。</p>
+  // 期間の絞りが、まだ読み込んでいない日にかかるときの注記。読み込み中は「〇〇まで読み込んでいます…」、止まった後は
+  // 「〇〇以前は未読込みです。」（文面はユーザー原文「〇〇以前は未読込みです。で」）。窓の期間の節にも同じ文を出す（→ `loadNote`）
+  const unloadedNotice = loadNote !== null
+    ? <p className="px-[var(--qk-pad)] pt-2 text-xs text-secondary roomy:text-sm">{loadNote.note}</p>
     : null
 
   if (earthquakes.length === 0) {
     return withDialog(
       <div className="flex flex-col h-full">
-        {filterBar}
         {notices.length > 0 && (
           <div className="p-2 space-y-1.5 roomy:p-3 roomy:space-y-2">
             {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
@@ -353,13 +406,12 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
     // 大きさは一覧自身の幅で切り替える（2026-11-02 選択「パネル自身の幅 (Recommended)」。値は src/index.css の quake-list）
     <div ref={listRef} className="quake-list">
      <div className="quake-list-scope">
-      {filterBar}
       {notices.length > 0 && (
         <div className="space-y-1.5 p-2 roomy:p-3">
           {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
         </div>
       )}
-      <QuakeListHeader sort={sort} onSort={onSort} />
+      <QuakeListHeader sort={sort} onSort={onSort} filterButton={filterButton} />
       {dayGroups.map(group => (
        <section key={group.key}>
         {group.label && <QuakeListDayLabel label={group.label} />}

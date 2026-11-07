@@ -68,7 +68,7 @@ const renderTab = async (quake: JMAQuake, { selected = true, openNotes = true } 
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={() => {}}
+      onLoadMore={async () => {}}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}

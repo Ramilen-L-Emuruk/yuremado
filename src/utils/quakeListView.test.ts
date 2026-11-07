@@ -4,7 +4,7 @@ import type { EarthquakePoint, IntensityScale, IssueType, JMAQuake } from '../ty
 import { sanitize } from '../hooks/useSettings'
 import {
   DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SETTINGS, nextQuakeListSort, passesQuakeListFilter, quakeFilterChipLabels,
-  quakeListFilterOf, quakeListFilterSettings, quakeListSection, quakeListUnloadedBefore, quakeRegionGroups, sortQuakeList,
+  quakeListFilterOf, quakeListFilterSettings, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, quakeRegionGroups, sortQuakeList,
   type QuakeFilterContext, type QuakeListFilter, keepIfSame, withLatestPinned, observedAreas } from './quakeListView'
 
 interface QuakeOpts {
@@ -299,6 +299,30 @@ describe('未読込みの注記', () => {
     expect(quakeListUnloadedBefore({ kind: 'hours', hours: 24 }, '2026-11-01', now)).toBeNull()
     expect(quakeListUnloadedBefore(null, '2026-11-01', now)).toBeNull()
     expect(quakeListUnloadedBefore({ kind: 'hours', hours: 720 }, null, now)).toBeNull()
+  })
+})
+
+describe('期間に合わせて自動で読み足す範囲（今日から 90 日前まで）', () => {
+  // 2026-11-07 15:00 JST。今日の頭は 11-07 00:00 JST、90 日前の日の頭は 08-09 00:00 JST
+  const now = Date.parse('2026-11-07T06:00:00Z')
+  // 正: 90 日前の日の頭ちょうどから始まる期間は読み足す
+  it('始まりが 90 日前の日の頭なら読み足す', () => {
+    expect(quakeListAutoLoadAllowed({ kind: 'range', from: '2026-08-09', to: '2026-11-07' }, now)).toBe(true)
+    expect(quakeListAutoLoadAllowed({ kind: 'hours', hours: 720 }, now)).toBe(true)
+  })
+  // 対照: 1 日でも古ければ読み足さない（「もっと見る」で遡る）。今を含まない過去の期間も始まりで決まる
+  it('始まりが 91 日前なら読み足さない', () => {
+    expect(quakeListAutoLoadAllowed({ kind: 'range', from: '2026-08-08', to: '2026-11-07' }, now)).toBe(false)
+    expect(quakeListAutoLoadAllowed({ kind: 'range', from: '2026-01-01', to: '2026-03-31' }, now)).toBe(false)
+  })
+  // 安全弁: 期間を決めていない・読めない日付なら読み足さない
+  it('期間なし・読めない日付なら読み足さない', () => {
+    expect(quakeListAutoLoadAllowed(null, now)).toBe(false)
+    expect(quakeListAutoLoadAllowed({ kind: 'range', from: 'x', to: '2026-11-07' }, now)).toBe(false)
+  })
+  it('注記に出す期間の始まりは日本時間の月日', () => {
+    expect(quakeListPeriodStartLabel({ kind: 'range', from: '2026-08-09', to: '2026-11-07' }, now)).toBe('8月9日')
+    expect(quakeListPeriodStartLabel({ kind: 'hours', hours: 24 }, now)).toBe('11月6日')
   })
 })
 

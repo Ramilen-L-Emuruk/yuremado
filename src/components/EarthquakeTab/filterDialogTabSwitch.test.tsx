@@ -40,7 +40,7 @@ const tab = (shown: boolean) => (
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={() => {}}
+      onLoadMore={async () => {}}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}
@@ -83,7 +83,7 @@ const dialog = () => document.querySelector('[role="dialog"]')
 const openScale = async (shown: boolean) => {
   const r = render(tab(shown))
   await flushDataEffects()
-  const chip = document.querySelector<HTMLElement>('[data-filter-kind="scale"]')
+  const chip = document.querySelector<HTMLElement>('[data-filter-button]')
   expect(chip).not.toBeNull()
   act(() => { fireEvent.click(chip!) })
   expect(dialog()).not.toBeNull()
