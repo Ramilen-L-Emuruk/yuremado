@@ -143,6 +143,53 @@ export const BAND_BOUNDS: [[number, number], [number, number]] = [[110, 0], [180
 export const BAND_MAX_TILE_ZOOM = 7
 
 /**
+ * 録画モードのあいだ地図の控えへ載せておく下地（オーバービュー層）のうち、全球で載せる最大タイル z。
+ *
+ * 載せる範囲は「全球の z0〜この値」と「`OVERVIEW_HOLD_BOXES` の z〜`GEBCO_OVERVIEW_MAX_ZOOM`」（`buildOverviewHoldTiles`）。
+ * 遠地地震の寄せ（震源＋日本全体）は引いた画になり、基準ペインではこの深さで足りる。枠の外で深い z が要る寄せは、
+ * 寄せ始めにその画のぶんを載せる（`BaseMapGL`）。z4 まで全球で載せると枚数が 400 枚を超え、GPU の記憶が 140MB を超えるので 3 で止める。
+ */
+export const OVERVIEW_HOLD_GLOBAL_MAX_ZOOM = 3
+
+/**
+ * 録画モードのあいだ、下地の z4〜5 まで地図の控えへ載せておく枠（[[西, 南], [東, 北]] の並び）。
+ *
+ * 日本の周りで地図を傾けると、地平線のほうに遠い地域が映る（ズーム 4.6・傾き 55° で、東経 79〜101°・西経 157〜180°・
+ * 北緯 62〜74° まで映った。2026-11-08 実測）。地図は表示中の祖先しか代わりに描かないので、控えに粗い z3 があっても
+ * z4〜5 の無いところは黒くなる。そこで東経 75° から日付変更線をまたいで西経 150° まで、北緯 0〜75° を載せる
+ * （日付変更線で 2 つに分ける）。範囲は 2026-11-08 ユーザー選択（「載せる範囲を広げる (Recommended)」）。
+ * 遠い震源の周りで傾けた画は覆わない（その寄せは寄せ始めに載せるぶんで補う）。
+ */
+export const OVERVIEW_HOLD_BOXES: readonly [[number, number], [number, number]][] = [
+  [[75, 0], [180, 75]],
+  [[-180, 0], [-150, 75]],
+]
+
+/**
+ * 録画モードのあいだ地図の控えへ載せておく下地のタイル（290 枚。低い z から）。
+ *
+ * **HTTP の控えを温めるだけでは、寄せた直後の黒い抜けは消えない**（`components/Map/gl/tileCacheAccess.ts` の冒頭）。
+ * 地図がタイルを読み込んで控えに持っていれば、寄せた瞬間にそのまま貼られる。範囲と深さは
+ * 2026-11-08 ユーザー選択（「先に広く載せる (Recommended)」・「載せる範囲を広げる (Recommended)」）。
+ */
+export function buildOverviewHoldTiles(): TileXYZ[] {
+  const seen = new Set<string>()
+  const out: TileXYZ[] = []
+  const push = (t: TileXYZ) => {
+    const key = tileKey(t)
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push(t)
+  }
+  for (const t of buildGlobalPrefetchTiles(OVERVIEW_HOLD_GLOBAL_MAX_ZOOM)) push(t)
+  // z ごとに枠をまとめて並べる（低い z を先に載せたいので、枠ごとではなく z ごとに回す）
+  for (let z = OVERVIEW_HOLD_GLOBAL_MAX_ZOOM + 1; z <= GEBCO_OVERVIEW_MAX_ZOOM; z++) {
+    for (const box of OVERVIEW_HOLD_BOXES) for (const t of buildBoxTiles(box, z, z)) push(t)
+  }
+  return out
+}
+
+/**
  * 配信元がタイルへ付ける有効期限（`Cache-Control: max-age=3600`）に合わせた、先読みの取り直し間隔。
  *
  * 先読みで温まるのはブラウザの HTTP キャッシュなので、この時間が過ぎると効果が切れる。据え置きで
