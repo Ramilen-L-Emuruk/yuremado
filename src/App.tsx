@@ -1475,13 +1475,22 @@ export function App() {
 
   // ブラウザの自動再生制限に対応: 初回のユーザー操作で音声を有効化する
   useEffect(() => {
-    // 端末の声も同じ操作で使えるようにする（iPhone の Safari は最初の発話を操作の中で始めないと読まない）
-    const unlock = () => { unlockAudio(); unlockSystemSpeech() }
-    window.addEventListener('pointerdown', unlock, { once: true })
-    window.addEventListener('keydown', unlock, { once: true })
+    window.addEventListener('pointerdown', unlockAudio, { once: true })
+    window.addEventListener('keydown', unlockAudio, { once: true })
+    // 端末の声は、ブラウザが操作と数える瞬間（指を離したとき・キー入力）に有効化する。指で触れた瞬間の pointerdown は
+    // 数えられず、iPhone ではそこで渡した発話が鳴らない（→ `unlockSystemSpeech`）。発話が鳴り始めるまで操作のたびに試す
+    const unlockSpeech = () => {
+      if (!unlockSystemSpeech()) return
+      window.removeEventListener('pointerup', unlockSpeech)
+      window.removeEventListener('keydown', unlockSpeech)
+    }
+    window.addEventListener('pointerup', unlockSpeech)
+    window.addEventListener('keydown', unlockSpeech)
     return () => {
-      window.removeEventListener('pointerdown', unlock)
-      window.removeEventListener('keydown', unlock)
+      window.removeEventListener('pointerdown', unlockAudio)
+      window.removeEventListener('keydown', unlockAudio)
+      window.removeEventListener('pointerup', unlockSpeech)
+      window.removeEventListener('keydown', unlockSpeech)
     }
   }, [])
 

@@ -323,6 +323,110 @@ describe('1 発話の部品（speakSystemUtterance）', () => {
   })
 })
 
+describe('端末の声の有効化（unlockSystemSpeech）', () => {
+  it('正: 操作と数えられない瞬間に渡して鳴らなかった有効化の発話は、1 秒たってからの次の操作で渡し直し、鳴り始めたら以後は要らないと返す', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak')
+    speak.mockImplementationOnce(() => { /* iPhone で指が触れた瞬間に渡した形: 鳴り始めない */ })
+    expect(unlockSystemSpeech()).toBe(false)
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(started).toHaveLength(0)
+    expect(unlockSystemSpeech()).toBe(false)
+    expect(speak).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(started.map(u => u.text)).toEqual([' '])
+    expect(unlockSystemSpeech()).toBe(true)
+    expect(speak).toHaveBeenCalledTimes(2)
+  })
+
+  it('対照: 渡したばかり（1 秒以内）の有効化の発話は、同じ操作から続けて呼ばれても渡し直さない', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak')
+    speak.mockImplementationOnce(() => { /* 鳴り始めない */ })
+    unlockSystemSpeech()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(unlockSystemSpeech()).toBe(false)
+    expect(speak).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全弁: 本番の発話が一度でも鳴り始めていれば、有効化の発話を渡さずに要らないと返す', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak')
+    const result = speakSystemUtterance('本番の文です', 1, () => {})
+    await vi.advanceTimersByTimeAsync(10)
+    expect(unlockSystemSpeech()).toBe(true)
+    expect(speak).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await result).toBe('ended')
+  })
+
+  it('安全弁: 本番の発話が持ち主でまだ鳴り始めていないときに呼ばれても、本番を止めない', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak')
+    speak.mockImplementationOnce(() => { /* 本番の発話はまだ鳴り始めていない */ })
+    const cancel = vi.spyOn(fakeSynth, 'cancel')
+    const result = speakSystemUtterance('本番の文です', 1, () => {})
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(speak).toHaveBeenCalledTimes(1)
+    expect(unlockSystemSpeech()).toBe(false)
+    expect(speak).toHaveBeenCalledTimes(1)
+    expect(cancel).not.toHaveBeenCalled()
+    // 本番はそのまま自分の見切り（4 秒）で終わる。有効化には止められていない
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(await result).toBe('failed')
+  })
+
+  it('正: 鳴り始めの知らせが無く終わりだけ来ても（声の無い端末）、有効化は済んだとして以後は渡さない', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak')
+    speak.mockImplementationOnce((u: FakeUtterance) => { setTimeout(() => u.onend?.(), 0) })
+    expect(unlockSystemSpeech()).toBe(false)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(unlockSystemSpeech()).toBe(true)
+    expect(speak).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全弁: 鳴らずに捨てた有効化の発話に後から終わりの知らせが届いても、済んだとは数えず渡し直す', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak')
+    let dropped: FakeUtterance | null = null
+    speak.mockImplementationOnce((u: FakeUtterance) => { dropped = u /* 鳴り始めない */ })
+    unlockSystemSpeech()
+    await vi.advanceTimersByTimeAsync(1100)
+    speak.mockImplementationOnce(() => { /* 渡し直しも鳴り始めない */ })
+    expect(unlockSystemSpeech()).toBe(false)  // 前の発話を捨てて渡し直す
+    ;(dropped as FakeUtterance | null)?.onend?.()  // 捨てた発話に遅れて届いた終わり
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(unlockSystemSpeech()).toBe(false)
+    expect(speak).toHaveBeenCalledTimes(3)
+  })
+
+  it('正: 見切った後に遅れて鳴り始めても、端末の声は使えるとして以後は有効化しない', async () => {
+    let late: FakeUtterance | null = null
+    vi.spyOn(fakeSynth, 'speak').mockImplementationOnce((u: FakeUtterance) => { late = u })
+    const result = speakSystemUtterance('本番の文です', 1, () => {})
+    await vi.advanceTimersByTimeAsync(4100)
+    expect(await result).toBe('failed')
+    ;(late as FakeUtterance | null)?.onstart?.()
+    expect(unlockSystemSpeech()).toBe(true)
+  })
+
+  it('対照: 有効化の発話が失敗で終わった直後（1 秒以内）の操作では渡し直さない', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak')
+    speak.mockImplementationOnce((u: FakeUtterance) => { setTimeout(() => u.onerror?.({ error: 'not-allowed' }), 0) })
+    unlockSystemSpeech()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(unlockSystemSpeech()).toBe(false)
+    expect(speak).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1100)
+    unlockSystemSpeech()
+    expect(speak).toHaveBeenCalledTimes(2)
+  })
+
+  it('安全弁: 鳴り始めも終わりも来ない環境でも打ち止めにせず、1 秒空けた操作のたびに試し続ける（使えないまま止まらない）', async () => {
+    const speak = vi.spyOn(fakeSynth, 'speak').mockImplementation(() => { /* 何も起きない */ })
+    for (let i = 0; i < 7; i++) {
+      expect(unlockSystemSpeech()).toBe(false)
+      await vi.advanceTimersByTimeAsync(1100)
+    }
+    expect(speak).toHaveBeenCalledTimes(7)
+  })
+})
+
 describe('端末の声で声の長さを測る（measureSystemSpeechSec）', () => {
   it('正: 音量 0 で 2 回読み、2 回目の長さに余裕を足して返す', async () => {
     const p = measureSystemSpeechSec('16時です')

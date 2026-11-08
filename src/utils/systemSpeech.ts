@@ -168,6 +168,8 @@ export async function speakSystemUtterance(
     utter.rate = SYSTEM_SPEECH_RATE
     utter.volume = Math.min(1, Math.max(0, volume))
     utter.onstart = () => {
+      // 見切った後に遅れて鳴り始めても、端末の声が使えることには変わりない
+      speechEverStarted = true
       if (settled || started) return
       started = true
       if (timer !== null) clearTimeout(timer)
@@ -215,33 +217,76 @@ export function cancelSystemSpeech(): void {
 }
 
 /**
- * 画面の最初の操作で、端末の声を使えるようにする。iPhone の Safari は、最初の発話を操作の中で始めないと
- * 以後も読まない。音量 0 の空の発話を 1 つ渡す。**持ち主として登録する** —— 直後に本番の発話が来たら、これを止めてから渡す
- * （列に残して本番を待たせない）。
+ * もう有効化が要らないか。端末の声の発話が一度でも鳴り始めたか、有効化の発話が最後まで済んだ（`onend`）ら真。
+ * 鳴り始めの知らせを出さずに終わりだけ出す環境（声が 1 つも無い端末）でも、終わりが来れば発話は受け付けられている
  */
-export function unlockSystemSpeech(): void {
-  if (!isSystemSpeechSupported() || active !== null) return
+let speechEverStarted = false
+/** 有効化を試した回数（1 秒の間隔を見るため。上限は置かない —— 2026-11-08 ユーザー選択「上限を置かない (Recommended)」） */
+let unlockAttempts = 0
+/** 有効化のために渡した空の発話と、渡した時刻（鳴り始めずに残ったものを見分けてやり直すため） */
+let unlockUtter: SpeechSynthesisUtterance | null = null
+let unlockIssuedAt = 0
+/** 渡したばかりの有効化の発話は、鳴り始めを待つ（同じ操作から続けて呼ばれても渡し直さない） */
+const UNLOCK_RETRY_AFTER_MS = 1000
+
+/**
+ * 画面の操作で、端末の声を使えるようにする。iPhone の Safari は、最初の発話を「利用者の操作」の中で始めないと以後も読まない。
+ * 音量 0 の空の発話を 1 つ渡す。**持ち主として登録する** —— 直後に本番の発話が来たら、これを止めてから渡す（列に残して本番を待たせない）。
+ *
+ * **呼ぶのは、ブラウザが操作と数える瞬間にする**（指を離したとき `pointerup`・キー入力 `keydown`）。指で触れた瞬間の `pointerdown` は
+ * 操作と数えられず、そこで渡した発話は iPhone では鳴り始めない（2026-11-08 実機の記録: `pointerdown(touch)` の時点で
+ * `navigator.userActivation.isActive` が偽、`pointerup` で真）。
+ *
+ * 有効化が済む（発話が一度でも鳴り始める・有効化の発話が最後まで済む）までは、呼ばれるたびに試す。前に渡した有効化の発話が
+ * 1 秒たっても鳴り始めずに残っていれば、捨ててやり直す。回数の上限は置かない（使えないまま止まらないため。渡すのは 1 秒に 1 回まで）。
+ *
+ * @returns もう有効化が要らなければ true（呼び出し側は操作の見張りを外してよい）
+ */
+export function unlockSystemSpeech(): boolean {
+  if (!isSystemSpeechSupported() || speechEverStarted) return true
+  // 前に渡してから 1 秒は渡し直さない（失敗で終わった後も。操作と数えられない操作が続いて上限を一気に使い切らないため）
+  if (unlockAttempts > 0 && performance.now() - unlockIssuedAt < UNLOCK_RETRY_AFTER_MS) return false
+  if (active !== null) {
+    // 本番の発話が持ち主なら邪魔しない（鳴り始めれば有効化は済む）
+    if (active.utter !== unlockUtter) return false
+    // 操作の外で渡されて鳴り始めなかった有効化の発話。捨てて、この操作の中で渡し直す
+    dropActive()
+  }
   try {
     const utter = new SpeechSynthesisUtterance(' ')
     utter.volume = 0
-    const finish = () => { if (active?.utter === utter) active = null }
-    utter.onend = finish
+    const finish = () => {
+      if (active?.utter === utter) active = null
+      if (unlockUtter === utter) unlockUtter = null
+    }
+    utter.onstart = () => { speechEverStarted = true }
+    // 数えるのは持ち主のまま最後まで済んだときだけ。止めて捨てた後に届く終わりの知らせ（WebKit は cancel にも end を出すことがある）は数えない
+    utter.onend = () => { if (unlockUtter === utter) speechEverStarted = true; finish() }
     utter.onerror = (ev) => {
       // 本番の発話に止められたとき（interrupted・canceled）は異常ではない。それ以外は、操作の中で有効にできなかった印
       if (ev.error !== 'interrupted' && ev.error !== 'canceled') log.debug(`[SystemSpeech] 有効化の発話が失敗（${ev.error}）`)
       finish()
     }
     active = { utter, finish }
+    unlockUtter = utter
+    unlockIssuedAt = performance.now()
+    unlockAttempts++
     window.speechSynthesis.speak(utter)
   } catch (err) {
     active = null
+    unlockUtter = null
     log.debug('[SystemSpeech] 有効化の発話に失敗', err)
   }
+  return false
 }
 
 export function __resetSystemSpeechForTest(): void {
   active = null
   pendingTicket = null
   voicesReady = false
+  speechEverStarted = false
+  unlockUtter = null
+  unlockIssuedAt = 0
+  unlockAttempts = 0
   warnSpeechErrorByKind.clear()
 }
