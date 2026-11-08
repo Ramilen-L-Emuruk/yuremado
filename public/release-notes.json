@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "6.11.0",
+      "date": "2026-11-08",
+      "added": [
+        {
+          "text": "地震タブで期間を選ぶと、その期間の地震だけを読み込むように改善",
+          "variant": "both"
+        }
+      ],
+      "fixed": [
+        {
+          "text": "iPhone・iPad で、画面の上端がぼやけて表示されることがある不具合を修正",
+          "variant": "both"
+        }
+      ]
+    },
+    {
       "version": "6.10.0",
       "date": "2026-11-08",
       "added": [
