@@ -56,6 +56,7 @@ import { groupUnreceivedPointNames, type UnreceivedPointGroup } from './unreceiv
 import { QuakeSeismoWave } from './QuakeSeismoWave'
 import { QuakeListRow, TileScaleLabel, quakeTileColors } from './QuakeListRow'
 import { QuakeOpenPin } from './QuakeOpenPin'
+import { hasDomesticQuakeReport, quakeReplayStartMs } from '../../utils/quakeReplayStart'
 import { InternationalTsunamiText } from './InternationalTsunamiText'
 import { DisclosureCaret, Reveal, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
 import { quakeReportTimeline, formatTimelineTime } from '../../utils/quakeReportTimeline'
@@ -618,6 +619,12 @@ interface Props {
   historyPickedId?: string | null
   /** 報の一覧の行を押した（`count` はこのカードが組んだ行数）。 */
   onPickHistory?: (entryId: string, count: number) => void
+  /**
+   * 見出しの行の「▶ 再生」を押した。この地震の 30 秒前からリプレイを始める（始める時刻と確認の窓は App が持つ。→ `utils/quakeReplayStart.ts`）。
+   * `firstReportMs` はこのカードの報の一覧の最も早い時刻（国内の報を持たないカードはここから始める）。
+   * **再生中のカードにも出す**（2026-11-08 ユーザー選択「再生中も出す (Recommended)」）。
+   */
+  onReplay: (eventKey: string, firstReportMs: number | null) => void
 }
 
 /**
@@ -835,7 +842,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView, showListDate,
-  quake: latestQuake, historyQuake = null, historyInputs = null, historyPickedId = null, onPickHistory,
+  quake: latestQuake, historyQuake = null, historyInputs = null, historyPickedId = null, onPickHistory, onReplay,
 }: Props) {
   // 報の一覧で前の報を押している間は、その報の時点のカードを出す（→ `historyQuake`）
   const quake = historyQuake ?? latestQuake
@@ -1496,6 +1503,14 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     const lpgmShown = lpgm && !lpgm.cancelled ? lpgm : undefined
     const quakeTimeText = formatQuakeTime(earthquake.time)
     const lastTimeline = [...timeline].reverse().find(e => e.ms !== null)
+    // 再生ボタン（→ `utils/quakeReplayStart.ts`）。最初の報は並べるだけの一覧から取る（押せる一覧は「更新 ▾」を開いている間しか組まない）。
+    // 始める時刻を決められないカードには出さない（2026-11-08 ユーザー選択「地震タブにも同じ赤字 (Recommended)」の説明）。
+    // ここでは秒まで決まった発生時刻を見ない（App だけが持つ）。それで決まらないのは電文の時刻が読めないときだけで、その地震は秒も引けない
+    const reportTimes = plainTimeline.flatMap(e => (e.ms !== null ? [e.ms] : []))
+    const firstReportMs = reportTimes.length > 0 ? Math.min(...reportTimes) : null
+    const replayable = !quake.cancelledAt && Number.isFinite(quakeReplayStartMs(latestQuake, undefined, firstReportMs))
+    // 国内の報を持たないカードは最初の報から始めるので、ホバーの文もそう書く（2026-11-08 ユーザー選択「最初の報の30秒前から (Recommended)」）
+    const replayTitle = hasDomesticQuakeReport(latestQuake) ? 'この地震の30秒前から再生します' : 'この地震の最初の報の30秒前から再生します'
     const tileBg = getIntensityColor(maxScale)
     const showObservedSeg = canDrawDistribution || !!lpgmShown
     const toObserved = () => {
@@ -1565,6 +1580,18 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               className="whitespace-nowrap rounded border border-border px-1.5 text-[#9fb3c8] hover:text-white"
             >
               更新 {formatTimelineTime(lastTimeline.ms)} <DisclosureCaret open={timelineOpen} glyph="▾" turn={180} />
+            </button>
+          )}
+          {/* 「更新」の右に置く（2026-11-08 ユーザー選択「A: 「更新」の右」・文面とホバーも同じ問いのまま）。
+              取り消された地震には出さない（覆いの下で押せない） */}
+          {replayable && (
+            <button
+              type="button"
+              onClick={() => onReplay(eventKey, firstReportMs)}
+              title={replayTitle}
+              className="whitespace-nowrap rounded border border-border px-1.5 text-[#9fb3c8] hover:text-white"
+            >
+              ▶ 再生
             </button>
           )}
         </div>

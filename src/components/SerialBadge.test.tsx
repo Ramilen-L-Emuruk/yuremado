@@ -113,6 +113,8 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       historyPickedId={null}
       historyView={null}
       onPickHistory={() => {}}
+      onReplayQuake={() => {}}
+      replayError={null}
     />,
   )
   await flushDataEffects()

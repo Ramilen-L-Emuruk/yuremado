@@ -123,6 +123,13 @@ interface Props {
   historyView: QuakeHistoryView | null
   /** 報の一覧の行を押した（同じ行をもう一度押すと最新へ戻す）。`count` はカードが組んだ一覧の行数。 */
   onPickHistory: (entryId: string, count: number) => void
+  /** カードの「▶ 再生」を押した（その地震からリプレイを始める。→ `EarthquakeCard` の `onReplay`）。 */
+  onReplayQuake: (eventKey: string, firstReportMs: number | null) => void
+  /**
+   * 再生を始められなかった・取りこぼした知らせ（設定の窓「テスト時刻設定」の赤字と同じ文。→ `useReplayController` の `error`）。無ければ null。
+   * 地震カードの「▶ 再生」から始めた人は設定の窓を開いていないので、一覧の上にも同じ文を出す（2026-11-08 ユーザー選択「地震タブにも同じ赤字 (Recommended)」）
+   */
+  replayError: string | null
   /** 震度分布モードを開いている地震の `eventKey`。 */
   distributionQuakeKey: string | null
   onToggleDistribution: (eventKey: string) => void
@@ -161,19 +168,22 @@ interface Props {
  * **全画面のエラー表示（`error`）とは分ける。** あちらは 1 件も取れなかったときのもので、
  * こちらは取れた分のカードを覆ってはいけない。
  *
- * **色は 2 通り。**
+ * **色は 3 通り。**
  *
  * | `tone` | 意味 | 色 |
  * |---|---|---|
  * | `loss` | **何かが欠けている。** 生成データの取得失敗（`MapDataStatus`）と揃える | 琥珀 |
  * | `info` | **欠けていない。** いま待っているだけで、放っておけば取れる | 青 |
+ * | `replay` | **リプレイの知らせ。** 設定の窓「テスト時刻設定」の赤字と同じ文を同じ赤で出す（2026-11-08 ユーザー選択「地震タブにも同じ赤字 (Recommended)」） | 赤 |
  *
  * **待ちを琥珀で出さないこと。** あれは損失の色で、並べると「取りこぼした」と読まれる。
  */
-function HistoryNotice({ tone, children, onClose }: { tone: 'loss' | 'info'; children: React.ReactNode; onClose?: () => void }) {
+function HistoryNotice({ tone, children, onClose }: { tone: NoticeTone; children: React.ReactNode; onClose?: () => void }) {
   const color = tone === 'info'
     ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
-    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+    : tone === 'replay'
+      ? 'border-red-500/40 bg-red-500/10 text-red-400'
+      : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
   return (
     <div className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-xs roomy:text-sm roomy:px-3 roomy:py-2 ${color}`}>
       <div className="flex-1">{children}</div>
@@ -184,12 +194,13 @@ function HistoryNotice({ tone, children, onClose }: { tone: 'loss' | 'info'; chi
   )
 }
 
-interface Notice { text: string; tone: 'loss' | 'info'; onClose?: () => void }
+type NoticeTone = 'loss' | 'info' | 'replay'
+interface Notice { text: string; tone: NoticeTone; onClose?: () => void }
 
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
@@ -312,6 +323,8 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   if (failed && earthquakes.length > 0) {
     notices.unshift({ text: error.trim() === '' ? 'データの取得に失敗' : `データの取得に失敗（${error}）`, tone: 'loss' })
   }
+  // 再生の知らせは先頭に置く（再生中は、ここに出る欠けが画面の中身そのものを左右する）
+  if (replayError !== null) notices.unshift({ text: replayError, tone: 'replay' })
   if (fetchThrottled) notices.push({ text: FETCH_THROTTLED_NOTICE, tone: 'info' })
   // 鍵の入れ直しの案内は欠けではないので青。閉じられる（2026-10-31 ユーザー選択の説明「［×］で閉じる」）
   const keyReentryNotice: Notice | null = onDismissKeyReentry === null
@@ -459,6 +472,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
           historyInputs={selected ? historyInputs : null}
           historyPickedId={selected ? historyPickedId : null}
           onPickHistory={onPickHistory}
+          onReplay={onReplayQuake}
           // 前の報を見ている間は長周期の印を出さない（その報の時点の長周期の印は組んでいない。最新の印が混ざると時点の画面にならない）
           lpgmMarks={view ? undefined : updateMarks.get(lpgmMarkKey(extractQuakeEventId(quake) ?? ''))}
           activeLpgmEventId={activeLpgmEventId}

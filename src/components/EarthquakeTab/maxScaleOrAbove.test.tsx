@@ -114,6 +114,8 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
     historyPickedId={null}
     historyView={null}
     onPickHistory={() => {}}
+    onReplayQuake={() => {}}
+    replayError={null}
   />,
   )
   await flushDataEffects()

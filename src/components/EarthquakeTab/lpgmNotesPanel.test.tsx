@@ -121,6 +121,8 @@ const renderTab = async (lpgm: JMALpgm) => {
     historyPickedId={null}
     historyView={null}
     onPickHistory={() => {}}
+    onReplayQuake={() => {}}
+    replayError={null}
   />
   )
   await flushDataEffects()
@@ -174,6 +176,8 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     historyPickedId={null}
     historyView={null}
     onPickHistory={() => {}}
+    onReplayQuake={() => {}}
+    replayError={null}
   />
 )
 const renderSpeaking = async (subject: string | null, lpgm: JMALpgm = makeLpgm()) => {

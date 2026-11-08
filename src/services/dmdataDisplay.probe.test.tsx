@@ -196,6 +196,8 @@ function earthquakeTabProps() {
     historyPickedId: null,
     historyView: null,
     onPickHistory: () => {},
+    onReplayQuake: () => {},
+    replayError: null,
   } as const
 }
 

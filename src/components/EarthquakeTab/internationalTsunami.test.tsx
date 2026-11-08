@@ -92,6 +92,8 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       historyPickedId={null}
       historyView={null}
       onPickHistory={() => {}}
+      onReplayQuake={() => {}}
+      replayError={null}
     />
 )
 
