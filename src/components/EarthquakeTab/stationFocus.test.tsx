@@ -148,6 +148,8 @@ function renderCard(
       historyPickedId={null}
       historyView={null}
       onPickHistory={() => {}}
+      onReplayQuake={() => {}}
+      replayError={null}
     />,
   )
 }

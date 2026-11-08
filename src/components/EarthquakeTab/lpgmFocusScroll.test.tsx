@@ -91,6 +91,8 @@ const tab = (lpgmFocus: LpgmSectionFocus | null, quake: JMAQuake = QUAKE, lpgm: 
       historyPickedId={null}
       historyView={null}
       onPickHistory={() => {}}
+      onReplayQuake={() => {}}
+      replayError={null}
     />
   </div>
 )

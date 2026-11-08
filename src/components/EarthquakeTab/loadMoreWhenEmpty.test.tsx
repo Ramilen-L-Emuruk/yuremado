@@ -73,6 +73,8 @@ async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLo
       historyPickedId={null}
       historyView={null}
       onPickHistory={() => {}}
+      onReplayQuake={() => {}}
+      replayError={null}
     />,
   )
   await flushDataEffects()

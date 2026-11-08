@@ -128,6 +128,7 @@ import {
   USAGE_FLUSH_INTERVAL_MS, usageConsentAnswered, usageCounter, type UsageSettingsFlags, usageSettingValues, markPrefsSentSafely, withUsageCount,
 } from './services/usageStats'
 import { UsageConsentDialog } from './components/UsageConsentDialog'
+import { QuakeReplayConfirmDialog } from './components/QuakeReplayConfirmDialog'
 import { useForecastKeyCheck } from './hooks/useForecastKey'
 import { relayRestClassifications, restSources } from './services/dmdataClassifications'
 import { dmdataKeyEndpoint } from './services/dmdataEndpoint'
@@ -140,6 +141,7 @@ import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
+import { quakeReplayStartMs } from './utils/quakeReplayStart'
 import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showTestBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
@@ -2359,7 +2361,7 @@ export function App() {
     restorePreWindowTracking,
     loadReplayEvents,
   })
-  // 設定の窓からリプレイを始めた回数を使用状況データに数える（許可している間だけ）。診断アクセサ（下）からの開始は数えない
+  // 設定の窓・地震カードの再生ボタンからリプレイを始めた回数を使用状況データに数える（許可している間だけ）。診断アクセサ（下）からの開始は数えない
   const replayStart = replay.start
   const startReplayCounted = useCallback((...args: Parameters<typeof replayStart>) => {
     countUsage('replay')
@@ -2912,6 +2914,47 @@ export function App() {
     activeEEWs,
     replayOffsetMs: replayTimeOffset,
   })
+  // 地震カードの「▶ 再生」（→ `EarthquakeCard` の `onReplay`）。その地震の 30 秒前から再生する（→ utils/quakeReplayStart.ts）。
+  //
+  // **ライブ中だけ確認の窓を挟む**（2026-11-08 ユーザー選択「ライブ中だけ確認する (Recommended)」）。始めるとライブの受信が止まり、
+  // 表示中の地震・津波・速報は捨てられる。再生中は既にライブが止まっているので、確かめずに始め直す。
+  //
+  // 発生時刻の秒（`quakeOriginSeconds`）は波形の設定が入っているときだけ求めている。求めていなければ
+  // 電文の時刻から「発生が入りうる最も早い時刻」を起点にする（待ちが少し長くなるだけで、揺れ始めは取りこぼさない）。
+  //
+  // **関数は ref 越しに最新の一覧を読む。** 一覧や秒の表を依存に入れると、届くたびに関数が変わり、
+  // 地震タブとカードの memo が素通りする。
+  const [quakeReplayConfirmAt, setQuakeReplayConfirmAt] = useState<number | null>(null)
+  const quakeReplayInputsRef = useRef({ quakes: filteredEarthquakes, originSeconds: quakeOriginSeconds, replaying: replayTimeOffset !== null })
+  useEffect(() => {
+    quakeReplayInputsRef.current = { quakes: filteredEarthquakes, originSeconds: quakeOriginSeconds, replaying: replayTimeOffset !== null }
+  })
+  const startQuakeReplayAt = useCallback((startMs: number) => {
+    // `void` で捨てない（→ 上の `__replay.start` と同じ理由。同期部分で投げると拾い手が無い）
+    startReplayCounted(new Date(startMs)).catch((e: unknown) => {
+      log.error('[replay] 地震カードからの再生を始められませんでした', e)
+    })
+  }, [startReplayCounted])
+  const replayQuakeFromCard = useCallback((eventKey: string, firstReportMs: number | null) => {
+    const { quakes, originSeconds, replaying } = quakeReplayInputsRef.current
+    const quake = quakes.find((q) => quakeEventKey(q) === eventKey)
+    if (quake === undefined) {
+      log.warn(`[replay] 再生ボタンの地震が一覧に見つかりません: ${eventKey}`)
+      return
+    }
+    const startMs = quakeReplayStartMs(quake, originSeconds.get(eventKey), firstReportMs)
+    if (!Number.isFinite(startMs)) {
+      log.warn(`[replay] 再生を始める時刻を決められません: ${eventKey} time=${quake.earthquake.time}`)
+      return
+    }
+    if (replaying) startQuakeReplayAt(startMs)
+    else setQuakeReplayConfirmAt(startMs)
+  }, [startQuakeReplayAt])
+  // 答えは窓が開いている間の値で始める。状態の更新関数の中で始めない（開発時の二重実行で 2 回始まる）
+  const answerQuakeReplayConfirm = useCallback((start: boolean) => {
+    if (start && quakeReplayConfirmAt !== null) startQuakeReplayAt(quakeReplayConfirmAt)
+    setQuakeReplayConfirmAt(null)
+  }, [quakeReplayConfirmAt, startQuakeReplayAt])
   // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
   // 地図の下端の波形（下の `useSeismoWaveVisibility`）と地震カードの波形（すぐ下）の両方が使う。
   const seismoScope = useSeismoScope({
@@ -3354,6 +3397,9 @@ export function App() {
                 historyPickedId={historyView ? historyView.entryId : null}
                 historyView={historyView}
                 onPickHistory={pickHistoryEntry}
+                onReplayQuake={replayQuakeFromCard}
+                // 再生中だけ渡す。弾かれた開始（範囲外）はライブのまま知らせだけが残り、消す口が地震タブに無いため
+                replayError={replayTimeOffset !== null ? replay.error : null}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}
@@ -3438,6 +3484,7 @@ export function App() {
 
         {/* 設定は窓（2026-10-27 ユーザー承認）。閉じている間も中身を外さずに隠す（→ `SettingsDialog`） */}
         {usageConsentOpen && <UsageConsentDialog onAnswer={answerUsageConsent} />}
+        {quakeReplayConfirmAt !== null && <QuakeReplayConfirmDialog onAnswer={answerQuakeReplayConfirm} />}
         <SettingsDialog open={settingsOpen} onClose={closeSettings} returnFocusRef={settingsButtonRef}>
             <ErrorBoundary variant="region" label={TAB_LABELS.settings}>
               <SettingsTab

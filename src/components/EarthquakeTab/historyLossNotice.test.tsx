@@ -101,6 +101,8 @@ async function renderTab(opts: {
       historyPickedId={null}
       historyView={null}
       onPickHistory={() => {}}
+      onReplayQuake={() => {}}
+      replayError={null}
     />,
   )
   // 観測点を持たない空の一覧（`earthquakes: []`）ではカードが 1 枚も描かれず、
