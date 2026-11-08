@@ -12,9 +12,9 @@ import { quakeEventKey, sortQuakes } from './quakeMerge'
 const EPICENTER_MATCH_MAX_KM = 300
 
 /**
- * 発生時刻の突き合わせで許すずれ。WEPA60 の `ORIGIN TIME` は分まで（秒を切り捨てた UTC）なので、
- * 遠地地震に関する情報の発生時刻（秒まで）より最大 59 秒早い。1 分の幅に、震源の決め直しで
- * 発生時刻が動く分の余裕を 1 分足す。
+ * 発生時刻の突き合わせで許すずれ。比べるのはカードの地震発生時刻（無ければカードの時刻。→ {@link quakeMsOf}）で、
+ * WEPA60 の `ORIGIN TIME` は分まで（秒を切り捨てた UTC）。1 分の幅に、震源の決め直しで発生時刻が動く分の余裕を
+ * 1 分足す。
  */
 export const ORIGIN_MATCH_TOLERANCE_MS = 120_000
 
@@ -52,7 +52,8 @@ const EMPTY_INDEX: InternationalTsunamiIndex = { byQuakeKey: new Map(), cards: [
  * 「国内に付け、無い分はカードに (Recommended)」。前は遠地地震のカードにだけ付けていたが、全期間の控えでは地震の報 163 通のうち
  * 60 通が国内の地震のものだった。例: 2021-02-13 福島県沖 M7.3）。
  *
- * - 付けられるのは、英文の発生時刻（`ORIGIN TIME`）がカードの時刻から {@link ORIGIN_MATCH_TOLERANCE_MS} 以内で、
+ * - 付けられるのは、英文の発生時刻（`ORIGIN TIME`）がカードの地震発生時刻（無ければカードの時刻。→ {@link quakeMsOf}）から
+ *   {@link ORIGIN_MATCH_TOLERANCE_MS} 以内で、
  *   震央が両方読めるときは {@link EPICENTER_MATCH_MAX_KM} を超えないカード。通信試験と発生時刻を読めない報はどこにも付かない
  * - **1 通は 1 枚にだけ付ける。** 付けられるカードが複数あれば、震央を突き合わせられたカード → 時刻の差が小さいカード →
  *   震央が近いカードの順に選ぶ。全期間の控えで、付けられるカードが 2 枚あった報は 3 通（2022-03-16 福島県沖の前震と本震・
@@ -189,11 +190,17 @@ function originMsOf(x: JMAInternationalTsunami): number {
 
 const originMsCache = new WeakMap<JMAInternationalTsunami, number>()
 
-/** カードの時刻（ミリ秒）。読めなければ NaN（どの報も付かない）。報の数だけ読み直さないよう、カードごとに 1 回だけ読む */
+/**
+ * 英文の発生時刻と比べるカードの時刻（ミリ秒）。**地震発生時刻（`earthquake.originTime`）があればそれ、無ければ
+ * カードの時刻（`earthquake.time`）。** カードの時刻は地震発現時刻で、深い地震・遠い地震では発生時刻より数分遅れうるので、
+ * 英文の発生時刻とは発生時刻どうしで比べる（→ data-sources-spec.md §2）。発生時刻を持たないのは震度速報だけのカード。
+ * 読めなければ NaN（どの報も付かない）。報の数だけ読み直さないよう、カードごとに 1 回だけ読む
+ */
 function quakeMsOf(q: JMAQuake): number {
   let ms = quakeMsCache.get(q)
   if (ms === undefined) {
-    ms = Date.parse(q.earthquake.time)
+    const origin = q.earthquake.originTime ? Date.parse(q.earthquake.originTime) : Number.NaN
+    ms = Number.isFinite(origin) ? origin : Date.parse(q.earthquake.time)
     quakeMsCache.set(q, ms)
   }
   return ms
