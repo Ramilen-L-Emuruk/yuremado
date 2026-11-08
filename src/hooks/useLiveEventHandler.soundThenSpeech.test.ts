@@ -97,7 +97,7 @@ function makeEEW(): EEWAlert {
 function setup(over: Partial<AppSettings> = {}) {
   const settings = {
     ...DEFAULTS,
-    voicevoxEnabled: true,
+    ttsEnabled: true,
     voicevoxUrl: 'http://localhost:50021',
     voicevoxSpeakerId: 1,
     soundEnabled: true,

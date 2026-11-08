@@ -122,7 +122,7 @@ function tsunamiReport(o: {
 function setup(overSettings: Partial<AppSettings> = {}) {
   const settings: AppSettings = {
     ...DEFAULTS,
-    voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
+    ttsEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     quakeListScaleMin: -1,

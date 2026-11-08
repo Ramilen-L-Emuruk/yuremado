@@ -46,7 +46,7 @@ React 18 + TypeScript + Vite 6 で作られた PWA（Progressive Web App）。�
   ├─ 通知音（alertSound）
   ├─ ブラウザ通知
   ├─ ウィンドウタイトル変更（useAlertTitle）
-  ├─ VOICEVOX 読み上げ（任意）
+  ├─ 読み上げ（任意。VOICEVOX か端末の声）
   └─ 自動タブ切替・カメラ自動フィット
 ```
 
@@ -122,7 +122,7 @@ React 18 + TypeScript + Vite 6 で作られた PWA（Progressive Web App）。�
 - `IconNav` から `mapTab` を切り替え。`mapTab === 'realtime'` は kyoshin モード
 - 各種フック（`useEarthquakes` / `useKyoshinRealtime` / `useKyoshinAlerts` / `useKyoshinDetectorV2` /
   `usePsWaveCalc` / `useLiveEventHandler` / `useAlertTitle`）を配線する
-- 通知音・ブラウザ通知・自動タブ切替・カメラ自動フィット・VOICEVOX 読み上げ・EEW 状態管理などの制御をここで行う
+- 通知音・ブラウザ通知・自動タブ切替・カメラ自動フィット・読み上げ・EEW 状態管理などの制御をここで行う
 
 App が直接持つのは「1 秒毎更新」（強震モニタ・`kyoshinIndices`）系の state だけで、「100ms 更新」の psWave は
 `usePsWaveCalc` フック内部で `setInterval` が回る。App はこれらの state を子コンポーネントに配る。

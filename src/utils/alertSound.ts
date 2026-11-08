@@ -5,7 +5,7 @@ import { recordReplayEvent, currentReplayTelegram } from './replayEventLog'
 // 音声ファイルを持たず Web Audio API で音を生成する（種別ごとに音が異なる）。
 //
 // 注意: ブラウザの自動再生制限により、ユーザー操作（クリック等）が一度行われるまで
-// 音は鳴らない。初回操作時に unlockAudio() を呼んで AudioContext を有効化する。
+// 音は鳴らない。操作のたびに unlockAudio() を呼んで、AudioContext が動き出すまで再開を試す。
 
 import type { AlertSoundType } from './alertSoundType'
 export type { AlertSoundType }
@@ -34,17 +34,24 @@ function getCtx(): AudioContext | null {
 }
 
 /**
- * ユーザー操作時に呼び、サスペンド中の AudioContext を再開する。
+ * ユーザー操作時に呼び、止まっている AudioContext を再開する。
+ *
+ * **呼ぶのは、ブラウザが操作と数える瞬間にする**（指を離したとき `pointerup`・クリック `click`・キー入力 `keydown`）。iPhone では
+ * 指で触れた瞬間の `pointerdown` が操作と数えられず、そこでの再開は効かない（端末の声の有効化で 2026-11-08 に実機の記録で確かめた形と同じ）。
+ * 再開は非同期なので、呼び出し側は `running` になったと返るまで操作のたびに呼ぶ。
  *
  * あわせてマスターチェーンを先に作っておく。DynamicsCompressor は生成から
  * 0.4 秒ほどアタックを強く潰すため、最初の音を鳴らす瞬間に作ると **その 1 発だけ
  * 約 8 dB 小さく鳴る**（EEW の初報がそれに当たると、いちばん聞かせたい音が鈍る）。
  * ここで作れば操作から発報までの間に定常へ落ち着く。
+ *
+ * @returns AudioContext が動いている（または作れない環境で、もう呼ぶ意味が無い）なら true
  */
-export function unlockAudio(): void {
+export function unlockAudio(): boolean {
   const ctx = getCtx()
-  if (!ctx) return
-  if (ctx.state === 'suspended') {
+  if (!ctx) return true
+  // `suspended` のほか、iPhone の Safari は電話などで止まると `interrupted`（標準外）になる。閉じたものは再開できない
+  if (ctx.state !== 'running' && ctx.state !== 'closed') {
     // resume の失敗は「以後ずっと無音」を意味する。黙って捨てると原因が追えない
     ctx.resume().catch(err => log.warn(`[sound] AudioContext の再開に失敗: ${String(err)}`))
   }
@@ -54,6 +61,7 @@ export function unlockAudio(): void {
     log.error(`[sound] マスターチェーンの事前生成に失敗: ${String(err)}`)
   }
   syncKeepAlive()
+  return ctx.state === 'running' || ctx.state === 'closed'
 }
 
 // ─── キープアライブ ─────────────────────────────────────────────
@@ -65,7 +73,7 @@ export function unlockAudio(): void {
 //
 // ごく低振幅・低周波の音を鳴らし続けてハードウェア側を常時起こしておく。
 
-// soundEnabled・voicevoxEnabled のいずれかを反映した「鳴らしたいか」の希望値。
+// soundEnabled・ttsEnabled のいずれかを反映した「鳴らしたいか」の希望値。
 // setKeepAliveEnabled() で App 側から設定する（既定 false — 実際に鳴らすものが
 // 無いうちは作らない。設定の窓の useEffect が起動直後に反映するため、実運用で
 // unlockAudio() が呼ばれる頃には確実に最新値になっている）。
@@ -76,7 +84,7 @@ let keepAliveSource: AudioBufferSourceNode | null = null
 let keepAliveCtx: AudioContext | null = null
 
 /**
- * 通知音（`soundEnabled`）・読み上げ（`voicevoxEnabled`）のどちらかが有効なときだけ
+ * 通知音（`soundEnabled`）・読み上げ（`ttsEnabled`）のどちらかが有効なときだけ
  * キープアライブを鳴らす。両方無効なら実際に鳴らすものが無く、キープアライブを
  * 続ける意味も無い。設定の窓の変更を反映する useEffect から呼ぶ。
  */

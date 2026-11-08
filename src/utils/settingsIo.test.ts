@@ -101,6 +101,23 @@ describe('設定の読み込み', () => {
     expect(r.ok && r.settings.notifyEEW).toBe(true)
   })
 
+  // 読み上げの入り切りを voicevoxEnabled で持っていた頃に書き出したファイルも、端末の設定と同じく移し替える（→ `migrateLegacyTts`）
+  it('正: voicevoxEnabled を入れていたファイルは、読み上げを入れて声を VOICEVOX にして入れ、読めなかった項目に数えない', () => {
+    const { ttsEnabled: _a, ttsVoice: _b, ...rest } = DEFAULTS
+    const file = buildSettingsFile({ ...rest, voicevoxEnabled: true } as unknown as AppSettings, NO_KEYS)
+    const r = parseSettingsFile(file, DEFAULTS)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.settings.ttsEnabled).toBe(true)
+    expect(r.settings.ttsVoice).toBe('voicevox')
+    expect(r.rejectedKeys).toEqual([])
+  })
+
+  it('対照: ttsEnabled を持つファイルは移し替えない（声は書いてあるまま）', () => {
+    const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, ttsEnabled: true, ttsVoice: 'system' }, NO_KEYS), DEFAULTS)
+    expect(r.ok && r.settings.ttsVoice).toBe('system')
+  })
+
   it('安全弁: 読み込んでも、いま入力してあるAPIキーが消えない', () => {
     // 書き出しにキーが入らない以上、ファイル側は空。空で塗ると読み込むたびにキーが消える。
     const file = buildSettingsFile(DEFAULTS, NO_KEYS)

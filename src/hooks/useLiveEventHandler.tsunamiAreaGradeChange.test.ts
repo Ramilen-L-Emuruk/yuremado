@@ -101,9 +101,9 @@ const PARTIAL_LIFT: AreaSpec[] = [
   { name: '佐賀県北部', code: '720', grade: 'Forecast', lastGrade: 'Watch' },
 ]
 
-function setup(voicevoxEnabled = true) {
+function setup(ttsEnabled = true) {
   const settings = { ...DEFAULTS,
-    voicevoxEnabled, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
+    ttsEnabled, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,

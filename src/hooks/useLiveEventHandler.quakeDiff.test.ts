@@ -155,7 +155,7 @@ const followSpeechTab = vi.fn()
 
 function setup() {
   const settings = { ...DEFAULTS,
-    voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
+    ttsEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: 2, ttsMaxRegions: 0, ttsAlwaysReadScale: -1, ttsRegionTolerance: 0,

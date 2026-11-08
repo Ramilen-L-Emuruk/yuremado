@@ -19,29 +19,29 @@ const has = (label: string) => screen.queryAllByText(label, { exact: true }).len
 
 describe('TimeSignalRows', () => {
   it('切のときは入り切りの行だけ', () => {
-    setup({ timeSignalEnabled: false, voicevoxEnabled: true })
+    setup({ timeSignalEnabled: false, ttsEnabled: true })
     expect(has('時報')).toBe(true)
     expect(has('間隔')).toBe(false)
   })
 
   it('読み上げを切っていると、読み上げにだけ効く行と声の行を出さない', () => {
-    setup({ timeSignalEnabled: true, voicevoxEnabled: false })
+    setup({ timeSignalEnabled: true, ttsEnabled: false })
     for (const l of ['間隔', '音', '鳴らさない時間帯', '時報の音量']) expect(has(l)).toBe(true)
     for (const l of ['順番', '読み上げの文', '時刻の読み方', '読み上げと重なったとき', '時報の声']) expect(has(l)).toBe(false)
   })
 
   it('読み上げを入れていれば出す。声の行は話者が取れているときだけ（対照）', () => {
-    setup({ timeSignalEnabled: true, voicevoxEnabled: true })
+    setup({ timeSignalEnabled: true, ttsEnabled: true })
     for (const l of ['順番', '読み上げの文', '時刻の読み方', '読み上げと重なったとき', '時報の声']) expect(has(l)).toBe(true)
   })
 
   it('話者が取れていなければ声の行を出さない', () => {
-    setup({ timeSignalEnabled: true, voicevoxEnabled: true }, [])
+    setup({ timeSignalEnabled: true, ttsEnabled: true }, [])
     expect(has('時報の声')).toBe(false)
   })
 
   it('読み上げの文の例は、選んだ時刻の読み方で出す', () => {
-    setup({ timeSignalEnabled: true, voicevoxEnabled: true, timeSignalClock: '12h' })
+    setup({ timeSignalEnabled: true, ttsEnabled: true, timeSignalClock: '12h' })
     expect(has('午後3時30分です')).toBe(true)
     expect(has('15時30分です')).toBe(false)
   })

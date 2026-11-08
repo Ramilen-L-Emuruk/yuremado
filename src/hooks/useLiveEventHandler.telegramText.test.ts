@@ -123,7 +123,7 @@ function makeNankai(): LiveEvent {
 function setup(overSettings: Partial<AppSettings> = {}) {
   const settings: AppSettings = {
     ...DEFAULTS,
-    voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
+    ttsEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     quakeListScaleMin: -1,
@@ -278,7 +278,7 @@ describe('気象庁が書いた文の読み上げ（配線）', () => {
   // 声を出してはいけない**（設定の窓では読み上げが無効だとこの項目自体が見えないため、
   // 利用者は切ったつもりでいる）。
   it('VOICEVOX 読み上げが無効なら、設定が有効でも鳴らない', async () => {
-    const { handleLiveEvent } = setup({ voicevoxEnabled: false })
+    const { handleLiveEvent } = setup({ ttsEnabled: false })
     handleLiveEvent(makeQuake())
     await drain()
     expect(speakMock).not.toHaveBeenCalled()
@@ -727,7 +727,7 @@ describe('長すぎる取消の理由（配線）', () => {
 
   // 安全弁: 読み上げそのものを切っていれば鳴らない
   it('VOICEVOX 読み上げが無効なら鳴らない', async () => {
-    const { handleLiveEvent } = setup({ voicevoxEnabled: false })
+    const { handleLiveEvent } = setup({ ttsEnabled: false })
     handleLiveEvent(cancelCount())
     await drain()
     expect(speakMock).not.toHaveBeenCalled()

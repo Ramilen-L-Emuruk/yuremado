@@ -72,8 +72,8 @@ export type TabHoldSource = 'speech' | 'idleRevert' | 'receipt' | 'hold'
  * 妥当なので、取り違えても型チェックは通る。取り違えたときに出る症状は「EEW 発表中に画面が動かない」
  * か「読み上げ中の EEW から画面を奪う」のいずれかで、**どちらも一度直した症状**。
  */
-export function resolveNonRealtimeTabSource(voicevoxEnabled: boolean): TabHoldSource {
-  return voicevoxEnabled ? 'hold' : 'receipt'
+export function resolveNonRealtimeTabSource(ttsEnabled: boolean): TabHoldSource {
+  return ttsEnabled ? 'hold' : 'receipt'
 }
 
 /** 自動タブ切替の保持状態。「いつまで」「どの優先度で」「どちらの駆動で」確保しているか。 */

@@ -110,7 +110,7 @@ function makeEEW(): EEWAlert {
 function setup() {
   const settings = {
     ...DEFAULTS,
-    voicevoxEnabled: true,
+    ttsEnabled: true,
     voicevoxUrl: 'http://localhost:50021',
     voicevoxSpeakerId: 1,
     soundEnabled: true,

@@ -240,7 +240,7 @@ function makeEEW(over: { serial?: string } = {}): EEWAlert {
   } as unknown as EEWAlert
 }
 
-function setup(over: { voicevoxEnabled?: boolean; soundEnabled?: boolean } = {}) {
+function setup(over: { ttsEnabled?: boolean; soundEnabled?: boolean } = {}) {
   const spies = {
     followSpeechTab: vi.fn(),
     preSpeechTab: vi.fn(() => true),
@@ -254,7 +254,7 @@ function setup(over: { voicevoxEnabled?: boolean; soundEnabled?: boolean } = {})
     openEstimatedIntensity: vi.fn(),
   }
   const settings = { ...DEFAULTS,
-    voicevoxEnabled: over.voicevoxEnabled ?? true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
+    ttsEnabled: over.ttsEnabled ?? true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: over.soundEnabled ?? false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
@@ -308,7 +308,7 @@ describe('読み上げとタブ切替の同調', () => {
   })
 
   it('読み上げが無効な端末では、従来どおり受信の瞬間にタブを動かす', async () => {
-    const { handle, spies } = setup({ voicevoxEnabled: false })
+    const { handle, spies } = setup({ ttsEnabled: false })
     handle(makeQuake())
     expect(spies.setActiveTabNonRealtime).toHaveBeenCalledWith('earthquake')
     await settle()
@@ -455,7 +455,7 @@ describe('読み上げとタブ切替の同調', () => {
   it('読み上げが無効でも、津波の観測点更新でタブを要求する', async () => {
     // 判定は UI 更新側（obsUpdateStatus / focusedDistrict）の「観測が動いたか」を再利用している。
     // 変化のない再送では動かない（同じ判定の else 節へ行く）。
-    const { handle, spies, tsunamisRef } = setup({ voicevoxEnabled: false })
+    const { handle, spies, tsunamisRef } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     spies.setActiveTabNonRealtime.mockClear()
     tsunamisRef.current = [makeTsunami()]
@@ -469,7 +469,7 @@ describe('読み上げとタブ切替の同調', () => {
   // 動いていなかった回帰。2024 年能登半島地震の 01/01〜01/02 では延べ 44 観測点がこの形だった。
 
   it('波高が据え置きでも、最大波の観測時刻が更新されたらバッジが付く', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -490,7 +490,7 @@ describe('読み上げとタブ切替の同調', () => {
 
   // 正: 最大波の時刻だけが動いた報は、その項目に印が立つ
   it('最大波の時刻だけが動いたら、その項目に印が立つ', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -503,7 +503,7 @@ describe('読み上げとタブ切替の同調', () => {
   // 対照: 波高だけが動いた報では、最大波の時刻に印を立てない
   // （`MaxHeight/Revise` が「更新」でなければ、気象庁は時刻を更新したと言っていない）
   it('波高だけが動いた報では、時刻の項目に印を立てない', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     await settle()
 
@@ -520,7 +520,7 @@ describe('読み上げとタブ切替の同調', () => {
     observations: r.observations!.map(o => ({ ...o, condition: { maxHeightMissing: true } })),
   })
   it('正: 前の報で観測できていた観測点が欠測へ転じたら、行に印が立つ', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -530,7 +530,7 @@ describe('読み上げとタブ切替の同調', () => {
   })
 
   it('対照: 欠測のまま続く報では印が立たない', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -543,7 +543,7 @@ describe('読み上げとタブ切替の同調', () => {
 
   // 観測波高が下がった報（2026-10-21 ユーザー選択「黄色の印を付ける (Recommended)」）
   it('正: 波高が直前の報より下がったら、波高の項目に印が立つ', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -557,7 +557,7 @@ describe('読み上げとタブ切替の同調', () => {
   // **読み上げは「第一波が更新されました」と名指しするので、画面が黙ると声が指した観測点を
   // どこにも示せない**（最大波の時刻で一度踏んだ穴と同型）。
   it('第1波だけが動いた報でも印が立つ', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -582,7 +582,7 @@ describe('読み上げとタブ切替の同調', () => {
   // これに当たる。「名前を初めて見たか」だけで絞っていたころは、読み上げが名指しして読むのに
   // 画面だけが黙っていた。
   it('波高を持たない観測点でも、第1波が付いたら印が立つ', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunamiArrivalOnly())
     await settle()
     expect(result.current.obsUpdateStatus.get('輪島港')?.status).toBe('new')
@@ -611,7 +611,7 @@ describe('読み上げとタブ切替の同調', () => {
   // 等級不変の枝は動いたものだけに絞っているのに、こちらは全件を無条件に「初めて出た値です」
   // （緑）で押していた。
   it('等級が動いた報でも、変わっていない観測点には印を付けない', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -629,7 +629,7 @@ describe('読み上げとタブ切替の同調', () => {
 
   // 対照: 等級が動いた報でも、値が動いていれば従来どおり印が付く（絞り込みが効きすぎていないこと）
   it('等級が動いた報で値も動いていれば印が付く', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     await settle()
@@ -647,7 +647,7 @@ describe('読み上げとタブ切替の同調', () => {
 
   // 安全弁: 新規発報では全件に印が付く（絞り込みを足したせいで最初の報が無印になっていないこと）
   it('新規発報では観測点に印が付く', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunamiObsUpdate())
     await settle()
     expect(result.current.obsUpdateStatus.get('輪島港')?.status).toBe('new')
@@ -665,7 +665,7 @@ describe('読み上げとタブ切替の同調', () => {
   // 上の枝（等級不変の続報）へ入り、そちらの絞り込みは以前からある。記憶が津波をまたいで残ること
   // 自体が根にあるので、そこは別途扱う。
   it('前の津波より低い波高でも、等級の違う別の津波の初報なら印が付く', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate()) // 輪島港 3.4m を記憶させる
     await settle()
@@ -688,7 +688,7 @@ describe('読み上げとタブ切替の同調', () => {
 
   // 安全弁: 同じ内容の再送では印が空になる（印が居座ると、動いていない項目が塗られ続ける）
   it('同じ内容の再送では項目の印が付かない', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     handle(makeTsunamiMaxHeightTimeUpdate())
@@ -705,7 +705,7 @@ describe('読み上げとタブ切替の同調', () => {
   // 項目に印を付けると決めた（2026-10-21 ユーザー選択「どちらかにあれば付ける (Recommended)」）ので、
   // 実電文に無い形を守る理由が無くなった —— **意図して覆したテスト**。
   it('同じ最大波の観測時刻の再送（Revise なし）ではバッジが付かない', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     handle(makeTsunamiMaxHeightTimeUpdate())
@@ -721,7 +721,7 @@ describe('読み上げとタブ切替の同調', () => {
 
   // 対照: 値が動いて見えなくても、電文が `Revise` を書いてきたら印を付ける（どの項目かは電文が言わないので波高へ）
   it('値が据え置きでも MaxHeight/Revise が付いた報では波高に印が付く', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     handle(makeTsunamiMaxHeightTimeUpdate())
@@ -741,7 +741,7 @@ describe('読み上げとタブ切替の同調', () => {
   it('解除を挟めば、同じ観測点の到達確認でもバッジが付き直す', async () => {
     // タブ要求では確かめられない（解除後の電文は必ず「新規発報」と判定され、観測点の記憶とは
     // 無関係にタブを取る）。観測が動いたかどうかが出るのはバッジの側。
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunamiArrivalOnly())
     await settle()
     expect(result.current.obsUpdateStatus.get('輪島港')?.status).toBe('new')
@@ -760,7 +760,7 @@ describe('読み上げとタブ切替の同調', () => {
   // 消してはいけない。カードの状態更新（`useEarthquakes`）は同じ判定で弾いているが、こちらは
   // `handleEvent` が状態更新の成否に関わらず先に呼ばれるため、自分で照合する必要がある。
   it('別イベントの遅延解除では、進行中の津波の記憶を落とさない', async () => {
-    const { handle, result } = setup({ voicevoxEnabled: false })
+    const { handle, result } = setup({ ttsEnabled: false })
     handle(makeTsunamiArrivalOnly())
     await settle()
     expect(result.current.obsUpdateStatus.get('輪島港')?.status).toBe('new')
@@ -904,7 +904,7 @@ describe('リプレイの開始で、津波の取消を「もう伝えた」記�
 
   // 対照: 同じ取消が続けて届いても 2 回目は鳴らない（重複鳴りの防止。これは維持する）
   it('同じ取消が続けて届いても 2 回目は鳴らない', () => {
-    const { handle, tsunamisRef } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    const { handle, tsunamisRef } = setup({ ttsEnabled: false, soundEnabled: true })
     handle(makeTsunami())
     tsunamisRef.current = [makeTsunami()]
     handle(makeTsunamiCancelEvent())
@@ -915,7 +915,7 @@ describe('リプレイの開始で、津波の取消を「もう伝えた」記�
 
   // 正: リセットを挟めば同じ取消でも鳴る（時間軸が変わったので「もう伝えた」は通用しない）
   it('リプレイの開始を挟めば、同じ取消でもう一度鳴る', () => {
-    const { handle, resetTracking, tsunamisRef } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    const { handle, resetTracking, tsunamisRef } = setup({ ttsEnabled: false, soundEnabled: true })
     handle(makeTsunami())
     tsunamisRef.current = [makeTsunami()]
     handle(makeTsunamiCancelEvent())
@@ -942,7 +942,7 @@ describe('EventID を持たない津波の解除は、発表日時で重複を�
 
   // 正: id が違っても発表日時が同じなら同じ解除
   it('id が違っても発表日時が同じ解除は 2 回目を鳴らさない', () => {
-    const { handle } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    const { handle } = setup({ ttsEnabled: false, soundEnabled: true })
     handle(p2pCancel('p2p-a', '2026/01/01 21:20:00'))
     handle(p2pCancel('p2p-b', '2026/01/01 21:20:00'))
     expect(cancelSounds()).toBe(1)
@@ -950,7 +950,7 @@ describe('EventID を持たない津波の解除は、発表日時で重複を�
 
   // 対照: 発表日時が違えば別の解除として鳴らす
   it('発表日時が違う解除はそれぞれ鳴らす', () => {
-    const { handle } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    const { handle } = setup({ ttsEnabled: false, soundEnabled: true })
     handle(p2pCancel('p2p-a', '2026/01/01 21:20:00'))
     handle(p2pCancel('p2p-b', '2026/01/02 08:00:00'))
     expect(cancelSounds()).toBe(2)
@@ -958,7 +958,7 @@ describe('EventID を持たない津波の解除は、発表日時で重複を�
 
   // 安全弁: eventId を持つ電文は eventId で見る
   it('eventId を持つ解除は発表日時が違っても同じ eventId なら鳴らさない', () => {
-    const { handle } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    const { handle } = setup({ ttsEnabled: false, soundEnabled: true })
     handle(makeTsunamiCancelEvent())
     handle({ ...makeTsunamiCancelEvent(), id: 'tsunami-cancel-2', issue: { source: 'JMA', time: '2026-01-01T12:30:00Z', type: 'Focus' } } as JMATsunami)
     expect(cancelSounds()).toBe(1)
@@ -1026,7 +1026,7 @@ describe('推計震度分布図のタブ切替', () => {
 
   // 対照: 読み上げが無効な端末では、画面が唯一の伝え手なので受信の瞬間に要求する。
   it('読み上げが無効な端末では、受信の瞬間にタブを動かす', async () => {
-    const { handle, spies } = setup({ voicevoxEnabled: false })
+    const { handle, spies } = setup({ ttsEnabled: false })
     handle(makeEstimatedIntensity())
     expect(spies.setActiveTabNonRealtime).toHaveBeenCalledWith('earthquake')
     await settle()
@@ -1045,7 +1045,7 @@ describe('推計震度分布図のタブ切替', () => {
 
   // 対照: 読み上げが無効な端末では開き直しの契機が無い（発話そのものが起きない）。
   it('読み上げが無効な端末では、受信の瞬間の 1 回だけ開く', async () => {
-    const { handle, spies } = setup({ voicevoxEnabled: false })
+    const { handle, spies } = setup({ ttsEnabled: false })
     handle(makeEstimatedIntensity())
     await settle()
     expect(spies.openEstimatedIntensity).toHaveBeenCalledTimes(1)

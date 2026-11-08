@@ -16,8 +16,10 @@ import { createLogThrottle, log } from '../utils/logger'
 import { serverNow } from '../utils/clock'
 import { getAudioContext, isAlertSpeechPending, scheduleTimeSignalSound, type TimeSignalSoundHandle } from '../utils/alertSound'
 import {
-  isSpeaking, isValidVoicevoxUrl, prewarmVoicevox, speakWithVoicevoxUncounted, type ChunkScheduledListener, type PrewarmedSpeech,
+  isSpeaking, measureSystemSpeechSec, prewarmVoicevox, routesToSystemVoice, speakWithVoicevoxUncounted,
+  type ChunkScheduledListener, type PrewarmedSpeech,
 } from '../utils/voicevox'
+import { isSystemSpeechSupported } from '../utils/systemSpeech'
 import { hasPendingSpeech } from '../utils/pendingSpeech'
 import { nextSpeechId, recordReplayEvent, truncateReplayText } from '../utils/replayEventLog'
 import {
@@ -32,7 +34,7 @@ type TimeSignalSettings = Pick<AppSettings,
   | 'timeSignalEnabled' | 'timeSignalIntervalMin' | 'timeSignalSound' | 'timeSignalOrder' | 'timeSignalPhrase'
   | 'timeSignalClock' | 'timeSignalQuietEnabled' | 'timeSignalQuietStartMin' | 'timeSignalQuietEndMin'
   | 'timeSignalWhileSpeaking' | 'timeSignalVolume' | 'timeSignalSpeakerId'
-  | 'soundVolume' | 'voicevoxEnabled' | 'voicevoxSpeakerId'>
+  | 'soundVolume' | 'ttsEnabled' | 'ttsVoice' | 'voicevoxSpeakerId'>
 
 /** 時計を見る間隔（ms）。境の支度はこの刻みで始まるので、{@link TIME_SIGNAL_PREPARE_MS} より十分短く取る */
 const TICK_MS = 1000
@@ -42,6 +44,13 @@ const PLAN_RETAIN_AFTER_MS = 15_000
 
 /** 声を出す何 ms 前に先に合成するか。合成は 150〜350 ms で済むので、余裕を見て数秒前に投げる */
 const PREWARM_LEAD_MS = 6_000
+
+/**
+ * 端末の声で「声が先」にするとき、境の何 ms 前に声の長さを測るか（2026-11-08 ユーザー選択「鳴らす少し前にその回の文だけ (Recommended)」）。
+ * 端末の声には合成の口が無いので、音量 0 で 2 回読んで測る（`voicevox.ts` の `measureSystemSpeechSec`）。
+ * 測る数秒と、測った後に声を始めるまでの余裕を見て 1 分前に置く（支度は {@link TIME_SIGNAL_PREPARE_MS} 前に済んでいる）。
+ */
+const SYSTEM_MEASURE_LEAD_MS = 60_000
 
 /**
  * 同じ境で予約を取り直す上限。時計の揺れが許容を超え続ける環境で、取り直しのたびに合成を頼み直し続けないため。
@@ -144,7 +153,7 @@ function settingsKey(s: TimeSignalSettings, voicevoxUrl: string): string {
   return JSON.stringify([
     s.timeSignalIntervalMin, s.timeSignalQuietEnabled, s.timeSignalQuietStartMin, s.timeSignalQuietEndMin,
     s.timeSignalSound, s.timeSignalOrder, s.timeSignalPhrase, s.timeSignalClock, s.timeSignalWhileSpeaking,
-    s.timeSignalVolume, s.timeSignalSpeakerId, s.soundVolume, s.voicevoxEnabled, s.voicevoxSpeakerId, voicevoxUrl,
+    s.timeSignalVolume, s.timeSignalSpeakerId, s.soundVolume, s.ttsEnabled, s.ttsVoice, s.voicevoxSpeakerId, voicevoxUrl,
   ])
 }
 
@@ -192,12 +201,14 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
         log.debug(`[timeSignal] ${fmt(at)} は鳴らさない時間帯のため飛ばす`)
         return
       }
-      const wantSpeech = s.voicevoxEnabled && isValidVoicevoxUrl(url)
+      // 端末の声で読むか（声が「システムの読み上げ」・VOICEVOX の接続先が正しくない・繋がらなかった直後）。読み上げの入口が同じ判定で声を選ぶ
+      const systemVoice = routesToSystemVoice(url)
+      const wantSpeech = s.ttsEnabled && (!systemVoice || isSystemSpeechSupported())
       if (s.timeSignalSound === 'none' && !wantSpeech) {
         const key = settingsKey(s, url)
         if (silentConfigWarnedKey !== key) {
           silentConfigWarnedKey = key
-          log.warn('[timeSignal] 音を「鳴らさない」にしていて、読み上げも使えない（VOICEVOX 読み上げが切か、接続先の URL が正しくない）ため、時報は何も鳴らない')
+          log.warn('[timeSignal] 音を「鳴らさない」にしていて、読み上げも使えない（読み上げが切か、端末の声が使えない）ため、時報は何も鳴らない')
         }
         return
       }
@@ -284,14 +295,53 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
         speakAt(startMs)
         return
       }
-      // 読み上げが先: 声の長さが要るので、いちばん長い声でも間に合う時刻に合成し、長さから始める時刻を逆算する
       const order = s.timeSignalOrder
       const soundKind = s.timeSignalSound
+      if (systemVoice) {
+        // 端末の声で読みが先: 1 分前に音量 0 で読んで長さを測り、長さから始める時刻を逆算する。測れなかった（他の読み上げが
+        // 割り込んだ・端末の声が黙った）ら、この回は音が先にする（2026-11-08 ユーザー選択）
+        after(at - SYSTEM_MEASURE_LEAD_MS, () => {
+          const soundFirstMs = at + speechStartOffsetSec(soundKind, 'soundFirst', 0) * 1000
+          if (otherSpeechBusy()) {
+            log.debug('[timeSignal] 他の読み上げの最中なので声の長さを測らず、この回は音を先に鳴らす')
+            speakAt(soundFirstMs)
+            return
+          }
+          void measureSystemSpeechSec(text).then(sec => {
+            if (p.cancelled) return
+            if (sec === null) {
+              log.debug('[timeSignal] 声の長さを測れなかったので、この回は音を先に鳴らす')
+              speakAt(soundFirstMs)
+              return
+            }
+            const startMs = at + speechStartOffsetSec(soundKind, order, sec) * 1000
+            if (startMs < serverNow()) {
+              log.debug('[timeSignal] 測るのが間に合わず、音の前に読み終われないので、この回は音を先に鳴らす')
+              speakAt(soundFirstMs)
+              return
+            }
+            speakAt(startMs)
+          }, err => {
+            if (p.cancelled) return
+            log.warn('[timeSignal] 声の長さを測れなかった（この回は音を先に鳴らす）', err)
+            speakAt(soundFirstMs)
+          })
+        })
+        return
+      }
+      // 読み上げが先: 声の長さが要るので、いちばん長い声でも間に合う時刻に合成し、長さから始める時刻を逆算する
       const latestStartMs = at + speechStartOffsetSec(soundKind, order, TIME_SIGNAL_MAX_SPEECH_SEC) * 1000
       after(latestStartMs - PREWARM_LEAD_MS, () => {
         const w = prewarm()
         if (w === null) {
-          if (!yieldIfBusy('声')) log.debug('[timeSignal] 声を出さない（音声出力を先に用意できなかった）')
+          if (yieldIfBusy('声')) return
+          // 支度の後に VOICEVOX が繋がらなくなった（読み上げは端末の声へ落ちる）。長さが分からないので、この回は音が先にする
+          if (routesToSystemVoice(latest.current.voicevoxUrl)) {
+            log.debug('[timeSignal] VOICEVOX に繋がらなくなったので、この回は音を先に鳴らす')
+            speakAt(at + speechStartOffsetSec(soundKind, 'soundFirst', 0) * 1000)
+            return
+          }
+          log.debug('[timeSignal] 声を出さない（音声出力を先に用意できなかった）')
           return
         }
         void w.first.then(buffer => {
