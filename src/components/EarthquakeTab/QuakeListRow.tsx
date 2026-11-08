@@ -1,6 +1,7 @@
 import { useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { getIntensityColor, getIntensityBgColor, getDepthColor, getMagnitudeColor } from '../../utils/intensity'
 import { getLpgmClassColor, getLpgmClassLabel } from '../../utils/lpgm'
+import type { QuakeListSort, QuakeSortKey } from '../../utils/quakeListView'
 
 /**
  * 地震一覧の閉じた行（見本 closed5。→ docs/quake-tab-redesign.md「決まっていること」）。
@@ -31,6 +32,11 @@ export interface QuakeListRowProps {
   chips: ReactNode
   /** 津波の文と色。null なら出さない（国際津波関連情報だけのカード。英文に国内の津波の区分は無い）。 */
   tsunami: { text: string; color: string; title?: string } | null
+  /**
+   * 上の段の情報名の後ろに添える日付（「11/07」）。時刻以外で並べたときだけ渡し、時刻順は null
+   * （時刻順は日付の区切りがあるので要らない。2026-11-07 ユーザー選択「上の段に出す (Recommended)」）。
+   */
+  date: string | null
   /** 時刻（HH:MM）。 */
   time: string
   /** 震央地名。 */
@@ -44,15 +50,50 @@ export interface QuakeListRowProps {
 /** 行と同じ列の割り付け（見出しの行と閉じた行で揃える）。 */
 const LIST_COLUMNS = 'var(--qk-tile-w) var(--qk-col-t) 1fr minmax(var(--qk-col-m), max-content) var(--qk-col-d)'
 
-/** 一覧の先頭の列の見出し（見本の .hdr）。 */
-export function QuakeListHeader() {
+/** 見出しの列と、押したときの並べ替えの欄（2026-11-07 ユーザー原文「すべて昇順降順は選べるようにしたい。」）。 */
+const HEADER_COLUMNS: readonly { key: QuakeSortKey; label: string; right: boolean; asc: string; desc: string }[] = [
+  { key: 'scale', label: '震度', right: false, asc: '小さい順', desc: '大きい順' },
+  { key: 'time', label: '時刻', right: false, asc: '古い順', desc: '新しい順' },
+  // 震央地名コードの順。コードは北の地方から振られている（遠地は最後）
+  { key: 'region', label: '震央地名', right: false, asc: '北から順', desc: '南から順' },
+  { key: 'magnitude', label: '規模', right: true, asc: '小さい順', desc: '大きい順' },
+  { key: 'depth', label: '深さ', right: true, asc: '浅い順', desc: '深い順' },
+]
+
+/**
+ * 一覧の先頭の列の見出し（見本の .hdr）。**押すとその欄で並べ替え、もう一度押すと向きを返す**（→ `nextQuakeListSort`）。
+ * 並べている欄には向きの印（▲ 小さい順・▼ 大きい順）を添える。
+ *
+ * `filterButton` は絞り込みのボタン（漏斗の印）。左端の震度の欄に、震度の見出しの前に置く
+ * （2026-11-08 ユーザー発言「震央地名の横じゃなくて普通に左端(震度の横)においてみて。」）。
+ */
+export function QuakeListHeader({ sort, onSort, filterButton }: { sort: QuakeListSort; onSort: (key: QuakeSortKey) => void; filterButton: ReactNode }) {
   return (
     // 巻いても上に残す（日付の区切りがこの下に、開いたカードの帯・枠はさらにその下に貼りつく。高さは index.css の --qk-head-h）
     <div
       className="sticky top-0 z-[4] grid items-center border-b border-border bg-panel text-[11px] text-secondary"
       style={{ gridTemplateColumns: LIST_COLUMNS, columnGap: 'var(--qk-gap)', padding: '0 var(--qk-pad)', height: 'var(--qk-head-h)' }}
     >
-      <span>震度</span><span>時刻</span><span>震央地名</span><span className="text-right">規模</span><span className="text-right">深さ</span>
+      {HEADER_COLUMNS.map(c => {
+        const on = sort.key === c.key
+        const head = (
+          <button
+            key={c.key}
+            type="button"
+            aria-pressed={on}
+            // 並べている欄だけ向きを読み上げに伝える（▲▼ は読ませない。2026-11-07 選択「向きを伝える (Recommended)」）
+            aria-label={on ? `${c.label} ${sort.dir === 'asc' ? c.asc : c.desc}` : undefined}
+            onClick={() => onSort(c.key)}
+            className={`flex items-center gap-0.5 whitespace-nowrap hover:text-white ${c.right ? 'justify-end' : ''} ${on ? 'text-white' : ''}`}
+          >
+            {c.label}
+            {on && <span aria-hidden="true" className="text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
+          </button>
+        )
+        return c.key === 'scale'
+          ? <div key={c.key} className="flex min-w-0 items-center gap-1">{filterButton}{head}</div>
+          : head
+      })}
     </div>
   )
 }
@@ -96,7 +137,7 @@ export function quakeTileColors(scale: number): { backgroundColor: string; borde
   return { backgroundColor: getIntensityBgColor(scale), border: `2px solid ${getIntensityColor(scale)}`, color: '#ffffff' }
 }
 
-export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmClass, heading, chips, tsunami, time, name, magnitude, depth }: QuakeListRowProps) {
+export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmClass, heading, chips, tsunami, date, time, name, magnitude, depth }: QuakeListRowProps) {
   const rowRef = useRef<HTMLDivElement>(null)
   const topRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLSpanElement>(null)
@@ -182,7 +223,7 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
         )}
       </div>
       <div ref={topRef} className="col-start-2 col-end-6 row-start-1 flex min-h-[18px] items-center gap-1.5" style={{ fontSize: 'var(--qk-fs)' }}>
-        <span ref={headingRef} className="min-w-0 flex-1 whitespace-nowrap">{heading}</span>
+        <span ref={headingRef} className="min-w-0 flex-1 whitespace-nowrap">{heading}{date !== null && <span data-col="date" className="ml-1.5 tabular-nums text-secondary">{date}</span>}</span>
         {!dropChips && <span ref={chipsRef} className="contents">{chips}</span>}
         {tsunami && <span className="whitespace-nowrap font-bold" style={{ color: tsunami.color }} title={tsunami.title}>{tsunami.text}</span>}
       </div>

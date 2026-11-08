@@ -189,7 +189,7 @@ function setup(displayed: JMATsunami[] = []) {
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
   } as unknown as AppSettings
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
     get: (t, k) => (k in t ? t[k as string] : vi.fn()),
@@ -218,7 +218,7 @@ function setupFull(displayed: JMATsunami[] = []) {
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
   } as unknown as AppSettings
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
     get: (t, k) => (k in t ? t[k as string] : vi.fn()),

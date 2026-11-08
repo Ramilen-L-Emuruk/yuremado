@@ -8,6 +8,7 @@ import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 
 afterEach(cleanup)
 
@@ -41,7 +42,7 @@ const FOREIGN: JMAQuake = {
 async function renderTab(opts: { quake: JMAQuake | null; replayError?: string | null; onReplayQuake?: (key: string, firstReportMs: number | null) => void }) {
   const earthquakes = opts.quake ? [opts.quake] : []
   render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={earthquakes.length}
       earthquakes={earthquakes}
       selectedId={opts.quake ? quakeEventKey(opts.quake) : null}
       selectSeq={0}
@@ -51,7 +52,7 @@ async function renderTab(opts: { quake: JMAQuake | null; replayError?: string | 
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={() => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}
@@ -75,6 +76,13 @@ async function renderTab(opts: { quake: JMAQuake | null; replayError?: string | 
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

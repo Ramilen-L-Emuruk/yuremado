@@ -125,7 +125,7 @@ function setup(overSettings: Partial<AppSettings> = {}) {
     voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
     // **気象庁が書いた文の復元を走らせるのに要る。** 既定は false で、そのままだと
     // `telegramTextToSpeak` が入口で降りて復元が一度も呼ばれない（壊れた電文のテストが空振りする）。
     ttsReadTelegramText: true,

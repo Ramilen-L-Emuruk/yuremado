@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createElement as h } from 'react'
 import { render, cleanup, act, fireEvent } from '@testing-library/react'
-import { TelegramTab, formatEntryForView, formatEntryForDownload } from './index'
+import { TelegramTab, formatEntryForView, formatEntryForDownload, showControlChars } from './index'
 import type { TelegramLogEntry } from '../../types/earthquake'
 import { withTz } from '../../test-utils/withTz'
 
@@ -224,6 +224,19 @@ describe('電文ログの本文の見せ方・落とし方', () => {
     expect(formatEntryForView(e)).toContain('TSUNAMI BULLETIN NUMBER 001\r\n')
     expect(formatEntryForView(e)).not.toContain('\\r\\n')
     expect(formatEntryForDownload(e)).toEqual({ text: plain, ext: 'txt' })
+  })
+
+  // 正: 画面には末尾の ETX を図記号で見せる。対照: コピー（formatEntryForView）とダウンロードは生のまま。
+  // 安全弁: 改行・復帰・タブは置き換えない（改行どおりに見せる決まりを壊さない）
+  it('画面に描くときだけ制御文字を図記号にし、コピーとダウンロードは生のまま', () => {
+    const plain = 'WEPA60 RJTD 211247\r\n\tTSUNAMI BULLETIN NUMBER 001\r\n=\r\n\x03'
+    const e = { ...xmlEntry(plain, { type: 'WEPA60' }), headType: 'WEPA60', kind: 'internationalTsunami' as const }
+    const view = formatEntryForView(e)
+    expect(showControlChars(view).endsWith('=\r\n␃')).toBe(true)
+    expect(showControlChars(view)).toContain('211247\r\n\tTSUNAMI')
+    expect(view.endsWith('=\r\n\x03')).toBe(true)
+    expect(formatEntryForDownload(e)).toEqual({ text: plain, ext: 'txt' })
+    expect(showControlChars('a\x00b\x7f')).toBe('a␀b␡')
   })
 
   // 正: 推計震度分布図は、要約の文を見せ、結合した元の電文を .bin で落とす

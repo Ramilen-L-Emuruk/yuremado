@@ -44,9 +44,21 @@ function isCommunicationsTestTitle(title: string): boolean {
 
 type Wepa60Read = { data: JMAInternationalTsunami } | { reason: string }
 
+/**
+ * 本文の終わりの印 `=` より後ろに付く、電文の本文ではない行か。全期間の控え（2020-12〜2026-10）の 181 通で
+ * 現れたのは次の 2 つと空行だけ:
+ * - 制御文字 ETX（`\x03`。回線で 1 通の終わりを機械へ知らせる印）だけの行 —— 2024-05 以降の 92 通すべて
+ * - ISO 8601 の時刻だけの行 —— 2021-07〜2024-04 の 73 通（気象庁の書式には無い形。73 通とも値は発表時刻 `ISSUED AT` と同じ。判定は形だけで見る）
+ * 画面に出すと化けて見えるので落とす。`=` 自体は気象庁が書いた字なので残す（承認の記録は quake-spec.md §3）。
+ * 知らない形は落とさない（本文を消す向きには倒さない）
+ */
+function isTrailerLine(line: string): boolean {
+  return line === '' || /^[\x00-\x1f]+$/.test(line) || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(line)
+}
+
 function readWepa60(raw: string): Wepa60Read {
   const lines = raw.replace(/\r\n?/g, '\n').split('\n').map(line => line.replace(/\s+$/, ''))
-  while (lines.length > 0 && (lines[lines.length - 1] === '' || lines[lines.length - 1] === '=')) lines.pop()
+  while (lines.length > 0 && isTrailerLine(lines[lines.length - 1])) lines.pop()
   if (!lines[0]?.startsWith('WEPA60 ')) return { reason: `1 行目が WEPA60 で始まりません（${JSON.stringify((lines[0] ?? '').slice(0, 40))}）` }
   const title = lines[1]?.trim() ?? ''
   if (!title) return { reason: '2 行目の題名がありません' }
@@ -85,6 +97,12 @@ const EVALUATIONS: readonly (readonly [string, InternationalTsunamiEvaluation])[
   ['THERE IS A VERY SMALL POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI', 'verySmall'],
   ['THERE IS NO POSSIBILITY OF A TSUNAMI', 'none'],
 ]
+
+/** 評価の文（空白を 1 つに詰め、末尾の句点を落としたもの）を 5 種のどれかとして読む。どれでもなければ undefined */
+export function evaluationFromSentence(sentence: string): InternationalTsunamiEvaluation | undefined {
+  const s = sentence.replace(/\s+/g, ' ').trim().replace(/\.$/, '')
+  return EVALUATIONS.find(([e]) => e === s)?.[1]
+}
 
 /** `EVALUATION` の段落（次の空行まで。文が 2 行に折れる報がある）を 5 種のどれかとして読む。どれでもなければ undefined */
 function readEvaluation(lines: readonly string[]): InternationalTsunamiEvaluation | undefined {

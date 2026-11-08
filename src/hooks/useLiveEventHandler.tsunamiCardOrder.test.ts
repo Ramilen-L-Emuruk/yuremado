@@ -90,7 +90,7 @@ function setup(displayed: JMATsunami[] = [], over: Partial<AppSettings> = {}) {
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
     ...over,
   } as unknown as AppSettings
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {

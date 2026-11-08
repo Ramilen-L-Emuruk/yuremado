@@ -9,6 +9,7 @@
 //
 // **ここで捕まえられないもの。** 畳んだことで主要な情報がどれだけ画面に戻るか（実測値）は
 // jsdom では測れない（要素の高さが 0 になる）。押し下げ量の確認は実機で行う。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -75,7 +76,7 @@ const NO_NOTES = { forecastText: undefined, varCommentText: undefined, freeFormT
 
 const renderTab = async (lpgm: JMALpgm) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[QUAKE]}
     selectedId={quakeEventKey(QUAKE)}
     selectSeq={0}
@@ -85,7 +86,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={() => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}
@@ -109,6 +110,13 @@ const renderTab = async (lpgm: JMALpgm) => {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}
@@ -123,7 +131,7 @@ const renderTab = async (lpgm: JMALpgm) => {
 
 /** 読み上げの主題を渡せる版（自動展開の確認用）。**`rerender` へ渡せるよう JSX を返す。** */
 const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[QUAKE]}
     selectedId={quakeEventKey(QUAKE)}
     selectSeq={0}
@@ -133,7 +141,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={() => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}
@@ -157,6 +165,13 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}

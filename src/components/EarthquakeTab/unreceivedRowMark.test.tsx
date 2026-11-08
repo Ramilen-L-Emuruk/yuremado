@@ -6,6 +6,7 @@
 // 後者はその範囲に未入電の地点があること（行の値は観測できている）。かつては後者しか出して
 // おらず、**事実を持っている観測点の行が黙って、範囲の行だけが喋っていた** —— 観測点の行は
 // 「震度5弱以上」としか出ず、なぜ「以上」なのかが読み取れなかった。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -52,7 +53,7 @@ function makeQuake(points: EarthquakePoint[], cities: JMAQuakeCity[] = CITIES): 
 
 const renderTab = async (quake: JMAQuake) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
     selectSeq={0}
@@ -62,7 +63,7 @@ const renderTab = async (quake: JMAQuake) => {
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={() => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}
@@ -86,6 +87,13 @@ const renderTab = async (quake: JMAQuake) => {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}

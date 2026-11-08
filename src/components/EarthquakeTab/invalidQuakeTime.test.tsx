@@ -8,6 +8,7 @@
 // 時刻を読み落としたのか電文に無いのか利用者に分からない。語を出すことを固定する。
 //
 // **開いたカードと一覧の閉じた行の 2 か所にある。** 片方だけ直しても型検査は通り、例外も出ない。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -43,7 +44,7 @@ function makeQuake(earthquakeTime: string): JMAQuake {
 
 const renderTab = async (quake: JMAQuake, selected: boolean) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={selected ? quakeEventKey(quake) : null}
     selectSeq={0}
@@ -53,7 +54,7 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={() => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}
@@ -77,6 +78,13 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}

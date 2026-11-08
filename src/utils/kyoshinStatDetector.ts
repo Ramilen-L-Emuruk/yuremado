@@ -42,6 +42,18 @@ export interface DetectorFrame {
 const T_EARLY = 9
 /** 値の無い点が多い中心での、早い段の下限（設計書§65）。確かな段の下限（T_CONF）は変えない */
 const T_EARLY_MISS = 8
+/**
+ * 地震が続いている所での、早い段の下限（設計書§80）。直前 ACTIVE_MS の内に、ACTIVE_KM の内で統計の部分が確かな段へ上げた事象があり、
+ * いちばん狭い半径の内で珍しさ 1 以上の点が ACTIVE_MIN_N 点以上そろった中心だけ、下限をこの値まで下げる。
+ * 余震が続く所の小さな有感は点数 7〜9 に留まりやすい。どこでも下げると、普段の週の震源に当たらない早い段どまりが 3 倍になった（設計書§79）
+ */
+const T_EARLY_ACTIVE = 7
+/** 地震が続いているとみなす、確かな段からの時間 */
+const ACTIVE_MS = 6 * 3600e3
+/** 地震が続いているとみなす、確かな段へ上げた事象の種からの距離 */
+const ACTIVE_KM = 50
+/** 地震が続いている所の下限を使うのに要る、いちばん狭い半径の内で珍しさ 1 以上の点の数 */
+const ACTIVE_MIN_N = 3
 /** 値の無い点が多いとみなす割合（いちばん狭い半径の内の点のうち） */
 const MISS_FRAC = 0.4
 /** 値の無い点が多いとみなすのに要る、いちばん狭い半径の内の点の数 */
@@ -206,8 +218,20 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
   type Ev = {
     id: string; seed: number; startMs: number; members: Map<number, number>; claimed: Set<number>; firstOnset: number; lastSupport: number; confStreak: number
     confirmed: boolean; lastConf: number; lastStrong: number; best: number; born: number; run: number; ripe: number
+    /** 地震が続いている所の下限（T_EARLY_ACTIVE）だけで届いた候補が作り、まだ確かな段へ上がっていない事象 */
+    weak: boolean
   }
   const events: Ev[] = [], ghosts: (Ev & { goneMs: number })[] = []
+  /**
+   * 点ごとの「地震が続いている所」の期限（ms）。確かな段へ上がった事象の種から ACTIVE_KM の内の点に、上がった時刻 + ACTIVE_MS を書く。
+   * 検知器の内部にだけあり、作り直す（起動・時間軸の巻き戻し・欠測明け）と空になる。
+   * 時刻は戻らない前提（巻き戻すときは呼び出し側が検知器を作り直す。kyoshinEnsembleShadow が古いフレームを捨て、時間軸の変更で作り直す）
+   */
+  const activeUntil = new Float64Array(n)
+  const markActive = (seed: number, ms: number) => {
+    const until = ms + ACTIVE_MS
+    for (let j = 0; j < n; j++) if (activeUntil[j] < until && hav(sites[seed][0], sites[seed][1], sites[j][0], sites[j][1]) <= ACTIVE_KM) activeUntil[j] = until
+  }
   let seq = 0, tick = 0
   /** 点 j の今回の立ち上がりの時刻（まだ上がっていなければいま）。フレームは 1 秒に 1 枚の前提 */
   const onsetOf = (j: number, nowMs: number) => (F.up1[j] >= 0 ? nowMs - (F.t - 1 - F.up1[j]) * 1000 : nowMs)
@@ -250,7 +274,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
     push(f: DetectorFrame): DetectorReport[] {
       F.push(f.values)
       tick++
-      const sig: { c: number; S: number; mem: number[]; s: Float64Array }[] = []
+      const sig: { c: number; S: number; mem: number[]; s: Float64Array; weak: boolean }[] = []
       for (const ch of chans) {
         const feat = featOf(ch.def.name), sv = ch.s, { lgP, onN, onC, q, L, cnt, mus } = ch, lv = ch.def.levels
         for (let i = 0; i < n; i++) {
@@ -270,6 +294,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           cnt.fill(0); mus.fill(0)
           let e = 0, W = 0, nearNone = 0
           const r0 = ch.ri[0], near = ct[r0]
+          let nearRare = 0
           for (const r of ch.ri) {
             for (; e < ct[r]; e++) {
               const j = nb[e], s = sv[j]
@@ -280,6 +305,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
               if (s >= 1) W += s
               for (let l = 0; l < L; l++) { mus[l] += q[j * L + l]; if (s >= lv[l]) cnt[l]++ }
             }
+            if (r === r0) nearRare = cnt[0]
             if (lv[0] === 1 && cnt[0] >= 2 && W >= TPM_MIN) {
               const v = -logTPM(W, mus[0]) - ch.penalty
               if (v > S) { S = v; Rb = ct[r] }
@@ -294,12 +320,15 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           // いちばん狭い半径の内で値の無い点が多い中心は、早い段の下限を下げる。値の届く点が少ないと、揺れていても点数が数え切れないため。
           // 欠測の割合はいちばん狭い半径で測り、S を出した半径（Rb）は問わない（設計書§65）
           const sparseData = near >= MISS_MIN_N && nearNone >= MISS_FRAC * near
-          if (S >= (sparseData ? T_EARLY_MISS : T_EARLY)) {
+          // 地震が続いている所で、いちばん狭い半径の内に珍しい点がそろった中心は、下限を T_EARLY_ACTIVE まで下げる（設計書§80）
+          const floor = sparseData ? T_EARLY_MISS : T_EARLY
+          const lo = S >= T_EARLY_ACTIVE && S < floor && nearRare >= ACTIVE_MIN_N && activeUntil[c] >= f.ms ? T_EARLY_ACTIVE : floor
+          if (S >= lo) {
             const mem: number[] = []
             for (let t = 0; t < Rb; t++) if (sv[nb[t]] >= ch.def.memMin) mem.push(nb[t])
             // 下げた下限だけで届いた候補（T_EARLY 未満）は、候補の点が MISS_MEM_N 点以上要る（T_EARLY に届かない 2 点だけの上がりは、欠測の中でも検知にしない）
             if (S < T_EARLY && mem.length < MISS_MEM_N) continue
-            sig.push({ c, S, mem, s: sv })
+            sig.push({ c, S, mem, s: sv, weak: S < floor })
           }
         }
       }
@@ -313,7 +342,9 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
         const votes = new Map<Ev, number>()
         for (const j of g.mem) { const o = owner.get(j); if (o) { ov++; votes.set(o, (votes.get(o) ?? 0) + 1) } }
         if (g.mem.length && ov * 2 >= g.mem.length) ev = [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0]
-        const old = (e: Ev) => g.S >= T_CONF && (e.confirmed ? f.ms - e.lastStrong > REFRESH * 1000 : f.ms - e.startMs > STALE * 1000)
+        // 地震が続いている所の下限だけで作った事象へは、STALE 秒を過ぎたらほかの候補を入れない。前の小さな揺れの事象が、後の地震を吸い込まないように（設計書§80）
+        const old = (e: Ev) => (g.S >= T_CONF && (e.confirmed ? f.ms - e.lastStrong > REFRESH * 1000 : f.ms - e.startMs > STALE * 1000))
+          || (!g.weak && e.weak && f.ms - e.startMs > STALE * 1000)
         if (ev && old(ev)) ev = undefined
         if (!ev) {
           const idx = events.findIndex(e => near(g.c, e))
@@ -324,8 +355,14 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
         }
         if (!ev) {
           const gi = ghosts.findIndex(e => e.confirmed && !old(e) && f.ms - e.goneMs < GHOST * 1000 && near(g.c, e))
-          if (gi >= 0) { ev = ghosts[gi]; ghosts.splice(gi, 1); events.push(ev) }
+          if (gi >= 0) {
+            // 弱い候補は消えかけの事象を生き返らせない（生き返らせると、支えの無いまま GHOST 秒を数え直す）
+            if (g.weak) continue
+            ev = ghosts[gi]; ghosts.splice(gi, 1); events.push(ev)
+          }
         }
+        // 地震が続いている所の下限だけで届いた候補は、近くに事象があれば捨て、無いときだけ新しい事象を作る（事象を長く続かせて後の地震を吸い込まないように）
+        if (g.weak && ev) continue
         if (!ev) {
           // 種 = 候補の点のうち、25 km 以内に上がった点の珍しさがいちばん多く集まっている点
           const cand = g.mem.length ? g.mem : [g.c]
@@ -342,7 +379,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           ev = {
             id: `s${seq++}`, seed, startMs, members: new Map([[seed, onsetOf(seed, f.ms)]]), claimed: new Set([seed]),
             firstOnset: onsetOf(seed, f.ms), lastSupport: f.ms, confStreak: 0, confirmed: false,
-            lastConf: -Infinity, lastStrong: -Infinity, best: 0, born: f.ms, run: 0, ripe: Infinity,
+            lastConf: -Infinity, lastStrong: -Infinity, best: 0, born: f.ms, run: 0, ripe: Infinity, weak: g.weak,
           }
           events.push(ev)
         }
@@ -378,7 +415,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
         if (e.run >= 0) { if (live) { e.run++; if (e.run >= EARLY_ON && e.ripe === Infinity) e.ripe = f.ms } else e.run = -1 }
         if (live && e.best >= T_CONF) {
           e.confStreak++
-          if (e.confStreak >= CONF_HOLD) { e.confirmed = true; e.lastConf = f.ms; e.lastStrong = f.ms }
+          if (e.confStreak >= CONF_HOLD) { if (!e.confirmed) markActive(e.seed, f.ms); e.confirmed = true; e.weak = false; e.lastConf = f.ms; e.lastStrong = f.ms }
         } else e.confStreak = 0
         // 確かな段の事象は、点がまだ長い基準より上にいる間（揺れの続き）は下ろさない
         if (e.confirmed && f.ms - e.lastStrong < SUSTAIN_MAX * 1000) {

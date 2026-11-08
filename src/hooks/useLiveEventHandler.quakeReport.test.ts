@@ -101,7 +101,7 @@ function setup(existingCards: JMAQuake[] = [], spies: {
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
   } as unknown as AppSettings
   // setTitle だけ捕捉し、それ以外のメソッドは呼ばれても無害な関数で受ける
   const title = new Proxy({ alertTitle: null, setTitle: (t: string) => { titles.push(t) } } as Record<string, unknown>, {

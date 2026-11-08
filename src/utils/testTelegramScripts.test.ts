@@ -498,6 +498,10 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(cards).toHaveLength(1)
     // 深さは 100 km 以深の地震にだけ書かれる（気象庁 技術情報 第522号 別紙1（4））ので、30 km の地震の英文には無い
     expect(cards[0].earthquake.hypocenter).toMatchObject({ name: 'MINDANAO, PHILIPPINES', magnitude: 6.9, depth: -1 })
+    // 英文だけのカードは初めから開くので、予想・観測の表の日本語訳はこの英文で見る（実配信の書式に倣った自作の表）
+    expect(mindanao.evaluation).toBe('localNearEpicenter')
+    expect(mindanao.text).toContain('ESTIMATED TSUNAMI ARRIVAL TIMES AND WAVE AMPLITUDES')
+    expect(mindanao.text).toContain('MEASUREMENTS OR REPORTS OF TSUNAMI')
     // 通信試験はどのカードにも付かず、読み上げ・通知・音だけが出る
     expect(commTest).toMatchObject({ isCommunicationsTest: true, title: 'NWPTA COMMUNICATIONS TEST' })
     expect(index.unattached).not.toContain(commTest)

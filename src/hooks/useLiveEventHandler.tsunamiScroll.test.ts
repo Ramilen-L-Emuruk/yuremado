@@ -118,7 +118,7 @@ function setup(displayed: JMATsunami[] = []) {
     soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: 2, ttsMaxRegions: 10, ttsAlwaysReadScale: 30, ttsRegionTolerance: 2,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
   } as unknown as AppSettings
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
     get: (t, k) => (k in t ? t[k as string] : vi.fn()),
