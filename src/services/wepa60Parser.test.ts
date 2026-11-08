@@ -32,7 +32,7 @@ const COMM_TEST = [
 ].join('\r\n')
 
 describe('parseWepa60Text', () => {
-  it('地震の報から題名・発表時刻・発生時刻を読み、本文を最後の = を落として残す', () => {
+  it('地震の報から題名・発表時刻・発生時刻を読み、本文を終わりの印 = まで残す', () => {
     const r = parseWepa60Text(BULLETIN)
     expect(r).toEqual({
       id: expect.stringMatching(/^WEPA60:2021-01-21T12:47:00\.000Z:TSUNAMI BULLETIN NUMBER 001:[0-9a-f]{8}$/),
@@ -48,7 +48,32 @@ describe('parseWepa60Text', () => {
       evaluation: 'none',
     })
     expect(r!.text.startsWith('WEPA60 RJTD 211247\n')).toBe(true)
-    expect(r!.text.endsWith('THERE IS NO POSSIBILITY OF A TSUNAMI')).toBe(true)
+    expect(r!.text.endsWith('THERE IS NO POSSIBILITY OF A TSUNAMI\n\n=')).toBe(true)
+  })
+
+  // 全期間の控え 181 通で、終わりの印 = の後ろに付いていた形: 制御文字 ETX だけの行（2024-05 以降の 92 通すべて）と、
+  // 発表時刻と同じ ISO 8601 の時刻（2021-07〜2024-04 の 73 通）。どちらも画面に出すと化けて見える
+  it('正: = の後ろの制御文字 ETX と ISO の時刻を本文から落とす', () => {
+    const etx = parseWepa60Text(`${BULLETIN}\x03`)!
+    expect(etx.text.endsWith('TSUNAMI\n\n=')).toBe(true)
+    const stamped = parseWepa60Text(`${BULLETIN}\x03\n\n2021-01-21T12:47:00.000Z`)!
+    expect(stamped.text.endsWith('TSUNAMI\n\n=')).toBe(true)
+    expect(parseWepa60Text(`${BULLETIN}\n2021-01-21T12:47:00.000Z`)!.text.endsWith('TSUNAMI\n\n=')).toBe(true)
+  })
+
+  // 対照: 後ろに付くものが違っても本文は同じなので、同じ報として 1 通に畳める
+  it('対照: = の後ろの形が違っても鍵は同じ', () => {
+    const plain = parseWepa60Text(BULLETIN)!
+    expect(parseWepa60Text(`${BULLETIN}\x03`)!.id).toBe(plain.id)
+    expect(parseWepa60Text(`${BULLETIN}\x03\n\n2021-01-21T12:47:00.000Z`)!.id).toBe(plain.id)
+  })
+
+  // 安全弁: 最後の行の末尾に付く = （通信試験の報の …GO.JP= の形）と、本文の行は落とさない
+  it('安全弁: 行の末尾の = と、時刻だけではない最後の行は残す', () => {
+    const tail = parseWepa60Text(COMM_TEST.replace('TEST ONLY.\r\n=', 'TEST_ONLY.EXAMPLE.INVALID=\r\n\x03'))!
+    expect(tail.text.endsWith('TEST_ONLY.EXAMPLE.INVALID=')).toBe(true)
+    const noMark = parseWepa60Text(BULLETIN.replace('\n=\n', '\nRECEIVED AT 2021-01-21T12:47:00.000Z\n'))!
+    expect(noMark.text.endsWith('RECEIVED AT 2021-01-21T12:47:00.000Z')).toBe(true)
   })
 
   // 実電文の書式（全期間の控えの地震の報 163 通）: 南緯・西経は SOUTH・WEST、規模の種類は (MJMA)・(MW)、深さは FOCAL DEPTH の行で

@@ -2,7 +2,7 @@
 //
 // 地震カードに国際津波関連情報（WEPA60・英文）を添える（2026-10-30 ユーザー選択
 // 「受けて英文のまま出す (Recommended)」・2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」）。
-// 結び付けの判定は `utils/internationalTsunami.test.ts`、ここは渡された報がカードに原文のまま出ることと、
+// 結び付けの判定は `utils/internationalTsunami.test.ts`、ここは渡された報がカードに日本語訳と原文の切り替えで出ることと、
 // 英文だけのカードの見出し・時刻の名前・津波の欄を固定する。
 import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach, vi } from 'vitest'
@@ -104,31 +104,54 @@ const renderTab = async (quake: JMAQuake, bulletins: readonly JMAInternationalTs
 /** 英文の 1 報の見出しの行（押すと本文を開閉する） */
 const foldRow = (): HTMLElement => screen.getByText('国際津波関連情報（英文）', { exact: false })
 
+/**
+ * 開いた欄は地名の表と観測点の座標を読み込んでから訳を出す。開く操作のあとはその読み込みを act() の中で決着させる
+ * （テスト環境では読み込みがその場で失敗し、表無しで訳す）
+ */
+const press = async (fire: () => void) => {
+  fire()
+  await flushDataEffects()
+}
+
+/** 開いた欄の「原文」を押して、英文の `<pre>` を返す */
+const showOriginal = (row: HTMLElement): HTMLPreElement => {
+  const box = row.parentElement!
+  fireEvent.click(Array.from(box.querySelectorAll('button')).find(b => b.textContent === '原文')!)
+  return box.querySelector('pre')!
+}
+
 describe('地震カードの国際津波関連情報（英文）', () => {
   // 地震情報のカードでは閉じて置き、見出しの行で開閉する（2026-11-05 ユーザー選択「英文だけのカードだけ開く」）
-  it('地震情報のカードでは題名つきの行だけを出し、押すと原文のまま開き、もう一度押すと閉じる', async () => {
+  // 開くと初めは日本語訳を出し、「原文」で英文に切り替える（2026-11-08 ユーザー発言「切り替えだけどせっかくなんだからデフォ翻訳でいいんじゃない」）
+  it('地震情報のカードでは題名つきの行だけを出し、押すと日本語訳で開き、原文に切り替えられ、もう一度押すと閉じる', async () => {
     const onSelect = vi.fn()
     await renderTab(makeQuake('遠地地震'), [BULLETIN], onSelect)
     const row = foldRow()
     expect(row.textContent).toContain('TSUNAMI BULLETIN NUMBER 001')
     expect(row.getAttribute('aria-expanded')).toBe('false')
     expect(row.parentElement!.querySelector('pre')).toBeNull()
-    fireEvent.click(row)
+    await press(() => fireEvent.click(row))
     expect(row.getAttribute('aria-expanded')).toBe('true')
-    expect(row.parentElement!.querySelector('pre')?.textContent).toBe(TEXT)
-    // 安全弁: 開閉の行を押しても、カードの選択は呼び直さない（地図を動かさない）
+    // 正: 初めは日本語訳（英文の <pre> は出さない）。訳せない行は英語のまま「（未訳）」を付ける
+    expect(row.parentElement!.querySelector('pre')).toBeNull()
+    expect(row.parentElement!.textContent).toContain('北西太平洋津波情報 第1報')
+    expect(row.parentElement!.textContent).toContain('（未訳）ORIGIN TIME:1223Z 21 JAN 2021')
+    // 対照: 「原文」を押すと英文をそのまま出す
+    expect(showOriginal(row).textContent).toBe(TEXT)
+    // 安全弁: 開閉の行や切り替えを押しても、カードの選択は呼び直さない（地図を動かさない）
     expect(onSelect).not.toHaveBeenCalled()
     fireEvent.click(row)
     expect(row.getAttribute('aria-expanded')).toBe('false')
   })
 
   // 正: 英文だけのカードは、ほかに出すものが無いので初めから開く（同じ選択）
-  it('英文だけのカードでは初めから原文を開いて出し、押すと閉じる', async () => {
+  it('英文だけのカードでは初めから日本語訳を開いて出し、押すと閉じる', async () => {
     const [card] = internationalTsunamiIndex([], [BULLETIN]).cards
     await renderTab(card, [BULLETIN])
     const row = foldRow()
     expect(row.getAttribute('aria-expanded')).toBe('true')
-    expect(row.parentElement!.querySelector('pre')?.textContent).toBe(TEXT)
+    expect(row.parentElement!.textContent).toContain('北西太平洋津波情報 第1報')
+    expect(showOriginal(row).textContent).toBe(TEXT)
     fireEvent.click(row)
     expect(row.getAttribute('aria-expanded')).toBe('false')
   })
@@ -152,7 +175,7 @@ describe('地震カードの国際津波関連情報（英文）', () => {
     expect(rows().map(r => r.getAttribute('aria-expanded'))).toEqual(['false', 'true'])
     fireEvent.keyDown(rows()[1], { key: 'Enter' })
     expect(rows().map(r => r.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
-    fireEvent.keyDown(rows()[0], { key: ' ' })
+    await press(() => fireEvent.keyDown(rows()[0], { key: ' ' }))
     expect(rows().map(r => r.getAttribute('aria-expanded'))).toEqual(['true', 'false'])
     expect(onSelect).not.toHaveBeenCalled()
   })
@@ -163,8 +186,9 @@ describe('地震カードの国際津波関連情報（英文）', () => {
     const onSelect = vi.fn()
     const quake = makeQuake('遠地地震')
     await renderTab(quake, [BULLETIN], onSelect)
-    fireEvent.click(foldRow())
-    const pre = foldRow().parentElement!.querySelector('pre')!
+    await press(() => fireEvent.click(foldRow()))
+    const pre = showOriginal(foldRow())
+    expect(onSelect).not.toHaveBeenCalled()
     fireEvent.click(pre)
     expect(onSelect).toHaveBeenCalledWith(quakeEventKey(quake))
     // 安全弁: 本文をなぞって選んでいる間の指の離しは地のクリックに数えない

@@ -2163,7 +2163,7 @@ export interface JMAInternationalTsunami {
   originTime?: string
   /** 通信試験（`NWPTA COMMUNICATIONS TEST`）か。地震を伴わないのでどのカードにも付かない */
   isCommunicationsTest: boolean
-  /** 電文の本文そのまま（行末の空白と最後の `=` だけ落とす） */
+  /** 電文の本文。終わりの印 `=` までを残し、行末の空白と `=` の後ろに付く行は落とす（`wepa60Parser.ts` の `isTrailerLine`） */
   text: string
   /** `PRELIMINARY EPICENTER:LAT04.8NORTH LON127.4EAST` の暫定の震央（南緯・西経は負）。地震の報にだけある */
   epicenter?: { latitude: number; longitude: number }
