@@ -599,7 +599,13 @@ export interface UseSeismoQuakeWavesParams {
   /** 自作地震計の機能そのものが有効か（設定）。 */
   enabled: boolean
   baseUrl: string
+  /**
+   * 届いた地震すべて（地震タブの絞りを掛ける前）。**右端の打ち切りはここから決める** —— 絞りで隠れた地震でも、
+   * 届いていればその揺れを前の地震のカードへ入れない（2026-11-07 選択「届いた全部の地震で切る (Recommended)」）。
+   */
   quakes: readonly JMAQuake[]
+  /** 地震タブに出ている地震の鍵。**取りに行くのはここに載った地震だけ**（隠れた地震の波形は取らない）。 */
+  shownEventKeys: ReadonlySet<string>
   scope: NearbyScope
   /** 押し出しで抱えている窓を読む（→ `useSeismoStation`）。 */
   readWave: (stationId: string, fromMs: number | null) => SeismoWaveWindow | null
@@ -637,7 +643,7 @@ export interface SeismoQuakeWavesWithStatus {
 }
 
 export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams): SeismoQuakeWavesWithStatus {
-  const { enabled, baseUrl, quakes, scope, readWave, replayOffsetMs, originSeconds, subscribeWaveRevised } = params
+  const { enabled, baseUrl, quakes, shownEventKeys, scope, readWave, replayOffsetMs, originSeconds, subscribeWaveRevised } = params
   const [waves, setWaves] = useState<ReadonlyMap<string, readonly SeismoQuakeWave[]>>(new Map())
   const [failedEventKeys, setFailedEventKeys] = useState<ReadonlySet<string>>(EMPTY_KEYS)
 
@@ -662,12 +668,16 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
   })
   const keptFor = (s: NearbyScope, k: string): ReadonlyMap<string, readonly string[]> | null =>
     keptRef.current.scope === s && keptRef.current.pickKey === k ? keptRef.current.picked : null
+  // 選ぶ（と打ち切りを決める）のは届いた地震すべてから、取りに行くのは地震タブに出ている地震だけ
   const targets = useMemo(
     () =>
-      canFetch ? pickTargets(quakes, scope, originSeconds, stationsForPick, keptFor(scope, pickKey) ?? new Map()) : [],
+      canFetch
+        ? pickTargets(quakes, scope, originSeconds, stationsForPick, keptFor(scope, pickKey) ?? new Map())
+          .filter((t) => shownEventKeys.has(t.eventKey))
+        : [],
     // `keptFor` は ref を読むだけ。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canFetch, quakes, scope, originSeconds, stationsForPick, pickKey],
+    [canFetch, quakes, shownEventKeys, scope, originSeconds, stationsForPick, pickKey],
   )
   // **依存は鍵の並びで持つ。** `targets` は毎レンダー新しい配列になるので、そのまま
   // 依存に置くと電文が 1 通届くたびに取り直しへ入る。

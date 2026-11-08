@@ -10,6 +10,7 @@
 //
 // 区分にならない文（0245「この地震で緊急地震速報を発表しましたが、強い揺れは観測されませんでした。」）は
 // この枠にしか現れない。消しても型検査は通り例外も出ないので、ここで固定する。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -57,7 +58,7 @@ function makeQuake(over: Partial<JMAQuake> = {}): JMAQuake {
  */
 const renderTab = async (quake: JMAQuake, { selected = true, openNotes = true } = {}) => {
   render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={selected ? quakeEventKey(quake) : null}
       selectSeq={0}
@@ -67,7 +68,7 @@ const renderTab = async (quake: JMAQuake, { selected = true, openNotes = true } 
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={() => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}
@@ -91,6 +92,13 @@ const renderTab = async (quake: JMAQuake, { selected = true, openNotes = true } 
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

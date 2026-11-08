@@ -17,22 +17,20 @@ export const NOTIFICATION_OPEN_WAIT_MS = 30_000
 
 /** 開き先の地震を、いまの一覧でどう扱うか */
 export type NotificationOpenTarget =
-  /** 選べる（鍵は `quakeEventKey`） */
-  | { readonly kind: 'select'; readonly key: string }
+  /**
+   * 選べる（鍵は `quakeEventKey`）。`pin` が真なら、地震タブの絞りで隠れている地震なので、
+   * 絞りの例外として一覧にも出してから選ぶ（2026-11-07 選択「その地震を一覧にも出して開く (Recommended)」）
+   */
+  | { readonly kind: 'select'; readonly key: string; readonly pin: boolean }
   /** まだ一覧に無い（届くのを待つ） */
   | { readonly kind: 'wait' }
-  /**
-   * 届いてはいるが、表示の絞りで地震タブに出ていない（待つ）。津波の一覧のように後から読み込まれるもので
-   * 出てくることがあるので、すぐには諦めない
-   */
-  | { readonly kind: 'hidden' }
   /** 一覧にはあるが選べない（待っても変わらない） */
   | { readonly kind: 'giveUp'; readonly reason: string }
   /** 地震を指さない開き先（タブを移すだけ） */
   | { readonly kind: 'none' }
 
 /**
- * 開き先の地震を引く。`all` は届いた地震カードすべて、`shown` はそのうち地震タブに出ているもの（表示の絞りを通した一覧）。
+ * 開き先の地震を引く。`all` は絞る前の地震カードすべて（英文だけのカードも含む）、`shown` はそのうち地震タブに出ているもの（表示の絞りを通した一覧）。
  * 取り消されたカード（選ぶとすぐ外れる）は、待っても選べないので諦める。
  */
 export function resolveNotificationOpen(
@@ -41,19 +39,21 @@ export function resolveNotificationOpen(
   let candidates: readonly JMAQuake[]
   if ('quake' in open) candidates = all.filter(q => quakeEventKey(q) === open.quake)
   else if ('lpgm' in open) candidates = all.filter(q => extractQuakeEventId(q) === open.lpgm)
-  else if ('estimated' in open) candidates = all.filter(q => matchEstimatedIntensityArrival(q, open.estimated, open.lat, open.lon))
+  // 英文だけのカードは震源の座標を持たず、時刻の分だけで当たってしまうので外す
+  else if ('estimated' in open) candidates = all.filter(q => !q.fromInternationalTsunami && matchEstimatedIntensityArrival(q, open.estimated, open.lat, open.lon))
   else if ('wepa60' in open) {
-    // 画面と同じ選び方で付く先を引く。付く地震カードの無い英文は、英文だけのカードとして `shown` にだけある（届いた地震カードの一覧には無い）
+    // 画面と同じ選び方で付く先を引く。付く地震カードの無い英文は英文だけのカードで、`all`（絞る前の全カード）に入っている
     const key = internationalTsunamiOpenKey(all, open.wepa60, open.lat, open.lon)
-    candidates = [...all, ...shown.filter(q => q.fromInternationalTsunami)].filter(q => quakeEventKey(q) === key)
+    candidates = all.filter(q => quakeEventKey(q) === key)
   } else return { kind: 'none' }
   if (candidates.length === 0) return { kind: 'wait' }
   const live = candidates.filter(q => !q.cancelledAt)
   if (live.length === 0) return { kind: 'giveUp', reason: '取り消された地震' }
-  // 候補が複数あるとき（推計を時刻だけで当てたときなど）は、地震タブに出ているものを選ぶ
+  // 候補が複数あるとき（推計を時刻だけで当てたときなど）は、地震タブに出ているものを選ぶ。
+  // どれも絞りで隠れていれば、最初の候補を一覧にも出して選ぶ
   const shownKeys = new Set(shown.map(quakeEventKey))
   const visible = live.find(q => shownKeys.has(quakeEventKey(q)))
-  return visible ? { kind: 'select', key: quakeEventKey(visible) } : { kind: 'hidden' }
+  return visible ? { kind: 'select', key: quakeEventKey(visible), pin: false } : { kind: 'select', key: quakeEventKey(live[0]), pin: true }
 }
 
 export interface NotificationOpenActions {
@@ -61,6 +61,8 @@ export interface NotificationOpenActions {
   readonly openTab: (tab: TabId) => void
   /** 手で選んだのと同じ扱いで地震カードを選び、地図を寄せる（`selectQuake(key, { explicit: true })`） */
   readonly selectQuake: (eventKey: string) => void
+  /** 地震タブの絞りで隠れている地震を、絞りの例外として一覧に出す（選ぶ前に呼ぶ） */
+  readonly pinQuake: (eventKey: string) => void
   /** 長周期の表示を開く（電文の `eventId`） */
   readonly openLpgm: (eventId: string) => void
   /** その地震カードの震度分布を開く（推計震度分布図の通知） */
@@ -124,11 +126,10 @@ export function useNotificationOpen(
       return
     }
     const target = resolveNotificationOpen(pending.open, shownRef.current, allRef.current)
-    if (target.kind === 'wait' || target.kind === 'hidden') {
+    if (target.kind === 'wait') {
       if (!expired && performance.now() < pending.deadline) return
       pendingRef.current = null
-      const why = target.kind === 'wait' ? '届かない' : '表示の絞りで地震タブに出てこない'
-      log.warn(`[notify] 押した通知の地震が ${NOTIFICATION_OPEN_WAIT_MS / 1000} 秒待っても${why}ので、タブだけ移した（${query}）`)
+      log.warn(`[notify] 押した通知の地震が ${NOTIFICATION_OPEN_WAIT_MS / 1000} 秒待っても届かないので、タブだけ移した（${query}）`)
       return
     }
     pendingRef.current = null
@@ -139,6 +140,7 @@ export function useNotificationOpen(
     }
     if (target.kind === 'none') return
     const a = actionsRef.current
+    if (target.pin) a.pinQuake(target.key)
     a.selectQuake(target.key)
     if ('lpgm' in pending.open) a.openLpgm(pending.open.lpgm)
     else if ('estimated' in pending.open) a.openDistribution(target.key)

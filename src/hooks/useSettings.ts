@@ -3,6 +3,9 @@ import { log } from '../utils/logger'
 import { consumeSettingsHandoff } from '../utils/settingsHandoff'
 import { isValidIntensityScale } from '../utils/intensity'
 import { isObservedLpgmClass } from '../utils/lpgm'
+import {
+  DEFAULT_QUAKE_LIST_SETTINGS, QUAKE_LIST_TYPES, QUAKE_PERIOD_HOUR_VALUES, QUAKE_SORT_KEYS, type QuakeListSettings,
+} from '../utils/quakeListView'
 // 読み上げ文の作り方を決める値なので、定義は読み上げ側（`utils/ttsText.ts`）に置く。
 // ここ（設定）から生やすと utils → hooks の向きで参照が要り、依存が逆流する。
 import type { TtsUnreceivedDetail, TelegramTextBlockKey, TelegramTextBlocks, TelegramBoilerplateKey, TelegramBoilerplateReads } from '../utils/ttsText'
@@ -41,8 +44,12 @@ export type MapLegendCollapseSetting = 'auto' | 'open' | 'collapsed'
 export const TTS_MAX_OBSERVATION_POINTS_MIN = 0
 export const TTS_MAX_OBSERVATION_POINTS_MAX = 20
 
-export interface AppSettings {
-  minDisplayScale: number   // 最低表示震度 (-1 = すべて)
+/**
+ * 地震タブの一覧の絞り込みと並び替え（→ `utils/quakeListView.ts` の {@link QuakeListSettings}）。
+ * 設定の窓にあった「最低表示震度」（`minDisplayScale`）は、地震タブの震度の下限（`quakeListScaleMin`）へ移した
+ * （2026-11-07 選択「地震タブに置き、設定から外す (Recommended)」）。
+ */
+export interface AppSettings extends QuakeListSettings {
   /**
    * ブラウザ通知をまとめて止める（false で、種類ごとの設定によらずどの通知も出さない）。
    * 種類ごとの値は書き換えないので、戻せば元どおり効く。判定は `utils/notificationGate.ts`。
@@ -330,7 +337,7 @@ export const SETTINGS_STORAGE_KEY = STORAGE_KEY
  * 項目が増えても既定の挙動から始まる。
  */
 export const DEFAULTS: AppSettings = {
-  minDisplayScale: -1,
+  ...DEFAULT_QUAKE_LIST_SETTINGS,
   // **地震情報の通知は既定で震度3以上**（2026-10-30 ユーザー選択「震度3以上 (Recommended)」。震度速報 VXSE51 の
   // 発表基準に揃える）。実際に出るのは利用者が通知を許可してから。保存した値はそのまま勝つ（最低震度 -1 を読み替えた端末の戻り先はこの既定）。
   notifyEnabled: true,
@@ -576,12 +583,85 @@ function clampNumberOrNull(value: unknown, min: number, max: number): number | n
   return Math.min(max, Math.max(min, value))
 }
 
+/** 期間の日付（端末の時刻の `YYYY-MM-DD`）。形が合わない・暦に無い日（2026-13-45 など）は null。 */
+function ensureYmdOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return d.getFullYear() === Number(m[1]) && d.getMonth() === Number(m[2]) - 1 && d.getDate() === Number(m[3]) ? value : null
+}
+
+/**
+ * 地震タブの条件の 1 項目を検め、**値があるのに弾いた・直したときだけ記録する**（`ensureIntensityScale` と同じ規則。
+ * 未設定は初回起動・項目追加で必ず通るので記録しない）。絞りが黙って外れると「絞ったはずが全件出る」の原因を追えない。
+ */
+function noteQuakeListFix(key: string, raw: unknown, fixed: unknown): void {
+  if (raw === undefined) return
+  if (JSON.stringify(raw) === JSON.stringify(fixed)) return
+  log.warn(`[settings] ${key} の保存値を使えないため直した`, { 保存値: raw, 使う値: fixed })
+}
+
+/** 下限と上限が逆なら入れ替える（手で書いた設定・書き出しのファイルで常に 0 件にならないように）。 */
+function orderedPair<T extends number | string>(a: T | null, b: T | null): [T | null, T | null] {
+  return a !== null && b !== null && a > b ? [b, a] : [a, b]
+}
+
+/**
+ * 地震タブの絞り込みと並び替えを検める。**震度の下限は、保存が無ければ設定の窓にあった「最低表示震度」
+ * （`minDisplayScale`）から引き継ぐ**（2026-11-07 選択「地震タブに置き、設定から外す (Recommended)」の説明
+ * 「今の最低表示震度の値は地震タブの震度の絞りへ引き継ぐ」）。
+ */
+function sanitizeQuakeList(partial: Partial<AppSettings>): QuakeListSettings {
+  const legacy = (partial as { minDisplayScale?: unknown }).minDisplayScale
+  const from0 = ensureYmdOrNull(partial.quakeListPeriodFrom)
+  const to0 = ensureYmdOrNull(partial.quakeListPeriodTo)
+  const bothDates = from0 !== null && to0 !== null
+  const [from, to] = bothDates ? orderedPair(from0, to0) : [null, null]
+  const scaleMin0 = ensureIntensityScale(partial.quakeListScaleMin ?? legacy, DEFAULTS.quakeListScaleMin, 'quakeListScaleMin')
+  const scaleMax0 = ensureIntensityScale(partial.quakeListScaleMax, DEFAULTS.quakeListScaleMax, 'quakeListScaleMax')
+  // 震度の -1 は「絞らない」なので、両方が階級値のときだけ並びを見る
+  const [scaleMin, scaleMax] = scaleMin0 >= 0 && scaleMax0 >= 0 ? orderedPair(scaleMin0, scaleMax0) as [number, number] : [scaleMin0, scaleMax0]
+  // 規模は窓の刻み（0.1）にそろえる
+  const mag = (v: unknown) => { const n = clampNumberOrNull(v ?? null, 0, 10); return n === null ? null : Math.round(n * 10) / 10 }
+  const [magMin, magMax] = orderedPair(mag(partial.quakeListMagnitudeMin), mag(partial.quakeListMagnitudeMax))
+  const [depthMin, depthMax] = orderedPair(clampNumberOrNull(partial.quakeListDepthMin ?? null, 0, 700), clampNumberOrNull(partial.quakeListDepthMax ?? null, 0, 700))
+  const out: QuakeListSettings = {
+    quakeListScaleMin: scaleMin,
+    quakeListScaleMax: scaleMax,
+    quakeListMagnitudeMin: magMin,
+    quakeListMagnitudeMax: magMax,
+    quakeListDepthMin: depthMin,
+    quakeListDepthMax: depthMax,
+    quakeListRegionBasis: ensureOneOf(partial.quakeListRegionBasis, ['epicenter', 'observed'] as const, DEFAULTS.quakeListRegionBasis),
+    quakeListRegions: Array.isArray(partial.quakeListRegions)
+      ? [...new Set(partial.quakeListRegions.filter((n): n is string => typeof n === 'string' && n !== ''))]
+      : [],
+    quakeListRegionView: ensureOneOf(partial.quakeListRegionView, ['list', 'map'] as const, DEFAULTS.quakeListRegionView),
+    quakeListTypes: Array.isArray(partial.quakeListTypes)
+      ? [...new Set(partial.quakeListTypes.filter(t => (QUAKE_LIST_TYPES as readonly unknown[]).includes(t)))]
+      : [],
+    quakeListPeriodHours: ensureOneOf(partial.quakeListPeriodHours, QUAKE_PERIOD_HOUR_VALUES, DEFAULTS.quakeListPeriodHours),
+    // 日付は始めと終わりがそろったときだけ残す（片方だけでは範囲にならない）
+    quakeListPeriodFrom: from,
+    quakeListPeriodTo: to,
+    quakeListSortKey: ensureOneOf(partial.quakeListSortKey, QUAKE_SORT_KEYS, DEFAULTS.quakeListSortKey),
+    quakeListSortDir: ensureOneOf(partial.quakeListSortDir, ['asc', 'desc'] as const, DEFAULTS.quakeListSortDir),
+  }
+  // 震度は ensureIntensityScale が記録する。それ以外を、保存値と使う値が食い違ったときだけ記録する
+  for (const key of Object.keys(out) as (keyof QuakeListSettings)[]) {
+    if (key === 'quakeListScaleMin' || key === 'quakeListScaleMax') continue
+    noteQuakeListFix(key, partial[key], out[key])
+  }
+  return out
+}
+
 // 壊れた JSON・型不一致・範囲外の値は既定値に落とす（不正な localStorage で App がクラッシュしない
 // ようにするための境界防御。基本は型と範囲だけを担保し、震度を取る項目のみ階級値かどうかまで見る）。
 // export はテスト向け（ランタイムからは load() 経由でのみ使う）。
 export function sanitize(partial: Partial<AppSettings>): AppSettings {
   return {
-    minDisplayScale: ensureIntensityScale(partial.minDisplayScale, DEFAULTS.minDisplayScale, 'minDisplayScale'),
+    ...sanitizeQuakeList(partial),
     notifyEnabled: ensureBool(partial.notifyEnabled, DEFAULTS.notifyEnabled),
     notifyQuake: ensureBool(partial.notifyQuake, DEFAULTS.notifyQuake),
     notifyMinScale: ensureIntensityScale(partial.notifyMinScale, DEFAULTS.notifyMinScale, 'notifyMinScale'),
@@ -955,8 +1035,13 @@ export function useSettings() {
   // どちらかなので sanitize を通さない（設定 1 つの変更で全項目を検証し直す必要がない）。
   // localStorage を直接書き換えられた場合は次回起動の load() で正される。
   const updateSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    updateSettings({ [key]: value } as Partial<AppSettings>)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  /** いくつかの項目をまとめて書き換える（地震タブの絞り込みのように、1 つの操作で十数項目が変わるもの。保存は 1 回） */
+  const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     setSettings(prev => {
-      const next = { ...prev, [key]: value }
+      const next = { ...prev, ...patch }
       try {
         // 保存する形を決める窓口は `settingsToStore` の 1 つに寄せる（`replaceSettings` と共有）。
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, false, injectedArrivalToken.current, injectedForecastKey.current)))
@@ -1009,5 +1094,5 @@ export function useSettings() {
     setSettings(prev => (prev[key] === value ? prev : { ...prev, [key]: value }))
   }, [])
 
-  return { settings, updateSetting, replaceSettings, adoptExternalSetting }
+  return { settings, updateSetting, updateSettings, replaceSettings, adoptExternalSetting }
 }

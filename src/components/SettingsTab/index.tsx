@@ -1934,16 +1934,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Section>
       )}
 
+      {/* 地震の一覧の絞り込みは地震タブの一覧の上へ移した（2026-11-07 選択「地震タブに置き、設定から外す (Recommended)」・
+          移したことは設定の窓に書かない: 選択「書かない (Recommended)」） */}
       <Section category="display" title="表示設定">
-        <Row label="最低表示震度" description="これ未満の地震はリストに表示しません">
-          <div className="flex items-center gap-2">
-            <IntensityBadge scale={settings.minDisplayScale} />
-            <ScaleSelect
-              value={settings.minDisplayScale}
-              onChange={v => onUpdate('minDisplayScale', v)}
-            />
-          </div>
-        </Row>
         <Row label="UI 倍率" description="画面全体の表示倍率を変更します">
           <select
             value={settings.uiScale}

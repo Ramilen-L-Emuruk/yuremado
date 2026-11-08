@@ -12,6 +12,7 @@
 //
 // 取得がまるごと失敗して `error` が立ったときも、カードがあれば一覧を残し、失敗は帯の先頭で知らせる
 // （カードが 0 件なら全画面の失敗表示）。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -63,7 +64,7 @@ async function renderTab(opts: {
 }) {
   const earthquakes = opts.earthquakes ?? [QUAKE]
   const result = render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={earthquakes}
       selectedId={earthquakes[0] ? quakeEventKey(earthquakes[0]) : null}
       selectSeq={0}
@@ -73,7 +74,7 @@ async function renderTab(opts: {
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={() => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={opts.error ?? null}
       historyLoss={opts.historyLoss ?? createEmptyTelegramLoss()}
@@ -97,6 +98,13 @@ async function renderTab(opts: {
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

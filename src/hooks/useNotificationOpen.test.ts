@@ -31,6 +31,7 @@ function actions(): NotificationOpenActions & { calls: string[] } {
     calls,
     openTab: tab => calls.push(`tab:${tab}`),
     selectQuake: key => calls.push(`quake:${key}`),
+    pinQuake: key => calls.push(`pin:${key}`),
     openLpgm: id => calls.push(`lpgm:${id}`),
     openDistribution: key => calls.push(`distribution:${key}`),
   }
@@ -50,28 +51,39 @@ describe('resolveNotificationOpen', () => {
   const all = [eq, cancelled, hidden]
   const shown = [eq, cancelled]
   it('正: 地震・長周期・推計の開き先から、その地震カードの鍵を引く', () => {
-    expect(resolveNotificationOpen({ tab: 'earthquake', quake: '20260101161000' }, shown, all)).toEqual({ kind: 'select', key: '20260101161000' })
-    expect(resolveNotificationOpen({ tab: 'earthquake', lpgm: '20260101161000' }, shown, all)).toEqual({ kind: 'select', key: '20260101161000' })
+    expect(resolveNotificationOpen({ tab: 'earthquake', quake: '20260101161000' }, shown, all)).toEqual({ kind: 'select', key: '20260101161000', pin: false })
+    expect(resolveNotificationOpen({ tab: 'earthquake', lpgm: '20260101161000' }, shown, all)).toEqual({ kind: 'select', key: '20260101161000', pin: false })
     expect(resolveNotificationOpen({ tab: 'earthquake', estimated: '2026-01-01T16:10:00+09:00', lat: 37.5, lon: 137.3 }, [eq], [eq]))
-      .toEqual({ kind: 'select', key: '20260101161000' })
+      .toEqual({ kind: 'select', key: '20260101161000', pin: false })
   })
   it('正: 推計を時刻だけで当てて候補が 2 つあるときは、地震タブに出ている方を選ぶ', () => {
     const twin = quake('20260101161001')
     expect(resolveNotificationOpen({ tab: 'earthquake', estimated: '2026-01-01T16:10:00+09:00' }, [twin], [eq, twin]))
-      .toEqual({ kind: 'select', key: '20260101161001' })
+      .toEqual({ kind: 'select', key: '20260101161001', pin: false })
   })
   it('対照: カードがまだ無ければ待ち、地震を指さない開き先は none', () => {
     expect(resolveNotificationOpen({ tab: 'earthquake', quake: '20260101190000' }, shown, all)).toEqual({ kind: 'wait' })
     expect(resolveNotificationOpen({ tab: 'realtime' }, shown, all)).toEqual({ kind: 'none' })
   })
-  it('安全弁: 取り消されたカードは待たずに諦め、表示の絞りで出ていないカードは出てくるのを待つ', () => {
+  // 正: 地震タブの絞りで隠れている地震は、待たずに一覧へ出して選ぶ（2026-11-07 選択「その地震を一覧にも出して開く (Recommended)」）
+  // 安全弁: 取り消されたカードは待たずに諦める
+  it('取り消されたカードは諦め、絞りで隠れているカードは一覧に出して選ぶ', () => {
     expect(resolveNotificationOpen({ tab: 'earthquake', quake: '20260101170000' }, shown, all).kind).toBe('giveUp')
-    expect(resolveNotificationOpen({ tab: 'earthquake', quake: '20260101180000' }, shown, all).kind).toBe('hidden')
+    expect(resolveNotificationOpen({ tab: 'earthquake', quake: '20260101180000' }, shown, all)).toEqual({ kind: 'select', key: '20260101180000', pin: true })
   })
 })
 
 describe('useNotificationOpen', () => {
   const eq = quake('20260101161000')
+
+  // 正: 絞りで隠れていた地震は、一覧に出して（pin）から選ぶ。待たない
+  it('正: 絞りで隠れていた地震を開くときは、一覧に出してから選ぶ', () => {
+    const a = actions()
+    const hidden = quake('20260101180000')
+    render(a, { shown: [eq], all: [eq, hidden] })
+    act(() => emitNotificationOpen({ tab: 'earthquake', quake: '20260101180000' }, 'テスト'))
+    expect(a.calls).toEqual(['tab:earthquake', 'pin:20260101180000', 'quake:20260101180000'])
+  })
 
   it('正: 開いている画面で押されたら、タブを移してその地震を選ぶ', () => {
     const a = actions()
@@ -144,12 +156,13 @@ describe('useNotificationOpen', () => {
     expect(a.calls).toEqual(['tab:earthquake'])
   })
 
-  it('正: 届いていても絞りで出ていない地震は、後から地震タブに出てきたら選ぶ', () => {
+  // 意図的に覆した: 以前は「届いていても絞りで出ていない地震は、地震タブに出てくるまで待つ」だった。
+  // 今は待たずに一覧へ出して選ぶ（2026-11-07 選択「その地震を一覧にも出して開く (Recommended)」）
+  it('正: 届いていても絞りで出ていない地震は、待たずに一覧へ出して選ぶ', () => {
     const a = actions()
-    const { rerender } = render(a, { all: [eq] })
+    render(a, { all: [eq] })
     act(() => emitNotificationOpen({ tab: 'earthquake', quake: '20260101161000' }, 'テスト'))
-    rerender({ shown: [eq], all: [eq], screen: screen('earthquake') })
-    expect(a.calls).toEqual(['tab:earthquake', 'quake:20260101161000'])
+    expect(a.calls).toEqual(['tab:earthquake', 'pin:20260101161000', 'quake:20260101161000'])
   })
 
   it('安全弁: 待っている間に利用者が地震を選び直したら、届いても通知の地震へ飛ばない', () => {

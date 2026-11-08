@@ -38,7 +38,7 @@ const baseProps: QuakeListRowProps = { lpgmTabbable: false,
   scale: 45, scaleLabel: '5弱', orAbove: false, lpgmClass: null,
   heading: <span>震源・震度情報</span>, chips: <span data-chip>訓練</span>,
   tsunami: { text: '津波の心配なし', color: '#fff' },
-  time: '16:10', name: '石川県能登地方', magnitude: { text: 'M7.6', value: 7.6 }, depth: { text: '10km', value: 10 },
+  date: null, time: '16:10', name: '石川県能登地方', magnitude: { text: 'M7.6', value: 7.6 }, depth: { text: '10km', value: 10 },
 }
 
 /** 札が 2 段目へ下がっているか（下げた札は別の段の要素へ移る）。 */

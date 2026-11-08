@@ -605,6 +605,8 @@ interface Props {
   seismoWaveFailed: boolean
   /** 波形を畳んでいるときに出すもの（設定「波形の表示」）。 */
   seismoWaveView: SeismoWaveCollapsedView
+  /** 閉じた行の上の段に日付を添えるか（一覧を時刻以外で並べているとき。→ `QuakeListRow` の `date`）。 */
+  showListDate: boolean
   /**
    * 報の一覧で押した報の時点のカード（→ `utils/quakeReportHistory.ts`）。あれば `quake` の代わりにこれを出す
    * （報の一覧は `historyInputs` の最新のカードから組むので変わらない）。押していなければ null。
@@ -832,7 +834,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
-  marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
+  marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView, showListDate,
   quake: latestQuake, historyQuake = null, historyInputs = null, historyPickedId = null, onPickHistory,
 }: Props) {
   // 報の一覧で前の報を押している間は、その報の時点のカードを出す（→ `historyQuake`）
@@ -1365,6 +1367,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       )}
     </>}
     tsunami={quake.fromInternationalTsunami ? null : { text: tsunamiInfo.text, color: tsunamiInfo.color, title: domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined }}
+    date={showListDate && quakeDate ? `${String(quakeDate.getMonth() + 1).padStart(2, '0')}/${String(quakeDate.getDate()).padStart(2, '0')}` : null}
     time={quakeDate ? formatHourMinute(quakeDate) : QUAKE_LIST_TIME_UNKNOWN}
     name={epicenterLabel}
     magnitude={hasFacts ? { text: formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType), value: hypocenter.magnitude } : null}

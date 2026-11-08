@@ -8,6 +8,7 @@
 //
 // ボタンは押した地震を選択したうえで追加表示を切り替える（App 側）。ここではタブの props で
 // 開いた状態・閉じた状態を作り、出るもの／出ないものを固定する。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -55,7 +56,7 @@ function makeQuake(points: EarthquakePoint[]): JMAQuake {
 
 const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {}) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
     selectSeq={0}
@@ -65,7 +66,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={() => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}
@@ -89,6 +90,13 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}
@@ -132,7 +140,7 @@ describe('未入電トグル', () => {
     expect(findIntensityRow(PREF)?.children[0]?.textContent).toBe('4（未入電あり）')
 
     rerender(
-      <EarthquakeTab
+      <EarthquakeTab matchedCount={0}
         earthquakes={[makeQuake(MIXED)]}
         selectedId={quakeEventKey(makeQuake(MIXED))}
         selectSeq={0}
@@ -142,7 +150,7 @@ describe('未入電トグル', () => {
         isLoading={false}
         isLoadingMore={false}
         hasMore={false}
-        onLoadMore={() => {}}
+        onLoadMore={async () => false}
         watchLoadMoreThrottle={false}
         error={null}
         historyLoss={createEmptyTelegramLoss()}
@@ -166,6 +174,13 @@ describe('未入電トグル', () => {
         seismoWaves={new Map()}
         seismoWaveFailedKeys={new Set()}
         seismoWaveView="composite"
+        filter={DEFAULT_QUAKE_LIST_FILTER}
+        onFilterChange={() => {}}
+        sort={DEFAULT_QUAKE_LIST_SORT}
+        onSortChange={() => {}}
+        filterSourceQuakes={[]}
+        shown
+        historyOldestDay={null}
         historyInputs={null}
         historyPickedId={null}
         historyView={null}

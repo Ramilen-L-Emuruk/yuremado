@@ -258,7 +258,7 @@ function setup(over: { voicevoxEnabled?: boolean; soundEnabled?: boolean } = {})
     soundEnabled: over.soundEnabled ?? false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
-    minDisplayScale: -1,
+    quakeListScaleMin: -1,
   } as unknown as AppSettings
   // title API は多数のメソッドを持つため、未知のプロパティも関数として返す Proxy で代替する
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {

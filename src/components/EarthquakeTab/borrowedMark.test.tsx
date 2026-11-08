@@ -10,6 +10,7 @@
 //
 // **説明は 1 行だけ**であることも固定する。欄ごとに「津波情報より」と書くと同じ語が並び、
 // 実際に画面がそうなって読みにくかった（震源と津波区分で別々に出していた）。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -65,7 +66,7 @@ function makeQuake(over: Partial<JMAQuake> = {}): JMAQuake {
 
 const renderTab = async (quake: JMAQuake) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
     selectSeq={0}
@@ -75,7 +76,7 @@ const renderTab = async (quake: JMAQuake) => {
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={() => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}
@@ -99,6 +100,13 @@ const renderTab = async (quake: JMAQuake) => {
     seismoWaves={new Map()}
     seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
+    filter={DEFAULT_QUAKE_LIST_FILTER}
+    onFilterChange={() => {}}
+    sort={DEFAULT_QUAKE_LIST_SORT}
+    onSortChange={() => {}}
+    filterSourceQuakes={[]}
+    shown
+    historyOldestDay={null}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}

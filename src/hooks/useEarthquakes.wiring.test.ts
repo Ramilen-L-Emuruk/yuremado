@@ -2682,7 +2682,10 @@ describe('再生中の「もっと見る」', () => {
     expect(h.current.hasMore).toBe(true)
     expect(h.current.isLoadingMore).toBe(false)
 
-    await act(async () => { await h.current.loadMoreEarthquakes() })
+    // 読んだ結果を一覧へ反映したら true を返す（期間に合わせた自動の読み足しが「読んだのに進まない」を見分けるのに使う）
+    let applied: boolean | null = null
+    await act(async () => { applied = await h.current.loadMoreEarthquakes() })
+    expect(applied).toBe(true)
     expect(more).toHaveBeenCalledTimes(2)
     expect(h.current.loadMoreFailed).toBe(false)
     expect(h.current.earthquakes).toHaveLength(1)
@@ -2699,7 +2702,8 @@ describe('再生中の「もっと見る」', () => {
     })
     act(() => { h.current.restoreQuakeHistory(replayHistory({}, more)) })
 
-    let pressed: Promise<void> = Promise.resolve()
+    let pressed: Promise<boolean> = Promise.resolve(false)
+    let pressedResult: boolean | null = null
     act(() => { pressed = h.current.loadMoreEarthquakes() })
     act(() => { h.current.resetState() })
     expect((passedSignal as AbortSignal | null)?.aborted).toBe(true)
@@ -2707,9 +2711,11 @@ describe('再生中の「もっと見る」', () => {
       resolveMore(replayHistory({
         quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')],
       }, async () => replayHistory({}, null)))
-      await pressed
+      pressedResult = await pressed
     })
 
+    // 捨てた取得は「反映した」と返さない（自動の読み足しが「進まなかった」と取り違えて止めない）
+    expect(pressedResult).toBe(false)
     expect(h.current.earthquakes).toHaveLength(0)
     expect(h.current.hasMore).toBe(false)
     expect(h.current.isLoadingMore).toBe(false)

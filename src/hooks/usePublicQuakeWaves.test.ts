@@ -40,7 +40,13 @@ vi.mock('../utils/publicQuakeColumns', async (importOriginal) => {
 })
 
 // **トップレベルで一度読む**（テスト本体で初めて読むと、その待ちが 1 件目に乗る。CLAUDE.md「検証」）。
-const { pickPublicQuakeTargets, usePublicQuakeWaves } = await import('./usePublicQuakeWaves')
+const publicQuakeWavesModule = await import('./usePublicQuakeWaves')
+const { pickPublicQuakeTargets } = publicQuakeWavesModule
+type PublicParams = Parameters<typeof publicQuakeWavesModule.usePublicQuakeWaves>[0]
+/** 地震タブに出ている地震（`shownEventKeys`）。ここのテストは、渡した地震がすべて一覧に出ている前提で書いてある */
+const ALL_SHOWN: ReadonlySet<string> = { has: () => true } as unknown as ReadonlySet<string>
+const usePublicQuakeWaves = (p: Omit<PublicParams, 'shownEventKeys'> & { shownEventKeys?: ReadonlySet<string> }) =>
+  publicQuakeWavesModule.usePublicQuakeWaves({ shownEventKeys: ALL_SHOWN, ...p })
 
 const SENS = 1e9
 
@@ -389,6 +395,46 @@ describe('usePublicQuakeWaves', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(archive.fetch).not.toHaveBeenCalled()
     expect(h.result.current.size).toBe(0)
+  })
+})
+
+// 地震タブの絞りで一覧に出ていない地震の波形は取らない。区切り（古い地震の範囲を次の地震の発生で切る）は、
+// 一覧に出ていない地震も含めて決める（2026-11-07 ユーザー選択「届いた全部の地震で切る (Recommended)」）。
+describe('一覧に出ている地震だけ取る', () => {
+  const quakes = [quake('new', TIME, 30), quake('old', '2026/10/13 20:43:30', 30, 35.6, 139.9)]
+  const run = (shown: readonly JMAQuake[]) => renderHook(() =>
+    publicQuakeWavesModule.usePublicQuakeWaves({
+      enabled: true, quakes, shownEventKeys: new Set(shown.map(quakeEventKey)),
+      originSeconds: NO_SECONDS, openedEventKey: null, liveNumbers: null, readLiveRaw, replayOffsetMs: null,
+    }),
+  )
+
+  // 正: 一覧に無い地震（new）は取らず、カードも作らない
+  it('一覧に無い地震は取らない', async () => {
+    setReplayOffset(Date.parse('2026-10-13T11:46:00Z') - Date.now())
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB'], [[11, 43, 40]]) })
+    const h = run([quakes[1]])
+    await waitFor(() => expect(h.result.current.get(quakeEventKey(quakes[1]))?.length).toBe(2))
+    expect(h.result.current.has(quakeEventKey(quakes[0]))).toBe(false)
+    expect(archive.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  // 安全弁: 一覧に無い new の発生（20:44:00 JST）で、一覧に出ている old の範囲を切る
+  it('一覧に無い地震の発生でも、古い地震の範囲を切る', async () => {
+    setReplayOffset(Date.parse('2026-10-13T11:46:00Z') - Date.now())
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB'], [[11, 43, 40]]) })
+    const h = run([quakes[1]])
+    await waitFor(() => expect(archive.fetch).toHaveBeenCalledTimes(1))
+    expect(archive.fetch.mock.calls[0][0].range.toMs).toBeLessThanOrEqual(Date.parse('2026-10-13T11:44:00Z'))
+    h.unmount()
+  })
+
+  // 対照: 両方が一覧に出ていれば両方取る
+  it('一覧に出ていれば両方取る', async () => {
+    setReplayOffset(Date.parse('2026-10-13T11:46:00Z') - Date.now())
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB'], [[11, 43, 40], [11, 44, 29]]) })
+    const h = run(quakes)
+    for (const q of quakes) await waitFor(() => expect(h.result.current.get(quakeEventKey(q))?.length).toBe(2))
   })
 })
 

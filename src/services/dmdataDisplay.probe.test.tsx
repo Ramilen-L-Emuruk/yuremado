@@ -6,6 +6,7 @@
 // 測り方・環境変数・結果の枠の意味・見ない出口・誤検出の型は、docs/spec/telegram-coverage-audit.md の
 // §2「画面と読み上げに出しているかを測る」にある。環境変数を渡したときだけ動く（通常の `npm test` は汚さない）。
 import { describe, it, expect, vi } from 'vitest'
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../utils/quakeListView'
 import fs from 'node:fs'
 import path from 'node:path'
 import { act } from 'react'
@@ -178,12 +179,19 @@ async function renderText(node: React.ReactElement, opts: { pressButtons?: boole
 function earthquakeTabProps() {
   return {
     speakingKey: null, followSpeech: false, onSelect: () => {}, isLoading: false, isLoadingMore: false,
-    hasMore: false, onLoadMore: () => {}, watchLoadMoreThrottle: false, error: null,
+    hasMore: false, onLoadMore: async () => false, watchLoadMoreThrottle: false, error: null,
     historyLoss: createEmptyTelegramLoss(), loadMoreFailed: false, reconnectGapLoss: false, fetchThrottled: false, onDismissKeyReentry: null,
     updateMarks: new Map(), onToggleLpgm: () => {}, lpgmFocus: null, estimatedIntensities: [], internationalTsunamisByQuake: new Map(), distributionQuakeKey: null,
     onToggleDistribution: () => {}, unreceivedQuakeKey: null, onToggleUnreceived: () => {}, onFocusMap: () => {},
     speakingTelegramTextSubject: null, seismoWaves: new Map(), seismoWaveFailedKeys: new Set<string>(),
     seismoWaveView: 'composite',
+    filter: DEFAULT_QUAKE_LIST_FILTER,
+    onFilterChange: () => {},
+    sort: DEFAULT_QUAKE_LIST_SORT,
+    onSortChange: () => {},
+    filterSourceQuakes: [],
+    shown: true,
+    historyOldestDay: null,
     historyInputs: null,
     historyPickedId: null,
     historyView: null,
@@ -197,7 +205,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
   if (/^VXSE5[123]$|^VXSE61$/.test(type)) {
     const q = ev as JMAQuake
     const dom = await renderText(
-      <EarthquakeTab {...earthquakeTabProps()} earthquakes={[q]} selectedId={quakeEventKey(q)}
+      <EarthquakeTab matchedCount={0} {...earthquakeTabProps()} earthquakes={[q]} selectedId={quakeEventKey(q)}
  selectSeq={0}
         lpgmByEventId={new Map<string, JMALpgm>()} activeLpgmEventId={null} />,
     )
@@ -219,7 +227,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
       points: [],
     } as unknown as JMAQuake
     const dom = await renderText(
-      <EarthquakeTab {...earthquakeTabProps()} earthquakes={[shell]} selectedId={quakeEventKey(shell)}
+      <EarthquakeTab matchedCount={0} {...earthquakeTabProps()} earthquakes={[shell]} selectedId={quakeEventKey(shell)}
  selectSeq={0}
         lpgmByEventId={new Map([[eid, l]])} activeLpgmEventId={eid} />,
     )

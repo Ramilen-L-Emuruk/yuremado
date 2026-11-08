@@ -4,6 +4,7 @@
 // 「受けて英文のまま出す (Recommended)」・2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」）。
 // 結び付けの判定は `utils/internationalTsunami.test.ts`、ここは渡された報がカードに日本語訳と原文の切り替えで出ることと、
 // 英文だけのカードの見出し・時刻の名前・津波の欄を固定する。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -46,7 +47,7 @@ function makeQuake(type: IssueType): JMAQuake {
 }
 
 const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami[], onSelect: (id: string) => void, selectSeq: number) => (
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={quakeEventKey(quake)}
       selectSeq={selectSeq}
@@ -56,7 +57,7 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={() => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}
@@ -80,6 +81,13 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

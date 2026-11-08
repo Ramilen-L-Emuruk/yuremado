@@ -1182,6 +1182,11 @@ export function useEarthquakes(
    */
   const historyCursorRef = useRef<HistoryCursor>(null)
   /**
+   * 読み込み済みの一番古い日（日本時間の `YYYY-MM-DD`。→ `QuakeHistoryResult.oldestLoadedDay`）。まだ読んでいなければ `null`。
+   * 地震タブの期間の絞りが「〇〇以前は未読込みです。」を出すのに使う。ライブ・再生のどちらの遡りでも進める。
+   */
+  const [historyOldestDay, setHistoryOldestDay] = useState<string | null>(null)
+  /**
    * 再生中の「もっと見る」で続きを読む口（→ `ReplayQuakeHistoryResult.loadMore`）。**再生中はこちらだけを使う。**
    *
    * リプレイの開始時の履歴（`restoreQuakeHistory`）が置き、押すたびに次の口へ差し替わる。`null` なら再生中は
@@ -2660,6 +2665,7 @@ export function useEarthquakes(
     // カーソルも初期値へ戻す（戻さないと、接続を張り直したあとの「もっと見る」が
     // 前の時間軸で読んだ位置から続きを読む）
     historyCursorRef.current = null
+    setHistoryOldestDay(null)
     dmdataHistorySettledRef.current = Promise.resolve()
     // 履歴の損失もここで空へ戻す。**これから読み直す範囲の話**なので、前の接続で欠けた分を
     // 持ち越すと直っても表示が消えない。遡り幅と同じ同期ブロックで戻す。
@@ -2974,6 +2980,7 @@ export function useEarthquakes(
           // **`stale` を見たあとに置くこと。** 時間軸が変わった後の結果でカーソルを
           // 進めると、新しい時間軸の「もっと見る」が古い軸で読んだ位置から続きを読む。
           historyCursorRef.current = historyCursorFromOldestDay(history.oldestLoadedDay)
+          setHistoryOldestDay(history.oldestLoadedDay)
           const quakeEvents = history.quakes
           const tsunamiEvents = history.tsunamis
           // 種別横断の生電文を eventId ごとに統合（リアルタイムと同一ロジック）。
@@ -3785,7 +3792,7 @@ export function useEarthquakes(
    * **口が無ければ読まずにボタンを畳む。** ライブの経路へは落とさない —— あちらは `serverDate()`（いま）から
    * 遡るので、再生時刻より未来の地震が一覧に並ぶ。
    */
-  const loadMoreReplayHistory = useCallback(async () => {
+  const loadMoreReplayHistory = useCallback(async (): Promise<boolean> => {
     const loadMore = replayLoadMoreRef.current
     if (loadMore === null) {
       // **通常は届かない。** 口が無いときは `hasMore` も偽で、ボタンが出ていない ——
@@ -3794,7 +3801,7 @@ export function useEarthquakes(
       // 再生へ切り替わったなど前提が崩れているので、記録してボタンを畳む
       log.warn('[data] 再生中の「もっと見る」に続きを読む先がありません（ボタンを畳みます）')
       setState(prev => (prev.hasMore ? { ...prev, hasMore: false } : prev))
-      return
+      return false
     }
     const generation = replayHistoryGenerationRef.current
     const stale = () => replayHistoryGenerationRef.current !== generation
@@ -3803,30 +3810,35 @@ export function useEarthquakes(
     try {
       const history = await loadMore(signal)
       // 再生を止めた・始め直した・履歴が差し替わった後に届いた分は捨てる（「取得中」の解除は finally が担う）
-      if (stale()) return
+      if (stale()) return false
       // **次の口へ進めるのは成功したときだけ。** 失敗したら同じ口のまま、押し直せば同じ範囲を読み直す
       replayLoadMoreRef.current = history.loadMore
+      if (history.oldestLoadedDay !== null) setHistoryOldestDay(history.oldestLoadedDay)
       applyLoadedHistory(history, history.loadMore !== null)
+      return true
     } catch (err) {
       // 時間軸が変わった後の失敗は誰も困っていない（ライブの「もっと見る」と同じ扱い）
       if (stale()) {
         log.debug('[data] 古い再生の追加読み込みが失敗（結果は破棄）', err)
-        return
+        return false
       }
       log.error('[data] 再生中の地震履歴の追加読み込みに失敗', err)
       setState(prev => ({ ...prev, loadMoreFailed: true }))
+      return false
     } finally {
       setState(prev => (prev.isLoadingMore ? { ...prev, isLoadingMore: false } : prev))
     }
   }, [applyLoadedHistory])
 
-  const loadMoreEarthquakes = useCallback(async () => {
-    if (stateRef.current.isLoadingMore || !stateRef.current.hasMore) return
+  /**
+   * 「もっと見る」の取得。**返す値は、読んだ結果を一覧へ反映したか**（読まずに返った・時間軸が変わって捨てた・失敗した
+   * なら false）。期間に合わせた自動の読み足しが、「読んだのに一番古い日が動かなかった」ときだけ止めるのに使う
+   * （→ `components/EarthquakeTab/index.tsx`）
+   */
+  const loadMoreEarthquakes = useCallback(async (): Promise<boolean> => {
+    if (stateRef.current.isLoadingMore || !stateRef.current.hasMore) return false
     // **再生中は再生の続きだけを読む**（→ `loadMoreReplayHistory`）。下のライブの経路はいまから遡る
-    if (replayActiveRef.current) {
-      await loadMoreReplayHistory()
-      return
-    }
+    if (replayActiveRef.current) return loadMoreReplayHistory()
     // **この取得が「まだ有効か」を測る物差し。**
     // 電文本体の取得は最長で数分かかる（→ `services/telegramBody.ts` の取得間隔）。そのあいだに
     // リプレイが始まる・接続が張り直されると、届いた電文は**別の時間軸の一覧**へ流し込まれる。
@@ -3872,7 +3884,7 @@ export function useEarthquakes(
         await waiting
         if (dmdataHistorySettledRef.current === waiting) break
       }
-      if (liveGenerationRef.current !== generation) return
+      if (liveGenerationRef.current !== generation) return false
       restRun = dmdataRestRunRef.current
       const before = historyCursorRef.current ?? serverDate()
       // **押すたびに新しい印を付けて取る**（`beginLoadMoreGateTag`）。ボタンが、この取得が門を
@@ -3884,7 +3896,7 @@ export function useEarthquakes(
         applyPartialMore, stale, beginLoadMoreGateTag(),
       )
       // 時間軸が変わっていたら、取れた分ごと捨てる（「取得中」の解除は finally が担う）
-      if (stale()) return
+      if (stale()) return false
       // **カーソルを進めるのは成功したときだけ。** 失敗（catch）や時間軸の変化では据え置き、
       // 次に押したとき同じ窓を読み直す。先に進めて失敗時に戻す形にすると、接続を張り直す
       // effect のリセット（`historyCursorRef.current = null`）を後から踏み潰しうる。
@@ -3893,8 +3905,10 @@ export function useEarthquakes(
       // 画面には何の痕跡も出ない。取得側は読み切った日をカーソルにするので（地震が 0 件の日も
       // 含む）、通常は在庫がある限り必ず進む。
       const nextCursor = historyCursorFromOldestDay(history.oldestLoadedDay)
-      if (nextCursor) historyCursorRef.current = nextCursor
-      else if (history.hasMore) {
+      if (nextCursor) {
+        historyCursorRef.current = nextCursor
+        setHistoryOldestDay(history.oldestLoadedDay)
+      } else if (history.hasMore) {
         // **429 の待機と本物の不具合を混ぜない。** 窓の最新の日が 429 の窓に入っていると
         // その日は読み切れず、カーソルは進まない —— それは待てば解ける正常な足踏みで、
         // 警告にすると解消するまで押すたび出続けて診断の価値が落ちる。
@@ -3909,13 +3923,14 @@ export function useEarthquakes(
       // それは「もっと古い在庫が無い」ことを何も意味しない。遡り幅の上限も見ない（件数で打ち切って
       // 読み残した日があってもボタンが死ぬ）。
       applyLoadedHistory(history, history.hasMore)
+      return true
     } catch (err) {
       // **時間軸が変わった後の失敗は「失敗」として記録しない。** 結果ごと捨てる取得なので、
       // 誰も困っていない。理由が本物なら新しい世代が同じ理由で失敗して、そちらが記録する。
       // 痕跡は詳細ログへ落とす。
       if (stale()) {
         log.debug('[data] 古い世代の追加読み込みが失敗（結果は破棄）', err)
-        return
+        return false
       }
       // 追加読み込みの失敗は画面では「増えなかった」だけに見える（初回ロード用の error state は
       // 触らない）。ユーザーが再度押せる状態に戻すだけなので、理由はログに残す。
@@ -3926,6 +3941,7 @@ export function useEarthquakes(
       // **画面にも出す。** 出さないと「押したのに何も起きない」だけに見え、もう一度押せば
       // 直るのか、これ以上遡れないのかが分からない。
       setState(prev => ({ ...prev, loadMoreFailed: true }))
+      return false
     } finally {
       // **「取得中」の解除は抜け道を作らず、必ずここで行う。**
       // 成功パスの `setState` の中に混ぜていた頃は、`stale()` での早期 return だけが解除を
@@ -4411,6 +4427,7 @@ export function useEarthquakes(
     replayLoadMoreAbortRef.current?.abort()
     replayLoadMoreAbortRef.current = null
     replayLoadMoreRef.current = null
+    setHistoryOldestDay(null)
     clearTestSimulationTimers()
     setState(prev => ({
       ...prev,
@@ -4477,6 +4494,7 @@ export function useEarthquakes(
     replayLoadMoreAbortRef.current?.abort()
     replayLoadMoreAbortRef.current = history.loadMore === null ? null : new AbortController()
     replayLoadMoreRef.current = history.loadMore
+    setHistoryOldestDay(history.oldestLoadedDay)
     const hasMore = history.loadMore !== null
     setState(prev => (prev.hasMore === hasMore ? prev : { ...prev, hasMore }))
     const quakes = history.quakes
@@ -4566,6 +4584,7 @@ export function useEarthquakes(
 
   return {
     ...state,
+    historyOldestDay,
     injectEvent: handleEvent,
     loadMoreEarthquakes,
     clearTelegramLog,

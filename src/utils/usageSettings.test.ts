@@ -30,7 +30,7 @@ describe('送る項目の決まりが、設定の読み込みと揃っている'
     }
     // 震度の表は「すべて」の -1 も持つ
     const scales = sorted(Object.keys(INTENSITY_LABELS).map(Number))
-    for (const name of ['notifyMinScale', 'ttsAlwaysReadScale', 'minDisplayScale', 'actionChecklistMinScale']) expect(choices(name)).toEqual(scales)
+    for (const name of ['notifyMinScale', 'ttsAlwaysReadScale', 'quakeListScaleMin', 'quakeListScaleMax', 'actionChecklistMinScale']) expect(choices(name)).toEqual(scales)
     expect(choices('timeSignalIntervalMin')).toEqual(sorted(TIME_SIGNAL_INTERVALS))
     expect(choices('timeSignalSound')).toEqual(sorted(TIME_SIGNAL_SOUNDS))
     expect(choices('timeSignalOrder')).toEqual(sorted(TIME_SIGNAL_ORDERS))

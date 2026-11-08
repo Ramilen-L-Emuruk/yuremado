@@ -9,6 +9,7 @@
 //
 // **どれも「電文が持っているのに画面へ出していなかった」もの。** 出し忘れても型検査は通り、
 // 例外も出ない —— 画面を見た人が気づくまで分からないので、ここで固定する。
+import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -63,7 +64,7 @@ function makeLpgm(infoName?: string): JMALpgm {
 
 const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => {
   const result = render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={selected ? quakeEventKey(quake) : null}
       selectSeq={0}
@@ -73,7 +74,7 @@ const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => 
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={() => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}
@@ -97,6 +98,13 @@ const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => 
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
+      filter={DEFAULT_QUAKE_LIST_FILTER}
+      onFilterChange={() => {}}
+      sort={DEFAULT_QUAKE_LIST_SORT}
+      onSortChange={() => {}}
+      filterSourceQuakes={[]}
+      shown
+      historyOldestDay={null}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}
