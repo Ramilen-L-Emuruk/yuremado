@@ -5,10 +5,11 @@ import { LoadMoreButton } from './LoadMoreButton'
 import { QuakeListHeader, QuakeListDayLabel } from './QuakeListRow'
 import { QuakeListFilterButton, QuakeListFilterDialog } from './QuakeListFilterBar'
 import {
-  clearQuakeListFilter, isQuakeListFiltered, nextQuakeListSort, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, sortQuakeList,
+  clearQuakeListFilter, isQuakeListFiltered, nextQuakeListSort, quakeListDayLabel, quakeListPeriodStartLabel, quakeListSection, sortQuakeList,
   type QuakeListFilter, type QuakeListSort, type QuakeSortKey,
 } from '../../utils/quakeListView'
 import { serverNow } from '../../utils/clock'
+import { addDays, missingRanges, periodDayRange, type DayRange, type HistoryDaysState } from '../../utils/historyDays'
 import { log } from '../../utils/logger'
 import { extractQuakeEventId, quakeEventKey } from '../../utils/quakeMerge'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
@@ -44,8 +45,15 @@ interface Props {
   onSortChange: (next: QuakeListSort) => void
   /** 地域の窓の一覧と件数を作る元（絞る前の、読み込んだ地震すべて）。 */
   filterSourceQuakes: readonly JMAQuake[]
-  /** 読み込んだ一番古い日（日本時間の `YYYY-MM-DD`）。期間の絞りの「〇〇以前は未読込みです。」に使う。 */
-  historyOldestDay: string | null
+  /**
+   * 履歴をどの日まで読んだか（今日から続く分と期間で読んだ日。→ `utils/historyDays.ts`）。期間の足りない日を出し、
+   * 「〇〇以前は未読込みです。」と期間の読み足しに使う。
+   */
+  historyDays: HistoryDaysState
+  /**
+   * 期間の読み足し（期間の足りない日の窓を 1 つ読む）。返す promise は `onLoadMore` と同じく、読んだ結果を一覧へ反映したかで解決する。
+   */
+  onLoadPeriod: (range: DayRange) => Promise<boolean>
   selectedId: string | null
   /**
    * 選択が呼ばれるたびに進む番号（→ App の `quakeSelectSeq`）。選ばれたカードにだけ渡す
@@ -200,7 +208,7 @@ interface Notice { text: string; tone: NoticeTone; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyDays, onLoadPeriod, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
@@ -213,26 +221,34 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   // 離れた描画で窓を出さず（open に false を渡す）、state は次の描画で掃除する
   useEffect(() => { if (!shown) setOpenFilter(false) }, [shown])
   const filterButton = <QuakeListFilterButton filter={filter} open={openFilter} onOpen={() => setOpenFilter(true)} />
-  // **期間の始まりが読み込んだ範囲より前なら、届くまで読み足す**（2026-11-08 ユーザー発言「期間で取得してない日付を設定できるのは
-  // おかしい」の後、選択「選んだら足りない日を読み込む (Recommended)」）。「もっと見る」と同じ口で 1 回 7 日ずつ進み、
-  // 読み込んだ一番古い日が動くたびにもう一度見る。地震タブを見ている間だけ走る。
-  // **止まる条件は 2 つ**: 読み込みに失敗した（`loadMoreFailed`）・読み込みが終わったのに一番古い日が動かなかった
-  // （429 の足踏み・カーソルが進まない日。失敗として現れないので、見ないと間隔なしに呼び続ける）。押し直しは「もっと見る」、
-  // 期間を選び直すか一番古い日が動けば自動に戻る
-  // 自動で読み足すのは期間の始まりが今日から 90 日前より新しいときだけ（→ `QUAKE_LIST_AUTO_LOAD_DAYS`）
+  // **期間の日のうち、まだ読んでいない日を読み足す**（2026-11-08 ユーザー選択「期間の日だけ取りに行く形を別に作る」・
+  // 「近い期間も別に読む (Recommended)」）。今日から途切れずには遡らず、期間の足りない日だけを新しい側から 1 回 7 日ずつ読む
+  // （→ `useEarthquakes` の `loadHistoryPeriod`）。足りない日が減るたびにもう一度見る。地震タブを見ている間だけ走る。
+  // **止まる条件は 3 つ**: 読み込みに失敗した（`loadMoreFailed`）・読んで一覧へ反映したのに足りない日が減らなかった（429 の足踏み）・
+  // 読まずに返ったまま足りない日が減らないことが 3 回続いた（手元の履歴アーカイブで再生していて読む先が無い）。後ろ 2 つは
+  // 失敗として現れないので、見ないと間隔なしに呼び続ける。読まずに返ったのを 1 回で止めないのは、起動時の履歴の取り直しや
+  // 時間軸の切り替えと重なると、読む前に捨てて返ることがあるため（そのまま止めると、期間の日を読まないまま止まる）。
+  // 押し直しは「もっと見る」（期間を選んでいる間は期間の続きを読む）、期間を選び直すか足りない日が減れば自動に戻る
   const nowMs = serverNow()
-  const unloadedBefore = quakeListUnloadedBefore(filter.period, historyOldestDay, nowMs)
-  const periodNeedsMore = unloadedBefore !== null && quakeListAutoLoadAllowed(filter.period, nowMs)
-  // 自動で呼んだときの一番古い日（呼んでいなければ undefined）。**終わりは呼んだ promise の解決で知る** —— 読み込み中の印
-  // （isLoadingMore）の移り変わりで見ると、印を立てずに返る経路（再生で続きの口が無い等）で控えが外れず、自動が止まったまま
-  // 「読み込んでいます…」を出し続ける。解決したら autoDoneSeq を進め、次の描画（取得で変わった一番古い日が載った後）で判定する
-  const autoFromRef = useRef<string | null | undefined>(undefined)
+  const periodRange = filter.period === null ? null : periodDayRange(filter.period, nowMs)
+  const missing = periodRange === null ? [] : missingRanges(periodRange, historyDays.main, historyDays.islands)
+  // 足りない日の形（減ったかを見る物差し。日付の文字列なので描き直しのたびに作っても依存が揺れない）
+  const missingKey = missing.map(r => `${r.from}~${r.to}`).join(',')
+  const periodNeedsMore = missing.length > 0
+  // 自動で呼んだときの足りない日の形（呼んでいなければ undefined）。**終わりは呼んだ promise の解決で知る** —— 読み込み中の印
+  // （isLoadingMore）の移り変わりで見ると、印を立てずに返る経路（再生で読む先が無い等）で控えが外れず、自動が止まったまま
+  // 「読み込んでいます…」を出し続ける。解決したら autoDoneSeq を進め、次の描画（取得で変わった読んだ日が載った後）で判定する
+  const autoFromRef = useRef<string | undefined>(undefined)
+  // 自動で呼んだ取得が、読んだ結果を一覧へ反映したか（読まずに返った・捨てた・失敗したなら false）
+  const autoAppliedRef = useRef(false)
+  // 読まずに返ったまま足りない日が減らなかった回数（減ったら 0 へ戻す）
+  const autoIdleRef = useRef(0)
   const [autoDoneSeq, setAutoDoneSeq] = useState(0)
   const seenDoneSeqRef = useRef(0)
-  // 自動で呼んだ取得が、読んだ結果を一覧へ反映したか（読まずに返った・捨てた・失敗したなら false。進まなかったとは見なさない）
-  const autoAppliedRef = useRef(false)
   const [autoStalled, setAutoStalled] = useState(false)
-  useEffect(() => { setAutoStalled(false) }, [filter.period, historyOldestDay])
+  // 期間を選び直した・足りない日が減った・時間軸が変わって読んだ日が作り直された（接続の張り直しや再生の切り替え）ら自動に戻す。
+  // 張り直しと重なって止まったまま、同じ期間を二度と読まない形にしない
+  useEffect(() => { setAutoStalled(false) }, [filter.period, missingKey, historyDays.top, historyDays.main?.from])
   useEffect(() => {
     if (autoDoneSeq !== seenDoneSeqRef.current) {
       seenDoneSeqRef.current = autoDoneSeq
@@ -240,31 +256,43 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
       const applied = autoAppliedRef.current
       autoFromRef.current = undefined
       autoAppliedRef.current = false
-      // 止めるのは「まだ読む必要があり、失敗でもないのに一番古い日が動かなかった」ときだけ（失敗は loadMoreFailed が止める。
-      // 期間を外した・90 日より古くした後に返ったなら止める理由が無い）
-      if (applied && from !== undefined && from === historyOldestDay && periodNeedsMore && hasMore && !loadMoreFailed) {
-        log.warn(`[地震タブ] 期間に合わせた読み足しで、読み込んだ一番古い日が ${historyOldestDay ?? '（なし）'} から動かなかったので止めた`)
+      // 止めるのは「まだ読む必要があり、失敗でもないのに足りない日が減らなかった」ときだけ（失敗は loadMoreFailed が止める。
+      // 期間を外した・選び直した後に返ったなら、形が変わっているので止まらない）
+      const unchanged = from !== undefined && from === missingKey && periodNeedsMore && !loadMoreFailed
+      autoIdleRef.current = unchanged && !applied ? autoIdleRef.current + 1 : 0
+      if (unchanged && (applied || autoIdleRef.current >= 3)) {
+        log.warn(`[地震タブ] 期間の読み足しで、足りない日（${missingKey}）が減らなかったので止めた（${applied ? '読んだのに減らない' : '読まずに返るのが 3 回続いた'}）`)
+        autoIdleRef.current = 0
         setAutoStalled(true)
         return
       }
     }
     // 呼んだ結果がまだ返っていない間は呼ばない（StrictMode の二度目の effect でも二重に呼ばない）
     if (autoFromRef.current !== undefined) return
-    if (!shown || !periodNeedsMore || !hasMore || isLoadingMore || loadMoreFailed || autoStalled) return
-    autoFromRef.current = historyOldestDay
-    onLoadMore()
-      .then(applied => { autoAppliedRef.current = applied }, () => { autoAppliedRef.current = false /* 失敗は onLoadMore が loadMoreFailed と記録に残す */ })
-      .finally(() => setAutoDoneSeq(s => s + 1))
-  }, [shown, periodNeedsMore, historyOldestDay, hasMore, isLoadingMore, loadMoreFailed, autoStalled, autoDoneSeq, onLoadMore])
+    // 起動時の履歴を読んでいる間は待つ（同じ窓を並んで読みに行き、取り直しと重なって捨てられる）
+    if (!shown || !periodNeedsMore || periodRange === null || isLoading || isLoadingMore || loadMoreFailed || autoStalled) return
+    autoFromRef.current = missingKey
+    onLoadPeriod(periodRange)
+      .then(applied => { autoAppliedRef.current = applied }, () => { autoAppliedRef.current = false /* 失敗は onLoadPeriod が loadMoreFailed と記録に残す */ })
+      .finally(() => setAutoDoneSeq(n => n + 1))
+    // periodRange は missingKey と filter.period から決まる（オブジェクトの同一性では見ない）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown, periodNeedsMore, missingKey, isLoading, isLoadingMore, loadMoreFailed, autoStalled, autoDoneSeq, onLoadPeriod])
   // 読み足しの様子（2026-11-08 選択「読み込み中と止まった後を分けて出す (Recommended)」）。読み込み中は期間の始まりまで読んでいる途中、
-  // 止まった後（失敗・進まない・90 日より古い期間）は読めた範囲を添える。どちらでもなければ出さない。もう遡れない（hasMore が偽）なら注記も出さない
-  const autoLoading = shown && periodNeedsMore && hasMore && !loadMoreFailed && !autoStalled
-  const oldestLabel = historyOldestDay === null ? null : `${Number(historyOldestDay.slice(5, 7))}月${Number(historyOldestDay.slice(8, 10))}日`
-  const loadNote = unloadedBefore === null || !hasMore || filter.period === null
+  // 止まった後（失敗・減らない）は読めた範囲を添える。足りない日が無ければ出さない
+  const autoLoading = shown && periodNeedsMore && !loadMoreFailed && !autoStalled
+  // 足りない日の一番新しい日（期間は新しい側から読むので、そこから前が未読込み）
+  const newestMissing = missing[0]?.to ?? null
+  const loadNote = filter.period === null || newestMissing === null
     ? null
     : autoLoading
       ? { note: `${quakeListPeriodStartLabel(filter.period, nowMs)}まで読み込んでいます…`, countSuffix: '（読み込み中）', loading: true }
-      : { note: `${unloadedBefore}以前は未読込みです。`, countSuffix: oldestLabel === null ? '' : `（${oldestLabel}以降を読込済み）`, loading: false }
+      : { note: `${quakeListDayLabel(newestMissing)}以前は未読込みです。`, countSuffix: `（${quakeListDayLabel(addDays(newestMissing, 1))}以降を読込済み）`, loading: false }
+  // 「もっと見る」が読むもの。期間を選んでいる間は期間の続き（足りない日が無ければ出さない）、外しているときは今日から続く分を遡る
+  // （2026-11-08 選択「期間の続きを読む (Recommended)」）
+  const loadMoreAction: (() => Promise<boolean>) | null = periodRange !== null
+    ? (periodNeedsMore ? () => onLoadPeriod(periodRange) : null)
+    : (hasMore ? onLoadMore : null)
   const filterDialog = <QuakeListFilterDialog filter={filter} onChange={onFilterChange} quakes={filterSourceQuakes} open={shown && openFilter} onClose={() => setOpenFilter(false)} shownCount={matchedCount} totalCount={filterSourceQuakes.length} loadNote={loadNote} />
   const withDialog = (screen: React.ReactNode) => <>{filterDialog}{screen}</>
   // 一覧が空・読み込み中・取得失敗の画面にも、一覧と同じ見出しの行（漏斗と並べ替えの欄）を上に置く。置かないと、絞りで空になったとき
@@ -399,9 +427,9 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
         {/* **空でも「もっと見る」を出す。** 絞りを掛けていて、読んだ範囲に条件に合う地震が無いと
             一覧は空になるが、遡れば出る地震はある。出さないと押す口が無くなる（2026-11-03 ユーザー選択
             「空でもボタンを出す (Recommended)」。1 回に読む日数も文面も一覧の末尾と同じ） */}
-        {hasMore && (
+        {loadMoreAction !== null && (
           <div className="p-2 roomy:p-3">
-            <LoadMoreButton onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
+            <LoadMoreButton onLoadMore={loadMoreAction} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
           </div>
         )}
       </div>
@@ -497,10 +525,10 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
        </section>
       ))}
       {unloadedNotice}
-      {hasMore && (
-        <LoadMoreButton onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
+      {loadMoreAction !== null && (
+        <LoadMoreButton onLoadMore={loadMoreAction} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
       )}
-      {!hasMore && earthquakes.length > 0 && (
+      {periodRange === null && !hasMore && earthquakes.length > 0 && (
         // 「すべての履歴」とは書かない。**止まる理由は経路で違う**（`useEarthquakes` の `hasMore`）。
         // ライブはアーカイブの目録が空になったとき（在庫の端。地震津波関連は 2020-11-18 から）。
         // 再生中は続きを読む口が

@@ -13,6 +13,7 @@ import { quakeEventKey } from '../../utils/quakeMerge'
 import type { IssueType, JMAInternationalTsunami, JMAQuake } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
 import { internationalTsunamiIndex } from '../../utils/internationalTsunami'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 afterEach(cleanup)
 
@@ -87,7 +88,7 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       onSortChange={() => {}}
       filterSourceQuakes={[]}
       shown
-      historyOldestDay={null}
+      historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

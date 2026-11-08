@@ -9,6 +9,7 @@ import { useSubRegions } from '../../hooks/useSubRegions'
 import { serverNow } from '../../utils/clock'
 import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 import { areaPrefIndexOf, getStationCoordsCache, onStationCoordsLoaded, regionOrderIndexOf, regionOrderRank, type StationCoordsData } from '../../utils/stationCoords'
+import { clampPeriodRange } from '../../utils/historyDays'
 import {
   clearQuakeListFilter, QUAKE_DEPTH_RANGE, QUAKE_LIST_TYPES, QUAKE_MAGNITUDE_RANGE, QUAKE_PERIOD_HOURS, QUAKE_SCALE_STEPS,
   isQuakeListFiltered, quakeFilterChipLabels, quakeRegionBlocks, quakeRegionGroups, type QuakeRegionOption,
@@ -304,9 +305,17 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
   const from = p?.kind === 'range' ? p.from : today
   const to = p?.kind === 'range' ? p.to : today
   const setRange = (a: string, b: string) => onChange({ ...filter, period: { kind: 'range', from: a, to: b } })
-  // 逆転したら、打った欄はそのままにして反対の欄を同じ日へ寄せる（2026-11-07 ユーザー選択「もう片方を同じ日に寄せる (Recommended)」）
-  const setFrom = (v: string) => setRange(v, v > to ? v : to)
-  const setTo = (v: string) => setRange(v < from ? v : from, v)
+  // 長さの上限で寄せたときだけ、日付の欄の下に注記を出す（次に打つまで残す。2026-11-08 選択「寄せて注記も出す」）
+  const [clampedByLength, setClampedByLength] = useState(false)
+  // 打った欄はそのままにして反対の欄を寄せる。前後が逆なら同じ日へ（2026-11-07 ユーザー選択「もう片方を同じ日に寄せる (Recommended)」）、
+  // 両端を含めて 90 日を超えたら 90 日の内へ（→ `clampPeriodRange`）
+  const commit = (a: string, b: string, edited: 'from' | 'to') => {
+    const r = clampPeriodRange(a, b, edited, today)
+    setClampedByLength(r.clampedByLength)
+    setRange(r.from, r.to)
+  }
+  const setFrom = (v: string) => commit(v, to, 'from')
+  const setTo = (v: string) => commit(from, v, 'to')
   const chip = (on: boolean) => `rounded-md border px-2 py-0.5 ${on ? 'border-blue-500 bg-blue-500/20 text-white' : 'border-border hover:bg-white/10'}`
   return (
     <div>
@@ -327,6 +336,7 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
           <DateField label="期間の終了日" value={to} min={PERIOD_MIN_DAY} max={today} onCommit={setTo} className={DATE_INPUT_CLASS} />
         </div>
       )}
+      {custom && clampedByLength && <p className="mt-1.5 text-xs text-secondary">期間は90日までです。</p>}
     </div>
   )
 }

@@ -2495,7 +2495,8 @@ describe('リプレイ開始時の地震カード', () => {
             quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00'),
           ],
         }),
-        loadMore: null,
+        topDay: '2026-08-10',
+        fetchWindow: null,
       })
     })
 
@@ -2508,8 +2509,8 @@ describe('リプレイ開始時の地震カード', () => {
     const h = setup({ offset: null })
     await h.flush()
 
-    act(() => { h.current.restoreQuakeHistory({ ...history({ quakes: [quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')] }), loadMore: null }) })
-    act(() => { h.current.restoreQuakeHistory({ ...history({ quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')] }), loadMore: null }) })
+    act(() => { h.current.restoreQuakeHistory({ ...history({ quakes: [quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')] }), topDay: '2026-08-10', fetchWindow: null }) })
+    act(() => { h.current.restoreQuakeHistory({ ...history({ quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')] }), topDay: '2026-08-10', fetchWindow: null }) })
 
     expect(h.current.earthquakes).toHaveLength(2)
   })
@@ -2544,13 +2545,14 @@ describe('再生中の「もっと見る」', () => {
     }
   }
 
-  /** リプレイの履歴（続きの口つき）。 */
+  /** リプレイの履歴（窓を読む口つき）。上端の日は再生を始めた日（このテストの電文の日）。 */
   function replayHistory(
     opts: Parameters<typeof history>[0],
-    loadMore: ReplayQuakeHistoryResult['loadMore'],
+    fetchWindow: ReplayQuakeHistoryResult['fetchWindow'],
   ): ReplayQuakeHistoryResult {
-    return { ...history(opts), loadMore }
+    return { ...history(opts), topDay: '2026-08-10', fetchWindow }
   }
+  type FetchWindow = NonNullable<ReplayQuakeHistoryResult['fetchWindow']>
 
   const loggedTelegrams = () =>
     drainReplayEvents().events.filter((e): e is ReplayTelegramEvent => e.type === 'telegram')
@@ -2561,35 +2563,41 @@ describe('再生中の「もっと見る」', () => {
   })
   afterEach(() => { __resetReplayEventLogForTest() })
 
-  it('正: 押すと続きの口で読み、カードを足し、帯は当てずに記録だけ残す', async () => {
+  it('正: 押すと窓を読む口で読み、カードを足し、帯は当てずに記録だけ残す', async () => {
     const h = setup({ offset: 0 })
     await h.flush()
-    const second = vi.fn(async () => replayHistory({}, null))
-    const first = vi.fn(async (_signal: AbortSignal | null) => replayHistory({
-      quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')],
-      extras: [extra({ kind: 'nankai', data: nankaiData('n-replay-more') })],
-    }, second))
+    const fetchWindow = vi.fn<FetchWindow>()
+      .mockResolvedValueOnce(history({
+        hasMore: true, oldestLoadedDay: '2026-08-02',
+        quakes: [quakeTelegram('20260803010000', '2026-08-03T01:05:00+09:00')],
+        extras: [extra({ kind: 'nankai', data: nankaiData('n-replay-more') })],
+      }))
+      .mockResolvedValueOnce(history({ hasMore: false, oldestLoadedDay: '2026-07-25' }))
     act(() => {
       h.current.restoreQuakeHistory(replayHistory({
+        hasMore: true, oldestLoadedDay: '2026-08-10',
         quakes: [quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')],
-      }, first))
+      }, fetchWindow))
     })
     expect(h.current.hasMore).toBe(true)
 
     await act(async () => { await h.current.loadMoreEarthquakes() })
 
-    expect(first).toHaveBeenCalledTimes(1)
+    // 今日から続く分（8/10 から）のすぐ前の窓を読む: 上端は 8/9 の終わり、その前 7 日
+    expect(fetchWindow).toHaveBeenCalledTimes(1)
+    expect(fetchWindow.mock.calls[0][0].toISOString()).toBe(new Date(Date.parse('2026-08-10T00:00:00+09:00') - 1).toISOString())
+    expect(fetchWindow.mock.calls[0][1]).toBe(HISTORY_WINDOW_DAYS)
     expect(h.current.earthquakes).toHaveLength(2)
     // 帯は当てない（古い日の帯で今の帯を上書きしない）。届いた事実は記録する
     expect(h.current.nankai).toBeNull()
     const notDispatched = loggedTelegrams().filter(t => t.kind === 'nankai' && t.skipped === 'notDispatched')
     expect(notDispatched).toHaveLength(1)
-    // 続きの口が残っているので、まだ押せる。押すと次の口を読む
+    // まだ遡れるので押せる。押すと、読み切った日（8/2）の前から読む
     expect(h.current.hasMore).toBe(true)
     await act(async () => { await h.current.loadMoreEarthquakes() })
-    expect(second).toHaveBeenCalledTimes(1)
-    expect(first).toHaveBeenCalledTimes(1)
-    // 次の口が無ければ畳む
+    expect(fetchWindow).toHaveBeenCalledTimes(2)
+    expect(fetchWindow.mock.calls[1][0].toISOString()).toBe(new Date(Date.parse('2026-08-02T00:00:00+09:00') - 1).toISOString())
+    // 在庫の端なら畳む
     expect(h.current.hasMore).toBe(false)
     // ライブの経路（いまから遡る）は通らない
     expect(fetchDmdataQuakeHistory).not.toHaveBeenCalled()
@@ -2607,7 +2615,7 @@ describe('再生中の「もっと見る」', () => {
       areas: [{ grade: 'Watch', immediate: false, name: 'テスト沿岸' }],
     }
     act(() => {
-      h.current.restoreQuakeHistory(replayHistory({}, async () => replayHistory({ tsunamis: [tsunami] }, null)))
+      h.current.restoreQuakeHistory(replayHistory({ hasMore: true }, async () => history({ tsunamis: [tsunami] })))
     })
 
     await act(async () => { await h.current.loadMoreEarthquakes() })
@@ -2643,50 +2651,56 @@ describe('再生中の「もっと見る」', () => {
   })
 
   // 静かな期間から始めた再生でも、その手前へ遡れる
-  it('正: 地震が 0 件の履歴でも、続きの口があれば「もっと見る」を出す', async () => {
+  it('正: 地震が 0 件の履歴でも、読む口があってまだ遡れるなら「もっと見る」を出す', async () => {
     const h = setup({ offset: 0 })
     await h.flush()
 
-    act(() => { h.current.restoreQuakeHistory(replayHistory({}, async () => replayHistory({}, null))) })
+    act(() => { h.current.restoreQuakeHistory(replayHistory({ hasMore: true }, async () => history({}))) })
 
     expect(h.current.earthquakes).toHaveLength(0)
     expect(h.current.hasMore).toBe(true)
   })
 
   // ローカル履歴アーカイブは収録範囲の外を持たない
-  it('対照: 続きの口が無ければ「もっと見る」を出さず、押しても何も読まない', async () => {
+  it('対照: 読む口が無ければ「もっと見る」を出さず、押しても期間を読んでも何も読まない', async () => {
     const h = setup({ offset: 0 })
     await h.flush()
     act(() => {
       h.current.restoreQuakeHistory(replayHistory({
+        hasMore: true,
         quakes: [quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')],
       }, null))
     })
 
     expect(h.current.hasMore).toBe(false)
     await act(async () => { await h.current.loadMoreEarthquakes() })
+    let periodApplied: boolean | null = null
+    await act(async () => { periodApplied = await h.current.loadHistoryPeriod({ from: '2026-07-01', to: '2026-07-10' }) })
+    expect(periodApplied).toBe(false)
     expect(fetchDmdataQuakeHistory).not.toHaveBeenCalled()
     expect(h.current.earthquakes).toHaveLength(1)
   })
 
-  it('対照: 読めなかったら失敗を出し、同じ口のまま押し直せる', async () => {
+  it('対照: 読めなかったら失敗を出し、同じ窓を押し直せる', async () => {
     const h = setup({ offset: 0 })
     await h.flush()
-    const more = vi.fn<(signal: AbortSignal | null) => Promise<ReplayQuakeHistoryResult>>()
+    const fetchWindow = vi.fn<FetchWindow>()
       .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce(replayHistory({ quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')] }, null))
-    act(() => { h.current.restoreQuakeHistory(replayHistory({}, more)) })
+      .mockResolvedValueOnce(history({ hasMore: true, quakes: [quakeTelegram('20260803010000', '2026-08-03T01:05:00+09:00')] }))
+    act(() => { h.current.restoreQuakeHistory(replayHistory({ hasMore: true, oldestLoadedDay: '2026-08-10' }, fetchWindow)) })
 
     await act(async () => { await h.current.loadMoreEarthquakes() })
     expect(h.current.loadMoreFailed).toBe(true)
     expect(h.current.hasMore).toBe(true)
     expect(h.current.isLoadingMore).toBe(false)
 
-    // 読んだ結果を一覧へ反映したら true を返す（期間に合わせた自動の読み足しが「読んだのに進まない」を見分けるのに使う）
+    // 読んだ結果を一覧へ反映したら true を返す（自動の読み足しが「読んだのに進まない」を見分けるのに使う）
     let applied: boolean | null = null
     await act(async () => { applied = await h.current.loadMoreEarthquakes() })
     expect(applied).toBe(true)
-    expect(more).toHaveBeenCalledTimes(2)
+    expect(fetchWindow).toHaveBeenCalledTimes(2)
+    // 失敗した窓と同じ窓を読み直す
+    expect(fetchWindow.mock.calls[1][0].getTime()).toBe(fetchWindow.mock.calls[0][0].getTime())
     expect(h.current.loadMoreFailed).toBe(false)
     expect(h.current.earthquakes).toHaveLength(1)
   })
@@ -2694,13 +2708,13 @@ describe('再生中の「もっと見る」', () => {
   it('安全弁: 読んでいる間にリセットしたら、届いた続きを入れず、取得を打ち切る', async () => {
     const h = setup({ offset: 0 })
     await h.flush()
-    let resolveMore: (r: ReplayQuakeHistoryResult) => void = () => {}
+    let resolveMore: (r: ReturnType<typeof history>) => void = () => {}
     let passedSignal: AbortSignal | null = null
-    const more = vi.fn((signal: AbortSignal | null) => {
+    const fetchWindow = vi.fn<FetchWindow>((_before, _maxDays, signal) => {
       passedSignal = signal
-      return new Promise<ReplayQuakeHistoryResult>(resolve => { resolveMore = resolve })
+      return new Promise(resolve => { resolveMore = resolve })
     })
-    act(() => { h.current.restoreQuakeHistory(replayHistory({}, more)) })
+    act(() => { h.current.restoreQuakeHistory(replayHistory({ hasMore: true }, fetchWindow)) })
 
     let pressed: Promise<boolean> = Promise.resolve(false)
     let pressedResult: boolean | null = null
@@ -2708,9 +2722,10 @@ describe('再生中の「もっと見る」', () => {
     act(() => { h.current.resetState() })
     expect((passedSignal as AbortSignal | null)?.aborted).toBe(true)
     await act(async () => {
-      resolveMore(replayHistory({
+      resolveMore(history({
+        hasMore: true,
         quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')],
-      }, async () => replayHistory({}, null)))
+      }))
       pressedResult = await pressed
     })
 
@@ -2721,9 +2736,9 @@ describe('再生中の「もっと見る」', () => {
     expect(h.current.isLoadingMore).toBe(false)
   })
 
-  // 再生中に続きの口が無い状態で押されても、ライブの経路（いまから遡る）へ落とさない。
+  // 再生中に読む口が無い状態で押されても、ライブの経路（いまから遡る）へ落とさない。
   // ライブで立った「もっと見る」が残ったまま再生へ切り替わった形で作る（App はリセットを挟むが、フックは頼らない）
-  it('安全弁: 再生中に続きの口が無ければ、ライブの「もっと見る」があっても、いまから遡らない', async () => {
+  it('安全弁: 再生中に読む口が無ければ、ライブの「もっと見る」があっても、いまから遡らない', async () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ hasMore: true }))
     const h = setup({ offset: null })
     await h.flush()
@@ -2736,6 +2751,33 @@ describe('再生中の「もっと見る」', () => {
 
     expect(fetchDmdataQuakeHistory).not.toHaveBeenCalled()
     expect(h.current.hasMore).toBe(false)
+  })
+
+  // 期間の読み足しも同じ口で読み、再生時刻より後の日は読まない
+  it('正: 期間の読み足しは、足りない日の新しい側から窓を読み、期間で読んだ日として持つ', async () => {
+    const h = setup({ offset: 0 })
+    await h.flush()
+    const fetchWindow = vi.fn<FetchWindow>(async (before, maxDays) => history({
+      hasMore: true,
+      // 窓の日を全部読み切った形（上端の日からその前 maxDays 日）
+      oldestLoadedDay: new Date(before.getTime() - maxDays * 86_400_000 + 9 * 3_600_000).toISOString().slice(0, 10),
+    }))
+    act(() => { h.current.restoreQuakeHistory(replayHistory({ hasMore: true, oldestLoadedDay: '2026-08-03' }, fetchWindow)) })
+
+    let applied: boolean | null = null
+    await act(async () => { applied = await h.current.loadHistoryPeriod({ from: '2026-06-01', to: '2026-06-10' }) })
+
+    expect(applied).toBe(true)
+    // 足りない日（6/1〜6/10）の新しい側の窓: 上端は 6/10 の終わり、その前 7 日（6/3 まで）
+    expect(fetchWindow.mock.calls[0][0].toISOString()).toBe(new Date(Date.parse('2026-06-11T00:00:00+09:00') - 1).toISOString())
+    expect(fetchWindow.mock.calls[0][1]).toBe(HISTORY_WINDOW_DAYS)
+    // 今日から続く分（8/3〜8/10）は伸びず、6/3〜6/10 が期間で読んだ日になる
+    expect(h.current.historyDays.main).toEqual({ from: '2026-08-03', to: '2026-08-10' })
+    expect([...h.current.historyDays.islands.keys()].sort()).toEqual(
+      ['2026-06-03', '2026-06-04', '2026-06-05', '2026-06-06', '2026-06-07', '2026-06-08', '2026-06-09', '2026-06-10'],
+    )
+    // 期間で読んだ窓は「もっと見る」の続き（在庫の端か）を変えない
+    expect(h.current.hasMore).toBe(true)
   })
 })
 
@@ -2762,10 +2804,22 @@ describe('「もっと見る」で遡れる範囲', () => {
     return vi.mocked(fetchDmdataQuakeHistory).mock.calls.map(c => c[2])
   }
 
-  /** 呼ばれたときの窓の上端（第 2 引数＝カーソル）を ISO で順に返す。 */
+  /** 呼ばれたときの窓の上端（第 2 引数）を ISO で順に返す。 */
   function requestedBefore(): string[] {
     return vi.mocked(fetchDmdataQuakeHistory).mock.calls.map(c => c[1].toISOString())
   }
+
+  /** 窓の日を全部読み切った形の結果（読み切った最古の日＝上端の日の maxDays 日前）。 */
+  function readWholeWindow(over: Parameters<typeof history>[0] = {}) {
+    vi.mocked(fetchDmdataQuakeHistory).mockImplementation(async (_endpoint, before, maxDays) => history({
+      hasMore: true,
+      oldestLoadedDay: new Date(before.getTime() - maxDays * 86_400_000 + 9 * 3_600_000).toISOString().slice(0, 10),
+      ...over,
+    }))
+  }
+
+  /** その日（日本時間）の 0 時の 1ms 前を ISO で。 */
+  const endOfDayBefore = (day: string) => new Date(Date.parse(`${day}T00:00:00+09:00`) - 1).toISOString()
 
   beforeEach(() => {
     // 呼び出し履歴（`requestedDays` / `requestedBefore`）を見るので、前のテストのぶんを消して
@@ -2794,16 +2848,16 @@ describe('「もっと見る」で遡れる範囲', () => {
     await h.flush()
 
     // **`setup()` の初回取得より後に仕込む**（理由は下の「取得中の解除」テストと同じ）。
-    vi.mocked(fetchDmdataQuakeHistory)
-      .mockResolvedValueOnce(history({ hasMore: true, oldestLoadedDay: '2026-08-20' }))
-      .mockResolvedValue(history({ hasMore: true, oldestLoadedDay: '2026-08-01' }))
+    readWholeWindow()
 
     await act(async () => { await h.current.loadMoreEarthquakes() })
+    const afterFirst = h.current.historyDays.main
     await act(async () => { await h.current.loadMoreEarthquakes() })
 
     // 上端は「前回読み切った最古の日の 00:00 JST の 1ms 前」
     const [, , third] = requestedBefore()
-    expect(third).toBe(new Date(Date.parse('2026-08-20T00:00:00+09:00') - 1).toISOString())
+    expect(afterFirst).not.toBeNull()
+    expect(third).toBe(endOfDayBefore(afterFirst!.from))
   })
 
   // 「もっと見る」の取得にだけ門の印を付ける。ボタンはこの印の待ちだけを数えるので
@@ -2829,15 +2883,13 @@ describe('「もっと見る」で遡れる範囲', () => {
   // 読み直す作りで、遡るほど 1 回の解析量が増えていた。
   it('正: 窓の幅は毎回一定', async () => {
     const h = setup({ offset: null })
-    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(
-      history({ hasMore: true, oldestLoadedDay: '2026-08-20' }),
-    )
+    readWholeWindow()
     await h.flush()
 
     await act(async () => { await h.current.loadMoreEarthquakes() })
     await act(async () => { await h.current.loadMoreEarthquakes() })
 
-    // 初回（起動時）だけは起動用の短い窓、以後は「もっと見る」の窓
+    // 初回（起動時）も「もっと見る」も同じ幅の窓
     expect(requestedDays().slice(1)).toEqual([HISTORY_WINDOW_DAYS, HISTORY_WINDOW_DAYS])
   })
 
@@ -2932,29 +2984,24 @@ describe('「もっと見る」で遡れる範囲', () => {
   it('安全弁: 失敗したらカーソルを進めず、押し直しで同じ範囲を読む', async () => {
     const h = setup({ offset: null })
     await h.flush()
-    // 1 回目を成功させてカーソルを進めておく（進んでいない状態では「据え置き」を確かめられない）
-    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValueOnce(
-      history({ hasMore: true, oldestLoadedDay: '2026-08-20' }),
-    )
+    // 1 回目を成功させて読んだ日を進めておく（進んでいない状態では「据え置き」を確かめられない）
+    readWholeWindow()
     await act(async () => { await h.current.loadMoreEarthquakes() })
+    const afterFirst = h.current.historyDays.main
 
     vi.mocked(fetchDmdataQuakeHistory).mockRejectedValueOnce(new Error('取得に失敗'))
     await act(async () => { await h.current.loadMoreEarthquakes() })
     expect(h.current.isLoadingMore).toBe(false)
     expect(h.current.hasMore).toBe(true)
 
-    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(
-      history({
-        hasMore: true, oldestLoadedDay: '2026-08-01',
-        quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')],
-      }),
-    )
+    readWholeWindow({ quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')] })
     await act(async () => { await h.current.loadMoreEarthquakes() })
 
     // 失敗した回と、その次の回が同じ上端を要求している（先へ飛ばさない）
     const [, , failed, retried] = requestedBefore()
     expect(retried).toBe(failed)
-    expect(failed).toBe(new Date(Date.parse('2026-08-20T00:00:00+09:00') - 1).toISOString())
+    expect(afterFirst).not.toBeNull()
+    expect(failed).toBe(endOfDayBefore(afterFirst!.from))
     expect(h.current.earthquakes).toHaveLength(1)
   })
 
