@@ -53,7 +53,7 @@ function makeQuake(points: EarthquakePoint[], cities: JMAQuakeCity[] = CITIES): 
 
 const renderTab = async (quake: JMAQuake) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
     selectSeq={0}

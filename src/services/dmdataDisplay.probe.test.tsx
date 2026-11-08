@@ -205,7 +205,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
   if (/^VXSE5[123]$|^VXSE61$/.test(type)) {
     const q = ev as JMAQuake
     const dom = await renderText(
-      <EarthquakeTab {...earthquakeTabProps()} earthquakes={[q]} selectedId={quakeEventKey(q)}
+      <EarthquakeTab matchedCount={0} {...earthquakeTabProps()} earthquakes={[q]} selectedId={quakeEventKey(q)}
  selectSeq={0}
         lpgmByEventId={new Map<string, JMALpgm>()} activeLpgmEventId={null} />,
     )
@@ -227,7 +227,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
       points: [],
     } as unknown as JMAQuake
     const dom = await renderText(
-      <EarthquakeTab {...earthquakeTabProps()} earthquakes={[shell]} selectedId={quakeEventKey(shell)}
+      <EarthquakeTab matchedCount={0} {...earthquakeTabProps()} earthquakes={[shell]} selectedId={quakeEventKey(shell)}
  selectSeq={0}
         lpgmByEventId={new Map([[eid, l]])} activeLpgmEventId={eid} />,
     )

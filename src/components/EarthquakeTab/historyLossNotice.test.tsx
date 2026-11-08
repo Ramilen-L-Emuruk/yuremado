@@ -64,7 +64,7 @@ async function renderTab(opts: {
 }) {
   const earthquakes = opts.earthquakes ?? [QUAKE]
   const result = render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={earthquakes}
       selectedId={earthquakes[0] ? quakeEventKey(earthquakes[0]) : null}
       selectSeq={0}

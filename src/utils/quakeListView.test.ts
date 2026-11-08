@@ -5,7 +5,8 @@ import { sanitize } from '../hooks/useSettings'
 import {
   DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SETTINGS, nextQuakeListSort, passesQuakeListFilter, quakeFilterChipLabels,
   quakeListFilterOf, quakeListFilterSettings, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, quakeRegionBlocks, quakeRegionGroups, sortQuakeList,
-  type QuakeFilterContext, type QuakeListFilter, keepIfSame, withLatestPinned, observedAreas } from './quakeListView'
+  type QuakeFilterContext, type QuakeListFilter, keepIfSame, withLatestPinned, observedAreas,
+  clearQuakeListFilter, wantsAttachedTypes, quakeListMatchedCount } from './quakeListView'
 
 interface QuakeOpts {
   id: string
@@ -48,6 +49,7 @@ function ctx(over: Partial<QuakeFilterContext> = {}): QuakeFilterContext {
     nowMs: NOW,
     pinnedKeys: new Set(),
     keyOf: q => q.id,
+    attachedTypesOf: () => [],
     areaPrefIndex: null,
     ...over,
   }
@@ -86,7 +88,7 @@ describe('絞り込み', () => {
   it('固定した地震だけはどの絞りでも残す', () => {
     const qs = [quake({ id: 'n', scale: 10 }), quake({ id: 'x', scale: 10 })]
     const c = ctx({ pinnedKeys: new Set(['n']) })
-    expect(pass(qs, filter({ scale: { min: 40, max: null }, region: { basis: 'epicenter', names: ['三陸沖'] } }), c)).toEqual(['n'])
+    expect(pass(qs, filter({ scale: { min: 40, max: null }, region: { basis: 'epicenter', names: ['三陸沖'], view: 'list' } }), c)).toEqual(['n'])
     expect(pass(qs, DEFAULT_QUAKE_LIST_FILTER, c)).toEqual(['n', 'x'])
   })
 
@@ -106,11 +108,11 @@ describe('絞り込み', () => {
   // 正: 震央地名と、震度を観測した地域（細分区域）を切り替える
   it('地域は震央地名か、震度を観測した地域で絞る', () => {
     const q = quake({ id: 'q', name: '茨城県南部', points: [{ isArea: true, addr: '栃木県南部' }, { area: '千葉県北西部' }] })
-    expect(pass([q], filter({ region: { basis: 'epicenter', names: ['茨城県南部'] } }))).toEqual(['q'])
-    expect(pass([q], filter({ region: { basis: 'epicenter', names: ['栃木県南部'] } }))).toEqual([])
-    expect(pass([q], filter({ region: { basis: 'observed', names: ['栃木県南部'] } }))).toEqual(['q'])
-    expect(pass([q], filter({ region: { basis: 'observed', names: ['千葉県北西部'] } }))).toEqual(['q'])
-    expect(pass([q], filter({ region: { basis: 'observed', names: ['茨城県南部'] } }))).toEqual([])
+    expect(pass([q], filter({ region: { basis: 'epicenter', names: ['茨城県南部'], view: 'list' } }))).toEqual(['q'])
+    expect(pass([q], filter({ region: { basis: 'epicenter', names: ['栃木県南部'], view: 'list' } }))).toEqual([])
+    expect(pass([q], filter({ region: { basis: 'observed', names: ['栃木県南部'], view: 'list' } }))).toEqual(['q'])
+    expect(pass([q], filter({ region: { basis: 'observed', names: ['千葉県北西部'], view: 'list' } }))).toEqual(['q'])
+    expect(pass([q], filter({ region: { basis: 'observed', names: ['茨城県南部'], view: 'list' } }))).toEqual([])
   })
 
   // 正: 受け取った種別のどれかが当たれば出す（2026-11-07 選択「札と同じ語で選ぶ (Recommended)」）
@@ -120,13 +122,33 @@ describe('絞り込み', () => {
     expect(pass([q], filter({ types: ['遠地地震'] }))).toEqual([])
   })
 
-  it('期間は今から遡る時間と、端末の時刻での日付の範囲（両端を含む）', () => {
+  it('期間は今から遡る時間で絞る', () => {
     const recent = quake({ id: 'r', time: '2026-11-07T00:00:00Z' })
     const old = quake({ id: 'o', time: '2026-11-05T00:00:00Z' })
     expect(pass([recent, old], filter({ period: { kind: 'hours', hours: 24 } }))).toEqual(['r'])
-    const d = new Date(Date.parse('2026-11-05T00:00:00Z'))
-    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    expect(pass([recent, old], filter({ period: { kind: 'range', from: ymd, to: ymd } }))).toEqual(['o'])
+  })
+
+  // 正: 日付の範囲は日本時間の日付で切る（2026-11-08 選択「日本時間で切る」）。端末の時刻帯によらない。
+  // 境界: 11-05 00:00 JST（= 11-04 15:00Z）は入り、その 1 秒前は前の日。11-05 23:59:59 JST は入り、11-06 00:00 JST は外れる
+  it('日付の範囲は日本時間の日付で切り、両端の日を含む', () => {
+    const qs = [
+      quake({ id: 'before', time: '2026-11-04T14:59:59Z' }),
+      quake({ id: 'start', time: '2026-11-04T15:00:00Z' }),
+      quake({ id: 'end', time: '2026-11-05T14:59:59Z' }),
+      quake({ id: 'after', time: '2026-11-05T15:00:00Z' }),
+    ]
+    expect(pass(qs, filter({ period: { kind: 'range', from: '2026-11-05', to: '2026-11-05' } }))).toEqual(['start', 'end'])
+  })
+
+  // 正: 長周期・推計・英文は、その地震に付いた報で当てる（2026-11-08 選択「長周期・推計・英文も並べる」）。
+  // 対照: 付いていない地震は外す。安全弁: 電文の種別の当たり方は変わらない
+  it('種類の長周期・推計・英文は、その地震に付いた報で当てる', () => {
+    const withLpgm = quake({ id: 'l' })
+    const plain = quake({ id: 'p' })
+    const c = ctx({ attachedTypesOf: q => (q.id === 'l' ? ['長周期地震動に関する観測情報'] : []) })
+    expect(pass([withLpgm, plain], filter({ types: ['長周期地震動に関する観測情報'] }), c)).toEqual(['l'])
+    expect(pass([withLpgm, plain], filter({ types: ['推計震度分布図'] }), c)).toEqual([])
+    expect(pass([withLpgm, plain], filter({ types: ['震源・震度情報'] }), c)).toEqual(['l', 'p'])
   })
 })
 
@@ -183,7 +205,7 @@ describe('帯の札', () => {
     })
     expect(quakeFilterChipLabels(filter({
       scale: { min: 30, max: 45 }, magnitude: { min: 4, max: null }, depth: { min: 10, max: 100 },
-      region: { basis: 'epicenter', names: ['a', 'b'] }, types: ['震度速報', '遠地地震', '震源情報'], period: { kind: 'hours', hours: 168 },
+      region: { basis: 'epicenter', names: ['a', 'b'], view: 'list' }, types: ['震度速報', '遠地地震', '震源情報'], period: { kind: 'hours', hours: 168 },
     }))).toEqual({
       scale: '震度3〜5弱', magnitude: 'M4.0以上', depth: '深さ10〜100km', region: '地域（2）', types: '種類（3）', period: '7日',
     })
@@ -194,9 +216,19 @@ describe('設定との行き来', () => {
   it('条件を設定の形にして戻すと元に戻る', () => {
     const f = filter({
       scale: { min: 30, max: null }, magnitude: { min: 4.5, max: 7 }, depth: { min: null, max: 100 },
-      region: { basis: 'observed', names: ['栃木県南部'] }, types: ['震度速報'], period: { kind: 'range', from: '2026-11-01', to: '2026-11-05' },
+      region: { basis: 'observed', names: ['栃木県南部'], view: 'list' }, types: ['震度速報'], period: { kind: 'range', from: '2026-11-01', to: '2026-11-05' },
     })
     expect(quakeListFilterOf({ ...DEFAULT_QUAKE_LIST_SETTINGS, ...quakeListFilterSettings(f) })).toEqual(f)
+  })
+
+  // 正: 地域の窓の一覧／地図は、最後に選んだ方を残す（2026-11-08 選択「最後に選んだ方を覚える」）。
+  // 安全弁: 読めない値は一覧に戻す
+  it('地域の窓の一覧／地図を保存し、読めない値は一覧に戻す', () => {
+    const f = filter({ region: { basis: 'epicenter', names: [], view: 'map' } })
+    expect(quakeListFilterSettings(f).quakeListRegionView).toBe('map')
+    expect(quakeListFilterOf({ ...DEFAULT_QUAKE_LIST_SETTINGS, ...quakeListFilterSettings(f) }).region.view).toBe('map')
+    expect(sanitize({ quakeListRegionView: 'map' }).quakeListRegionView).toBe('map')
+    expect(sanitize({ quakeListRegionView: 'globe' } as never).quakeListRegionView).toBe('list')
   })
 
   // 正: 保存に条件が無ければ、設定の窓にあった最低表示震度を震度の下限へ引き継ぐ。
@@ -423,5 +455,36 @@ describe('地域の一覧を地方で束ねる', () => {
   it('地名の無い地方は出さない', () => {
     expect(quakeRegionBlocks([], ALL)).toEqual([])
     expect(quakeRegionBlocks([g('海域')], ALL).map(b => b.label)).toEqual(['海域'])
+  })
+})
+
+describe('すべて解除・件数', () => {
+  // 正: 絞りと地域の基準は既定へ戻る。安全弁: 「一覧／地図」は残す（2026-11-08 選択「最後に選んだ方を覚える」）
+  it('すべて解除は既定へ戻し、一覧／地図だけを残す', () => {
+    const f = filter({ scale: { min: 30, max: null }, types: ['震度速報'], period: { kind: 'hours', hours: 24 },
+      region: { basis: 'observed', names: ['栃木県南部'], view: 'map' } })
+    expect(clearQuakeListFilter(f)).toEqual({ ...DEFAULT_QUAKE_LIST_FILTER, region: { basis: 'epicenter', names: [], view: 'map' } })
+  })
+
+  // 正: 長周期・推計・英文のどれかを選んだときだけ、付いた報を引く。対照: 電文の種別だけなら引かない
+  it('付いた報を引くのは、種類に長周期・推計・英文があるときだけ', () => {
+    expect(wantsAttachedTypes(filter({ types: ['推計震度分布図'] }))).toBe(true)
+    expect(wantsAttachedTypes(filter({ types: ['震度速報', '遠地地震'] }))).toBe(false)
+    expect(wantsAttachedTypes(DEFAULT_QUAKE_LIST_FILTER)).toBe(false)
+  })
+
+  // 件数は条件に合う地震だけ（2026-11-08 選択「条件に合う数だけ」）。固定の 1 件は、条件にも合うときだけ数える
+  it('固定の 1 件は、条件に合わなければ数えず、合えば数える', () => {
+    const f = filter({ scale: { min: 40, max: null } })
+    const strong = quake({ id: 's', scale: 50 })
+    const weakPinned = quake({ id: 'w', scale: 10 })
+    const strongPinned = quake({ id: 'p', scale: 45 })
+    // 正: 条件に合わない固定は引く
+    expect(quakeListMatchedCount([strong, weakPinned], f, ctx({ pinnedKeys: new Set(['w']) }))).toBe(1)
+    // 対照: 条件にも合う固定は引かない
+    expect(quakeListMatchedCount([strong, strongPinned], f, ctx({ pinnedKeys: new Set(['p']) }))).toBe(2)
+    // 安全弁: 固定が一覧に無ければ何も引かない・固定が無ければそのまま
+    expect(quakeListMatchedCount([strong], f, ctx({ pinnedKeys: new Set(['gone']) }))).toBe(1)
+    expect(quakeListMatchedCount([strong], f, ctx())).toBe(1)
   })
 })

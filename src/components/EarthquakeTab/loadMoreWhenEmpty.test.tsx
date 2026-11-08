@@ -36,7 +36,7 @@ const QUAKE: JMAQuake = {
 async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLoadingMore?: boolean; onLoadMore?: () => Promise<boolean> }) {
   const { earthquakes } = opts
   const result = render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={earthquakes}
       selectedId={earthquakes[0] ? quakeEventKey(earthquakes[0]) : null}
       selectSeq={0}

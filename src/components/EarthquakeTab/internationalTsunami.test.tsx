@@ -47,7 +47,7 @@ function makeQuake(type: IssueType): JMAQuake {
 }
 
 const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami[], onSelect: (id: string) => void, selectSeq: number) => (
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={quakeEventKey(quake)}
       selectSeq={selectSeq}

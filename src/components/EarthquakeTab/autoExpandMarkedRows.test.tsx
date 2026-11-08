@@ -60,7 +60,7 @@ const marksOf = (...keys: string[]): ReadonlyMap<string, QuakeCardMarks> => new 
 
 const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selectedId: string | null) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[QUAKE]}
     selectedId={selectedId}
     selectSeq={0}
@@ -140,7 +140,7 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
 
     // **印は同じ参照のまま**カードだけを開く（新しい報は届いていない）。
     rerender(
-      <EarthquakeTab
+      <EarthquakeTab matchedCount={0}
         earthquakes={[QUAKE]}
         selectedId={KEY}
         selectSeq={0}

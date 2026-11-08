@@ -5,6 +5,7 @@
 import { DEFAULT_QUAKE_LIST_FILTER } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup, fireEvent, act } from '@testing-library/react'
+import { cloneElement } from 'react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
 import { EarthquakeTab } from './index'
 import type { JMAQuake } from '../../types/earthquake'
@@ -30,7 +31,7 @@ const QUAKE: JMAQuake = {
 }
 
 const tab = (shown: boolean) => (
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[QUAKE]}
       selectedId={null}
       selectSeq={0}
@@ -86,6 +87,8 @@ const openScale = async (shown: boolean) => {
   const chip = document.querySelector<HTMLElement>('[data-filter-button]')
   expect(chip).not.toBeNull()
   act(() => { fireEvent.click(chip!) })
+  // 窓の地域の節が区域データ（`useSubRegions`）を読み始めるので、その決着も act の中で待つ
+  await flushDataEffects()
   expect(dialog()).not.toBeNull()
   return r
 }
@@ -111,5 +114,20 @@ describe('地震タブを離れたら絞り込みの窓を閉じる', () => {
     act(() => { rerender(tab(false)) })
     act(() => { rerender(tab(true)) })
     expect(dialog()).toBeNull()
+  })
+})
+
+describe('一覧が空・読み込み中・取得失敗でも見出しの漏斗を出す', () => {
+  // 正: 空・読み込み中・取得失敗のどの画面にも漏斗がある（2026-11-08 選択「空でも見出しと漏斗を出す」）。
+  // 対照: 一覧の画面にも 1 つだけある（見出しを二重に描かない）
+  it.each([
+    ['空', { earthquakes: [] }],
+    ['読み込み中', { earthquakes: [], isLoading: true }],
+    ['取得失敗', { earthquakes: [], error: '取得に失敗' }],
+    ['一覧', {}],
+  ])('%s の画面', async (_name, over) => {
+    render(cloneElement(tab(true), over))
+    await flushDataEffects()
+    expect(document.querySelectorAll('[data-filter-button]')).toHaveLength(1)
   })
 })

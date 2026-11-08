@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { ARCHIVE_START_DAY } from '../../services/dmdataReplay'
 import { createPortal } from 'react-dom'
-import type { IssueType, JMAQuake } from '../../types/earthquake'
+import type { JMAQuake } from '../../types/earthquake'
 import { PREFECTURES } from '../../data/prefectureCodes'
 import { RangeSlider } from '../RangeSlider'
 import { DateField } from '../DateField'
@@ -9,9 +9,9 @@ import { useSubRegions } from '../../hooks/useSubRegions'
 import { serverNow } from '../../utils/clock'
 import { areaPrefIndexOf, getStationCoordsCache, onStationCoordsLoaded, regionOrderIndexOf, regionOrderRank, type StationCoordsData } from '../../utils/stationCoords'
 import {
-  DEFAULT_QUAKE_LIST_FILTER, QUAKE_DEPTH_RANGE, QUAKE_LIST_TYPES, QUAKE_MAGNITUDE_RANGE, QUAKE_PERIOD_HOURS, QUAKE_SCALE_STEPS,
+  clearQuakeListFilter, QUAKE_DEPTH_RANGE, QUAKE_LIST_TYPES, QUAKE_MAGNITUDE_RANGE, QUAKE_PERIOD_HOURS, QUAKE_SCALE_STEPS,
   isQuakeListFiltered, quakeFilterChipLabels, quakeRegionBlocks, quakeRegionGroups, type QuakeRegionOption,
-  type QuakeListFilter, type QuakeRange, type QuakeRegionBasis,
+  type QuakeListFilter, type QuakeRange, type QuakeRegionBasis, type QuakeListType, type QuakeRegionView,
 } from '../../utils/quakeListView'
 
 /**
@@ -35,9 +35,10 @@ const DATE_INPUT_CLASS = 'bg-panel border border-border text-white rounded-sm px
 /** 期間の日付で選べる最も古い日（地震情報のアーカイブの始まり）。読み込んでいない日を選ぶと、地震タブが読み足してから絞る。 */
 const PERIOD_MIN_DAY = ARCHIVE_START_DAY
 
-function localYmd(ms: number): string {
-  const d = new Date(ms)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+/** 日本時間の `YYYY-MM-DD`（期間の絞りを日本時間で切るのとそろえる。2026-11-08 選択「日本時間で切る」）。 */
+function jstYmd(ms: number): string {
+  const d = new Date(ms + 9 * 3_600_000)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
 }
 
 function activeKinds(filter: QuakeListFilter): Record<FilterKind, boolean> {
@@ -85,7 +86,10 @@ interface DialogProps {
    */
   open: boolean
   onClose: () => void
-  /** 一覧に並ぶ地震の数（絞りの外でも出す最新の 1 枚を含む）と、読み込んだ地震の数。窓の見出しの横に出す。 */
+  /**
+   * 条件に合う地震の数と、読み込んだ地震の数。窓の見出しの横に出す。条件に合わないまま一覧に出す最新の 1 枚・飛んで開いた 1 件は
+   * 数えない（2026-11-08 選択「条件に合う数だけ」）
+   */
   shownCount: number
   totalCount: number
   /**
@@ -133,7 +137,7 @@ export function QuakeListFilterDialog({ filter, onChange, quakes, open, onClose,
       count={(isQuakeListFiltered(filter) ? `${totalCount}件中 ${shownCount}件` : `${totalCount}件`) + (loadNote?.countSuffix ?? '')}
       // 自動で読み足している間は読み上げない（7 日ずつ増えるたびに読むと続けて鳴る）。読み終わった件数は読む
       countLive={!(loadNote?.loading ?? false)}
-      onClose={onClose} onClearAll={isQuakeListFiltered(filter) ? () => onChange(DEFAULT_QUAKE_LIST_FILTER) : null}>
+      onClose={onClose} onClearAll={isQuakeListFiltered(filter) ? () => onChange(clearQuakeListFilter(filter)) : null}>
       {KINDS.map(kind => (
         <section key={kind} className="border-b border-border py-3 first:pt-0 last:border-b-0">
           <div className="mb-2 flex items-center gap-2">
@@ -239,11 +243,12 @@ function ScaleRange({ value, text, onChange }: { value: QuakeRange; text: string
   }
   const from = indexOf(value.min, 0)
   const to = indexOf(value.max, last)
-  // 値の文は短い形（2026-11-07 選択「地震タブは短い形、カタログは総ざらいで (Recommended)」）。絞っていないときは出さない
+  // 値の文は短い形（2026-11-07 選択「地震タブは短い形、カタログは総ざらいで (Recommended)」）。絞っていないときはカタログと同じ「制限なし」
+  // （2026-11-08 選択「カタログと同じくいつも出す」・語は震源カタログタブの `rangeLabel`）
   const unset = value.min === null && value.max === null
   return (
     <div>
-      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{unset ? '' : text}</p>
+      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{unset ? '制限なし' : text}</p>
       <RangeSlider
         label="震度" min={0} max={last} step={1} from={from} to={to}
         onChange={(a, b) => onChange({ min: a <= 0 ? null : QUAKE_SCALE_STEPS[a], max: b >= last ? null : QUAKE_SCALE_STEPS[b] })}
@@ -263,7 +268,7 @@ function NumberRange({ range, value, label, text, onChange }: {
   const round = (v: number) => Math.round(v / range.step) * range.step
   return (
     <div>
-      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{value.min === null && value.max === null ? '' : text}</p>
+      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{value.min === null && value.max === null ? '制限なし' : text}</p>
       <RangeSlider
         label={label} min={range.min} max={range.max} step={range.step}
         from={value.min ?? range.min} to={value.max ?? range.max}
@@ -276,8 +281,8 @@ function NumberRange({ range, value, label, text, onChange }: {
   )
 }
 
-function TypePicker({ value, onChange }: { value: readonly IssueType[]; onChange: (t: IssueType[]) => void }) {
-  const toggle = (t: IssueType) => onChange(value.includes(t) ? value.filter(x => x !== t) : [...value, t])
+function TypePicker({ value, onChange }: { value: readonly QuakeListType[]; onChange: (t: QuakeListType[]) => void }) {
+  const toggle = (t: QuakeListType) => onChange(value.includes(t) ? value.filter(x => x !== t) : [...value, t])
   return (
     <div className="flex flex-col gap-1.5">
       {QUAKE_LIST_TYPES.map(t => (
@@ -291,7 +296,7 @@ function TypePicker({ value, onChange }: { value: readonly IssueType[]; onChange
 }
 
 function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; nowMs: number; onChange: (f: QuakeListFilter) => void }) {
-  const today = localYmd(nowMs)
+  const today = jstYmd(nowMs)
   const p = filter.period
   // 「日付を指定」を押した時点で範囲を入れるので、選んでいるかは値から導く（解除したら戻る）
   const custom = p?.kind === 'range'
@@ -307,11 +312,12 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
       <div className="flex flex-wrap gap-1.5">
         {QUAKE_PERIOD_HOURS.map(o => (
           <button key={o.hours} type="button" aria-pressed={p?.kind === 'hours' && p.hours === o.hours} className={chip(p?.kind === 'hours' && p.hours === o.hours)}
-            onClick={() => onChange({ ...filter, period: { kind: 'hours', hours: o.hours } })}>
+            // 選んでいる期間をもう一度押すと外す（2026-11-08 選択「もう一度押すと外れる」）
+            onClick={() => onChange({ ...filter, period: p?.kind === 'hours' && p.hours === o.hours ? null : { kind: 'hours', hours: o.hours } })}>
             {o.label}
           </button>
         ))}
-        <button type="button" aria-pressed={custom} className={chip(custom)} onClick={() => setRange(from, to)}>日付を指定</button>
+        <button type="button" aria-pressed={custom} className={chip(custom)} onClick={() => (custom ? onChange({ ...filter, period: null }) : setRange(from, to))}>日付を指定</button>
       </div>
       {custom && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -333,7 +339,9 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
  * （震央地名は「石川県能登地方」「石川県西方沖」のように細分区域の名前と合わない）。
  */
 function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; quakes: readonly JMAQuake[]; onChange: (f: QuakeListFilter) => void }) {
-  const [mode, setMode] = useState<'list' | 'map'>('list')
+  // 一覧と地図のどちらを出すかは設定に覚える（2026-11-08 選択「最後に選んだ方を覚える」）
+  const mode = filter.region.view
+  const setMode = (view: QuakeRegionView) => { if (view !== mode) onChange({ ...filter, region: { ...filter.region, view } }) }
   const [query, setQuery] = useState('')
   // 地方と県の開閉（2026-11-08 ユーザー発言「地名広すぎるからたためるようにして。」、同日選択「地方ごとにまとめて 2 段で畳む」）。
   // 押して決めた段だけ開／閉を持ち、決めていない段は「選んだ地名があれば開く」。地名で探している間は全部開く。
@@ -363,14 +371,18 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
     const g = b?.groups.find(x => x.options.some(o => o.name === name))
     if (b) setGroup(`b:${b.label}`, adding ? null : true)
     if (g) setGroup(`p:${g.label}`, adding ? null : true)
-    onChange({ ...filter, region: { basis, names: adding ? [...names, name] : names.filter(n => n !== name) } })
+    onChange({ ...filter, region: { ...filter.region, names: adding ? [...names, name] : names.filter(n => n !== name) } })
   }
   // 基準を変えたら選んだ名前は空にする（震央地名と細分区域は別の名前の集まり）
   // 基準を替えたら畳みの指定も外す（県の名前は両方の基準で同じなので、残すと片方で畳んだ県がもう片方でも畳まれて見える）
-  const setBasis = (b: QuakeRegionBasis) => { if (b !== basis) { setGroupOpen(new Map()); onChange({ ...filter, region: { basis: b, names: [] } }) } }
+  const setBasis = (b: QuakeRegionBasis) => { if (b !== basis) { setGroupOpen(new Map()); onChange({ ...filter, region: { ...filter.region, basis: b, names: [] } }) } }
   const seg = (on: boolean) => `px-2 py-0.5 ${on ? 'bg-blue-500/30 text-white' : 'hover:bg-white/10'}`
   const q = query.trim()
   const mapOn = basis === 'observed' && mode === 'map'
+  // 地図のときは一覧（地名の検索欄も）を隠す。地図を読み込めなかったときだけ出す（2026-11-08 選択「地図のときは一覧を隠す」）。
+  // 区域の形はメインの地図と同じ取得の控えを読むだけなので、ここで読んでも通信は増えない
+  const { failed: mapFailed } = useSubRegions()
+  const listOn = !mapOn || mapFailed
   const present = useMemo(() => new Set(groups.flatMap(g => g.options.map(o => o.name))), [groups])
   const shown = blocks
     .map(b => ({
@@ -418,6 +430,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
         )}
       </div>
       {mapOn && <RegionMap selected={names} present={present} onToggle={toggle} />}
+      {listOn && (<>
       <input
         type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="地名で探す" aria-label="地名で探す"
         className="rounded-sm border border-border bg-panel px-2 py-1.5 text-white focus:border-blue-500 focus:outline-hidden"
@@ -449,6 +462,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
           )
         })}
       </div>
+      </>)}
     </div>
   )
 }

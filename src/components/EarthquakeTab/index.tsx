@@ -5,7 +5,7 @@ import { LoadMoreButton } from './LoadMoreButton'
 import { QuakeListHeader, QuakeListDayLabel } from './QuakeListRow'
 import { QuakeListFilterButton, QuakeListFilterDialog } from './QuakeListFilterBar'
 import {
-  DEFAULT_QUAKE_LIST_FILTER, isQuakeListFiltered, nextQuakeListSort, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, sortQuakeList,
+  clearQuakeListFilter, isQuakeListFiltered, nextQuakeListSort, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, sortQuakeList,
   type QuakeListFilter, type QuakeListSort, type QuakeSortKey,
 } from '../../utils/quakeListView'
 import { serverNow } from '../../utils/clock'
@@ -34,6 +34,8 @@ interface Props {
   shown: boolean
   /** 絞り込みを通した一覧（時刻の新しい順。並べ替えはここで行う）。 */
   earthquakes: JMAQuake[]
+  /** 条件に合う地震の数（窓の「◯件中 ◯件」の後ろ。条件に合わないまま出す最新の 1 枚・飛んで開いた 1 件は数えない。2026-11-08 選択「条件に合う数だけ」） */
+  matchedCount: number
   /** 絞り込みの条件（→ `utils/quakeListView.ts`）。 */
   filter: QuakeListFilter
   onFilterChange: (next: QuakeListFilter) => void
@@ -187,7 +189,7 @@ interface Notice { text: string; tone: 'loss' | 'info'; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
@@ -252,8 +254,15 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
     : autoLoading
       ? { note: `${quakeListPeriodStartLabel(filter.period, nowMs)}まで読み込んでいます…`, countSuffix: '（読み込み中）', loading: true }
       : { note: `${unloadedBefore}以前は未読込みです。`, countSuffix: oldestLabel === null ? '' : `（${oldestLabel}以降を読込済み）`, loading: false }
-  const filterDialog = <QuakeListFilterDialog filter={filter} onChange={onFilterChange} quakes={filterSourceQuakes} open={shown && openFilter} onClose={() => setOpenFilter(false)} shownCount={earthquakes.length} totalCount={filterSourceQuakes.length} loadNote={loadNote} />
+  const filterDialog = <QuakeListFilterDialog filter={filter} onChange={onFilterChange} quakes={filterSourceQuakes} open={shown && openFilter} onClose={() => setOpenFilter(false)} shownCount={matchedCount} totalCount={filterSourceQuakes.length} loadNote={loadNote} />
   const withDialog = (screen: React.ReactNode) => <>{filterDialog}{screen}</>
+  // 一覧が空・読み込み中・取得失敗の画面にも、一覧と同じ見出しの行（漏斗と並べ替えの欄）を上に置く。置かないと、絞りで空になったとき
+  // 条件の一部を緩める口が無い（2026-11-08 選択「空でも見出しと漏斗を出す」）。幅で欄を切り替える作りは一覧と同じ枠（quake-list）に入れて揃える
+  const emptyHeader = (
+    <div className="quake-list shrink-0 overflow-visible">
+      <div className="quake-list-scope"><QuakeListHeader sort={sort} onSort={onSort} filterButton={filterButton} /></div>
+    </div>
+  )
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
   const scrollTarget = quakeCardScrollTarget({ earthquakes, selectedKey: selectedId, speakingKey, followSpeech, lpgmFocus })
   // 長周期の節を見せる番なら、巻くのはそのカード（長周期の札と同じ巻き方。→ `EarthquakeCard` の `lpgmFocusSeq`）。
@@ -316,11 +325,14 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
   // 逐次に出す仕組みが画面へ一度も現れない**。
   if (isLoading && earthquakes.length === 0) {
     return withDialog(
-      <div className="flex items-center justify-center h-full">
+      <div className="flex flex-col h-full">
+       {emptyHeader}
+       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-secondary text-sm">データを取得中…</p>
         </div>
+       </div>
       </div>
     )
   }
@@ -330,6 +342,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
   if (failed && earthquakes.length === 0) {
     return withDialog(
       <div className="flex flex-col h-full">
+        {emptyHeader}
         {keyReentryNotice !== null && (
           <div className="p-2 roomy:p-3">
             <HistoryNotice tone={keyReentryNotice.tone} onClose={keyReentryNotice.onClose}>{keyReentryNotice.text}</HistoryNotice>
@@ -354,6 +367,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
   if (earthquakes.length === 0) {
     return withDialog(
       <div className="flex flex-col h-full">
+        {emptyHeader}
         {notices.length > 0 && (
           <div className="p-2 space-y-1.5 roomy:p-3 roomy:space-y-2">
             {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
@@ -363,7 +377,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
         <div className="flex-1 flex flex-col items-center justify-center gap-2">
           <p className="text-secondary text-sm">{filtered ? '条件に合う地震はありません' : '地震情報はありません'}</p>
           {filtered && (
-            <button type="button" onClick={() => onFilterChange(DEFAULT_QUAKE_LIST_FILTER)} className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white hover:bg-white/10">
+            <button type="button" onClick={() => onFilterChange(clearQuakeListFilter(filter))} className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white hover:bg-white/10">
               すべて解除
             </button>
           )}

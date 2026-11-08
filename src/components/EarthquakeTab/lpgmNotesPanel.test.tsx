@@ -76,7 +76,7 @@ const NO_NOTES = { forecastText: undefined, varCommentText: undefined, freeFormT
 
 const renderTab = async (lpgm: JMALpgm) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[QUAKE]}
     selectedId={quakeEventKey(QUAKE)}
     selectSeq={0}
@@ -129,7 +129,7 @@ const renderTab = async (lpgm: JMALpgm) => {
 
 /** 読み上げの主題を渡せる版（自動展開の確認用）。**`rerender` へ渡せるよう JSX を返す。** */
 const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[QUAKE]}
     selectedId={quakeEventKey(QUAKE)}
     selectSeq={0}

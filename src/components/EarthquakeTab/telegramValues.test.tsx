@@ -64,7 +64,7 @@ function makeLpgm(infoName?: string): JMALpgm {
 
 const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => {
   const result = render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={selected ? quakeEventKey(quake) : null}
       selectSeq={0}

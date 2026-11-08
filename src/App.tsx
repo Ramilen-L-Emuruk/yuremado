@@ -112,8 +112,8 @@ import {
 } from './utils/quakeOverlay'
 import { findEndedTsunami, isTsunamiForecastOnly, tsunamiOverallGrade } from './utils/tsunami'
 import {
-  passesQuakeListFilter, quakeListFilterOf, quakeListFilterSettings, quakeListSortOf, keepIfSame, withLatestPinned,
-  type QuakeFilterContext, type QuakeListFilter, type QuakeListSort,
+  passesQuakeListFilter, quakeListFilterOf, quakeListFilterSettings, quakeListSortOf, keepIfSame, withLatestPinned, wantsAttachedTypes, quakeListMatchedCount,
+  type QuakeFilterContext, type QuakeAttachedType, type QuakeListFilter, type QuakeListSort,
 } from './utils/quakeListView'
 import { useMinuteClock } from './hooks/useMinuteClock'
 import { internationalTsunamiIndex, withInternationalTsunamiCards, NO_INTERNATIONAL_TSUNAMIS } from './utils/internationalTsunami'
@@ -1457,7 +1457,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [settings.quakeListScaleMin, settings.quakeListScaleMax, settings.quakeListMagnitudeMin, settings.quakeListMagnitudeMax,
       settings.quakeListDepthMin, settings.quakeListDepthMax, settings.quakeListRegionBasis, settings.quakeListRegions,
-      settings.quakeListTypes, settings.quakeListPeriodHours, settings.quakeListPeriodFrom, settings.quakeListPeriodTo],
+      settings.quakeListTypes, settings.quakeListRegionView, settings.quakeListPeriodHours, settings.quakeListPeriodFrom, settings.quakeListPeriodTo],
   )
   // 期間を「今から遡る時間」で絞っている間だけ、1 分ごとに「今」を進める（時間が経って範囲から出た地震を外すため）
   const quakeListNowMs = useMinuteClock(quakeListFilter.period?.kind === 'hours')
@@ -1467,7 +1467,8 @@ export function App() {
   }, [notificationPinKey, selectedQuakeId])
   // 絞りを変えたときも外す（選んでいる地震を絞りで外したら、その地震も一覧から外れる。→ quake-spec.md §8）
   // 比べるのは条件の中身（設定の読み直しで配列の参照だけが変わっても外さない）
-  const quakeListFilterSignature = JSON.stringify(quakeListFilter)
+  // 一覧と地図の切り替え（`region.view`）は絞りではないので比べない
+  const quakeListFilterSignature = JSON.stringify({ ...quakeListFilter, region: { ...quakeListFilter.region, view: undefined } })
   useEffect(() => { setNotificationPinKey(null) }, [quakeListFilterSignature])
   // filter は毎回新規配列を返すため useMemo で参照を安定化する
   // （EarthquakeTab / TsunamiTab へ props として渡すため。毎レンダー新配列を渡すと
@@ -1484,18 +1485,38 @@ export function App() {
   const [areaPrefIndex, setAreaPrefIndex] = useState(() => getAreaPrefIndexCache())
   useEffect(() => (areaPrefIndex ? undefined : onStationCoordsLoaded(d => setAreaPrefIndex(areaPrefIndexOf(d)))), [areaPrefIndex])
   const conditionFilteredRef = useRef<JMAQuake[] | null>(null)
-  const conditionFiltered = useMemo(() => {
-    const ctx: QuakeFilterContext = {
+  // 種類の絞りに長周期・推計・英文が入っていないときは、それらの電文が届いても絞り直さない（引く口を空にし、依存からも外す）
+  const quakeListWantsAttached = wantsAttachedTypes(quakeListFilter)
+  const attachedLpgm = quakeListWantsAttached ? lpgmByEventId : null
+  const attachedEstimated = quakeListWantsAttached ? estimatedIntensities : null
+  const attachedIntl = quakeListWantsAttached ? internationalTsunamiIdx : null
+  const quakeFilterCtx = useMemo((): Omit<QuakeFilterContext, 'pinnedKeys'> => ({
       nowMs: quakeListNowMs,
-      pinnedKeys: new Set<string>(notificationPinKey !== null ? [notificationPinKey] : []),
       keyOf: quakeEventKey, areaPrefIndex,
-    }
+      // 種類の絞りの「長周期・推計・英文」は、その地震カードに付いている報で当てる（取り消された長周期は入れない。カードの報の一覧と同じ）
+      attachedTypesOf: (q) => {
+        if (attachedLpgm === null || attachedEstimated === null || attachedIntl === null) return []
+        const out: QuakeAttachedType[] = []
+        const lpgm = attachedLpgm.get(extractQuakeEventId(q) ?? '')
+        if (lpgm && !lpgm.cancelled) out.push('長周期地震動に関する観測情報')
+        if (estimatedIntensityFor(q, attachedEstimated)) out.push('推計震度分布図')
+        if (q.fromInternationalTsunami || (attachedIntl.byQuakeKey.get(quakeEventKey(q))?.length ?? 0) > 0) out.push('国際津波関連情報')
+        return out
+      },
+  }), [quakeListNowMs, areaPrefIndex, attachedLpgm, attachedEstimated, attachedIntl])
+  const conditionFiltered = useMemo(() => {
+    const ctx: QuakeFilterContext = { ...quakeFilterCtx, pinnedKeys: new Set<string>(notificationPinKey !== null ? [notificationPinKey] : []) }
     // 津波の原因地震・国際津波関連情報の付いた地震（英文だけのカードも）も絞りどおりに外す（2026-11-08 選択「例外をやめる (Recommended)」）
     const next = allQuakeCards.filter(q => passesQuakeListFilter(q, quakeListFilter, ctx))
     const kept = keepIfSame(conditionFilteredRef.current, next)
     conditionFilteredRef.current = kept
     return kept
-  }, [allQuakeCards, quakeListFilter, quakeListNowMs, notificationPinKey, areaPrefIndex])
+  }, [allQuakeCards, quakeListFilter, quakeFilterCtx, notificationPinKey])
+  // 窓の「◯件中 ◯件」の後ろ。条件に合う数だけを数え、飛んで開いた 1 件（固定）と最新の 1 枚は数えない（2026-11-08 選択「条件に合う数だけ」）
+  const quakeListMatched = useMemo(
+    () => quakeListMatchedCount(conditionFiltered, quakeListFilter, { ...quakeFilterCtx, pinnedKeys: new Set<string>(notificationPinKey !== null ? [notificationPinKey] : []) }),
+    [conditionFiltered, notificationPinKey, quakeListFilter, quakeFilterCtx],
+  )
   const filteredEarthquakes = useMemo(
     () => withLatestPinned(conditionFiltered, allQuakeCards, latestNonCancelled),
     [conditionFiltered, allQuakeCards, latestNonCancelled],
@@ -3414,6 +3435,7 @@ export function App() {
               <EarthquakeTab
                 shown={activeTab === 'earthquake'}
                 earthquakes={filteredEarthquakes}
+                matchedCount={quakeListMatched}
                 filter={quakeListFilter}
                 onFilterChange={changeQuakeListFilter}
                 sort={quakeListSort}

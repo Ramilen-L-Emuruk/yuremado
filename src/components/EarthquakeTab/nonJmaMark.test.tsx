@@ -80,7 +80,7 @@ const LPGM_BASE: JMALpgm = {
 
 const renderTab = async (quake: JMAQuake, lpgm?: JMALpgm, opts: { unreceivedOpen?: boolean } = {}) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
     selectSeq={0}

@@ -58,7 +58,7 @@ function makeQuake(over: Partial<JMAQuake> = {}): JMAQuake {
  */
 const renderTab = async (quake: JMAQuake, { selected = true, openNotes = true } = {}) => {
   render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={selected ? quakeEventKey(quake) : null}
       selectSeq={0}

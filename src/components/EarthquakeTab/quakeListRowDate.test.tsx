@@ -31,7 +31,7 @@ const QUAKE: JMAQuake = {
 
 const renderTab = async (sort: QuakeListSort) => {
   const result = render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[QUAKE]}
       selectedId={null}
       selectSeq={0}

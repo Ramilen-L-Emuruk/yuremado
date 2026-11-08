@@ -637,6 +637,7 @@ function sanitizeQuakeList(partial: Partial<AppSettings>): QuakeListSettings {
     quakeListRegions: Array.isArray(partial.quakeListRegions)
       ? [...new Set(partial.quakeListRegions.filter((n): n is string => typeof n === 'string' && n !== ''))]
       : [],
+    quakeListRegionView: ensureOneOf(partial.quakeListRegionView, ['list', 'map'] as const, DEFAULTS.quakeListRegionView),
     quakeListTypes: Array.isArray(partial.quakeListTypes)
       ? [...new Set(partial.quakeListTypes.filter(t => (QUAKE_LIST_TYPES as readonly unknown[]).includes(t)))]
       : [],

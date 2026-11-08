@@ -54,7 +54,7 @@ const KEY = quakeEventKey(QUAKE)
 // 巻く箱（`overflow-y: auto` の祖先）の中に置く。巻く関数は最も近いこの祖先を巻く
 const tab = (lpgmFocus: LpgmSectionFocus | null, quake: JMAQuake = QUAKE, lpgm: JMALpgm = LPGM) => (
   <div style={{ overflowY: 'auto', height: 400 }}>
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={KEY}
       selectSeq={0}

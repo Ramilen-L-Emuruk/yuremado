@@ -34,11 +34,18 @@ export interface QuakeListFilter {
   readonly scale: QuakeRange
   readonly magnitude: QuakeRange
   readonly depth: QuakeRange
-  readonly region: { readonly basis: QuakeRegionBasis; readonly names: readonly string[] }
+  /**
+   * 地域。`view` は地域の窓で一覧と地図のどちらを出すか（絞りには効かない。最後に選んだ方を覚える。
+   * 2026-11-08 選択「最後に選んだ方を覚える」）
+   */
+  readonly region: { readonly basis: QuakeRegionBasis; readonly names: readonly string[]; readonly view: QuakeRegionView }
   /** 選んだ種類。空ならすべて。 */
-  readonly types: readonly IssueType[]
+  readonly types: readonly QuakeListType[]
   readonly period: QuakePeriod | null
 }
+
+/** 地域の窓で一覧と地図のどちらを出すか。 */
+export type QuakeRegionView = 'list' | 'map'
 
 export type QuakeSortKey = 'time' | 'scale' | 'magnitude' | 'depth' | 'region'
 
@@ -53,7 +60,7 @@ export const DEFAULT_QUAKE_LIST_FILTER: QuakeListFilter = {
   scale: NO_RANGE,
   magnitude: NO_RANGE,
   depth: NO_RANGE,
-  region: { basis: 'epicenter', names: [] },
+  region: { basis: 'epicenter', names: [], view: 'list' },
   types: [],
   period: null,
 }
@@ -61,9 +68,18 @@ export const DEFAULT_QUAKE_LIST_FILTER: QuakeListFilter = {
 /** 今の並び（時刻の新しい順）。 */
 export const DEFAULT_QUAKE_LIST_SORT: QuakeListSort = { key: 'time', dir: 'desc' }
 
+/**
+ * 地震カードに付く報のうち、地震情報の種類（`IssueType`）でないもの。語はカードの報の一覧の札と同じ（`EarthquakeCard.tsx` の報の一覧）。
+ * 種類の窓に並べる（2026-11-08 選択「長周期・推計・英文も並べる」）。
+ */
+export const QUAKE_ATTACHED_TYPES = ['長周期地震動に関する観測情報', '推計震度分布図', '国際津波関連情報'] as const
+export type QuakeAttachedType = (typeof QUAKE_ATTACHED_TYPES)[number]
+export type QuakeListType = IssueType | QuakeAttachedType
+
 /** 種類の窓に並べる語。カードの札と同じ語（2026-11-07 選択「札と同じ語で選ぶ (Recommended)」）。 */
-export const QUAKE_LIST_TYPES: readonly IssueType[] = [
+export const QUAKE_LIST_TYPES: readonly QuakeListType[] = [
   '震度速報', '震源情報', '震源・震度情報', '各地の震度情報', '顕著な地震の震源要素更新のお知らせ', '遠地地震',
+  ...QUAKE_ATTACHED_TYPES,
 ]
 
 function rangeSet(r: QuakeRange): boolean {
@@ -74,6 +90,19 @@ function rangeSet(r: QuakeRange): boolean {
 export function isQuakeListFiltered(f: QuakeListFilter): boolean {
   return rangeSet(f.scale) || rangeSet(f.magnitude) || rangeSet(f.depth)
     || f.region.names.length > 0 || f.types.length > 0 || f.period !== null
+}
+
+/**
+ * 「すべて解除」の後の条件。既定へ戻し、窓の「一覧／地図」だけは残す（絞りではなく見せ方で、最後に選んだ方を覚える ——
+ * 2026-11-08 選択「最後に選んだ方を覚える」）
+ */
+export function clearQuakeListFilter(f: QuakeListFilter): QuakeListFilter {
+  return { ...DEFAULT_QUAKE_LIST_FILTER, region: { ...DEFAULT_QUAKE_LIST_FILTER.region, view: f.region.view } }
+}
+
+/** 種類の絞りに、地震カードに付く報（長周期・推計・英文）が入っているか。入っていなければ `attachedTypesOf` は呼ばれない。 */
+export function wantsAttachedTypes(f: QuakeListFilter): boolean {
+  return f.types.some(t => (QUAKE_ATTACHED_TYPES as readonly string[]).includes(t))
 }
 
 function inRange(value: number, r: QuakeRange): boolean {
@@ -106,26 +135,29 @@ export function observedAreas(q: Pick<JMAQuake, 'points'>, areaPrefIndex: AreaPr
 }
 
 /** その地震で受け取った種類（記録が無ければ今の種類）。 */
-function receivedTypes(q: JMAQuake): IssueType[] {
+function receivedTypes(q: JMAQuake): QuakeListType[] {
   return q.reports && q.reports.length > 0 ? q.reports.map(r => r.type) : [q.issue.type]
 }
 
-/** 端末の時刻で `YYYY-MM-DD` の 0 時のエポックミリ秒。読めなければ NaN。 */
-function localDayStartMs(ymd: string): number {
+/**
+ * 日本時間で `YYYY-MM-DD` の 0 時のエポックミリ秒。読めなければ NaN。
+ * 端末の時刻ではなく日本時間で切る（地震カードの時刻・読み足しの注記の日付と境をそろえる。2026-11-08 選択「日本時間で切る」）
+ */
+function jstDayStartMs(ymd: string): number {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
   if (!m) return Number.NaN
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - 9 * 3_600_000
 }
 
 function inPeriod(q: JMAQuake, p: QuakePeriod, nowMs: number): boolean {
   const t = parseJstTimeMs(q.earthquake.time)
   if (!Number.isFinite(t)) return false
   if (p.kind === 'hours') return t >= nowMs - p.hours * 3_600_000
-  const from = localDayStartMs(p.from)
-  const toStart = localDayStartMs(p.to)
+  const from = jstDayStartMs(p.from)
+  const toStart = jstDayStartMs(p.to)
   if (!Number.isFinite(from) || !Number.isFinite(toStart)) return false
-  // 終わりの日も含める（翌日の 0 時の手前まで。夏時間の無い前提で 1 日を足す）
-  const toEnd = new Date(toStart).setDate(new Date(toStart).getDate() + 1)
+  // 終わりの日も含める（日本時間の翌日の 0 時の手前まで。日本時間に夏時間は無い）
+  const toEnd = toStart + 86_400_000
   return t >= from && t < toEnd
 }
 
@@ -139,13 +171,15 @@ export interface QuakeFilterContext {
    */
   readonly pinnedKeys: ReadonlySet<string>
   readonly keyOf: (q: JMAQuake) => string
+  /** その地震カードに付いている、地震情報の種類でない報（長周期・推計・英文）。取り消された報は入れない。 */
+  readonly attachedTypesOf: (q: JMAQuake) => readonly QuakeAttachedType[]
   /** 一次細分区域名 → 都道府県名（都道府県のまとめの点を区域と見分ける。→ `observedAreas`）。 */
   readonly areaPrefIndex: AreaPrefIndex
 }
 
 /** 条件ごとに 1 回だけ作る集合（地震 1 件ごとに作り直さない）。 */
-const filterSets = new WeakMap<QuakeListFilter, { names: ReadonlySet<string>; types: ReadonlySet<IssueType> }>()
-function setsOf(f: QuakeListFilter): { names: ReadonlySet<string>; types: ReadonlySet<IssueType> } {
+const filterSets = new WeakMap<QuakeListFilter, { names: ReadonlySet<string>; types: ReadonlySet<QuakeListType> }>()
+function setsOf(f: QuakeListFilter): { names: ReadonlySet<string>; types: ReadonlySet<QuakeListType> } {
   let sets = filterSets.get(f)
   if (!sets) {
     sets = { names: new Set(f.region.names), types: new Set(f.types) }
@@ -192,7 +226,7 @@ export function passesQuakeListFilter(q: JMAQuake, f: QuakeListFilter, ctx: Quak
   }
   if (f.types.length > 0) {
     const { types } = setsOf(f)
-    if (!receivedTypes(q).some(t => types.has(t))) return false
+    if (!receivedTypes(q).some(t => types.has(t)) && !ctx.attachedTypesOf(q).some(t => types.has(t))) return false
   }
   if (f.period !== null && !inPeriod(q, f.period, ctx.nowMs)) return false
   return true
@@ -318,7 +352,7 @@ export function quakeListUnloadedBefore(period: QuakePeriod | null, oldestLoaded
   if (period === null || oldestLoadedDay === null) return null
   const oldestMs = Date.parse(`${oldestLoadedDay}T00:00:00+09:00`)
   if (!Number.isFinite(oldestMs)) return null
-  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : localDayStartMs(period.from)
+  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : jstDayStartMs(period.from)
   if (!Number.isFinite(startMs) || startMs >= oldestMs) return null
   // 前の日（日本時間）
   const d = new Date(oldestMs - 86_400_000 + 9 * 3_600_000)
@@ -336,17 +370,16 @@ export const QUAKE_LIST_AUTO_LOAD_DAYS = 90
 /** 期間の始まりが自動で読み足す範囲（今日から `QUAKE_LIST_AUTO_LOAD_DAYS` 日前の日の頭以降）に入っているか。 */
 export function quakeListAutoLoadAllowed(period: QuakePeriod | null, nowMs: number): boolean {
   if (period === null) return false
-  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : localDayStartMs(period.from)
+  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : jstDayStartMs(period.from)
   if (!Number.isFinite(startMs)) return false
-  // 今日の頭は、期間の絞り（`localDayStartMs`）と同じく端末の日付で取る（基準を混ぜると境の 1 日がずれる）
-  const now = new Date(nowMs)
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  // 今日の頭は、期間の絞り（`jstDayStartMs`）と同じく日本時間の日付で取る（基準を混ぜると境の 1 日がずれる）
+  const todayStart = Math.floor((nowMs + 9 * 3_600_000) / 86_400_000) * 86_400_000 - 9 * 3_600_000
   return startMs >= todayStart - QUAKE_LIST_AUTO_LOAD_DAYS * 86_400_000
 }
 
 /** 期間の始まり（日本時間の「10月31日」の形）。注記「〇〇まで読み込んでいます…」に使う。 */
 export function quakeListPeriodStartLabel(period: QuakePeriod, nowMs: number): string {
-  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : localDayStartMs(period.from)
+  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : jstDayStartMs(period.from)
   const d = new Date(startMs + 9 * 3_600_000)
   return `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
 }
@@ -513,7 +546,9 @@ export interface QuakeListSettings {
   quakeListDepthMax: number | null
   quakeListRegionBasis: QuakeRegionBasis
   quakeListRegions: string[]
-  quakeListTypes: IssueType[]
+  quakeListTypes: QuakeListType[]
+  /** 地域の窓で一覧と地図のどちらを出すか（最後に選んだ方）。 */
+  quakeListRegionView: QuakeRegionView
   /** 今から遡る時間（0 は絞らない）。日付の範囲が入っていればそちらを使う。 */
   quakeListPeriodHours: (typeof QUAKE_PERIOD_HOUR_VALUES)[number]
   quakeListPeriodFrom: string | null
@@ -532,6 +567,7 @@ export const DEFAULT_QUAKE_LIST_SETTINGS: QuakeListSettings = {
   quakeListRegionBasis: 'epicenter',
   quakeListRegions: [],
   quakeListTypes: [],
+  quakeListRegionView: 'list',
   quakeListPeriodHours: 0,
   quakeListPeriodFrom: null,
   quakeListPeriodTo: null,
@@ -550,7 +586,7 @@ export function quakeListFilterOf(s: QuakeListSettings): QuakeListFilter {
     scale: { min: scaleOrNull(s.quakeListScaleMin), max: scaleOrNull(s.quakeListScaleMax) },
     magnitude: { min: s.quakeListMagnitudeMin, max: s.quakeListMagnitudeMax },
     depth: { min: s.quakeListDepthMin, max: s.quakeListDepthMax },
-    region: { basis: s.quakeListRegionBasis, names: s.quakeListRegions },
+    region: { basis: s.quakeListRegionBasis, names: s.quakeListRegions, view: s.quakeListRegionView },
     types: s.quakeListTypes,
     period,
   }
@@ -569,6 +605,7 @@ export function quakeListFilterSettings(f: QuakeListFilter): Omit<QuakeListSetti
     quakeListRegionBasis: f.region.basis,
     quakeListRegions: [...f.region.names],
     quakeListTypes: [...f.types],
+    quakeListRegionView: f.region.view,
     quakeListPeriodHours: (QUAKE_PERIOD_HOUR_VALUES as readonly number[]).includes(hours) ? hours as QuakeListSettings['quakeListPeriodHours'] : 0,
     quakeListPeriodFrom: f.period?.kind === 'range' ? f.period.from : null,
     quakeListPeriodTo: f.period?.kind === 'range' ? f.period.to : null,
@@ -611,5 +648,22 @@ export function withLatestPinned(
   if (latest === null || filtered.includes(latest)) return filtered
   const shown = new Set(filtered)
   return all.filter(q => q === latest || shown.has(q))
+}
+
+/**
+ * 窓の「◯件中 ◯件」の後ろの数。条件に合う地震だけを数える（2026-11-08 選択「条件に合う数だけ」）。
+ * `filtered` は固定（飛んで開いた 1 件）を通した後の結果なので、固定の 1 件が条件に合わないときだけ 1 を引く。
+ * 最新の 1 枚（`withLatestPinned` が足す）は `filtered` に入らないので、ここでは数えない。
+ */
+export function quakeListMatchedCount(
+  filtered: readonly JMAQuake[],
+  f: QuakeListFilter,
+  ctx: QuakeFilterContext,
+): number {
+  if (ctx.pinnedKeys.size === 0) return filtered.length
+  const unpinned: QuakeFilterContext = { ...ctx, pinnedKeys: new Set<string>() }
+  let n = 0
+  for (const q of filtered) if (!ctx.pinnedKeys.has(ctx.keyOf(q)) || passesQuakeListFilter(q, f, unpinned)) n++
+  return n
 }
 

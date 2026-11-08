@@ -69,7 +69,7 @@ const WITHOUT_UNRECEIVED: EarthquakePoint[] = [station()]
 /** `selected` で開いた表示・畳んだ表示を出し分ける（`EarthquakeCard` の `isSelected`）。 */
 const renderTab = async (quake: JMAQuake, selected: boolean) => {
   render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={selected ? quakeEventKey(quake) : null}
     selectSeq={0}

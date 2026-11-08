@@ -68,7 +68,7 @@ const renderEEW = async (eew: EEWAlert) => {
 
 const renderQuake = async (quake: JMAQuake, selected = true) => {
   const { container } = render(
-    <EarthquakeTab
+    <EarthquakeTab matchedCount={0}
       earthquakes={[quake]}
       selectedId={selected ? quakeEventKey(quake) : 'other'}
       selectSeq={0}

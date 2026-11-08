@@ -56,7 +56,7 @@ function makeQuake(points: EarthquakePoint[]): JMAQuake {
 
 const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {}) => {
   const result = render(
-  <EarthquakeTab
+  <EarthquakeTab matchedCount={0}
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
     selectSeq={0}
@@ -140,7 +140,7 @@ describe('未入電トグル', () => {
     expect(findIntensityRow(PREF)?.children[0]?.textContent).toBe('4（未入電あり）')
 
     rerender(
-      <EarthquakeTab
+      <EarthquakeTab matchedCount={0}
         earthquakes={[makeQuake(MIXED)]}
         selectedId={quakeEventKey(makeQuake(MIXED))}
         selectSeq={0}
