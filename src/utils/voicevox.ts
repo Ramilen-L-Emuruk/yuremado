@@ -1,6 +1,6 @@
 import { getAudioContext, getMasterInput, syncKeepAlive } from './alertSound'
 import { findPhraseBreakMatch, getTtsPhraseBreakDictCache, isPlaceNameKey, loadTtsPhraseBreakDict } from './ttsPhraseBreakDict'
-import { CHUNK_BREAK_PUNCTUATION as SHARED_CHUNK_BREAK_PUNCTUATION } from './ttsPunctuation'
+import { CHUNK_BREAK_PUNCTUATION as SHARED_CHUNK_BREAK_PUNCTUATION, SENTENCE_END_RE } from './ttsPunctuation'
 import { leadingParticle, endsWithParticle } from './ttsTrailingParticles'
 import { getTtsStationReadingsCache, loadTtsStationReadings } from './ttsStationReadings'
 import { getTtsEpicenterAccentsCache, loadTtsEpicenterAccents } from './ttsEpicenterAccents'
@@ -567,6 +567,76 @@ export function splitIntoChunks(text: string): string[] {
     }
   }
   return merged.length > 0 ? merged : [text]
+}
+
+/**
+ * 端末の声の 1 発話の長さの上限（字）。Chrome は長い発話を 15 秒ほどで切る（1.1 倍で 1 字およそ 0.15 秒という見積もりなら 100 字で届く。境界は実測していない）ため、
+ * 余裕を見て 80 字とし、これを超える文だけ読点で分ける。読点の無い 80 字超の塊は分けられないのでそのまま 1 発話にする
+ * （終わりの見切りは文字数に比例して伸びる）。
+ */
+const SYSTEM_SENTENCE_MAX_CHARS = 80
+
+/** 閉じ括弧と句読点だけの断片。単独の発話にすると空に近い発話になるので、前の文の後ろへ付ける */
+const SYSTEM_TRAILING_FRAGMENT_RE = new RegExp(String.raw`^[」』）)】〕\]${CHUNK_BREAK_PUNCTUATION}\s]+$`)
+/** 文の頭に来た閉じ括弧（「…。」の 」）。前の文の後ろへ移す */
+const SYSTEM_LEADING_CLOSER_RE = /^[」』）)】〕\]]+/
+
+/**
+ * 端末の声で読む単位に分ける。**文（。！？まで）ごとに 1 つ**にまとめ、長すぎる文（{@link SYSTEM_SENTENCE_MAX_CHARS} 字超）だけ
+ * 読点で分ける（2026-11-08 ユーザー選択「句点（。）ごとにまとめる (Recommended)」）。
+ *
+ * VOICEVOX は読点ごとに分ける（{@link splitIntoChunks}。合成し終えないと鳴らせないので、短い句を先に鳴らして出だしを早める）が、
+ * 端末の声は読みながら音を作るので分けても出だしは早まらない。読点で分けると発話ごとにエンジンが文末の無音を入れ、
+ * 語の間が長く聞こえる（Windows の Haruka で 3 文が 8.51 秒、1 発話なら 7.79 秒。2026-11-08 実測）。
+ *
+ * **各要素は元の文をそのまま切り出したもの**（前後の空白だけ落とす）。チャンクを継ぎ合わせると、句読点の直後の空白
+ * （電文の改行から来る）が抜けて元の文に含まれない文字列になり、画面の追従（`mapChunksToRefs` が元の文の中を探す）が外れる。
+ *
+ * export しているのはテストのため。
+ */
+export function splitIntoSystemSentences(text: string): string[] {
+  const ranges: Array<[number, number]> = []
+  let start = 0
+  let pos = 0
+  for (const piece of text.split(CHUNK_SPLIT_RE)) {
+    const end = pos + piece.length
+    if (start === pos && ranges.length > 0) {
+      if (SYSTEM_TRAILING_FRAGMENT_RE.test(piece)) {
+        ranges[ranges.length - 1][1] = end
+        start = end
+        pos = end
+        continue
+      }
+      const closer = SYSTEM_LEADING_CLOSER_RE.exec(piece)
+      if (closer) {
+        start = pos + closer[0].length
+        ranges[ranges.length - 1][1] = start
+      }
+    }
+    const trimmed = text.slice(start, end).trim()
+    if (trimmed !== '') {
+      if (start < pos && trimmed.length > SYSTEM_SENTENCE_MAX_CHARS) {
+        ranges.push([start, pos])
+        start = pos
+      }
+      if (SENTENCE_END_RE.test(trimmed)) {
+        ranges.push([start, end])
+        start = end
+      }
+    }
+    pos = end
+  }
+  if (start < text.length) ranges.push([start, text.length])
+  return ranges.map(([a, b]) => text.slice(a, b).trim()).filter(s => s !== '')
+}
+
+/**
+ * 端末の声で読むときの 1 発話の単位。**読み上げ本体（`speakWithSystemVoice`）と時報の測定（`measureSystemSpeechSec`）は必ずここを通す**
+ * —— 割り方が食い違うと、測った長さが鳴らす長さとずれる。取り下げの判定を添えた読み上げ（緊急地震速報）は読点の区切り、
+ * それ以外は文の区切り（2026-11-08 ユーザー選択「速報だけ読点で区切る (Recommended)」）。
+ */
+function systemSpeechUnits(text: string, withdrawable: boolean): string[] {
+  return withdrawable ? splitIntoChunks(text) : splitIntoSystemSentences(text)
 }
 
 /** 通常テキストを /audio_query に渡し、accent_phrases 部分だけを取り出す。失敗時は null。 */
@@ -1752,8 +1822,8 @@ export type SpeechOutcome = {
    * 取り下げた場合（`shouldStillPlay` が偽を返した）。**どちらも「声になっていない」**ので、
    * 既読を進める側から見れば同じ扱いでよい。
    *
-   * `spokenChunks.length > 0` と同値。両方を持つのは呼び出し側の読みやすさのためで、
-   * 作るのは {@link SpeechOutcome} を組み立てる 1 箇所だけ（食い違う余地は無い）。
+   * VOICEVOX では `spokenChunks.length > 0` と同値。**端末の声では違う** —— あちらは最後まで鳴ったチャンクだけを
+   * `spokenChunks` に入れるので、1 文目の途中で割り込まれると「鳴った（真）・既読は空」になる（`speakWithSystemVoice`）。
    */
   spoke: boolean
   /**
@@ -2215,11 +2285,15 @@ const warnNoSystemSpeech = createLogThrottle(60_000)
 /**
  * 端末の声（Web Speech API）で読む。{@link speakOnce} の分かれ道から、割り込みとセッションの採番を済ませた後に呼ぶ。
  *
- * **チャンクごとに 1 つの発話にする。** 既読と画面の追従をチャンクの鳴り始めで進めるため（VOICEVOX と同じ単位）と、
- * Chrome が長い発話を 15 秒ほどで切るため。次のチャンクは前が鳴り終わってから渡す —— 先に並べると、鳴る直前の
+ * **文ごとに 1 つの発話にする**（{@link splitIntoSystemSentences}）。ただし `shouldStillPlay` を添えた読み上げ（いまは緊急地震速報だけ）は、
+ * VOICEVOX と同じ読点の区切り（{@link splitIntoChunks}）で読む —— 取り下げの判定は発話の切れ目でしか効かないので、文でまとめると
+ * 誤報取消を受けても文の終わりまで（最大 80 字・およそ 12 秒）読み続けてしまう（2026-11-08 ユーザー選択「速報だけ読点で区切る (Recommended)」）。
+ * 以下の「チャンク」はこの 1 発話の単位を指す。次のチャンクは前が鳴り終わってから渡す —— 先に並べると、鳴る直前の
  * 妥当性の判定（`shouldStillPlay`）が効かない（並べた発話を 1 つだけ外す口が無い）。
  *
- * 鳴り始めた（`onstart`）チャンクを「鳴った」に数える。途中で止められても数えるのは VOICEVOX と同じ線引き。
+ * **既読（`spokenChunks`）に数えるのは最後まで鳴ったチャンクだけ**（見切った `timeout` も鳴りきったとみなす）。割り込まれて途中で
+ * 止まった文は数えず、次の報で読み直す（同日ユーザー選択「最後まで鳴った文だけ既読 (Recommended)」）。文でまとめると 1 チャンクが長く、
+ * 鳴り始めで数えると、声になっていない文の残り（地方名など）まで既読になる。`spoke` と画面の追従は鳴り始めで進める。
  * 追従へ渡す開始時刻は鳴り始めた時点の {@link getSpeechClock}（AudioContext が無ければ 0）。
  *
  * 音は AudioContext を通らないので、通知音との音圧の抑え（compressor）は掛からない。
@@ -2237,8 +2311,9 @@ async function speakWithSystemVoice(
     return { spoke: false, spokenChunks: [] }
   }
   log.debug(`[SystemSpeech] 読み上げ（${reason}）: ${text}`)
-  const chunks = splitIntoChunks(text)
+  const chunks = systemSpeechUnits(text, shouldStillPlay !== undefined)
   const spoken: string[] = []
+  let startedAny = false
   let lastResult: SystemUtteranceResult = 'ended'
   for (let i = 0; i < chunks.length; i++) {
     if (currentSessionId !== sessionId) break  // 割り込まれた
@@ -2257,7 +2332,7 @@ async function speakWithSystemVoice(
     const result = await speakSystemUtterance(chunks[i], volume, () => {
       if (currentSessionId !== sessionId) return
       systemAudibleSession = sessionId
-      spoken.push(chunks[i])
+      startedAny = true
       try {
         onChunkScheduled?.(i, getSpeechClock() ?? 0, chunks)
       } catch (err) {
@@ -2269,20 +2344,21 @@ async function speakWithSystemVoice(
       lastAudioEndedAt = performance.now()
     }
     lastResult = result
+    if (result === 'ended' || result === 'timeout') spoken.push(chunks[i])
     // 見切った（読み終わりの知らせが来ない）チャンクは鳴りきったとみなして次へ進む
     if (result !== 'ended' && result !== 'timeout') break
   }
   const stillMine = currentSessionId === sessionId
   if (lastResult === 'failed' && stillMine) {
     // 鳴らなかった・途中で壊れた。途中までなら、鳴ったチャンクだけが既読になる（後ろは次の報で読まれうる）
-    log.warn(`[SystemSpeech] ${spoken.length === 0 ? '1 音も鳴らなかった' : `${spoken.length}/${chunks.length} チャンクで止まった`}: ${text}`)
+    log.warn(`[SystemSpeech] ${!startedAny ? '1 音も鳴らなかった' : `${spoken.length}/${chunks.length} チャンクを読み終えて止まった`}: ${text}`)
   } else if (lastResult === 'cancelled' && stillMine) {
     // アプリは割り込むときセッションを進めるので、セッションが自分のまま止められたのは外から（電話・他のタブ・OS）
     log.warn(`[SystemSpeech] 端末の声が外から止められた（${spoken.length}/${chunks.length} チャンク）: ${text}`)
-  } else if (spoken.length === 0 && stillMine) {
+  } else if (!startedAny && stillMine) {
     log.debug(`[SystemSpeech] 1 音も鳴らなかった（取り下げ）: ${text}`)
   }
-  return { spoke: spoken.length > 0, spokenChunks: spoken }
+  return { spoke: startedAny, spokenChunks: spoken }
 }
 
 /** 端末の声で測った長さに足す余裕（秒）。黙って測ると、iPhone の Kyoko は鳴らしたときより 30〜80 ms 短く出る（2026-11-08 実測） */
@@ -2296,7 +2372,7 @@ const measuredSpeechSec = new Map<string, number>()
  * （2026-11-08 ユーザー選択「鳴らす少し前にその回の文だけ (Recommended)」）。端末の声は合成の口が無く、鳴らさないと長さが分からない。
  *
  * **2 回読んで短いほうを使う。** iPhone の Kyoko は 1 回目だけ大きく外れた（2250 ms と約 620 ms。2026-11-08 実測）。
- * 長さは {@link speakWithSystemVoice} と同じくチャンクごとに 1 つの発話で読み、最初の鳴り始めから最後の終わりまでを取る
+ * 長さは {@link speakWithSystemVoice} と同じく文ごとに 1 つの発話で読み、最初の鳴り始めから最後の終わりまでを取る
  * （チャンクの間の隙間も含めるため）。
  *
  * 測っている間に読み上げが始まったら、測るのをやめて null を返す（→ {@link systemMeasure}）。端末の声が使えない・
@@ -2314,7 +2390,7 @@ export async function measureSystemSpeechSec(text: string): Promise<number | nul
   abortSystemMeasure()
   const me = { aborted: false }
   systemMeasure = me
-  const chunks = splitIntoChunks(text)
+  const chunks = systemSpeechUnits(text, false)  // 時報は取り下げの判定を渡さない（useTimeSignal）
   const once = async (): Promise<number | null> => {
     let firstStart: number | null = null
     for (const chunk of chunks) {

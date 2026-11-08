@@ -5,7 +5,7 @@
 // VOICEVOX と同じ約束を守るかを見る。`speechSynthesis` は偽物に差し替え、鳴り始めと終わりをタイマーで起こす。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
-  speakWithVoicevox, stopSpeech, isAudioPlaying, prewarmVoicevox, setSpeechVoice, splitIntoChunks,
+  speakWithVoicevox, stopSpeech, isAudioPlaying, prewarmVoicevox, setSpeechVoice, splitIntoSystemSentences, splitIntoChunks,
   measureSystemSpeechSec, clearVoicevoxDown, SYSTEM_SPEECH_MEASURE_MARGIN_SEC,
   __resetSpeechVoiceForTest, __resetAudioPlaybackStateForTest,
 } from './voicevox'
@@ -129,7 +129,7 @@ describe('声を「システムの読み上げ」にしたとき', () => {
     const p = speakWithVoicevox(URL_OK, TEXT, 1, 0.5, undefined, null, i => { scheduled.push(i) })
     await vi.advanceTimersByTimeAsync(5000)
     const outcome = await p
-    const chunks = splitIntoChunks(TEXT)
+    const chunks = splitIntoSystemSentences(TEXT)
     expect(fetchCalls).toBe(0)
     expect(started.map(u => u.text)).toEqual(chunks)
     expect(started.every(u => u.rate === SYSTEM_SPEECH_RATE && u.lang === 'ja-JP' && u.volume === 0.5)).toBe(true)
@@ -153,16 +153,44 @@ describe('声を「システムの読み上げ」にしたとき', () => {
     expect(fetchCalls).toBe(0)
   })
 
-  it('安全弁: 割り込まれたら、鳴り始めていたチャンクまでを鳴ったと返し、残りは読まない', async () => {
+  it('安全弁: 割り込まれたら残りは読まず、途中で止まった文は既読に数えない（鳴り始めたことは spoke で返す）', async () => {
     setSpeechVoice('system')
-    const chunks = splitIntoChunks(TEXT)
     const p = speakWithVoicevox(URL_OK, TEXT, 1, 1)
     await vi.advanceTimersByTimeAsync(10)
     stopSpeech()
     await vi.advanceTimersByTimeAsync(5000)
     const outcome = await p
-    expect(outcome).toEqual({ spoke: true, spokenChunks: [chunks[0]] })
+    expect(outcome).toEqual({ spoke: true, spokenChunks: [] })
     expect(started).toHaveLength(1)
+  })
+
+  it('対照: 1 文目を読み終えてから割り込まれたら、1 文目だけを既読に数える', async () => {
+    setSpeechVoice('system')
+    const chunks = splitIntoSystemSentences(TEXT)
+    const p = speakWithVoicevox(URL_OK, TEXT, 1, 1)
+    await vi.advanceTimersByTimeAsync(UTTER_MS + 50)
+    stopSpeech()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await p).toEqual({ spoke: true, spokenChunks: [chunks[0]] })
+  })
+
+  it('正: 取り下げの判定を添えた読み上げ（緊急地震速報）は、読点ごとに 1 発話で読む（取り下げを読点で効かせる）', async () => {
+    setSpeechVoice('system')
+    const text = '緊急地震速報、石川県能登、新潟県上越では強い揺れに警戒してください。'
+    const p = speakWithVoicevox(URL_OK, text, 1, 1, () => true)
+    await vi.advanceTimersByTimeAsync(20_000)
+    await p
+    expect(started.map(u => u.text)).toEqual(splitIntoChunks(text))
+    expect(started.length).toBeGreaterThan(1)
+  })
+
+  it('対照: 取り下げの判定が無い読み上げは、同じ文を 1 発話で読む', async () => {
+    setSpeechVoice('system')
+    const text = '緊急地震速報、石川県能登、新潟県上越では強い揺れに警戒してください。'
+    const p = speakWithVoicevox(URL_OK, text, 1, 1)
+    await vi.advanceTimersByTimeAsync(20_000)
+    await p
+    expect(started.map(u => u.text)).toEqual([text])
   })
 
   it('安全弁: 鳴らす直前の判定が偽になったら、以降のチャンクを読まない', async () => {
@@ -193,7 +221,7 @@ describe('声を VOICEVOX にして、VOICEVOX に繋がらないとき', () => 
     const p1 = speakWithVoicevox(URL_OK, TEXT, 1, 1)
     await vi.advanceTimersByTimeAsync(20_000)
     const o1 = await p1
-    expect(o1.spokenChunks).toEqual(splitIntoChunks(TEXT))
+    expect(o1.spokenChunks).toEqual(splitIntoSystemSentences(TEXT))
     expect(fetchCalls).toBeGreaterThan(0)
 
     const before = fetchCalls
@@ -328,6 +356,15 @@ describe('端末の声で声の長さを測る（measureSystemSpeechSec）', () 
     expect(await p2).not.toBeNull()
   })
 
+  it('正: 読み上げ本体と同じく文ごとに 1 発話で測る（2 文なら 1 回に 2 発話、2 回で 4 発話）', async () => {
+    const text = '16時をお知らせします。ただいまの時刻です。'
+    const p = measureSystemSpeechSec(text)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(await p).not.toBeNull()
+    expect(started.map(u => u.text)).toEqual([...splitIntoSystemSentences(text), ...splitIntoSystemSentences(text)])
+    expect(started).toHaveLength(4)
+  })
+
   it('安全弁: 測っている間に読み上げが始まったら打ち切り、null を返して読み上げを鳴らす', async () => {
     setSpeechVoice('system')
     const m = measureSystemSpeechSec('16時です')
@@ -336,6 +373,45 @@ describe('端末の声で声の長さを測る（measureSystemSpeechSec）', () 
     await vi.advanceTimersByTimeAsync(5000)
     expect(await m).toBeNull()
     expect((await speech).spoke).toBe(true)
+  })
+})
+
+describe('端末の声の区切り（splitIntoSystemSentences）', () => {
+  it('正: 読点では分けず、文（。）ごとにまとめる', () => {
+    expect(splitIntoSystemSentences('緊急地震速報、三陸沖で地震。強い揺れに警戒してください。'))
+      .toEqual(['緊急地震速報、三陸沖で地震。', '強い揺れに警戒してください。'])
+  })
+  it('正: 句読点の直後に空白（電文の改行）があっても、各要素は元の文をそのまま切り出したもの（追従が元の文の中を探せる）', () => {
+    const text = '揺れの強い地域、 宮城県北部、 岩手県南部。 津波の心配はありません。'
+    const parts = splitIntoSystemSentences(text)
+    expect(parts).toEqual(['揺れの強い地域、 宮城県北部、 岩手県南部。', '津波の心配はありません。'])
+    expect(parts.every(p => text.includes(p))).toBe(true)
+  })
+  it('正: 閉じ括弧だけの断片は単独の発話にせず、前の文に付ける', () => {
+    expect(splitIntoSystemSentences('「強い揺れに警戒してください。」と発表しました。'))
+      .toEqual(['「強い揺れに警戒してください。」', 'と発表しました。'])
+  })
+  it('正: 文の後ろに続く句点・閉じ括弧だけの断片（！？・。。・。」。）は単独の発話にせず、前の文に付ける', () => {
+    expect(splitIntoSystemSentences('本当ですか！？次の文です。')).toEqual(['本当ですか！？', '次の文です。'])
+    expect(splitIntoSystemSentences('揺れました。。次の文です。')).toEqual(['揺れました。。', '次の文です。'])
+    expect(splitIntoSystemSentences('「警戒してください。」。次の文です。')).toEqual(['「警戒してください。」。', '次の文です。'])
+  })
+  it('安全弁: 80 字を超える文は読点で分け、継ぐと元の文に戻る（Chrome が長い発話を切るため）', () => {
+    const long = Array.from({ length: 12 }, (_, i) => `地域${i}は震度三、 `).join('') + '以上です。'
+    const parts = splitIntoSystemSentences(long)
+    expect(parts.length).toBeGreaterThan(1)
+    expect(parts.every(p => p.length <= 80)).toBe(true)
+    expect(parts.every(p => long.includes(p))).toBe(true)
+    expect(parts.join(' ')).toBe(long)
+  })
+  it('対照: 80 字ちょうどの文は分けない', () => {
+    const exact = 'あ'.repeat(40) + '、' + 'い'.repeat(38) + '。'
+    expect(exact.length).toBe(80)
+    expect(splitIntoSystemSentences(exact)).toEqual([exact])
+  })
+  it('対照: 句点の無い文はそのまま 1 つ・空の文は 0 個', () => {
+    expect(splitIntoSystemSentences('16時です')).toEqual(['16時です'])
+    expect(splitIntoSystemSentences('')).toEqual([])
   })
 })
 
