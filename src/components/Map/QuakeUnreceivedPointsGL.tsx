@@ -125,8 +125,8 @@ function clickHtml(f: MapGeoJSONFeature): string {
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
       `${badgeHtml(UNRECEIVED_BADGE_LABEL, UNRECEIVED_COLOR)}` +
       `<span style="color:#cbd5e1">震度 ${escapeHtml(UNRECEIVED_BADGE_LABEL)}</span></div>` +
-    // **推定したのは気象庁**であることを書く。このアプリは強震モニタ由来の値にも「推定」を
-    // 使っており（リアルタイムタブ）、主語が無いと「アプリが推定した値」と取り違えられる。
+    // **推定したのは気象庁**であることを書く。このアプリは自前で計算した値にも「推定」を
+    // 使っており（リアルタイムタブの到達時間）、主語が無いと「アプリが推定した値」と取り違えられる。
     `<div style="margin-top:4px;font-size:11px;color:#9ca3af">` +
       `気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）</div>` +
     (distanceKm >= 0

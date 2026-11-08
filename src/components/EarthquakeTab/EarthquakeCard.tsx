@@ -1886,8 +1886,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             if (unreceivedActive && unreceivedPoints.count > 0) {
               return (
                 <div className="flex flex-col gap-1 pt-1 border-t border-white/10">
-                  {/* **推定したのは気象庁**であることを書く。このアプリは強震モニタ由来の
-                      値にも「推定」を使っており（リアルタイムタブ）、主語が無いと
+                  {/* **推定したのは気象庁**であることを書く。このアプリは自前で計算した
+                      値にも「推定」を使っており（リアルタイムタブの到達時間）、主語が無いと
                       「アプリが推定した値」と取り違えられる。 */}
                   <div className="text-[0.6875rem] text-secondary roomy:text-[0.8125rem]">
                     気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）

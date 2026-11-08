@@ -1607,7 +1607,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               </Row>
             )}
             {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
-            <Row label="揺れ検知通知" description="揺れを検知したときに通知します。推定値のため、通知は多めになります">
+            <Row label="揺れ検知通知" description="揺れを検知したときに通知します。リアルタイム震度から判定するため、通知は多めになります">
               <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
             </Row>
             <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
