@@ -7,6 +7,7 @@ import { getIntensityLabel } from './intensity'
 import { parseJstTimeMs } from './quakeOriginSeconds'
 import { quakeListDay } from './quakeListDay'
 import { isAreaPoint, isMaxScaleUnreceived, type AreaPrefIndex } from './quakePoints'
+import { clampPeriodRange } from './historyDays'
 
 /** 下限と上限。どちらも null なら絞らない。 */
 export interface QuakeRange {
@@ -342,39 +343,9 @@ export function quakeFilterChipLabels(f: QuakeListFilter): Record<'scale' | 'mag
   return { scale, magnitude, depth, region, types, period }
 }
 
-/**
- * 期間の絞りが、まだ読み込んでいない日にかかるか。かかるなら、注記「〇〇以前は未読込みです。」の〇〇（読み込んだ一番古い日の前の日。
- * 日本時間の「10月31日」の形）を返す。かからなければ null（2026-11-07 選択「読んだ範囲だけで絞る」・文面はユーザー原文「〇〇以前は未読込みです。で」）。
- *
- * @param oldestLoadedDay 読み込んだ一番古い日（日本時間の `YYYY-MM-DD`）。まだ読んでいなければ null（注記は出さない）
- */
-export function quakeListUnloadedBefore(period: QuakePeriod | null, oldestLoadedDay: string | null, nowMs: number): string | null {
-  if (period === null || oldestLoadedDay === null) return null
-  const oldestMs = Date.parse(`${oldestLoadedDay}T00:00:00+09:00`)
-  if (!Number.isFinite(oldestMs)) return null
-  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : jstDayStartMs(period.from)
-  if (!Number.isFinite(startMs) || startMs >= oldestMs) return null
-  // 前の日（日本時間）
-  const d = new Date(oldestMs - 86_400_000 + 9 * 3_600_000)
-  return `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
-}
-
-/**
- * 期間に合わせて自動で読み足す範囲。**期間の始まりが今日（日本時間）から 90 日前より新しいときだけ**読み足す
- * （2026-11-08 ユーザー選択「期間の日だけ取りに行く形を別に作る」の説明「今回は『今日から 90 日前まで』で入れ」）。
- * 読み足しは「もっと見る」と同じく今日から途切れずに遡るので、90 日より古い期間を選ぶと今日からそこまで全部を読むことになる。
- * それより古い期間は「もっと見る」で遡る（90 日にした重さの根拠は docs/spec/quake-spec.md §8）。
- */
-export const QUAKE_LIST_AUTO_LOAD_DAYS = 90
-
-/** 期間の始まりが自動で読み足す範囲（今日から `QUAKE_LIST_AUTO_LOAD_DAYS` 日前の日の頭以降）に入っているか。 */
-export function quakeListAutoLoadAllowed(period: QuakePeriod | null, nowMs: number): boolean {
-  if (period === null) return false
-  const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : jstDayStartMs(period.from)
-  if (!Number.isFinite(startMs)) return false
-  // 今日の頭は、期間の絞り（`jstDayStartMs`）と同じく日本時間の日付で取る（基準を混ぜると境の 1 日がずれる）
-  const todayStart = Math.floor((nowMs + 9 * 3_600_000) / 86_400_000) * 86_400_000 - 9 * 3_600_000
-  return startMs >= todayStart - QUAKE_LIST_AUTO_LOAD_DAYS * 86_400_000
+/** 日本時間の `YYYY-MM-DD` を「10月31日」の形に。注記「〇〇以前は未読込みです。」「（〇〇以降を読込済み）」に使う（文面はユーザー原文「〇〇以前は未読込みです。で」）。 */
+export function quakeListDayLabel(day: string): string {
+  return `${Number(day.slice(5, 7))}月${Number(day.slice(8, 10))}日`
 }
 
 /** 期間の始まり（日本時間の「10月31日」の形）。注記「〇〇まで読み込んでいます…」に使う。 */
@@ -579,8 +550,12 @@ const scaleOrNull = (v: number): number | null => (v >= 0 ? v : null)
 
 /** 設定から条件を組む。 */
 export function quakeListFilterOf(s: QuakeListSettings): QuakeListFilter {
-  const period: QuakePeriod | null = s.quakeListPeriodFrom !== null && s.quakeListPeriodTo !== null
-    ? { kind: 'range', from: s.quakeListPeriodFrom, to: s.quakeListPeriodTo }
+  // 日付の期間は 90 日まで（日付の欄が寄せるので通常は収まる。前の版で保存した長い範囲は、終わりの日から 90 日へ縮める）
+  const range = s.quakeListPeriodFrom !== null && s.quakeListPeriodTo !== null
+    ? clampPeriodRange(s.quakeListPeriodFrom, s.quakeListPeriodTo, 'to', s.quakeListPeriodTo)
+    : null
+  const period: QuakePeriod | null = range !== null
+    ? { kind: 'range', from: range.from, to: range.to }
     : s.quakeListPeriodHours > 0 ? { kind: 'hours', hours: s.quakeListPeriodHours } : null
   return {
     scale: { min: scaleOrNull(s.quakeListScaleMin), max: scaleOrNull(s.quakeListScaleMax) },

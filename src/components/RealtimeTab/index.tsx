@@ -1597,9 +1597,9 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           )}
           <span className="text-[length:var(--qk-fs)] text-secondary">
             {activeCount > 0
-              ? `${activeCount + subZeroCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
+              ? `${activeCount + subZeroCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`
               : belowZero
-                ? `${belowZeroCount}観測点で${subZeroFullLabel ?? ''}の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
+                ? `${belowZeroCount}観測点で${subZeroFullLabel ?? ''}の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`
                 : `観測点の反応は収まりました${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`}
           </span>
           {/* 段のチップが「どの段か」を示すのに対し、この行は何がその検知を支えたかを示す。確かな段は確定した瞬間の
@@ -1681,7 +1681,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
         return (
           <div className="flex flex-col gap-2">
             <KyoshinDetectionSummary events={events} points={kyoshinDetectedPoints} visible={visible && pageVisible} subregions={subregions} />
-            <p className="text-[length:var(--qk-fs)] text-secondary">※リアルタイムの推定値。気象庁発表とは異なる場合があります。</p>
+            <p className="text-[length:var(--qk-fs)] text-secondary">※気象庁が発表する震度とは計算方法が異なり、単純には比較できません。</p>
           </div>
         )
       })()}
@@ -1696,7 +1696,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
           <h2 className="font-bold mb-1">
             <DescriptionTip
               label="リアルタイム震度モニタ"
-              description="各観測点のリアルタイム震度を地図に表示します。1秒ごとに更新されます。緊急地震速報の発報時は予報円も表示します。青が P 波、赤が S 波です。"
+              description="各観測点のリアルタイム震度を地図に表示します。1秒ごとに更新されます。気象庁の震度は1分間の揺れから計算するため、ここではそれを実時間で近似した値を出しています。緊急地震速報の発報時は予報円も表示します。青が P 波、赤が S 波です。"
             />
           </h2>
         </div>
@@ -1706,7 +1706,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
         {/* 注記 */}
         <div className="bg-card rounded-md p-3 border border-border">
           <p className="text-secondary text-[length:var(--qk-fs)] leading-relaxed">
-            ※ 表示される震度はリアルタイムの推定値であり、気象庁が発表する震度とは異なる場合があります。
+            ※ 表示される震度は、気象庁が発表する震度とは計算方法が異なり、単純には比較できません。観測の状況によっては実際の揺れとは異なる場合があります。
           </p>
         </div>
       </div>

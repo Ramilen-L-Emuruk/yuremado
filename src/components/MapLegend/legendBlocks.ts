@@ -344,7 +344,7 @@ function catalogBlock(sources: MapLegendSources): LegendBlock | null {
 /**
  * 震度スケールの見出し。使っている描画物の名前を並べる。
  *
- * **「震度」と「リアルタイム震度」を混ぜない。** 前者は気象庁の発表値、後者は強震モニタの推定値で、
+ * **「震度」と「リアルタイム震度」を混ぜない。** 前者は気象庁の発表値、後者は強震モニタの値（計測震度を実時間で近似したもの）で、
  * 同じ配色でも意味が違う（リアルタイム震度は発表震度より高く振れる）。
  */
 function intensityTitle(sources: MapLegendSources): string {

@@ -19,6 +19,7 @@ import type { JMAQuake, JMALpgm, EarthquakePoint, JMAQuakeCity } from '../../typ
 // `getByText('〇〇＊')` では引けないので、行ごと見る。
 import { intensityRowText as rowText, openIntensityRows } from '../../test-utils/intensityRow'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 afterEach(cleanup)
 
@@ -120,7 +121,7 @@ const renderTab = async (quake: JMAQuake, lpgm?: JMALpgm, opts: { unreceivedOpen
     onSortChange={() => {}}
     filterSourceQuakes={[]}
     shown
-    historyOldestDay={null}
+    historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}

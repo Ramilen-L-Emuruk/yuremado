@@ -35,6 +35,7 @@ import {
 } from '../utils/ttsText'
 import { eewMaxScaleInfo, eewMaxLpgmClassInfo } from '../utils/eew'
 import type { TtsSpeechOptions } from '../utils/ttsText'
+import { EMPTY_HISTORY_DAYS } from '../utils/historyDays'
 import type {
   JMAQuake, EEWAlert, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu,
   JMAQuakeNotice, JMAEarthquakeCount,
@@ -191,7 +192,7 @@ function earthquakeTabProps() {
     onSortChange: () => {},
     filterSourceQuakes: [],
     shown: true,
-    historyOldestDay: null,
+    historyDays: EMPTY_HISTORY_DAYS, onLoadPeriod: async () => false,
     historyInputs: null,
     historyPickedId: null,
     historyView: null,

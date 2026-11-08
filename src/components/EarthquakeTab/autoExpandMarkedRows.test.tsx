@@ -16,6 +16,7 @@ import { rowMarkKey, type QuakeCardMarks } from '../../utils/quakeUpdateMark'
 import type { JMAQuake, EarthquakePoint } from '../../types/earthquake'
 import { findIntensityRow } from '../../test-utils/intensityRow'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 afterEach(cleanup)
 
@@ -100,7 +101,7 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
     onSortChange={() => {}}
     filterSourceQuakes={[]}
     shown
-    historyOldestDay={null}
+    historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}
@@ -182,7 +183,7 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
         onSortChange={() => {}}
         filterSourceQuakes={[]}
         shown
-        historyOldestDay={null}
+        historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
         historyInputs={null}
         historyPickedId={null}
         historyView={null}
