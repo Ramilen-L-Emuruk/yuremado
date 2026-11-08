@@ -7,6 +7,7 @@ import { RangeSlider } from '../RangeSlider'
 import { DateField } from '../DateField'
 import { useSubRegions } from '../../hooks/useSubRegions'
 import { serverNow } from '../../utils/clock'
+import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 import { areaPrefIndexOf, getStationCoordsCache, onStationCoordsLoaded, regionOrderIndexOf, regionOrderRank, type StationCoordsData } from '../../utils/stationCoords'
 import {
   clearQuakeListFilter, QUAKE_DEPTH_RANGE, QUAKE_LIST_TYPES, QUAKE_MAGNITUDE_RANGE, QUAKE_PERIOD_HOURS, QUAKE_SCALE_STEPS,
@@ -203,7 +204,7 @@ function FilterDialog({ title, count, countLive, onClose, onClearAll, children }
   const upOnBackdrop = useRef(false)
   return createPortal(
     <div
-      className="fixed inset-0 z-100000 flex items-center justify-center bg-black/60 p-2 sm:p-6 [--text-sm:0.90625rem] [--text-xs:0.71875rem] min-[520px]:[--text-sm:1rem] min-[520px]:[--text-xs:0.78125rem]"
+      className={`fixed inset-0 z-100000 flex items-center justify-center bg-black/60 ${OVERLAY_BACKDROP_PAD} [--text-sm:0.90625rem] [--text-xs:0.71875rem] min-[520px]:[--text-sm:1rem] min-[520px]:[--text-xs:0.78125rem]`}
       onClick={e => {
         e.stopPropagation()
         if (e.target === e.currentTarget && downOnBackdrop.current && upOnBackdrop.current) onClose()

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { CANCEL_FADE_MS, fadeIn } from './EarthquakeTab/quakeMotion'
+import { OVERLAY_BACKDROP_PAD } from '../rootFrame'
 
 /**
  * 地震カードの再生ボタンを、ライブ表示中に押したときに出す確認の窓。
@@ -35,7 +36,7 @@ export function QuakeReplayConfirmDialog({ onAnswer }: {
   const button = 'rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) hover:bg-white/10 hover:text-white'
   const content = (
     <div
-      className="fixed inset-0 z-100000 flex items-center justify-center bg-black/60 p-2 sm:p-6"
+      className={`fixed inset-0 z-100000 flex items-center justify-center bg-black/60 ${OVERLAY_BACKDROP_PAD}`}
       onClick={(e) => {
         e.stopPropagation()
         if (e.target === e.currentTarget) onAnswer(false)

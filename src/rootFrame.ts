@@ -10,3 +10,24 @@
  * 規則と実測は docs/spec/architecture-spec.md「画面いっぱいへの広がりとセーフエリア」規則 5。
  */
 export const ROOT_FRAME_CLASS = 'fixed inset-x-0 top-0 h-dvh'
+
+/**
+ * 外枠の上に取る余白。ステータスバーが被る高さ（`env(safe-area-inset-top)`）だけ中身を下げ、そこは外枠の地の色で塗る。
+ *
+ * iOS は同じホーム画面のアイコンから開いても、ステータスバーを黒い帯にして画面をその下から始める起動と、
+ * 画面をステータスバーの裏まで広げる起動がある。後者では裏に回った地図にぼかしが掛かる。
+ * 帯がある起動では値が 0 なので何も変わらず、裏まで広がった起動だけが帯のある見た目にそろう。
+ * 実測と規則は docs/spec/architecture-spec.md「画面いっぱいへの広がりとセーフエリア」規則 2・規則 4。
+ *
+ * クラスではなく `style` で渡す（代わりの画面の `p-6` と上の余白がぶつかったとき、どちらが勝つかを読ませないため）。
+ */
+export const ROOT_FRAME_TOP_INSET = 'env(safe-area-inset-top, 0px)'
+
+/**
+ * 外枠の外（`document.body`）に描く、画面全体を覆う窓の外枠の余白。
+ *
+ * 外枠の上の余白（ROOT_FRAME_TOP_INSET）は外枠の外には効かないので、窓は自分で上端を避ける。
+ * 本体が画面いっぱいまで伸びる窓では、避けないと見出しや × がステータスバーの裏に入る。
+ * 上だけ `p-2`・`sm:p-6` の余白と上の安全領域の大きいほうを取り、残りの 3 辺は `p-2`・`sm:p-6` のまま。
+ */
+export const OVERLAY_BACKDROP_PAD = 'p-2 sm:p-6 pt-[max(0.5rem,env(safe-area-inset-top,0px))] sm:pt-[max(1.5rem,env(safe-area-inset-top,0px))]'
