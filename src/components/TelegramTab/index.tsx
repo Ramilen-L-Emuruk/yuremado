@@ -83,6 +83,17 @@ export function formatEntryForView(entry: TelegramLogEntry): string {
   return JSON.stringify(buildDownloadPayload(entry), null, 2)
 }
 
+/**
+ * 画面に描くときだけ、改行・復帰・タブ以外の制御文字を Unicode の制御文字の図記号（U+2400〜。ETX なら「␃」）へ置き換える。
+ * 国際津波関連情報の末尾には回線の終わりの印 ETX（`\x03`）が付いて来て、そのままでは化けて見える。字があることは
+ * 伝えたまま化けだけを消す（2026-11-07 ユーザー選択「見える記号に置き換える (Recommended)」）。
+ * コピーとダウンロードは {@link formatEntryForView}・{@link formatEntryForDownload} の生のままで、これを通さない。
+ */
+export function showControlChars(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, c => (c === '\x7f' ? '␡' : String.fromCharCode(0x2400 + c.charCodeAt(0))))
+}
+
 /** 単体ダウンロードの中身。文字の電文は `text`、二進の電文は `bytes`。 */
 export type EntryDownload =
   | { text: string; ext: 'xml' | 'txt' | 'json' }
@@ -446,7 +457,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                                 </button>
                               </div>
                               <pre className="font-mono text-secondary bg-black/30 rounded-sm p-2 overflow-x-auto max-h-[min(24rem,45dvh)] whitespace-pre-wrap break-all">
-                                {formatEntryForView(entry)}
+                                {showControlChars(formatEntryForView(entry))}
                               </pre>
                             </>
                           )
