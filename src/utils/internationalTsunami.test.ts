@@ -10,6 +10,10 @@ import {
 const quake = (type: string, time: string, lat = -200, lon = -200): JMAQuake =>
   ({ id: `q-${type}-${time}`, eventKey: `q-${type}-${time}`, issue: { type }, earthquake: { time, hypocenter: { latitude: lat, longitude: lon } } }) as unknown as JMAQuake
 
+/** 地震発生時刻（`earthquake.originTime`）を持たせた地震。震度速報だけのカードは持たない */
+const withOrigin = (q: JMAQuake, originTime: string): JMAQuake =>
+  ({ ...q, earthquake: { ...q.earthquake, originTime } }) as JMAQuake
+
 const bulletin = (over: Partial<JMAInternationalTsunami> = {}): JMAInternationalTsunami => ({
   id: 'WEPA60:2021-01-21T12:47:00.000Z:TSUNAMI BULLETIN NUMBER 001',
   title: 'TSUNAMI BULLETIN NUMBER 001',
@@ -41,6 +45,23 @@ describe('internationalTsunamiIndex の結び付け', () => {
     })
     expect(attachedTo(FOREIGN, [FOREIGN], [at(-ORIGIN_MATCH_TOLERANCE_MS)])).toHaveLength(1)
     expect(attachedTo(FOREIGN, [FOREIGN], [at(-ORIGIN_MATCH_TOLERANCE_MS - 1)])).toHaveLength(0)
+  })
+
+  // 比べるのはカードの地震発生時刻（無ければカードの時刻）。カードの時刻は地震発現時刻で、深い地震・遠い地震では数分遅れる
+  //   正: 発現時刻が 3 分遅れても、発生時刻が合えば付ける（2026-10-16 カムチャツカ半島付近 深さ 160 km の形）
+  //   対照: 発生時刻を持たないカード（震度速報だけ）はカードの時刻で比べる
+  //   安全弁: 発現時刻が合っていても、発生時刻が許すずれの外なら付けない（発生時刻を先に見ている）
+  it('カードの地震発生時刻で比べ、発生時刻が無ければカードの時刻で比べる', () => {
+    const b = bulletin({ originTime: '2026-10-16T03:35:00.000Z', epicenter: { latitude: 50.0, longitude: 158.1 } })
+    const kamchatka = withOrigin(quake('震源・震度情報', '2026-10-16T03:38:00.000Z', 50.0, 158.1), '2026-10-16T03:35:00.000Z')
+    expect(attachedTo(kamchatka, [kamchatka], [b])).toEqual([b])
+    expect(internationalTsunamiIndex([kamchatka], [b]).cards).toEqual([])
+
+    const intensityOnly = quake('震度速報', '2026-10-16T03:35:40.000Z')
+    expect(attachedTo(intensityOnly, [intensityOnly], [b])).toEqual([b])
+
+    const originFar = withOrigin(quake('震源・震度情報', '2026-10-16T03:35:30.000Z', 50.0, 158.1), '2026-10-16T03:32:00.000Z')
+    expect(attachedTo(originFar, [originFar], [b])).toHaveLength(0)
   })
 
   // 正（前の「国内の地震のカードには付けない」を覆した。2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」）:

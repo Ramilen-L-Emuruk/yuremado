@@ -479,6 +479,10 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(bulletins).toHaveLength(1)
     expect(bulletins[0].title).toBe('TSUNAMI BULLETIN NUMBER 001')
     expect(internationalTsunamiIndex([quake], bulletins).byQuakeKey.get(quakeEventKey(quake))).toEqual(bulletins)
+    // 遠地地震の報は発現時刻だけが発生時刻の 3 分後（日本で揺れた深い・遠い地震の形）。カードの時刻（発現）と英文の発生時刻の差は
+    // 許すずれ（120 秒）を超えるので、上で付いているのは発生時刻で突き合わせているから
+    expect(Date.parse(quake.earthquake.time) - Date.parse(quake.earthquake.originTime!)).toBe(180_000)
+    expect(Math.abs(Date.parse(quake.earthquake.time) - Date.parse(bulletins[0].originTime!))).toBeGreaterThan(120_000)
     // 自作の英文の深さは実電文の書式（FOCAL DEPTH の行に規模と並ぶ）で書き、読み取りが拾える
     expect(bulletins[0]).toMatchObject({ depthKm: 140, magnitude: 7.0, regionName: 'TALAUD ISLANDS, INDONESIA' })
   })

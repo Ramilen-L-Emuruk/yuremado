@@ -209,11 +209,20 @@ export const HEADLINE_ONLY_CITY: TestTelegramScript = {
  * WEPA60 は NII に無く、DMDATA の実電文はリポジトリへ置けない。行の並び（題名・`ISSUED AT`・
  * `ORIGIN TIME:`・末尾の `=`）だけを実電文に倣い、中身は自作だと本文に書いてある。
  * 発生時刻は遠地地震の報と同じ 12:23Z にしてあるので、カードへ結び付く。
+ *
+ * **遠地地震の報の地震発現時刻（`ArrivalTime`）だけを 3 分遅らせる。** 深い地震・遠い地震が日本で揺れると、発現時刻が発生時刻より
+ * 数分遅れて届く。カードの時刻は発現時刻で、英文は発生時刻どうしで突き合わせる（→ `utils/internationalTsunami.ts` の `quakeMsOf`）。
+ * 発現時刻がずれても英文が同じカードに付く形を、画面で確かめるため
  */
 export const FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI: TestTelegramScript = {
   anchor: 0,
   steps: [
-    { file: nii('20210121125105_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0 },
+    {
+      file: nii('20210121125105_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0,
+      rewrite: xml => editXml(xml, doc => {
+        childOf(only(doc, 'Earthquake'), 'ArrivalTime')!.textContent = '2021-01-21T21:26:00+09:00'
+      }),
+    },
     { file: 'synthetic/wepa60-talaud.txt', headType: 'WEPA60', atMs: 3_000 },
   ],
 }
