@@ -1473,25 +1473,20 @@ export function App() {
   // 時報（→ hooks/useTimeSignal.ts）。読み上げの接続先は作り置きと同じく、入力が落ち着いた値を使う
   useTimeSignal(settings, debouncedVoicevoxUrl)
 
-  // ブラウザの自動再生制限に対応: 初回のユーザー操作で音声を有効化する
+  // ブラウザの自動再生制限に対応: 利用者の操作で音声を有効化する
   useEffect(() => {
-    window.addEventListener('pointerdown', unlockAudio, { once: true })
-    window.addEventListener('keydown', unlockAudio, { once: true })
-    // 端末の声は、ブラウザが操作と数える瞬間（指を離したとき・キー入力）に有効化する。指で触れた瞬間の pointerdown は
-    // 数えられず、iPhone ではそこで渡した発話が鳴らない（→ `unlockSystemSpeech`）。発話が鳴り始めるまで操作のたびに試す
-    const unlockSpeech = () => {
-      if (!unlockSystemSpeech()) return
-      window.removeEventListener('pointerup', unlockSpeech)
-      window.removeEventListener('keydown', unlockSpeech)
+    // 効果音も端末の声も、ブラウザが操作と数える瞬間（指を離したとき・クリック・キー入力）に有効化する。指で触れた瞬間の pointerdown は
+    // 数えられず、iPhone ではそこで再開・発話しても効かない（→ `unlockAudio`・`unlockSystemSpeech`）。済むまで操作のたびに試す。
+    // click はどの環境でも操作と数えられる保険（マウスの pointerup を操作と数えるかはブラウザによる）
+    const UNLOCK_EVENTS = ['pointerup', 'click', 'keydown'] as const
+    const watch = (fn: () => boolean) => {
+      const handler = () => { if (fn()) UNLOCK_EVENTS.forEach(t => window.removeEventListener(t, handler)) }
+      UNLOCK_EVENTS.forEach(t => window.addEventListener(t, handler))
+      return () => UNLOCK_EVENTS.forEach(t => window.removeEventListener(t, handler))
     }
-    window.addEventListener('pointerup', unlockSpeech)
-    window.addEventListener('keydown', unlockSpeech)
-    return () => {
-      window.removeEventListener('pointerdown', unlockAudio)
-      window.removeEventListener('keydown', unlockAudio)
-      window.removeEventListener('pointerup', unlockSpeech)
-      window.removeEventListener('keydown', unlockSpeech)
-    }
+    const unwatchSound = watch(unlockAudio)
+    const unwatchSpeech = watch(unlockSystemSpeech)
+    return () => { unwatchSound(); unwatchSpeech() }
   }, [])
 
   // 国際津波関連情報の結び付けは、絞る前の全カードで 1 回だけ作る（→ `internationalTsunamiIndex`）。付く地震カードの無い報は、
