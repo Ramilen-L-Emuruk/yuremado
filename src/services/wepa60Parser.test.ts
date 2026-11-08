@@ -68,7 +68,7 @@ describe('parseWepa60Text', () => {
     expect(parseWepa60Text(`${BULLETIN}\x03\n\n2021-01-21T12:47:00.000Z`)!.id).toBe(plain.id)
   })
 
-  // 安全弁: 最後の行の末尾に付く = （通信試験の報の …GO.JP= の形）と、本文の行は落とさない
+  // 安全弁: 最後の行の末尾に付く = （通信試験の報の …GO.JP= の形。値は架空）と、本文の行は落とさない
   it('安全弁: 行の末尾の = と、時刻だけではない最後の行は残す', () => {
     const tail = parseWepa60Text(COMM_TEST.replace('TEST ONLY.\r\n=', 'TEST_ONLY.EXAMPLE.INVALID=\r\n\x03'))!
     expect(tail.text.endsWith('TEST_ONLY.EXAMPLE.INVALID=')).toBe(true)
