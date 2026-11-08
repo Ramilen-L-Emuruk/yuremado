@@ -150,7 +150,7 @@ import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showTe
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isLiveFeedHalted } from './utils/connectionStatus'
-import { ROOT_FRAME_CLASS } from './rootFrame'
+import { ROOT_FRAME_CLASS, ROOT_FRAME_TOP_INSET } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
 import { effectiveNotifyMinScale, notificationRegionAllowed } from './utils/notificationGate'
 import { quakePrefectures } from './utils/notificationRegions'
@@ -3198,11 +3198,12 @@ export function App() {
   return (
     // 画面いっぱいの高さは h-dvh（100dvh）で取る。dvh はブラウザ UI の出入りに追従するため、
     // iOS Safari でツールバーが出ている間もナビが画面外へ押し出されない。
-    // 画面端の safe-area は端に接する要素が各自で避ける（root では扱わない）。
+    // 画面端の safe-area は、上端だけ root が余白で避け（理由は ROOT_FRAME_TOP_INSET）、
+    // 下・左・右は端に接する要素が各自で避ける。
     // 外枠は固定配置にする（iOS が上端に重ねるぼかしと、横向きのあとのずれを避ける。理由は ROOT_FRAME_CLASS）。
     // 規則と端ごとの担当は docs/spec/architecture-spec.md
     // 「画面いっぱいへの広がりとセーフエリア」に集約している。
-    <div className={`${ROOT_FRAME_CLASS} flex flex-col bg-app text-white overflow-hidden`}>
+    <div className={`${ROOT_FRAME_CLASS} flex flex-col bg-app text-white overflow-hidden`} style={{ paddingTop: ROOT_FRAME_TOP_INSET }}>
       {/* 地図(左) | パネル | アイコンナビ(右端)。
           side ブレークポイント未満（スマホ縦など）は縦積み(地図上・つまみ・パネル・ナビ下)になり、
           パネルの高さは --panel-ratio（つまみのドラッグで可変・折りたたみ時 0）で決まる。
@@ -3301,7 +3302,8 @@ export function App() {
               ref={topCornersRef}
               className="absolute z-99999 pointer-events-none flex items-start justify-between gap-2"
               style={{
-                top: 'max(0.5rem, env(safe-area-inset-top, 0px))',
+                // 上端のステータスバーは root が余白で避けている（ROOT_FRAME_TOP_INSET）。ここでも足すと二重に下がる
+                top: '0.5rem',
                 left: 'max(0.5rem, env(safe-area-inset-left, 0px))',
                 right: 'max(0.5rem, env(safe-area-inset-right, 0px))',
               }}

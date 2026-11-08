@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { PREFECTURES } from '../../data/prefectureCodes'
+import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 
 /** 選んだ都道府県の一言。何も選んでいなければ「全国」（2026-11-03 ユーザー選択「通知する地域」の説明で決めた表示） */
 export function prefectureSummary(codes: readonly string[]): string {
@@ -60,7 +61,7 @@ export function PrefecturePicker({ value, onChange }: { value: readonly string[]
       </button>
       {open && createPortal(
         <div
-          className="fixed inset-0 z-100000 flex items-center justify-center bg-black/60 p-2 sm:p-6 [--text-sm:0.90625rem] [--text-xs:0.71875rem] min-[520px]:[--text-sm:1rem] min-[520px]:[--text-xs:0.78125rem]"
+          className={`fixed inset-0 z-100000 flex items-center justify-center bg-black/60 ${OVERLAY_BACKDROP_PAD} [--text-sm:0.90625rem] [--text-xs:0.71875rem] min-[520px]:[--text-sm:1rem] min-[520px]:[--text-xs:0.78125rem]`}
           // ポータルでも React のイベントは設定の窓の暗幕まで伝わるので、ここで止める（変更履歴の窓と同じ）
           onClick={e => {
             e.stopPropagation()

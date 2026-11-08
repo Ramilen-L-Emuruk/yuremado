@@ -57,6 +57,7 @@ import {
   type ViewRange,
 } from './detailView'
 import { paintIntensitySeries } from './paintIntensity'
+import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 import { paintSampleLane } from './paintSampleLane'
 import {
   buildSampleSeries,
@@ -557,7 +558,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
 
   const content = (
     <div
-      className="fixed inset-0 z-100000 flex items-center justify-center bg-black/60 p-2 sm:p-6"
+      className={`fixed inset-0 z-100000 flex items-center justify-center bg-black/60 ${OVERLAY_BACKDROP_PAD}`}
       // **ここで止める。** ポータルでもイベントはカード（`<button>`）まで伝わる。
       onClick={(e) => {
         e.stopPropagation()

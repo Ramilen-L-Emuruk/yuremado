@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { log } from '../utils/logger'
-import { ROOT_FRAME_CLASS } from '../rootFrame'
+import { ROOT_FRAME_CLASS, ROOT_FRAME_TOP_INSET } from '../rootFrame'
 
 /**
  * React のレンダー・ライフサイクル中の例外を受け止め、その範囲だけをフォールバック表示に
@@ -110,8 +110,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
     if (props.variant === 'root') {
       return (
-        // 外枠は App のルートと同じ固定配置にする（理由は ROOT_FRAME_CLASS）
-        <div className={`${ROOT_FRAME_CLASS} flex flex-col items-center justify-center gap-3 bg-app p-6 text-center text-white`}>
+        // 外枠は App のルートと同じ固定配置・同じ上の余白にする（理由は ROOT_FRAME_CLASS・ROOT_FRAME_TOP_INSET）。
+        // 上の余白は p-6 の 1.5rem に足す
+        <div
+          className={`${ROOT_FRAME_CLASS} flex flex-col items-center justify-center gap-3 bg-app p-6 text-center text-white`}
+          style={{ paddingTop: `calc(1.5rem + ${ROOT_FRAME_TOP_INSET})` }}
+        >
           <div className="text-lg roomy:text-2xl">画面を表示できなくなりました</div>
           {/* 根が落ちると副作用の後始末で接続も切れる。**「見えないだけ」と誤解させないこと。** */}
           <div className="text-sm opacity-80 roomy:text-lg">情報の受信も止まっています</div>
