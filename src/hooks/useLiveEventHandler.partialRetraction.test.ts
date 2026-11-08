@@ -50,10 +50,10 @@ const cancelEvent: JMAQuake = {
   issue: { source: 'JMA', time: '2026-01-01T12:10:00Z', type: '震度速報', correct: 'なし' },
 } as JMAQuake
 
-function setup(over: { voicevoxEnabled?: boolean } = {}) {
+function setup(over: { ttsEnabled?: boolean } = {}) {
   const selectQuake = vi.fn()
   const settings = { ...DEFAULTS,
-    voicevoxEnabled: over.voicevoxEnabled ?? false, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
+    ttsEnabled: over.ttsEnabled ?? false, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, notifyQuake: false, notifyEEW: false, notifyTsunami: false, notifyDetection: false,
   } as unknown as AppSettings
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
@@ -90,7 +90,7 @@ describe('一部の取消で、その地震の行を開く', () => {
 
   // 正: 読み上げが有効な端末でも同じ
   it('読み上げが有効でも選ぶ', () => {
-    const { handle, selectQuake } = setup({ voicevoxEnabled: true })
+    const { handle, selectQuake } = setup({ ttsEnabled: true })
     handle({ quakeCancel: { target: card, retracted, duplicate: false } })
     expect(selectQuake).toHaveBeenCalledWith(CARD_KEY)
   })

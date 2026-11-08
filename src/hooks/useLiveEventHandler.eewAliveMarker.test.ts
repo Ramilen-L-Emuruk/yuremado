@@ -55,7 +55,7 @@ function soleLineWith(needle: string): number {
 /**
  * `anchor` 行から上へ遡って、直近の `open` を含む行を返す。
  *
- * **同じ字下げの `if (settings.voicevoxEnabled) {` はこのファイルに 5 つある**（地震情報・
+ * **同じ字下げの `if (settings.ttsEnabled) {` はこのファイルに 5 つある**（地震情報・
  * 津波・長周期…）ので、素直に前から探すと別のブロックを掴む。中にしか無いものを目印にして
  * 遡る形にすれば、目的のブロックだけを一意に指せる。
  */
@@ -73,7 +73,7 @@ describe('「まだ生きているか」の印は、読み上げ設定のブロ�
   // **対象は EEW の読み上げブロック 1 つだけ。** 第 2 フェーズの予約を組む関数はその中にしか
   // 無いので、そこを目印にして開始行まで遡る。
   const phase2 = soleLineWith('const enqueuePhase2 = () => {')
-  const ttsBlock = blockRange(enclosingBlockStart(phase2, 'if (settings.voicevoxEnabled) {'))
+  const ttsBlock = blockRange(enclosingBlockStart(phase2, 'if (settings.ttsEnabled) {'))
 
   // 正: 発表中の電文を覚える書き込みは、ブロックの手前にある。
   it('発表中の電文を覚える書き込みは、読み上げブロックの外にある', () => {
@@ -97,7 +97,7 @@ describe('「まだ生きているか」の印は、読み上げ設定のブロ�
 
   // 安全弁: ブロックの範囲を取り違えていない（極端に短い範囲を掴んでいない）。
   // **この検査が無いと、範囲の取得が壊れて数行しか見ていなくても上の 2 件が通る。**
-  // 実際、最初に書いたときは別の `if (settings.voicevoxEnabled) {` を掴んで 13 行しか
+  // 実際、最初に書いたときは別の `if (settings.ttsEnabled) {` を掴んで 13 行しか
   // 見ておらず、ここだけが落ちた。
   it('読み上げブロックの範囲を正しく掴んでいる', () => {
     const size = ttsBlock.to - ttsBlock.from

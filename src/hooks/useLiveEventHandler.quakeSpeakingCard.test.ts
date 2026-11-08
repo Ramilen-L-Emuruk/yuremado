@@ -96,7 +96,7 @@ const quakeSpeakingCard = {
 function setup(overSettings: Partial<AppSettings> = {}) {
   const settings: AppSettings = {
     ...DEFAULTS,
-    voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
+    ttsEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     quakeListScaleMin: -1,
@@ -191,7 +191,7 @@ describe('語っている地震のカードを一覧へ知らせる（配線）'
 
   // 対照: 読み上げが無効なら声が出ないので、印も立てない（一覧は受信した時点で寄る側へ回る）。
   it('読み上げが無効なら begin が呼ばれない', async () => {
-    const { handleLiveEvent } = setup({ voicevoxEnabled: false })
+    const { handleLiveEvent } = setup({ ttsEnabled: false })
     handleLiveEvent(makeQuake())
     await drain()
     expect(speakMock).not.toHaveBeenCalled()

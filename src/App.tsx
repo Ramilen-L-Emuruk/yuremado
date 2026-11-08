@@ -121,7 +121,8 @@ import { playCountdownBeep, unlockAudio, setSoundVolume, setKeepAliveEnabled } f
 import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
 import { loadTtsEpicenterAccents } from './utils/ttsEpicenterAccents'
-import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed } from './utils/voicevox'
+import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed, setSpeechVoice, clearVoicevoxDown } from './utils/voicevox'
+import { unlockSystemSpeech } from './utils/systemSpeech'
 import { EEW_LEAD_PHRASES } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
@@ -783,9 +784,9 @@ export function App() {
   //   **越えさせてはいけない** ——EEW を実際に読み上げている最中に画面を奪い、予想震度・予報円が
   //   見えなくなる（この優先度の仕組みが最初に直した症状そのもの）
   const setActiveTabNonRealtime = useCallback((tab: Exclude<TabId, 'realtime'>) => {
-    const source = resolveNonRealtimeTabSource(settings.voicevoxEnabled)
+    const source = resolveNonRealtimeTabSource(settings.ttsEnabled)
     requestAutoTab(tab, tab === 'tsunami' ? TAB_PRIORITY.tsunami : TAB_PRIORITY.quake, source, false, false)
-  }, [requestAutoTab, settings.voicevoxEnabled])
+  }, [requestAutoTab, settings.ttsEnabled])
 
   /**
    * 気象庁の推計震度分布図が届いたときに、その地震の分布モードを開く。
@@ -1039,11 +1040,11 @@ export function App() {
     requestAutoTab(
       tab,
       tab === 'realtime' ? TAB_PRIORITY.eewUpdate : TAB_PRIORITY.tsunami,
-      resolveNonRealtimeTabSource(settings.voicevoxEnabled),
+      resolveNonRealtimeTabSource(settings.ttsEnabled),
       false,
       true,
     )
-  }, [requestAutoTab, settings.tsunamiPriorityDefault, settings.voicevoxEnabled])
+  }, [requestAutoTab, settings.tsunamiPriorityDefault, settings.ttsEnabled])
 
   // 予報キー（設計書 §0 の 2026-10-31「予報キー」の行）。手元の検証が通ったときだけ中継の札に添える ——
   // 通らないキーを送っても中継は断るだけなので、送る前に止めておく。予報を流すかを決めるのは中継の側。
@@ -1060,7 +1061,7 @@ export function App() {
   // （設定の全項目を記録の文字列にするのも札を取るときだけ。描き直しのたびには組まない）
   const usageFlagsRef = useRef<UsageSettingsFlags>({ apiKey: false, tts: false, sound: false, notify: false, seismo: false })
   usageFlagsRef.current = {
-    apiKey: settings.dmdataApiKey !== '', tts: settings.voicevoxEnabled, sound: settings.soundEnabled,
+    apiKey: settings.dmdataApiKey !== '', tts: settings.ttsEnabled, sound: settings.soundEnabled,
     notify: settings.notifyEnabled, seismo: settings.seismoEnabled,
   }
   const usageSettingsRef = useRef(settings)
@@ -1357,8 +1358,8 @@ export function App() {
   // 通知音の間隔が長く空く録画中はキープアライブが守っていたハードウェア起床遅延が
   // 再発しうる**ことを受け入れている（→ audio-tts-spec.md §2「キープアライブ」）。
   useEffect(() => {
-    setKeepAliveEnabled((settings.soundEnabled || settings.voicevoxEnabled || settings.timeSignalEnabled) && !settings.recordingMode)
-  }, [settings.soundEnabled, settings.voicevoxEnabled, settings.timeSignalEnabled, settings.recordingMode])
+    setKeepAliveEnabled((settings.soundEnabled || settings.ttsEnabled || settings.timeSignalEnabled) && !settings.recordingMode)
+  }, [settings.soundEnabled, settings.ttsEnabled, settings.timeSignalEnabled, settings.recordingMode])
 
   // TTS の読み辞書をアプリ起動時に事前ロードする（VOICEVOX 有効・無効に関わらず）。
   // 手で書いた句区切り辞書と、生成物 2 つ（震度観測点名の読み・震央地名の句割り）。
@@ -1392,7 +1393,8 @@ export function App() {
   // 叩き続けないため。
   const debouncedVoicevoxUrl = useDebouncedValue(settings.voicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS)
   useEffect(() => {
-    if (!settings.voicevoxEnabled) return
+    // 端末の声を選んでいるなら VOICEVOX へは繋がない（作り置きは VOICEVOX の音のため）
+    if (!settings.ttsEnabled || settings.ttsVoice !== 'voicevox') return
     if (!isValidVoicevoxUrl(debouncedVoicevoxUrl)) {
       // **黙って戻らない。** 設定の窓は同じ条件を「接続先の URL が正しくありません」として
       // 画面に出すが、こちらは画面を持たないため、記録が無いと「作り置きが一度も効かない」
@@ -1402,7 +1404,7 @@ export function App() {
       return
     }
     warmFixedPhrases(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, EEW_LEAD_PHRASES)
-  }, [settings.voicevoxEnabled, debouncedVoicevoxUrl, settings.voicevoxSpeakerId])
+  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl, settings.voicevoxSpeakerId])
 
   // 録画中は合成待ちの予算を緩める（→ `RECORDING_SYNTH_BUDGET_MS`）。負荷で音が途切れた
   // ぶんだけ予算が削られるため、既定のままだと長い文の後半が落ちる。
@@ -1410,12 +1412,21 @@ export function App() {
     setSpeechSynthBudgetRelaxed(settings.recordingMode)
   }, [settings.recordingMode])
 
+  // 読み上げの声（VOICEVOX か端末の声か）。呼び出し側は声を知らずに読むので、ここで渡しておく（→ `utils/voicevox.ts` の `SpeechVoice`）
+  useEffect(() => {
+    setSpeechVoice(settings.ttsVoice)
+  }, [settings.ttsVoice])
+  // 接続先・話者を直したら「VOICEVOX に繋がらない」の印を解く（直した設定を次の報からすぐ試す）
+  useEffect(() => {
+    clearVoicevoxDown()
+  }, [debouncedVoicevoxUrl, settings.voicevoxSpeakerId])
+
   // リプレイ中は、これから届く電文の読み上げを先に合成しておく（→ hooks/useSpeechPrefetch.ts）。
   // 負荷で合成が再生に追いつかなくなる場面（録画中）への手当てで、**投機は本番を邪魔しない**
   // （読み上げ中は投げず、始まれば打ち切る）。設定の入口は作り置きと同じものを通す。
   const ttsSpeechOptions = useMemo(() => ttsRegionOptions(settings), [settings])
   useSpeechPrefetch({
-    enabled: replayTimeOffset !== null && settings.voicevoxEnabled,
+    enabled: replayTimeOffset !== null && settings.ttsEnabled && settings.ttsVoice === 'voicevox',
     replayKey: replayTimeOffset,
     peekUpcoming: peekUpcomingPayloads,
     baseUrl: debouncedVoicevoxUrl,
@@ -1428,7 +1439,8 @@ export function App() {
 
   // ブラウザの自動再生制限に対応: 初回のユーザー操作で音声を有効化する
   useEffect(() => {
-    const unlock = () => unlockAudio()
+    // 端末の声も同じ操作で使えるようにする（iPhone の Safari は最初の発話を操作の中で始めないと読まない）
+    const unlock = () => { unlockAudio(); unlockSystemSpeech() }
     window.addEventListener('pointerdown', unlock, { once: true })
     window.addEventListener('keydown', unlock, { once: true })
     return () => {
@@ -3392,7 +3404,7 @@ export function App() {
               )}
               <SpecialInfoBanner banners={specialInfoBanners} speakingTelegramTextSubject={speakingTelegramTextSubject}
                 // 参考情報を読む設定なら、読んでいる間は帯の「この種類の情報について」も開く
-                readsAppendix={settings.voicevoxEnabled && settings.ttsReadTelegramText && settings.ttsTelegramBoilerplate.earthquakeInfoAppendix}
+                readsAppendix={settings.ttsEnabled && settings.ttsReadTelegramText && settings.ttsTelegramBoilerplate.earthquakeInfoAppendix}
                 // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
                 atScreenBottom={!waveChartShown}
               />
@@ -3488,7 +3500,7 @@ export function App() {
                 selectedId={selectedQuakeKey}
                 selectSeq={quakeSelectSeq}
                 speakingKey={speakingQuakeKey}
-                followSpeech={settings.voicevoxEnabled}
+                followSpeech={settings.ttsEnabled}
                 onSelect={selectQuakeFromCard}
                 isLoading={isLoading}
                 isLoadingMore={isLoadingMore}
@@ -3562,7 +3574,7 @@ export function App() {
                    高さが 0 になり、視野の高さが取れない。 */
                 isVisible={activeTab === 'tsunami' && !panelCollapsed}
                 /* 読み上げが有効なら受信時スクロールを止め、追従に任せる（逆向きの動きを消す） */
-                speechFollowEnabled={settings.voicevoxEnabled}
+                speechFollowEnabled={settings.ttsEnabled}
                 /* 自動で見せたときは先頭から見せる（手動選択では位置を保つ） */
                 autoShowTick={tsunamiAutoShowTick}
               />

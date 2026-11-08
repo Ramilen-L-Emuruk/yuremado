@@ -36,7 +36,7 @@ const sound = vi.mocked(playAlertSound)
 
 function setup(over: Partial<AppSettings> = {}, nankaiActive = false) {
   const settings = { ...DEFAULTS,
-    voicevoxEnabled: false, soundEnabled: true, notifyMinScale: 40,
+    ttsEnabled: false, soundEnabled: true, notifyMinScale: 40,
     notifyEEW: true, notifyTsunami: true, notifyDetection: false, notifyNankai: true,
     nankaiCommentaryAlerts: true, quakeListScaleMin: -1, ...over,
   } as unknown as AppSettings

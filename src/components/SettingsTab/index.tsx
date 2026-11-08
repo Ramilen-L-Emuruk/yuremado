@@ -2,7 +2,7 @@ import { ensureWaveSpanSec, WAVE_SPAN_CHOICES } from '../../utils/waveSpan'
 import { formatArchiveCoverage } from '../../utils/historicalArchiveCoverage'
 import { memo, useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { currentAppUpdater, type ManualCheckResult } from '../../services/appUpdate'
-import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
+import type { AppSettings, TtsUnreceivedDetail, TtsVoice } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX, devInjectedKeys } from '../../hooks/useSettings'
 import { Toggle } from '../Toggle'
 import { quakeTileColors } from '../EarthquakeTab/QuakeListRow'
@@ -19,7 +19,7 @@ import { INTENSITY_SCALE_COUNT, getIntensityLabel, getIntensityColor, INTENSITY_
 import { kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { readableTextColor } from '../../utils/contrast'
 import { playAlertSound, playCountdownBeep, playKyoshinUpdateSound, unlockAudio } from '../../utils/alertSound'
-import { checkVoicevoxAvailable, fetchVoicevoxSpeakers, isValidVoicevoxUrl, speakSequentially, VOICEVOX_URL_DEBOUNCE_MS, type VoicevoxSpeaker } from '../../utils/voicevox'
+import { checkVoicevoxAvailable, clearVoicevoxDown, fetchVoicevoxSpeakers, isValidVoicevoxUrl, speakSequentially, VOICEVOX_URL_DEBOUNCE_MS, type VoicevoxSpeaker } from '../../utils/voicevox'
 import { voicevoxPreviewTexts } from '../../utils/ttsText'
 import { log } from '../../utils/logger'
 import { serverDate, getServerClockOffsetMs } from '../../utils/clock'
@@ -842,7 +842,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
   voicevoxSpeakers: readonly VoicevoxSpeaker[]
 }) {
   const selectClass = 'bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white'
-  const speech = settings.voicevoxEnabled
+  const speech = settings.ttsEnabled
   return (
     <>
       <Row label="時報" description="決めた間隔で、音と読み上げで時刻を知らせます">
@@ -1115,6 +1115,8 @@ function TestButton({ color, onClick, children, disabled }: {
  * 画面には何も出ない。
  */
 async function speakVoicevoxPreview(baseUrl: string, speakerId: number, volume: number): Promise<void> {
+  // 試聴は VOICEVOX をもう一度試す（「繋がらない」の印が残ったままだと、VOICEVOX が直っていても端末の声で鳴る）
+  clearVoicevoxDown()
   await speakSequentially(baseUrl, voicevoxPreviewTexts(), speakerId, volume)
 }
 
@@ -1415,7 +1417,8 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   const isVoicevoxCheckPending = settings.voicevoxUrl !== debouncedVoicevoxUrl
 
   useEffect(() => {
-    if (!settings.voicevoxEnabled) {
+    // VOICEVOX の欄を出すのは声が VOICEVOX のときだけなので、確かめるのもそのときだけ
+    if (!settings.ttsEnabled || settings.ttsVoice !== 'voicevox') {
       setVoicevoxStatus('idle')
       setVoicevoxSpeakers([])
       return
@@ -1439,7 +1442,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       })
     }).catch(() => { if (!cancelled) setVoicevoxStatus('unavailable') })
     return () => { cancelled = true }
-  }, [settings.voicevoxEnabled, debouncedVoicevoxUrl])
+  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl])
 
   // 自作地震計ホストの確認。**VOICEVOX と同じ流儀**（通信する側だけデバウンス後の値を使う）。
   const debouncedSeismoUrl = useDebouncedValue(settings.seismoHostUrl, VOICEVOX_URL_DEBOUNCE_MS)
@@ -1666,8 +1669,33 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('soundEnabled', v)}
           />
         </Row>
+        {/* 読み上げの入り切りと声（2026-11-08 ユーザー選択「声を 2 択＋自動で落とす (Recommended)」「この並べ方で足す (Recommended)」）。
+            声を選んでも VOICEVOX に繋がらない報は端末の声で読む（`utils/voicevox.ts` の `routesToSystemVoice`） */}
+        <Row label="読み上げ" description="地震・緊急地震速報・津波情報を読み上げます">
+          <Toggle checked={settings.ttsEnabled} onChange={v => onUpdate('ttsEnabled', v)} />
+        </Row>
+        {settings.ttsEnabled && (
+          <Row label="読み上げの声" description="VOICEVOX に繋がらないときは、システムの読み上げで読み上げます">
+            <div className="flex items-center gap-2">
+              <select
+                value={settings.ttsVoice}
+                onChange={e => onUpdate('ttsVoice', e.target.value as TtsVoice)}
+                className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
+              >
+                <option value="voicevox">VOICEVOX</option>
+                <option value="system">システムの読み上げ</option>
+              </select>
+              {/* 試聴は今の声で読む（VOICEVOX に繋がらなければ端末の声へ落ちるのも本番と同じ）。通信先はデバウンス後の URL（下の VOICEVOX の試聴と同じ理由） */}
+              <TestButton color="blue" onClick={() => {
+                unlockAudio()
+                speakVoicevoxPreview(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                  .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
+              }}>▶ 試聴</TestButton>
+            </div>
+          </Row>
+        )}
         {/* 時報も鳴らすので数える（時報の「通知音と同じ」はこの音量を指す。切ると行ごと消えて辿れない） */}
-        {(settings.soundEnabled || settings.voicevoxEnabled || settings.timeSignalEnabled) && (
+        {(settings.soundEnabled || settings.ttsEnabled || settings.timeSignalEnabled) && (
           <Row label="音量" description="通知音と読み上げに共通の音量です">
             <div className="flex items-center gap-2">
               <span className="text-xs text-secondary w-8 text-right">
@@ -1723,20 +1751,14 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <TimeSignalRows settings={settings} onUpdate={onUpdate} voicevoxSpeakers={voicevoxStatus === 'available' ? voicevoxSpeakers : []} />
       </Section>
 
-      {/* VOICEVOX の接続と声（2026-11-06 ユーザー選択「VOICEVOX」）。読み上げの入り切りもここに置き、何を読むかの行は上の「音と読み上げ」に残す */}
+      {/* VOICEVOX の接続と声（2026-11-06 ユーザー選択「VOICEVOX」）。読み上げの声が VOICEVOX のときだけ出す
+          （2026-11-08 ユーザー選択「この並べ方で足す (Recommended)」。入り切りは上の「音と読み上げ」の「読み上げ」） */}
+      {settings.ttsEnabled && settings.ttsVoice === 'voicevox' && (
       <Section category="sound" title="VOICEVOX">
-        {/* 「要：VOICEVOXアプリ起動」は hint に置いて常時見せる。説明文に混ぜて隠すと、
-            ON にしたとき「接続状態: 起動していません」だけが見えて原因に辿り着けない。 */}
-        <Row
-          label="VOICEVOX 読み上げ"
-          description="地震・緊急地震速報・津波情報をVOICEVOXで読み上げます"
-          hint="要：VOICEVOXアプリ起動"
-        >
-          <Toggle checked={settings.voicevoxEnabled} onChange={v => onUpdate('voicevoxEnabled', v)} />
-        </Row>
-        {settings.voicevoxEnabled && (
           <>
-            <Row label="VOICEVOX URL" description="VOICEVOXのHTTP APIのURL">
+            {/* 「要：VOICEVOXアプリ起動」は hint に置いて常時見せる。説明文に混ぜて隠すと、
+                「接続状態: 起動していません」だけが見えて原因に辿り着けない。 */}
+            <Row label="VOICEVOX URL" description="VOICEVOXのHTTP APIのURL" hint="要：VOICEVOXアプリ起動">
               {/* 赤枠と理由は入力が落ち着いてから出す（判定に使うのはデバウンス後の値）。
                   打鍵ごとに判定すると、書き直している最中ずっと赤いままになる。 */}
               <div className="flex flex-col items-end gap-1">
@@ -1801,13 +1823,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               </>
             )}
           </>
-        )}
       </Section>
+      )}
 
-      {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
+      {/* 読み上げの詳しさ。読み上げを入れたときだけ出す（切った端末では何も効かないため）。
           並びは「地域の列挙 → 1 件ごとの詳しさ → 気象庁の発表文」。中の順序は
           通知設定・テスト機能と同じカテゴリ順（地震情報 → 津波情報 → 緊急地震速報）。 */}
-      {settings.voicevoxEnabled && (
+      {settings.ttsEnabled && (
         <Section category="sound" title="読み上げ設定">
           <Row label="読み上げ震度階数" description="最大震度から何階級下まで、地域名を読み上げるかです">
             <select

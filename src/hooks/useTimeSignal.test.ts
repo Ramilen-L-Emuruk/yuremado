@@ -15,6 +15,11 @@ const h = vi.hoisted(() => ({
   prewarm: vi.fn(),
   prewarmBuffer: { duration: 1.2 } as { duration: number } | null,
   ctxBase: 0,
+  /** 端末の声で読むか（`routesToSystemVoice` の答え） */
+  systemVoice: false,
+  measure: vi.fn(),
+  /** 端末の声で測った長さ（秒）。null は測れなかった */
+  measureSec: 1.0 as number | null,
 }))
 
 vi.mock('../utils/clock', () => ({
@@ -33,12 +38,17 @@ vi.mock('../utils/alertSound', () => ({
 }))
 vi.mock('../utils/voicevox', () => ({
   isSpeaking: () => h.busy,
-  isValidVoicevoxUrl: () => true,
+  routesToSystemVoice: () => h.systemVoice,
+  measureSystemSpeechSec: (text: string) => { h.measure(text); return Promise.resolve(h.measureSec) },
   prewarmVoicevox: (_url: string, text: string) => {
     h.prewarm(text)
     return { text, first: Promise.resolve(h.prewarmBuffer), abort: () => {} }
   },
   speakWithVoicevoxUncounted: (...args: unknown[]) => { h.speak(...args); return Promise.resolve({ spoke: true, spokenChunks: [] }) },
+}))
+
+vi.mock('../utils/systemSpeech', () => ({
+  isSystemSpeechSupported: () => true,
 }))
 
 vi.mock('../utils/pendingSpeech', () => ({
@@ -50,7 +60,7 @@ const { useTimeSignal } = await import('./useTimeSignal')
 
 const URL = 'http://localhost:50021'
 const settings = (over: Partial<AppSettings> = {}): AppSettings => ({
-  ...DEFAULTS, timeSignalEnabled: true, voicevoxEnabled: true, ...over,
+  ...DEFAULTS, timeSignalEnabled: true, ttsEnabled: true, ...over,
 })
 
 /** 偽の時計を進める（タイマーの発火で起きる更新を act で包む） */
@@ -69,7 +79,9 @@ beforeEach(() => {
   h.pending = false
   h.ctxState = 'running'
   h.prewarmBuffer = { duration: 1.2 }
-  h.cancel.mockReset(); h.schedule.mockReset(); h.speak.mockReset(); h.prewarm.mockReset()
+  h.systemVoice = false
+  h.measureSec = 1.0
+  h.cancel.mockReset(); h.schedule.mockReset(); h.speak.mockReset(); h.prewarm.mockReset(); h.measure.mockReset()
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 afterEach(() => {
@@ -243,6 +255,41 @@ describe('useTimeSignal', () => {
     expect(h.speak).not.toHaveBeenCalled()
     await advance(200)
     expect(h.speak).toHaveBeenCalledTimes(1)
+  })
+
+  describe('端末の声（システムの読み上げ）で読みが先', () => {
+    it('正: 1 分前に黙って測った長さから逆算してピッの前に読み終わり、VOICEVOX へは合成を頼まない', async () => {
+      h.systemVoice = true
+      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL))
+      // 境まで 10 秒（1 分前はもう過ぎている）ので、すぐ測る
+      await advance(10)
+      expect(h.measure).toHaveBeenCalledWith('16時です')
+      // 声 1.0 秒・前置き 3 秒・間 0.3 秒 → 境の 4.3 秒前に読み始める（今から 5.7 秒後）
+      await advance(5_600)
+      expect(h.speak).not.toHaveBeenCalled()
+      await advance(200)
+      expect(h.speak).toHaveBeenCalledTimes(1)
+      expect(h.prewarm).not.toHaveBeenCalled()
+    })
+
+    it('対照: 測れなかった回は、音が先にする（音が鳴り終わってから読む）', async () => {
+      h.systemVoice = true
+      h.measureSec = null
+      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL))
+      await advance(10_000 + 1_400)
+      expect(h.speak).not.toHaveBeenCalled()
+      await advance(200)
+      expect(h.speak).toHaveBeenCalledTimes(1)
+    })
+
+    it('安全弁: 他の読み上げの最中なら測らない（測る発話が読み上げを待たせない）', async () => {
+      h.systemVoice = true
+      h.busy = true
+      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL))
+      await advance(15_000)
+      expect(h.measure).not.toHaveBeenCalled()
+      expect(h.speak).not.toHaveBeenCalled()
+    })
   })
 
   it('切ると、支度した予約を取り消す', async () => {

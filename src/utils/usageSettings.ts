@@ -131,7 +131,8 @@ export const USAGE_TOP_LEVEL_SPECS = {
   // 音と読み上げ
   soundEnabled: bool('sound', '通知音', true),
   soundVolume: num('sound', '音量', 0, 1, 1),
-  voicevoxEnabled: bool('voicevox', 'VOICEVOX 読み上げ', false),
+  ttsEnabled: bool('sound', '読み上げ', false),
+  ttsVoice: choice('sound', '読み上げの声', ['voicevox', 'system'], 'system'),
   voicevoxUrl: present('voicevox', 'VOICEVOX URL（既定の localhost から変えたか）'),
   voicevoxSpeakerId: num('voicevox', '話者（番号）', 0, 100000, 0),
   nankaiCommentaryAlerts: bool('sound', '解説情報の音・読み上げ', true),

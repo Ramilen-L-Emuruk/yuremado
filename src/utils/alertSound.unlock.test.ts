@@ -125,7 +125,7 @@ describe('unlockAudio: 音を鳴らす前にマスターチェーンを作る', 
   })
 })
 
-describe('キープアライブ: soundEnabled/voicevoxEnabled と音量が揃ったときだけ鳴らす', () => {
+describe('キープアライブ: soundEnabled/ttsEnabled と音量が揃ったときだけ鳴らす', () => {
   // 対照: setKeepAliveEnabled(true) を呼ぶまでは作られない（前の describe で
   // unlockAudio() は既に複数回呼ばれているが、それだけでは発火しないことの確認でもある）
   it('setKeepAliveEnabled(true) を呼ぶまでは作られない', () => {
@@ -161,7 +161,7 @@ describe('キープアライブ: soundEnabled/voicevoxEnabled と音量が揃っ
     expect(keepAlive.stopped).toBe(true)
   })
 
-  // 対照: 音量を戻しても soundEnabled/voicevoxEnabled 側が無効なままなら再開しない
+  // 対照: 音量を戻しても soundEnabled/ttsEnabled 側が無効なままなら再開しない
   it('setKeepAliveEnabled(false) の状態で音量を戻しても再開しない', () => {
     sound.setKeepAliveEnabled(false)
     sound.setSoundVolume(1)

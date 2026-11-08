@@ -233,7 +233,7 @@ function setup(
   followSpeechTabSpy?: (tab: unknown, priority: unknown) => void,
 ) {
   const settings = { ...DEFAULTS,
-    voicevoxEnabled: true,
+    ttsEnabled: true,
     voicevoxUrl: 'http://localhost:50021',
     voicevoxSpeakerId: 1,
     soundEnabled: false,
@@ -472,7 +472,7 @@ describe('EEW 読み上げの文言と発話順序', () => {
     })
 
     it('安全弁: 読み上げを切っていても、画面用の待ちは同じ長さで切れる', async () => {
-      const handle = setup({ voicevoxEnabled: false })
+      const handle = setup({ ttsEnabled: false })
       handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
       await vi.advanceTimersByTimeAsync(2999)
       expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
@@ -482,7 +482,7 @@ describe('EEW 読み上げの文言と発話順序', () => {
     })
 
     it('安全弁: 値の無い続報が待ちの途中で届いても、待ちは張り直さない（最初の報から数える）', async () => {
-      const handle = setup({ voicevoxEnabled: false })
+      const handle = setup({ ttsEnabled: false })
       handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
       await vi.advanceTimersByTimeAsync(2000)
       handle(makeEEW({ serial: 2, noAreas: true, epicenterRank: 1 }))
@@ -491,7 +491,7 @@ describe('EEW 読み上げの文言と発話順序', () => {
     })
 
     it('安全弁: 印が付いた後に値が付いた続報が来たら、印を落とす', async () => {
-      const handle = setup({ voicevoxEnabled: false })
+      const handle = setup({ ttsEnabled: false })
       handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
       await act(() => vi.advanceTimersByTimeAsync(3000))
       expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
@@ -500,7 +500,7 @@ describe('EEW 読み上げの文言と発話順序', () => {
     })
 
     it('安全弁: 取消で印を落とす', async () => {
-      const handle = setup({ voicevoxEnabled: false })
+      const handle = setup({ ttsEnabled: false })
       handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
       await act(() => vi.advanceTimersByTimeAsync(3000))
       act(() => { handle(makeEEW({ serial: 2, cancelled: true })) })
@@ -510,7 +510,7 @@ describe('EEW 読み上げの文言と発話順序', () => {
     // 時間軸が変わったら、印も待ちも落とす。落とさないと、新しい時間軸で同じ鍵の初報が
     // 待たずに理由を出す（残った待ちが切れて印を付け直す形も同じ）。
     it('安全弁: リプレイのリセットで印と待ちを落とす', async () => {
-      const handle = setup({ voicevoxEnabled: false })
+      const handle = setup({ ttsEnabled: false })
       handle(makeEEW({ eventId: 'evt-A', noAreas: true, epicenterRank: 1 }))
       await act(() => vi.advanceTimersByTimeAsync(3000))
       handle(makeEEW({ eventId: 'evt-B', noAreas: true, epicenterRank: 1 }))
@@ -522,7 +522,7 @@ describe('EEW 読み上げの文言と発話順序', () => {
     })
 
     it('安全弁: 取り消された鍵がまた発表されたら、待ちを最初からやり直す', async () => {
-      const handle = setup({ voicevoxEnabled: false })
+      const handle = setup({ ttsEnabled: false })
       handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
       await act(() => vi.advanceTimersByTimeAsync(3000))
       act(() => { handle(makeEEW({ serial: 2, cancelled: true })) })
@@ -535,7 +535,7 @@ describe('EEW 読み上げの文言と発話順序', () => {
 
     // 窓の手前で届いた報は、再生を始めた時点から待ち直す（印を最初から付けない）。
     it('安全弁: リプレイの途中から始めたら、印を最初から付けず、始めた時点から待つ', async () => {
-      const d = setupFull({ voicevoxEnabled: false })
+      const d = setupFull({ ttsEnabled: false })
       act(() => {
         d.restore([{
           payload: { kind: 'event' as const, event: makeEEW({ noAreas: true, epicenterRank: 1 }) },

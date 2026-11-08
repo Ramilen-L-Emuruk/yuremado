@@ -304,6 +304,33 @@ describe('load', () => {
     expect(result.notifyNankai).toBe(true)
   })
 
+  // 読み上げの入り切りを voicevoxEnabled で持っていた設定は、ttsEnabled と声に移して読む（→ `migrateLegacyTts`）
+  it('正: VOICEVOX 読み上げを入れていた設定は、読み上げを入れて声を VOICEVOX にして読む', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ voicevoxEnabled: true }))
+    const result = load()
+    expect(result.ttsEnabled).toBe(true)
+    expect(result.ttsVoice).toBe('voicevox')
+  })
+
+  it('対照: VOICEVOX 読み上げを切っていた設定は、読み上げを切ったまま声は既定（システムの読み上げ）で読む', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ voicevoxEnabled: false }))
+    const result = load()
+    expect(result.ttsEnabled).toBe(false)
+    expect(result.ttsVoice).toBe('system')
+  })
+
+  it('安全弁: ttsEnabled を持つ設定は、古い voicevoxEnabled が残っていても書いてあるほうを使う', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ voicevoxEnabled: true, ttsEnabled: false, ttsVoice: 'system' }))
+    const result = load()
+    expect(result.ttsEnabled).toBe(false)
+    expect(result.ttsVoice).toBe('system')
+  })
+
+  it('安全弁: 知らない声の値は既定（システムの読み上げ）へ戻す', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ttsEnabled: true, ttsVoice: 'espeak' }))
+    expect(load().ttsVoice).toBe('system')
+  })
+
   // 「切る」を最低震度の -1 で表していた設定は、入り切りと最低震度に分けて読む（→ `migrateScaleToggles`）
   it('正: 地震情報の通知を -1 で切っていた設定は、通知を切ったまま最低震度を既定へ戻して読む', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: -1, notifyNankai: true }))

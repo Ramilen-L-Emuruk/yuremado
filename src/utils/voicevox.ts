@@ -8,6 +8,7 @@ import { mergeSpeechDicts } from './ttsGeneratedDict'
 import { speechChunkKey, takeCachedChunk, hasCachedChunk, putCachedChunk, clearSpeechAudioCache, registerSpeechCacheExtraStats } from './speechAudioCache'
 import { log, createLogThrottle } from './logger'
 import { fetchWithTimeout } from './fetchWithTimeout'
+import { cancelSystemSpeech, isSystemSpeechSupported, pickJapaneseVoice, speakSystemUtterance, type SystemUtteranceResult } from './systemSpeech'
 
 /**
  * 設定の接続先を使って通信を始めるまでに、入力が落ち着くのを待つ時間。
@@ -22,6 +23,66 @@ import { fetchWithTimeout } from './fetchWithTimeout'
  * 時点でしか通信しないので対象外。
  */
 export const VOICEVOX_URL_DEBOUNCE_MS = 800
+
+/**
+ * 読み上げの声。`system` は端末の声（Web Speech API）。`App.tsx` が設定の `ttsVoice` を {@link setSpeechVoice} で渡す。
+ *
+ * 呼び出し側（電文の読み上げ・時報・試聴）は声を知らずに {@link speakWithVoicevox} を呼ぶ。声の出し分けはこのファイルの中だけで行う
+ * （呼び出し側の引数を増やすと、読み上げを偽物に差し替えたテストまで書き換えになる）。
+ */
+export type SpeechVoice = 'voicevox' | 'system'
+let speechVoice: SpeechVoice = 'voicevox'
+
+/** 読み上げの声を切り替える（→ {@link SpeechVoice}） */
+export function setSpeechVoice(voice: SpeechVoice): void {
+  if (voice !== speechVoice) voicevoxDown = null
+  speechVoice = voice
+}
+
+/**
+ * VOICEVOX で 1 音も合成できなかったあと、この時刻（`performance.now()`）までは VOICEVOX を試さず端末の声で読む。
+ *
+ * 繋がらない間に報ごとに合成を待つと、そのぶん声が遅れる（1 チャンクで最大 {@link CHUNK_SYNTH_TIMEOUT_MS}）。
+ * 合成できた時点で解く。
+ */
+let voicevoxDown: { baseUrl: string; until: number } | null = null
+const VOICEVOX_DOWN_HOLD_MS = 60_000
+
+/**
+ * 「VOICEVOX に繋がらない」の印を解く。接続先・話者・声を変えたとき（`App.tsx`）と、試聴の前（設定の窓）に呼ぶ ——
+ * 直した設定をすぐ試せるようにするため（印が残ったままだと、直しても 60 秒は端末の声で読み、試聴も端末の声で鳴る）。
+ */
+export function clearVoicevoxDown(): void {
+  voicevoxDown = null
+}
+
+/**
+ * この読み上げを端末の声で読むか（声が `system`・接続先が URL として成り立たない・VOICEVOX が繋がらなかった直後）。
+ * 時報が「声が先」の声の長さを、合成で測るか端末の声で測るかを決めるのにも使う。
+ */
+export function routesToSystemVoice(baseUrl: string): boolean {
+  if (speechVoice === 'system' || !isValidVoicevoxUrl(baseUrl)) return true
+  return voicevoxDown !== null && voicevoxDown.baseUrl === baseUrl && performance.now() < voicevoxDown.until
+}
+
+/**
+ * 端末の声が鳴っている発話の持ち主（セッション ID）。鳴っていなければ null。{@link isAudioPlaying} がこれも見る。
+ * 持ち主を持つのは、割り込まれた古い発話の終わりの知らせが、新しい発話が鳴り始めた後に届いても消さないため。
+ */
+let systemAudibleSession: number | null = null
+
+/**
+ * 端末の声で黙って長さを測っている最中なら、その打ち切りの印（→ {@link measureSystemSpeechSec}）。
+ * 読み上げが始まったら測るのをやめる —— 端末の声は 1 本の列なので、測っている発話が読み上げを待たせる。
+ */
+let systemMeasure: { aborted: boolean } | null = null
+
+function abortSystemMeasure(): void {
+  if (systemMeasure === null) return
+  systemMeasure.aborted = true
+  systemMeasure = null
+  cancelSystemSpeech()
+}
 
 export type VoicevoxStyle = { name: string; id: number }
 export type VoicevoxSpeaker = { name: string; speaker_uuid: string; styles: VoicevoxStyle[] }
@@ -82,10 +143,6 @@ const speechIdleListeners = new Set<() => void>()
  * 取ってある。
  */
 const SPEECH_STALE_MS = 5 * 60_000
-
-// 1 チャンクも合成できなかったときの警告の間引き。VOICEVOX が落ちていると読み上げのたびに
-// 起こるため、素通しにするとログが埋まって他の異常が見えなくなる。
-const warnNoAudio = createLogThrottle(30000)
 
 /**
  * 合成 1 チャンクを待つ上限。超えたらそのチャンクは合成失敗と同じ扱いにする。
@@ -855,7 +912,7 @@ async function buildChunkQueryWithStatus(
     } else {
       // 応答形式が想定と違う。**音は鳴るので気づけない**が、句読点の間が入らないまま合成が
       // 続き、地名を読点で並べても一続きに聞こえる状態（この処理を入れた理由そのもの）へ
-      // 静かに戻る。全チャンク失敗の警告（warnNoAudio）にも引っかからないため、ここで残す。
+      // 静かに戻る。全チャンク失敗の警告（端末の声へ落とすときの警告）にも引っかからないため、ここで残す。
       warnNoChunkBreak(() => log.debug(
         '[VoiceVox] accent_phrases が配列でないため句読点の間を付けられない', { chunk },
       ))
@@ -996,6 +1053,8 @@ const activePrewarms = new Set<PrewarmedSpeech>()
  * @returns AudioContext が未確立（ユーザー操作前）なら null。その場合は先行合成なしで進む
  */
 export function prewarmVoicevox(baseUrl: string, text: string, speakerId: number): PrewarmedSpeech | null {
+  // 端末の声で読むなら VOICEVOX へは投げない（端末の声には合成の待ちが無い）
+  if (routesToSystemVoice(baseUrl)) return null
   const ctx = getAudioContext()
   if (!ctx) return null
   const chunks = splitIntoChunks(text)
@@ -1441,6 +1500,19 @@ export function __resetAudioPlaybackStateForTest(): void {
   lastAudioEndedAt = 0
   // 前のテストの発話の口（古い偽の AudioContext を掴んでいる）を次のテストへ持ち越さない
   markUnstartedAsCut = null
+  // 合成をわざと失敗させたテストの「VOICEVOX に繋がらない」の印を持ち越さない（持ち越すと、後のテストが端末の声へ回る）
+  voicevoxDown = null
+  systemAudibleSession = null
+  systemMeasure = null
+}
+
+/** テスト用に声の設定と端末の声の状態を既定へ戻す（本番経路では呼ばない）。 */
+export function __resetSpeechVoiceForTest(): void {
+  speechVoice = 'voicevox'
+  voicevoxDown = null
+  systemAudibleSession = null
+  systemMeasure = null
+  measuredSpeechSec.clear()
 }
 
 /** テスト用に投機の状態を捨てる（本番経路では呼ばない）。 */
@@ -1527,7 +1599,7 @@ const AUDIO_GAP_GRACE_MS = 1000
  * 「詰まっている」と見て打ち切る側が正しいため。**
  */
 export function isAudioPlaying(): boolean {
-  if (activeSources.length > 0) return true
+  if (activeSources.length > 0 || systemAudibleSession !== null) return true
   // 一度も鳴っていなければ猶予も無い（`performance.now()` はページ読み込みからの経過なので、
   // 起動直後は差が小さく、初期値 0 のままだと真に見えてしまう）
   if (lastAudioEndedAt === 0) return false
@@ -1548,7 +1620,7 @@ export function isAudioPlaying(): boolean {
  * そこで**畳む前の値**を返し、猶予の長さは使う側がその尺度で決める。
  */
 export function msSinceAudible(): number | null {
-  if (activeSources.length > 0) return 0
+  if (activeSources.length > 0 || systemAudibleSession !== null) return 0
   if (lastAudioEndedAt === 0) return null
   return performance.now() - lastAudioEndedAt
 }
@@ -1650,6 +1722,9 @@ export function stopSpeech(): void {
     try { src.stop() } catch { /* already stopped */ }
   }
   activeSources = []
+  abortSystemMeasure()
+  cancelSystemSpeech()
+  systemAudibleSession = null
   // **ここでも控える。** `onended` は `stop()` から非同期に発火するので、それだけに任せると
   // 止めた直後の一瞬だけ {@link isAudioPlaying} が「まだ鳴っている」と答える
   // （直前のチャンクの切れ目で起点が更新されていた場合）。
@@ -1775,6 +1850,13 @@ async function speakOnce(
     try { src.stop() } catch { /* already stopped */ }
   }
   activeSources = []
+  abortSystemMeasure()
+  // **鳴っているかに関わらず止める。** 渡したばかりで鳴り始める前の発話も列に残っていて、止めないと後から鳴る
+  cancelSystemSpeech()
+  if (systemAudibleSession !== null) {
+    systemAudibleSession = null
+    lastAudioEndedAt = performance.now()
+  }
 
   // 使われない先行合成を打ち切る。放っておくと VOICEVOX 側の直列処理を占有して、これから
   // 読む方が待たされる（旧セッションの fetch を abort するのと同じ理由。AUD-4）。
@@ -1801,6 +1883,11 @@ async function speakOnce(
   // セッション ID を更新して古いパイプラインを無効化
   const sessionId = ++currentSessionId
 
+  if (routesToSystemVoice(baseUrl)) {
+    return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled,
+      speechVoice === 'system' ? '声の設定' : 'VOICEVOX に繋がらない')
+  }
+
   // 辞書が未ロードならここで待つ（キャッシュ済みなら即時解決）。取得できなくても句区切りが
   // 効かないだけで読み上げは続行する（synthesizeChunk はキャッシュを都度参照し、未取得なら
   // 句区切り処理を飛ばす）。ここで長く待つと緊急地震速報の読み上げがそのまま遅れるため、
@@ -1817,11 +1904,12 @@ async function speakOnce(
 
   const ctx = getAudioContext()
   if (!ctx) {
-    log.debug('[VoiceVox] スキップ (AudioContext なし)')
-    return { spoke: false, spokenChunks: [] }
+    // VOICEVOX の音は AudioContext でしか鳴らせない。端末の声なら鳴らせることがあるので、そちらで読む
+    log.debug('[VoiceVox] AudioContext が無いため端末の声で読む')
+    return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled, '音声出力がまだ無い')
   }
   if (ctx.state === 'suspended') await ctx.resume()
-  // soundEnabled が無効でも voicevoxEnabled だけで読み上げは鳴る（AUD-7）。この経路が
+  // soundEnabled が無効でも ttsEnabled だけで読み上げは鳴る（AUD-7）。この経路が
   // alertSound 側の再生関数を一度も通らない端末があるため、ここでもキープアライブの
   // 生死を確かめる（詳細は syncKeepAlive() のコメント）
   syncKeepAlive()
@@ -2049,6 +2137,8 @@ async function speakOnce(
     // scheduleAt が過去になっている場合（合成が再生より遅れた）は現時刻にフォールバック
     if (scheduleAt < ctx.currentTime) scheduleAt = ctx.currentTime
 
+    // 合成できたので、VOICEVOX は繋がっている
+    voicevoxDown = null
     const startAt = scheduleAt
     const entry = { source, startAt, dropped: false, ended: false, cut: false, text: chunks[i] }
     scheduled.push(entry)
@@ -2099,17 +2189,154 @@ async function speakOnce(
     // 呼び出し側からは「読み上げが正常に完了した」と区別できず、**無音だったことが
     // どこにも残らない**（VOICEVOX 未起動・ネットワーク断・話者 ID 不正などで起こる）。
     // 同じ失敗が読み上げのたびに繰り返されうるため間引く。
-    warnNoAudio(() => log.warn(
-      `[VoiceVox] 音声を 1 つも合成できなかったため無音で終了した（chunks=${chunks.length}）`,
-      { baseUrl, speakerId },
-    ))
     completionResolve()
+    if (currentSessionId === sessionId) {
+      // VOICEVOX に繋がらない（未起動・ネットワーク断・話者 ID 不正）。この報は端末の声で読み、しばらくは VOICEVOX を試さない
+      // （2026-11-08 ユーザー選択「声を 2 択＋自動で落とす (Recommended)」）
+      // 印を立てるのは 60 秒に 1 回までなので間引かない（印のある間は VOICEVOX を試さず、ここへ来ない）
+      log.warn(
+        `[VoiceVox] 音声を 1 つも合成できなかったため、端末の声で読む。${VOICEVOX_DOWN_HOLD_MS / 1000} 秒は VOICEVOX を試さない（chunks=${chunks.length}）`,
+        { baseUrl, speakerId },
+      )
+      voicevoxDown = { baseUrl, until: performance.now() + VOICEVOX_DOWN_HOLD_MS }
+      if (markUnstartedAsCut === markMine) markUnstartedAsCut = null
+      return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled, 'VOICEVOX に繋がらない')
+    }
   }
   await completionPromise
   // 鳴り終えた発話の口は外す（自分のものが残っているときだけ）。残しても未鳴動の予約は無いので
   // 害は無いが、古い予約と AudioContext を次の割り込みまで抱え続ける。
   if (markUnstartedAsCut === markMine) markUnstartedAsCut = null
   return outcome()
+}
+
+const warnNoSystemSpeech = createLogThrottle(60_000)
+
+/**
+ * 端末の声（Web Speech API）で読む。{@link speakOnce} の分かれ道から、割り込みとセッションの採番を済ませた後に呼ぶ。
+ *
+ * **チャンクごとに 1 つの発話にする。** 既読と画面の追従をチャンクの鳴り始めで進めるため（VOICEVOX と同じ単位）と、
+ * Chrome が長い発話を 15 秒ほどで切るため。次のチャンクは前が鳴り終わってから渡す —— 先に並べると、鳴る直前の
+ * 妥当性の判定（`shouldStillPlay`）が効かない（並べた発話を 1 つだけ外す口が無い）。
+ *
+ * 鳴り始めた（`onstart`）チャンクを「鳴った」に数える。途中で止められても数えるのは VOICEVOX と同じ線引き。
+ * 追従へ渡す開始時刻は鳴り始めた時点の {@link getSpeechClock}（AudioContext が無ければ 0）。
+ *
+ * 音は AudioContext を通らないので、通知音との音圧の抑え（compressor）は掛からない。
+ */
+async function speakWithSystemVoice(
+  text: string,
+  volume: number,
+  sessionId: number,
+  shouldStillPlay: ShouldStillPlay | undefined,
+  onChunkScheduled: ChunkScheduledListener | undefined,
+  reason: string,
+): Promise<SpeechOutcome> {
+  if (!isSystemSpeechSupported()) {
+    warnNoSystemSpeech(() => log.warn(`[SystemSpeech] この端末では端末の声が使えないため読めない（${reason}）`))
+    return { spoke: false, spokenChunks: [] }
+  }
+  log.debug(`[SystemSpeech] 読み上げ（${reason}）: ${text}`)
+  const chunks = splitIntoChunks(text)
+  const spoken: string[] = []
+  let lastResult: SystemUtteranceResult = 'ended'
+  for (let i = 0; i < chunks.length; i++) {
+    if (currentSessionId !== sessionId) break  // 割り込まれた
+    if (shouldStillPlay) {
+      let still = true
+      try {
+        still = shouldStillPlay()
+      } catch (err) {
+        log.warn('[SystemSpeech] 発話直前の判定に失敗したため、そのまま読み上げる', err)
+      }
+      if (!still) {
+        log.debug(`[SystemSpeech] 以降のチャンクを取り下げた（情報が新しくなった）: ${text}`)
+        break
+      }
+    }
+    const result = await speakSystemUtterance(chunks[i], volume, () => {
+      if (currentSessionId !== sessionId) return
+      systemAudibleSession = sessionId
+      spoken.push(chunks[i])
+      try {
+        onChunkScheduled?.(i, getSpeechClock() ?? 0, chunks)
+      } catch (err) {
+        log.warn('[SystemSpeech] 予約の通知に失敗（読み上げは続行）', err)
+      }
+    })
+    if (systemAudibleSession === sessionId) {
+      systemAudibleSession = null
+      lastAudioEndedAt = performance.now()
+    }
+    lastResult = result
+    // 見切った（読み終わりの知らせが来ない）チャンクは鳴りきったとみなして次へ進む
+    if (result !== 'ended' && result !== 'timeout') break
+  }
+  const stillMine = currentSessionId === sessionId
+  if (lastResult === 'failed' && stillMine) {
+    // 鳴らなかった・途中で壊れた。途中までなら、鳴ったチャンクだけが既読になる（後ろは次の報で読まれうる）
+    log.warn(`[SystemSpeech] ${spoken.length === 0 ? '1 音も鳴らなかった' : `${spoken.length}/${chunks.length} チャンクで止まった`}: ${text}`)
+  } else if (lastResult === 'cancelled' && stillMine) {
+    // アプリは割り込むときセッションを進めるので、セッションが自分のまま止められたのは外から（電話・他のタブ・OS）
+    log.warn(`[SystemSpeech] 端末の声が外から止められた（${spoken.length}/${chunks.length} チャンク）: ${text}`)
+  } else if (spoken.length === 0 && stillMine) {
+    log.debug(`[SystemSpeech] 1 音も鳴らなかった（取り下げ）: ${text}`)
+  }
+  return { spoke: spoken.length > 0, spokenChunks: spoken }
+}
+
+/** 端末の声で測った長さに足す余裕（秒）。黙って測ると、iPhone の Kyoko は鳴らしたときより 30〜80 ms 短く出る（2026-11-08 実測） */
+export const SYSTEM_SPEECH_MEASURE_MARGIN_SEC = 0.1
+
+/** 測った長さ（秒）。鍵は声の名前と文（{@link measureSystemSpeechSec}） */
+const measuredSpeechSec = new Map<string, number>()
+
+/**
+ * 端末の声で `text` を読んだときの長さ（秒）を、音量 0 で読んで測る。時報の「声が先」で、声の終わりを音に合わせるために使う
+ * （2026-11-08 ユーザー選択「鳴らす少し前にその回の文だけ (Recommended)」）。端末の声は合成の口が無く、鳴らさないと長さが分からない。
+ *
+ * **2 回読んで短いほうを使う。** iPhone の Kyoko は 1 回目だけ大きく外れた（2250 ms と約 620 ms。2026-11-08 実測）。
+ * 長さは {@link speakWithSystemVoice} と同じくチャンクごとに 1 つの発話で読み、最初の鳴り始めから最後の終わりまでを取る
+ * （チャンクの間の隙間も含めるため）。
+ *
+ * 測っている間に読み上げが始まったら、測るのをやめて null を返す（→ {@link systemMeasure}）。端末の声が使えない・
+ * 鳴り始めないときも null。
+ */
+export async function measureSystemSpeechSec(text: string): Promise<number | null> {
+  if (!isSystemSpeechSupported()) return null
+  // 同じ文・同じ声で一度測れていれば、測り直さない（時報の文は時刻ごとに決まり、毎日同じ文が繰り返される。
+  // 5 分間隔なら 1 日 288 回 × 2 回の無音の合成を、ページを開いている間の初回だけにする）
+  const cacheKey = `${pickJapaneseVoice(window.speechSynthesis.getVoices())?.name ?? ''}\u0000${text}`
+  const cached = measuredSpeechSec.get(cacheKey)
+  if (cached !== undefined) return cached
+  // 読み上げの最中なら測らない（測る発話が読み上げを止めたり、声の一覧の待ちで読み上げの番を奪ったりしないため）
+  if (speakingCount > 0 || systemAudibleSession !== null) return null
+  abortSystemMeasure()
+  const me = { aborted: false }
+  systemMeasure = me
+  const chunks = splitIntoChunks(text)
+  const once = async (): Promise<number | null> => {
+    let firstStart: number | null = null
+    for (const chunk of chunks) {
+      const result = await speakSystemUtterance(chunk, 0, () => { firstStart ??= performance.now() })
+      // 見切った（timeout）回は長さが分からない。見切った時間を長さとして覚えない
+      if (me.aborted || result !== 'ended') return null
+    }
+    return firstStart === null ? null : (performance.now() - firstStart) / 1000
+  }
+  try {
+    const first = await once()
+    if (first === null) return null
+    const second = await once()
+    if (second === null) return null
+    log.debug(`[SystemSpeech] 時報の声の長さ: 1 回目 ${first.toFixed(2)} 秒・2 回目 ${second.toFixed(2)} 秒: ${text}`)
+    // 短いほうを使う。iPhone の Kyoko は 1 回目だけ長く外れた。覚えて使い回すので、外れ値を覚えないよう 2 回の短い側を取る
+    const sec = Math.min(first, second) + SYSTEM_SPEECH_MEASURE_MARGIN_SEC
+    measuredSpeechSec.set(cacheKey, sec)
+    return sec
+  } finally {
+    if (systemMeasure === me) systemMeasure = null
+  }
 }
 
 /**

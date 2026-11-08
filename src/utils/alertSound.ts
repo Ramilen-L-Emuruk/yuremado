@@ -65,7 +65,7 @@ export function unlockAudio(): void {
 //
 // ごく低振幅・低周波の音を鳴らし続けてハードウェア側を常時起こしておく。
 
-// soundEnabled・voicevoxEnabled のいずれかを反映した「鳴らしたいか」の希望値。
+// soundEnabled・ttsEnabled のいずれかを反映した「鳴らしたいか」の希望値。
 // setKeepAliveEnabled() で App 側から設定する（既定 false — 実際に鳴らすものが
 // 無いうちは作らない。設定の窓の useEffect が起動直後に反映するため、実運用で
 // unlockAudio() が呼ばれる頃には確実に最新値になっている）。
@@ -76,7 +76,7 @@ let keepAliveSource: AudioBufferSourceNode | null = null
 let keepAliveCtx: AudioContext | null = null
 
 /**
- * 通知音（`soundEnabled`）・読み上げ（`voicevoxEnabled`）のどちらかが有効なときだけ
+ * 通知音（`soundEnabled`）・読み上げ（`ttsEnabled`）のどちらかが有効なときだけ
  * キープアライブを鳴らす。両方無効なら実際に鳴らすものが無く、キープアライブを
  * 続ける意味も無い。設定の窓の変更を反映する useEffect から呼ぶ。
  */

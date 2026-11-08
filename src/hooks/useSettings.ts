@@ -45,6 +45,13 @@ export const TTS_MAX_OBSERVATION_POINTS_MIN = 0
 export const TTS_MAX_OBSERVATION_POINTS_MAX = 20
 
 /**
+ * 読み上げの声。`voicevox` は VOICEVOX、`system` は端末の声（Web Speech API）。
+ * `voicevox` でも VOICEVOX に繋がらない報は端末の声で読む（2026-11-08 ユーザー選択「声を 2 択＋自動で落とす (Recommended)」）。
+ */
+export type TtsVoice = 'voicevox' | 'system'
+export const TTS_VOICES: readonly TtsVoice[] = ['voicevox', 'system']
+
+/**
  * 地震タブの一覧の絞り込みと並び替え（→ `utils/quakeListView.ts` の {@link QuakeListSettings}）。
  * 設定の窓にあった「最低表示震度」（`minDisplayScale`）は、地震タブの震度の下限（`quakeListScaleMin`）へ移した
  * （2026-11-07 選択「地震タブに置き、設定から外す (Recommended)」）。
@@ -66,7 +73,7 @@ export interface AppSettings extends QuakeListSettings {
   soundVolume: number       // 通知音・VOICEVOX 読み上げ共通の全体音量 (0.0 〜 1.0)
   // 南海トラフ地震関連解説情報（VYSE51/52）の通知音と読み上げを行う。
   // 平常時でも毎月1回は必ず届く電文なので、煩わしいときに個別に切れるようにしている
-  // （臨時情報＝段階の発表はこの設定に関わらず鳴る）。soundEnabled / voicevoxEnabled が
+  // （臨時情報＝段階の発表はこの設定に関わらず鳴る）。soundEnabled / ttsEnabled が
   // 無効ならそちらが優先される。
   nankaiCommentaryAlerts: boolean
   /**
@@ -78,13 +85,13 @@ export interface AppSettings extends QuakeListSettings {
    * 地震・津波に関するお知らせ（VZSE40）の通知音と読み上げを行う（解説情報の `nankaiCommentaryAlerts` と同じ形）。
    * **既定は行わない**（運用連絡が大半で、平常時に音や声で知らせるほどの情報ではないため）。読み上げは
    * 最下位の層で行い、他の情報の読み上げを切らない。本文は「気象庁が書いた文」の設定
-   * （`ttsReadTelegramText` と `quakeNoticeBody`）に従う。`soundEnabled` / `voicevoxEnabled` が
+   * （`ttsReadTelegramText` と `quakeNoticeBody`）に従う。`soundEnabled` / `ttsEnabled` が
    * 無効ならそちらが優先される。有効なら受信時にパネルを一時的に開く（他の帯と同じ）。
    */
   quakeNoticeAlerts: boolean
   /**
    * 揺れ検知が確かな段に上がったとき、揺れている区域の名前を 1 回読み上げる（「〇〇で揺れを検知。」）。
-   * 緊急地震速報の範囲内の揺れは読まない。`voicevoxEnabled` が無効なら読まない。
+   * 緊急地震速報の範囲内の揺れは読まない。`ttsEnabled` が無効なら読まない。
    * 既定は行わない（2026-10-31 ユーザー選択「設定を足し既定オフ」）。
    */
   kyoshinDetectSpeech: boolean
@@ -155,7 +162,12 @@ export interface AppSettings extends QuakeListSettings {
    */
   dmdataKeyReentryNotice: boolean
   dmdataTestDelivery: boolean      // 試験報・訓練報を受信する（検証用）。DMDATA の配信テスト VXSE42 等と、強震モニタの緊急地震速報の訓練報（→ admitTrainingEew）
-  voicevoxEnabled: boolean         // VOICEVOX 読み上げを有効にする
+  ttsEnabled: boolean              // 読み上げる（声は ttsVoice）
+  /**
+   * 読み上げの声。`system` は端末の声（Web Speech API）。`voicevox` でも VOICEVOX に繋がらない報は端末の声で読む
+   * （2026-11-08 ユーザー選択「声を 2 択＋自動で落とす (Recommended)」。初期値は同日「システムの読み上げ (Recommended)」）
+   */
+  ttsVoice: TtsVoice
   voicevoxUrl: string              // VOICEVOX の HTTP API ベース URL
   voicevoxSpeakerId: number        // VOICEVOX 話者 ID
   ttsIntensityLevels: number       // 読み上げる震度階数（最大震度に加えて何階級下まで。0 = 最大震度のみ）
@@ -395,7 +407,8 @@ export const DEFAULTS: AppSettings = {
   dmdataApiKey: '',
   dmdataKeyReentryNotice: false,
   dmdataTestDelivery: false,
-  voicevoxEnabled: false,
+  ttsEnabled: false,
+  ttsVoice: 'system',
   voicevoxUrl: 'http://localhost:50021',
   voicevoxSpeakerId: 0,
   ttsIntensityLevels: 2,
@@ -707,7 +720,8 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     dmdataApiKey: ensureString(partial.dmdataApiKey, DEFAULTS.dmdataApiKey),
     dmdataKeyReentryNotice: ensureBool(partial.dmdataKeyReentryNotice, DEFAULTS.dmdataKeyReentryNotice),
     dmdataTestDelivery: ensureBool(partial.dmdataTestDelivery, DEFAULTS.dmdataTestDelivery),
-    voicevoxEnabled: ensureBool(partial.voicevoxEnabled, DEFAULTS.voicevoxEnabled),
+    ttsEnabled: ensureBool(partial.ttsEnabled, DEFAULTS.ttsEnabled),
+    ttsVoice: ensureOneOf(partial.ttsVoice, TTS_VOICES, DEFAULTS.ttsVoice),
     voicevoxUrl: ensureString(partial.voicevoxUrl, DEFAULTS.voicevoxUrl),
     voicevoxSpeakerId: clampNumber(partial.voicevoxSpeakerId, 0, 100000, DEFAULTS.voicevoxSpeakerId),
     ttsIntensityLevels: clampNumber(partial.ttsIntensityLevels, 0, 10, DEFAULTS.ttsIntensityLevels),
@@ -1019,7 +1033,28 @@ export function migrateScaleToggles(stored: Partial<AppSettings>, settings: AppS
  * -1 を消す `migrateScaleToggles` より先に掛ける。
  */
 export function migrateStoredSettings(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
-  return migrateScaleToggles(stored, migrateDetachedNotifications(stored, settings))
+  return migrateLegacyTts(stored, migrateScaleToggles(stored, migrateDetachedNotifications(stored, settings)))
+}
+
+/** 読み上げの入り切りを `voicevoxEnabled` で持っていた頃の設定。VOICEVOX だけで読んでいたので、入なら声は VOICEVOX */
+type LegacyTtsSettings = { voicevoxEnabled?: unknown }
+
+/**
+ * 読み上げの入り切りを `voicevoxEnabled` で持っていた頃の設定を読む（2026-11-08 ユーザー選択「ttsEnabled へ改める (Recommended)」）。
+ *
+ * 新しい項目（`ttsEnabled`）が保存されていないときだけ、古い値を移す。入だった端末は VOICEVOX で読んでいたので、
+ * 声も VOICEVOX にする（新しい初期値の「システムの読み上げ」へ黙って変えない）。読み込みで変えた値は保存しない
+ * （`migrateDetachedNotifications` と同じ）。保存した時点で `ttsEnabled` が入るので、以後は効かない。
+ *
+ * **`sanitize()` の中では行わない**（理由は `migrateDetachedNotifications` と同じ）。
+ */
+export function migrateLegacyTts(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
+  if (stored.ttsEnabled !== undefined) return settings
+  const legacy = (stored as LegacyTtsSettings).voicevoxEnabled
+  if (typeof legacy !== 'boolean') return settings
+  if (!legacy) return { ...settings, ttsEnabled: false }
+  log.info('[settings] VOICEVOX 読み上げを入れていた設定なので、読み上げを入れて声を VOICEVOX にして読む')
+  return { ...settings, ttsEnabled: true, ttsVoice: stored.ttsVoice === undefined ? 'voicevox' : settings.ttsVoice }
 }
 
 export function useSettings() {
