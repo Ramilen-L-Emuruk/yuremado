@@ -41,6 +41,19 @@ vi.mock('./gl/camera', async importOriginal => ({
   },
 }))
 
+// 地図の控えへ触る口は、本物の地図の中身が要るので差し替える。既定は「この版では使えない」で、
+// 既存のテスト（HTTP の先読みだけの経路）はそのまま通る。控えへ載せる経路は下の describe で口を渡して見る。
+const { resolveSpy, fillSpy } = vi.hoisted(() => ({
+  resolveSpy: vi.fn<(map: unknown, sourceId: string) => unknown>(() => ({ kind: 'unsupported', reason: 'テストの既定' })),
+  fillSpy: vi.fn<(access: unknown, tiles: { z: number }[], signal: AbortSignal, concurrency: number) => Promise<unknown>>(
+    async () => ({ loaded: 0, skipped: 0, failed: 0, firstError: null, aborted: false, gaveUp: false, unread: 0 })),
+}))
+vi.mock('./gl/tileCacheAccess', async importOriginal => ({
+  ...(await importOriginal<typeof import('./gl/tileCacheAccess')>()),
+  resolveTileCacheAccess: resolveSpy,
+  fillTileCache: fillSpy,
+}))
+
 // 陸地塗り・境界線は生成データ（遅延読込）の到着後に追加される。解決しない Promise で止めて、
 // その後段（共有ソースの追加・区域ポップアップの登録）を走らせない。**このテストの対象は
 // `[map, recording]` 依存の別の effect** なので、止めてもそちらは通る。
@@ -59,6 +72,7 @@ vi.mock('../../utils/subregions', async importOriginal => ({
 import { BaseMapGL } from './BaseMapGL'
 import { MapGLContext } from './mapGLContext'
 import { createFakeMapGL } from './testing/fakeMapGL'
+import { RETRY_MS } from './gl/overviewHold'
 
 // BaseMapGL の高解像度ラスタ層の id（同ファイルの `LYR_GEBCO`）。コンポーネントが実際に
 // レンダーを終えたかどうかの目印に使う。
@@ -235,5 +249,147 @@ describe('録画モードでは寄せ始めに着地先のタイルを取りに�
     for (const l of flightListeners) l({ ...target, center: [130, 33] })
     for (const l of flightListeners) l(target)
     expect(tileListSpy).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('録画モードでは下地のタイルを地図の控えへ先に載せる', () => {
+  const target = { center: [-100, 15] as [number, number], zoom: 6, bearing: 0, pitch: 0 }
+  const withPane = (map: MapLibreMap) =>
+    Object.assign(map, { getContainer: () => ({ clientWidth: 1920, clientHeight: 1080 }) })
+  /** 控えの口の代役。reserve で上げた枚数と、戻したかを覚える。 */
+  const makeAccess = () => {
+    const restore = vi.fn()
+    const access = { has: () => false, load: async () => true, reserve: vi.fn((_extra: number) => restore), isCurrent: vi.fn(() => true) }
+    return { access, restore }
+  }
+
+  beforeEach(() => {
+    prefetchSpy.mockClear()
+    tileListSpy.mockClear()
+    flightListeners.clear()
+    resolveSpy.mockReset()
+    fillSpy.mockClear()
+  })
+  afterEach(cleanup)
+
+  it('口が作れたら、帯と全球の低い z を控えへ載せ、上限をその枚数だけ上げる（正）', () => {
+    const { access } = makeAccess()
+    resolveSpy.mockReturnValue({ kind: 'ready', access })
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+
+    expect(resolveSpy).toHaveBeenCalledWith(fake.map, 'gebco-overview')
+    expect(access.reserve).toHaveBeenCalledWith(290)
+    expect(fillSpy).toHaveBeenCalledTimes(1)
+    const [, tiles, signal] = fillSpy.mock.calls[0]
+    expect(tiles).toHaveLength(290)
+    expect(tiles.every(t => t.z <= 5)).toBe(true)
+    expect(signal.aborted).toBe(false)
+  })
+
+  it('寄せ始めには、下地のぶんを控えへ載せ、HTTP の先読みには高解像度のぶんだけを渡す（正）', () => {
+    const { access } = makeAccess()
+    resolveSpy.mockReturnValue({ kind: 'ready', access })
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+    fillSpy.mockClear()
+
+    for (const l of flightListeners) l(target)
+
+    expect(fillSpy).toHaveBeenCalledTimes(1)
+    const overview = fillSpy.mock.calls[0][1]
+    expect(overview.length).toBeGreaterThan(0)
+    expect(overview.every(t => t.z <= 5)).toBe(true)
+    const rest = tileListSpy.mock.calls[0][0] as { z: number }[]
+    expect(rest.length).toBeGreaterThan(0)
+    expect(rest.every(t => t.z > 5)).toBe(true)
+  })
+
+  it('録画モードでなければ口を作らない（対照）', () => {
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: false })
+    expect(resolveSpy).not.toHaveBeenCalled()
+    expect(fillSpy).not.toHaveBeenCalled()
+  })
+
+  it('この版で使えなければ控えへは載せず、寄せ始めのタイルはすべて HTTP の先読みへ渡す（安全弁）', () => {
+    resolveSpy.mockReturnValue({ kind: 'unsupported', reason: 'テスト' })
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+
+    for (const l of flightListeners) l(target)
+
+    expect(fillSpy).not.toHaveBeenCalled()
+    const all = tileListSpy.mock.calls[0][0] as { z: number }[]
+    expect(all.some(t => t.z <= 5)).toBe(true)
+    expect(all.some(t => t.z > 5)).toBe(true)
+  })
+
+  it('まだ口が作れなければ、少し置いて試し直す', () => {
+    vi.useFakeTimers()
+    try {
+      const { access } = makeAccess()
+      resolveSpy.mockReturnValueOnce({ kind: 'notYet', reason: 'テスト' }).mockReturnValue({ kind: 'ready', access })
+      const fake = createFakeMapGL()
+      renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+      expect(fillSpy).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(RETRY_MS)
+
+      expect(access.reserve).toHaveBeenCalledTimes(1)
+      expect(fillSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('録画モードを解くと、載せている途中のぶんを打ち切り、上げた上限を戻す（安全弁）', () => {
+    const { access, restore } = makeAccess()
+    resolveSpy.mockReturnValue({ kind: 'ready', access })
+    const fake = createFakeMapGL()
+    const { update } = renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+    const holdSignal = fillSpy.mock.calls[0][2]
+
+    update({ showBathymetry: true, recording: false })
+
+    expect(holdSignal.aborted).toBe(true)
+    expect(restore).toHaveBeenCalledTimes(1)
+  })
+  it('ソースが作り直されて口が古くなったら、上限を戻して口を作り直す', () => {
+    const first = makeAccess()
+    const second = makeAccess()
+    resolveSpy.mockReturnValueOnce({ kind: 'ready', access: first.access }).mockReturnValue({ kind: 'ready', access: second.access })
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+    first.access.isCurrent.mockReturnValue(false)
+
+    for (const l of flightListeners) l(target)
+
+    expect(first.restore).toHaveBeenCalledTimes(1)
+    expect(resolveSpy).toHaveBeenCalledTimes(2)
+    expect(second.access.reserve).toHaveBeenCalledWith(290)
+  })
+
+  it('口ができる前の寄せと同じ行き先へもう一度寄せたら、下地を控えへ載せる', () => {
+    const { access } = makeAccess()
+    resolveSpy.mockReturnValueOnce({ kind: 'notYet', reason: 'テスト' }).mockReturnValue({ kind: 'ready', access })
+    vi.useFakeTimers()
+    try {
+      const fake = createFakeMapGL()
+      renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+      for (const l of flightListeners) l(target)
+      expect(tileListSpy).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(RETRY_MS)
+      fillSpy.mockClear()
+
+      for (const l of flightListeners) l(target)
+
+      expect(fillSpy).toHaveBeenCalledTimes(1)
+      expect(fillSpy.mock.calls[0][1].every(t => t.z <= 5)).toBe(true)
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
   })
 })
