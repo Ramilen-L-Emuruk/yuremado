@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLazyRef } from './useLazyRef'
 import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, EEWAlert, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
-import { historyCursorFromOldestDay, type HistoryCursor } from '../utils/historyCursor'
+import { addIslandRange, daysBetween, EMPTY_HISTORY_DAYS, expiredIslandDays, extendMain, holdIslands, isEvictedCard, ISLAND_KEEP_MS, jstDayEndMs, jstDayOf, jstDayStartMs, missingRanges, nextLoadMoreWindow, nextWindowOf, quakeCardDays, type DayRange, type HistoryDaysState, type JstDay } from '../utils/historyDays'
 import type { QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
 // 種別ごとの取得関数（`fetchDmdataEarthquakes` ほか 8 本）は撤去済み。履歴はアーカイブ経由の
 // 1 本へ寄せてある（→ `data-sources-spec.md` §2「大量に取るならアーカイブを使う」）。
@@ -1175,25 +1175,34 @@ export function useEarthquakes(
    */
   const dmdataHistorySettledRef = useRef<Promise<void>>(Promise.resolve())
   /**
-   * 次に読む窓の上端（→ `HistoryCursor`）。**「もっと見る」のたびに古い方へ進める。**
+   * 地震カードの履歴を、どの日まで読んだか（→ `utils/historyDays.ts`）。今日から続く分（`main`）と、期間で読んだ日（`islands`）を分けて持つ。
    *
-   * 初回の履歴を読み終えるまでは `null`。初回が読めなかった場合もそのままなので、
-   * その状態で押されたら現在時刻から読み直す（＝初回と同じ範囲をもう一度試す）。
+   * **「もっと見る」・期間の読み足し・再生中の続きは、どれもここから次に読む窓を決める**（→ `readHistoryWindow`）。
+   * 取得の途中で読む・書くので ref と state の両方に持つ（state は地震タブの注記と一覧の出し分けに渡す）。
+   * 時間軸が変わったら空へ戻す（接続 effect の頭・`resetState`）。
    */
-  const historyCursorRef = useRef<HistoryCursor>(null)
+  const [historyDays, setHistoryDaysState] = useState<HistoryDaysState>(EMPTY_HISTORY_DAYS)
+  const historyDaysRef = useRef<HistoryDaysState>(EMPTY_HISTORY_DAYS)
+  const updateHistoryDays = useCallback((fn: (d: HistoryDaysState) => HistoryDaysState) => {
+    const next = fn(historyDaysRef.current)
+    if (next === historyDaysRef.current) return
+    historyDaysRef.current = next
+    setHistoryDaysState(next)
+  }, [])
   /**
-   * 読み込み済みの一番古い日（日本時間の `YYYY-MM-DD`。→ `QuakeHistoryResult.oldestLoadedDay`）。まだ読んでいなければ `null`。
-   * 地震タブの期間の絞りが「〇〇以前は未読込みです。」を出すのに使う。ライブ・再生のどちらの遡りでも進める。
+   * いま地震タブで選んでいる期間の日の範囲（→ `holdHistoryPeriod`）。期間で読んだ日をいつまで持つかと、
+   * 読み終えた日を「いまの期間の日」として足すかに使う。
    */
-  const [historyOldestDay, setHistoryOldestDay] = useState<string | null>(null)
+  const activePeriodRef = useRef<DayRange | null>(null)
   /**
-   * 再生中の「もっと見る」で続きを読む口（→ `ReplayQuakeHistoryResult.loadMore`）。**再生中はこちらだけを使う。**
+   * 再生中に窓を読む口（→ `ReplayQuakeHistoryResult.fetchWindow`）。**再生中はこちらだけを使う。**
    *
-   * リプレイの開始時の履歴（`restoreQuakeHistory`）が置き、押すたびに次の口へ差し替わる。`null` なら再生中は
-   * 遡らない（ローカル履歴アーカイブ・在庫の端・履歴の取得に失敗した）。ライブの経路（`historyCursorRef`）は
-   * 読む先が `serverDate()`（いま）なので、再生中に使うと再生時刻より未来の地震が並ぶ。
+   * リプレイの開始時の履歴（`restoreQuakeHistory`）が置く。`null` なら再生中は読まない（ローカル履歴アーカイブ・
+   * 履歴の取得に失敗した）。ライブの取得へは落とさない —— 再生時刻より後の地震が一覧に並びうるため。
    */
-  const replayLoadMoreRef = useRef<ReplayQuakeHistoryResult['loadMore']>(null)
+  const replayFetchWindowRef = useRef<ReplayQuakeHistoryResult['fetchWindow']>(null)
+  /** 再生中に期間の日を読めないことを記録したか（同じ再生の中で何度も記録しない。`restoreQuakeHistory` で戻す） */
+  const replayNoPeriodLoggedRef = useRef(false)
   /**
    * 再生の履歴の世代。`resetState` と `restoreQuakeHistory` で進める。押した時点の値と違えば、
    * 届いた続きは別の再生（または差し替わった履歴）のものなので捨てる。
@@ -2662,10 +2671,9 @@ export function useEarthquakes(
     // 世代番号（結果を捨てる判定）と対で持つ —— こちらは目録・一覧のページを辿り続けないため。
     const historyAbort = new AbortController()
     liveHistoryAbortRef.current = historyAbort
-    // カーソルも初期値へ戻す（戻さないと、接続を張り直したあとの「もっと見る」が
+    // 読んだ日も空へ戻す（戻さないと、接続を張り直したあとの「もっと見る」が
     // 前の時間軸で読んだ位置から続きを読む）
-    historyCursorRef.current = null
-    setHistoryOldestDay(null)
+    updateHistoryDays(() => EMPTY_HISTORY_DAYS)
     dmdataHistorySettledRef.current = Promise.resolve()
     // 履歴の損失もここで空へ戻す。**これから読み直す範囲の話**なので、前の接続で欠けた分を
     // 持ち越すと直っても表示が消えない。遡り幅と同じ同期ブロックで戻す。
@@ -2974,13 +2982,21 @@ export function useEarthquakes(
         )))
         .then((history) => {
           if (stale()) return
-          // **「もっと見る」はここの続きから読む。** 初回が読めなければ `null` のままで、
-          // 押されたときは初回と同じ範囲をもう一度試す。
+          // **「もっと見る」はここの続きから読む**（今日から続く分。→ `utils/historyDays.ts`）。初回が読めなければ
+          // 今日から続く分は無いままで、押されたときは初回と同じ範囲をもう一度試す。取り直しの版は前の版と重なるので、
+          // 前に「もっと見る」で伸ばした分を落とさずにつなぐ（`extendMain`）。
           //
-          // **`stale` を見たあとに置くこと。** 時間軸が変わった後の結果でカーソルを
-          // 進めると、新しい時間軸の「もっと見る」が古い軸で読んだ位置から続きを読む。
-          historyCursorRef.current = historyCursorFromOldestDay(history.oldestLoadedDay)
-          setHistoryOldestDay(history.oldestLoadedDay)
+          // **`stale` を見たあとに置くこと。** 時間軸が変わった後の結果で進めると、新しい時間軸の「もっと見る」が
+          // 古い軸で読んだ位置から続きを読む。
+          {
+            const top = jstDayOf(historyBefore.getTime())
+            const oldest = history.oldestLoadedDay
+            updateHistoryDays(d => ({
+              ...d,
+              top: d.top === null || top > d.top ? top : d.top,
+              main: oldest === null ? d.main : extendMain(d.main, { from: oldest, to: top }),
+            }))
+          }
           const quakeEvents = history.quakes
           const tsunamiEvents = history.tsunamis
           // 種別横断の生電文を eventId ごとに統合（リアルタイムと同一ロジック）。
@@ -3674,7 +3690,12 @@ export function useEarthquakes(
    *
    * @param hasMore 続きを出すか。**決め方は経路が持つ**（ライブは取得側の在庫の判定、再生中は続きの口の有無）
    */
-  const applyLoadedHistory = useCallback((history: QuakeHistoryResult, hasMore: boolean) => {
+  /**
+   * 読んだ履歴を一覧へ反映する。
+   *
+   * @param hasMore 今日から続く分の「もっと見る」をまだ出すか。期間で読んだ窓は今日から続く分の続きとは関係ないので `null`（触らない）
+   */
+  const applyLoadedHistory = useCallback((history: QuakeHistoryResult, hasMore: boolean | null) => {
     const events = history.quakes
     // 既存カード群を base に、新バッチの生電文を eventId ごとに統合する。
     // これによりバッチ跨ぎ（先に届いた VXSE61 単独カードへ後続の VXSE53 の震度を合流など）も
@@ -3781,76 +3802,60 @@ export function useEarthquakes(
         historyLoss: mergeHistoryLoss(prev.historyLoss, history),
         // 押し直せば回復しうる側の表示は、成功したので消す
         loadMoreFailed: false,
-        hasMore,
+        ...(hasMore === null ? {} : { hasMore }),
       }
     })
   }, [rememberQuakeRetractionsFromBatch, applyEstimatedIntensity])
 
   /**
-   * 再生中の「もっと見る」。リプレイの開始時の履歴が置いた続きの口（`replayLoadMoreRef`）で読む。
+   * 履歴の窓を 1 つ読んで一覧へ反映する。**「もっと見る」・期間の読み足し・再生中の続きの入口はこれ 1 つ**
+   * （2026-11-08 ユーザー発言「同じ関数でやるほうが汎用性高くない？」）。どの窓を読むかは呼び出し側の `choose` が
+   * 読んだ日（→ `historyDaysRef`）から決め、読み終えた日を今日から続く分（`main`）か期間で読んだ日（`island`）へ足す。
    *
-   * **口が無ければ読まずにボタンを畳む。** ライブの経路へは落とさない —— あちらは `serverDate()`（いま）から
-   * 遡るので、再生時刻より未来の地震が一覧に並ぶ。
+   * **返す値は、読んだ結果を一覧へ反映したか**（読む窓が無い・読まずに返った・時間軸が変わって捨てた・失敗したなら
+   * false）。地震タブの自動の読み足しが、「読んだのに足りない日が減らなかった」ときだけ止めるのに使う
+   * （→ `components/EarthquakeTab/index.tsx`）。
+   *
+   * 再生中は開始時の履歴が置いた口（`replayFetchWindowRef`）で読み、ライブの取得へは落とさない。
+   * 窓の上端は再生時刻・いまより後にしない（`serverNow()` は再生中は再生時刻を返す）。
    */
-  const loadMoreReplayHistory = useCallback(async (): Promise<boolean> => {
-    const loadMore = replayLoadMoreRef.current
-    if (loadMore === null) {
-      // **通常は届かない。** 口が無いときは `hasMore` も偽で、ボタンが出ていない ——
+  const readHistoryWindow = useCallback(async (
+    choose: (days: HistoryDaysState) => { window: DayRange; promote: JstDay[] } | null,
+    kind: 'main' | 'island',
+  ): Promise<boolean> => {
+    if (stateRef.current.isLoadingMore) return false
+    if (kind === 'main' && !stateRef.current.hasMore) return false
+    const replay = replayActiveRef.current
+    const replayFetch = replayFetchWindowRef.current
+    if (replay && replayFetch === null) {
+      // **「もっと見る」では通常は届かない。** 口が無いときは `hasMore` も偽で、ボタンが出ていない ——
       // `restoreQuakeHistory` が口の有無で決め、開始時の履歴の取得に失敗したときは呼ばれないので
-      // `resetState` が落とした偽のまま残る。ここへ来たら、ライブで立った `hasMore` が残ったまま
-      // 再生へ切り替わったなど前提が崩れているので、記録してボタンを畳む
-      log.warn('[data] 再生中の「もっと見る」に続きを読む先がありません（ボタンを畳みます）')
-      setState(prev => (prev.hasMore ? { ...prev, hasMore: false } : prev))
-      return false
-    }
-    const generation = replayHistoryGenerationRef.current
-    const stale = () => replayHistoryGenerationRef.current !== generation
-    const signal = replayLoadMoreAbortRef.current?.signal ?? null
-    setState(prev => ({ ...prev, isLoadingMore: true }))
-    try {
-      const history = await loadMore(signal)
-      // 再生を止めた・始め直した・履歴が差し替わった後に届いた分は捨てる（「取得中」の解除は finally が担う）
-      if (stale()) return false
-      // **次の口へ進めるのは成功したときだけ。** 失敗したら同じ口のまま、押し直せば同じ範囲を読み直す
-      replayLoadMoreRef.current = history.loadMore
-      if (history.oldestLoadedDay !== null) setHistoryOldestDay(history.oldestLoadedDay)
-      applyLoadedHistory(history, history.loadMore !== null)
-      return true
-    } catch (err) {
-      // 時間軸が変わった後の失敗は誰も困っていない（ライブの「もっと見る」と同じ扱い）
-      if (stale()) {
-        log.debug('[data] 古い再生の追加読み込みが失敗（結果は破棄）', err)
-        return false
+      // `resetState` が落とした偽のまま残る。ここへ来たら前提が崩れているので、記録してボタンを畳む。
+      // 期間の読み足しは、手元の履歴アーカイブで再生しているときに来る（読む先が無いので読まない）
+      if (kind === 'main') {
+        log.warn('[data] 再生中の「もっと見る」に続きを読む先がありません（ボタンを畳みます）')
+        setState(prev => (prev.hasMore ? { ...prev, hasMore: false } : prev))
+      } else if (!replayNoPeriodLoggedRef.current) {
+        // 手元の履歴アーカイブは収録範囲の外を持たないので、期間の日は読めない（地震タブは 3 回で読み足しを止める）
+        replayNoPeriodLoggedRef.current = true
+        log.info('[data] 再生中は読む先が無いため、期間の日を読みません（手元の履歴アーカイブで再生しています）')
       }
-      log.error('[data] 再生中の地震履歴の追加読み込みに失敗', err)
-      setState(prev => ({ ...prev, loadMoreFailed: true }))
       return false
-    } finally {
-      setState(prev => (prev.isLoadingMore ? { ...prev, isLoadingMore: false } : prev))
     }
-  }, [applyLoadedHistory])
-
-  /**
-   * 「もっと見る」の取得。**返す値は、読んだ結果を一覧へ反映したか**（読まずに返った・時間軸が変わって捨てた・失敗した
-   * なら false）。期間に合わせた自動の読み足しが、「読んだのに一番古い日が動かなかった」ときだけ止めるのに使う
-   * （→ `components/EarthquakeTab/index.tsx`）
-   */
-  const loadMoreEarthquakes = useCallback(async (): Promise<boolean> => {
-    if (stateRef.current.isLoadingMore || !stateRef.current.hasMore) return false
-    // **再生中は再生の続きだけを読む**（→ `loadMoreReplayHistory`）。下のライブの経路はいまから遡る
-    if (replayActiveRef.current) return loadMoreReplayHistory()
     // **この取得が「まだ有効か」を測る物差し。**
     // 電文本体の取得は最長で数分かかる（→ `services/telegramBody.ts` の取得間隔）。そのあいだに
     // リプレイが始まる・接続が張り直されると、届いた電文は**別の時間軸の一覧**へ流し込まれる。
     // 接続 effect の `cancelled` はそちらのスコープに閉じていて、ここからは触れないので、
-    // 作り直しのたびに進む世代の番号で見分ける。
-    const generation = liveGenerationRef.current
+    // 作り直しのたびに進む世代の番号で見分ける。再生中は再生の履歴の世代（`resetState` と `restoreQuakeHistory` で進む）で見る。
+    const generation = replay ? replayHistoryGenerationRef.current : liveGenerationRef.current
     // 履歴の取り直しを挟んだ取得も古い（前の区分で読んだ続きを、取り直した一覧へ足さない）。
     // 下で、進行中の履歴の取得を待った後の番号に取り直す
     let restRun = dmdataRestRunRef.current
-    const stale = () => liveGenerationRef.current !== generation || dmdataRestRunRef.current !== restRun
-    // 同じ時間軸の打ち切りの合図（接続 effect が作り、作り直しのクリーンアップで立てる）
-    const signal = liveHistoryAbortRef.current?.signal ?? null
+    const stale = replay
+      ? () => replayHistoryGenerationRef.current !== generation
+      : () => liveGenerationRef.current !== generation || dmdataRestRunRef.current !== restRun
+    // 同じ時間軸の打ち切りの合図（ライブは接続 effect が作り、作り直しのクリーンアップで立てる。再生は `restoreQuakeHistory` が作る）
+    const signal = (replay ? replayLoadMoreAbortRef.current?.signal : liveHistoryAbortRef.current?.signal) ?? null
     setState(prev => ({ ...prev, isLoadingMore: true }))
     try {
       // 初回と同じ理由で逐次に反映する。**控えが空のうちは 1 件 6 秒**なので、
@@ -3871,73 +3876,98 @@ export function useEarthquakes(
           }
         })
       }
-      // **前回の続きから、窓 1 つぶんを丸ごと読む**（→ `historyCursorRef`）。件数では打ち切らない
-      // （→ `HISTORY_WINDOW_DAYS` の「件数の上限は置かない」）。
-      //
-      // カーソルが無いのは初回の履歴を読めていない場合。そのときは初回と同じ範囲を
-      // もう一度試す（進めないだけで、押しても何も起きない状態にはしない）。
-      // **進行中の履歴の取得（取り直しを含む）が決着するまで待つ**（→ `dmdataHistorySettledRef`）。
-      // 待つ間もボタンは「取得中…」のまま
-      // **待っている間に取り直しが始まったら、その新しい版も待つ**（待った約束が ref の中身と一致するまで繰り返す）。
-      // 1 本だけ待つと、新しい版がまだカーソルを書いていない（null の）うちに初回と同じ窓を読みに行く
-      for (let waiting = dmdataHistorySettledRef.current; ; waiting = dmdataHistorySettledRef.current) {
-        await waiting
-        if (dmdataHistorySettledRef.current === waiting) break
+      if (!replay) {
+        // **進行中の履歴の取得（取り直しを含む）が決着するまで待つ**（→ `dmdataHistorySettledRef`）。
+        // 待つ間もボタンは「取得中…」のまま。**待っている間に取り直しが始まったら、その新しい版も待つ**
+        // （待った約束が ref の中身と一致するまで繰り返す）。1 本だけ待つと、新しい版がまだ読んだ日を書いていない
+        // うちに初回と同じ窓を読みに行く
+        for (let waiting = dmdataHistorySettledRef.current; ; waiting = dmdataHistorySettledRef.current) {
+          await waiting
+          if (dmdataHistorySettledRef.current === waiting) break
+        }
+        if (liveGenerationRef.current !== generation) return false
+        restRun = dmdataRestRunRef.current
       }
-      if (liveGenerationRef.current !== generation) return false
-      restRun = dmdataRestRunRef.current
-      const before = historyCursorRef.current ?? serverDate()
+      // **読む窓は、待った後の読んだ日から決める**（初回の履歴が書いた今日から続く分を見るため）
+      const choice = choose(historyDaysRef.current)
+      if (choice === null) return false
+      const { window, promote } = choice
+      // 期間で読み終えていた日を今日から続く分へ入れる（読み直さない。→ `nextLoadMoreWindow`）
+      if (promote.length > 0) {
+        updateHistoryDays(d => {
+          if (d.main === null) return d
+          const islands = new Map(d.islands)
+          for (const day of promote) islands.delete(day)
+          return { ...d, main: { from: promote[promote.length - 1], to: d.main.to }, islands }
+        })
+      }
+      // 窓の上端は、その窓の最後の日の終わりか、いま（再生中は再生時刻）の早い方
+      const before = new Date(Math.min(jstDayEndMs(window.to), serverNow()))
+      if (!Number.isFinite(before.getTime()) || !Number.isFinite(jstDayStartMs(window.from))) {
+        log.warn(`[data] 履歴の窓の日付を読めませんでした（読みません）: ${window.from}〜${window.to}`)
+        return false
+      }
+      if (before.getTime() < jstDayStartMs(window.from)) return false
+      const maxDays = Math.max(0, daysBetween(window.from, window.to))
       // **押すたびに新しい印を付けて取る**（`beginLoadMoreGateTag`）。ボタンが、この取得が門を
       // 通り終えるまでの残り時間を数える（→ `components/EarthquakeTab/LoadMoreButton.tsx`）。
       // 使い回さないのは、中断された前回の待ちを今回の分として数えないため（理由はその関数）。
-      const history = await fetchDmdataQuakeHistoryFor(
-        dmdataRestClassificationsRef.current,
-        relayRestEndpoint, before, HISTORY_WINDOW_DAYS, dmdataTestDeliveryRef.current, signal,
-        applyPartialMore, stale, beginLoadMoreGateTag(),
-      )
+      const history = replay && replayFetch !== null
+        ? await replayFetch(before, maxDays, signal, beginLoadMoreGateTag())
+        : await fetchDmdataQuakeHistoryFor(
+          dmdataRestClassificationsRef.current,
+          relayRestEndpoint, before, maxDays, dmdataTestDeliveryRef.current, signal,
+          applyPartialMore, stale, beginLoadMoreGateTag(),
+        )
       // 時間軸が変わっていたら、取れた分ごと捨てる（「取得中」の解除は finally が担う）
       if (stale()) return false
-      // **カーソルを進めるのは成功したときだけ。** 失敗（catch）や時間軸の変化では据え置き、
-      // 次に押したとき同じ窓を読み直す。先に進めて失敗時に戻す形にすると、接続を張り直す
-      // effect のリセット（`historyCursorRef.current = null`）を後から踏み潰しうる。
+      // **読んだ日を足すのは成功したときだけ。** 失敗（catch）や時間軸の変化では据え置き、
+      // 次に同じ窓を読み直す。先に足して失敗時に戻す形にすると、接続を張り直す effect の
+      // リセットを後から踏み潰しうる。
       //
-      // **進まなかったのに「まだある」と言われたら記録する。** 押しても永久に増えない状態で、
-      // 画面には何の痕跡も出ない。取得側は読み切った日をカーソルにするので（地震が 0 件の日も
-      // 含む）、通常は在庫がある限り必ず進む。
-      const nextCursor = historyCursorFromOldestDay(history.oldestLoadedDay)
-      if (nextCursor) {
-        historyCursorRef.current = nextCursor
-        setHistoryOldestDay(history.oldestLoadedDay)
+      // 足すのは「新しい側から読み切った日」だけ（→ `QuakeHistoryResult.oldestLoadedDay`）。窓の上端の日は
+      // `before` の日（いまより後の日は読んでいない）
+      const oldest = history.oldestLoadedDay
+      const readTo = jstDayOf(before.getTime())
+      const loadedFrom = oldest === null ? null : (oldest < window.from ? window.from : oldest)
+      const loadedTo = readTo < window.to ? readTo : window.to
+      // 読み切った日が窓より新しい側にしか無い（窓の日を 1 日も読み切れていない）なら、読んだ日は増えない
+      const loaded: DayRange | null = loadedFrom === null || loadedFrom > loadedTo ? null : { from: loadedFrom, to: loadedTo }
+      if (loaded !== null) {
+        updateHistoryDays(d => kind === 'main'
+          ? { ...d, main: extendMain(d.main, loaded) }
+          : { ...d, islands: holdIslands(addIslandRange(d.islands, loaded, d.main), activePeriodRef.current, Date.now()) })
+      } else if (kind === 'island') {
+        // 期間で読んだ窓は在庫の端と関係なく読むので、進まなかったら理由に関わらず記録する（地震タブは減らなければ止める）
+        log.info(`[data] 期間の窓を読んだが、読み切れた日がありませんでした（${window.from}〜${window.to}`
+          + `${history.rateLimitedSources.length > 0 ? '・429 の窓が明けるまでの足踏み' : ''}）`)
       } else if (history.hasMore) {
-        // **429 の待機と本物の不具合を混ぜない。** 窓の最新の日が 429 の窓に入っていると
-        // その日は読み切れず、カーソルは進まない —— それは待てば解ける正常な足踏みで、
-        // 警告にすると解消するまで押すたび出続けて診断の価値が落ちる。
+        // **進まなかったのに「まだある」と言われたら記録する。** 押しても永久に増えない状態で、
+        // 画面には何の痕跡も出ない。取得側は読み切った日を返すので（地震が 0 件の日も含む）、
+        // 通常は在庫がある限り必ず進む。
+        // **429 の待機と本物の不具合を混ぜない。** 窓の最新の日が 429 の窓に入っているとその日は読み切れず、
+        // 進まない —— それは待てば解ける正常な足踏みで、警告にすると解消するまで押すたび出続けて診断の価値が落ちる。
         if (history.rateLimitedSources.length > 0) {
-          log.info('[data] 履歴のカーソルは進みませんでした（429 の窓が明けるまでの足踏み）')
+          log.info('[data] 履歴の読んだ日は進みませんでした（429 の窓が明けるまでの足踏み）')
         } else {
-          log.warn('[data] 履歴のカーソルが進みませんでした（押しても増えない状態になります）')
+          log.warn(`[data] 履歴の読んだ日が進みませんでした（${window.from}〜${window.to}。押しても増えない状態になります）`)
         }
       }
       // **続きを出すかは取得側に任せる**（在庫＝アーカイブの目録が空になったか。→ `hasMore`）。
       // 増えたかどうかでは判定しない —— 30 日まるごと震度1以上の地震が無いことは起きうるが、
-      // それは「もっと古い在庫が無い」ことを何も意味しない。遡り幅の上限も見ない（件数で打ち切って
-      // 読み残した日があってもボタンが死ぬ）。
-      applyLoadedHistory(history, history.hasMore)
+      // それは「もっと古い在庫が無い」ことを何も意味しない。期間で読んだ窓は今日から続く分の続きと関係ないので触らない
+      applyLoadedHistory(history, kind === 'main' ? history.hasMore : null)
       return true
     } catch (err) {
       // **時間軸が変わった後の失敗は「失敗」として記録しない。** 結果ごと捨てる取得なので、
       // 誰も困っていない。理由が本物なら新しい世代が同じ理由で失敗して、そちらが記録する。
-      // 痕跡は詳細ログへ落とす。
       if (stale()) {
         log.debug('[data] 古い世代の追加読み込みが失敗（結果は破棄）', err)
         return false
       }
       // 追加読み込みの失敗は画面では「増えなかった」だけに見える（初回ロード用の error state は
-      // 触らない）。ユーザーが再度押せる状態に戻すだけなので、理由はログに残す。
-      //
-      // **カーソルは触らない。** 進めるのは成功した後だけなので、ここへ来た時点で前回の位置の
-      // まま。押し直せば同じ窓をもう一度読む。
-      log.error('[data] 地震履歴の追加読み込みに失敗', err)
+      // 触らない）。押し直せる状態に戻すだけなので、理由はログに残す。読んだ日は触らない（押し直せば同じ窓を読む）。
+      log.error(replay ? '[data] 再生中の地震履歴の追加読み込みに失敗' : '[data] 地震履歴の追加読み込みに失敗', err)
       // **画面にも出す。** 出さないと「押したのに何も起きない」だけに見え、もう一度押せば
       // 直るのか、これ以上遡れないのかが分からない。
       setState(prev => ({ ...prev, loadMoreFailed: true }))
@@ -3947,10 +3977,97 @@ export function useEarthquakes(
       // 成功パスの `setState` の中に混ぜていた頃は、`stale()` での早期 return だけが解除を
       // 通らなかった。冒頭のガード（`isLoadingMore` なら何もしない）と噛み合って、
       // **押してから API キーを変えた・リプレイを始めただけでボタンがリロードまで死ぬ**。
-      // 画面には「取得中…」のまま押せないボタンが残るだけで、例外もログも出ない。
       setState(prev => (prev.isLoadingMore ? { ...prev, isLoadingMore: false } : prev))
     }
-  }, [applyLoadedHistory, loadMoreReplayHistory])
+  }, [applyLoadedHistory, updateHistoryDays])
+
+  /**
+   * 「もっと見る」。今日から続く分の一番古い日の前から、窓 1 つぶん古い方へ読む（→ `nextLoadMoreWindow`）。
+   * 返す値は `readHistoryWindow` と同じ。
+   */
+  const loadMoreEarthquakes = useCallback((): Promise<boolean> => readHistoryWindow(
+    d => nextLoadMoreWindow(d.main, d.top ?? jstDayOf(serverNow()), d.islands, HISTORY_WINDOW_DAYS),
+    'main',
+  ), [readHistoryWindow])
+
+  /**
+   * 期間の読み足し。期間の日のうち、まだ読んでいない日の一番新しいまとまりから、窓 1 つぶんを読む
+   * （2026-11-08 ユーザー選択「期間の日だけ取りに行く形を別に作る」・「近い期間も別に読む (Recommended)」）。
+   * 読んだ日は期間で読んだ日として持ち、期間を外した後 3 日で捨てる（→ `holdHistoryPeriod`）。
+   * 返す値は `readHistoryWindow` と同じ（足りない日が無ければ読まずに false）。
+   */
+  const loadHistoryPeriod = useCallback((range: DayRange): Promise<boolean> => readHistoryWindow(
+    d => {
+      const missing = missingRanges(range, d.main, d.islands)
+      return missing.length === 0 ? null : { window: nextWindowOf(missing[0], HISTORY_WINDOW_DAYS), promote: [] }
+    },
+    'island',
+  ), [readHistoryWindow])
+
+  /**
+   * 期間で読んだ日のうち、期間から外れて 3 日たった日を捨て、その日に発生した地震を一覧から外す
+   * （2026-11-08 選択「3日 (Recommended)」）。今日から続く分の日に報が届いた地震は外さない（→ `isEvictedCard`）。
+   */
+  const evictExpiredIslands = useCallback(() => {
+    const before = historyDaysRef.current
+    // 3 日は実際に経った時間なので壁時計で測る（serverNow は再生中に再生時刻を返し、跳ぶ）
+    const expired = expiredIslandDays(before.islands, Date.now(), ISLAND_KEEP_MS)
+    if (expired.length === 0) return
+    const drop = new Set(expired)
+    // 今日から続く分の端。起動時の履歴が無いうちは今日で補う（App の出し分けと同じ補い方）
+    const mainFrom: JstDay = before.main?.from ?? before.top ?? jstDayOf(serverNow())
+    updateHistoryDays(d => {
+      const islands = new Map(d.islands)
+      for (const day of expired) islands.delete(day)
+      return { ...d, islands }
+    })
+    // 同じ日の国際津波関連情報も捨てる。残すと、付く地震カードが消えた後に英文だけのカードとして現れる
+    const evictedWepa = (t: JMAInternationalTsunami): boolean => {
+      const issued = Date.parse(t.time)
+      const origin = t.originTime !== undefined ? Date.parse(t.originTime) : Number.NaN
+      return isEvictedCard({
+        origin: Number.isFinite(origin) ? jstDayOf(origin) : null,
+        newest: Number.isFinite(issued) ? jstDayOf(issued) : null,
+      }, mainFrom, drop)
+    }
+    if (internationalTsunamisRef.current.some(evictedWepa)) {
+      internationalTsunamisRef.current = internationalTsunamisRef.current.filter(t => !evictedWepa(t))
+    }
+    setState(prev => {
+      const kept = prev.earthquakes.filter(q => !isEvictedCard(quakeCardDays(q), mainFrom, drop))
+      const keptWepa = prev.internationalTsunamis.some(evictedWepa) ? prev.internationalTsunamis.filter(t => !evictedWepa(t)) : prev.internationalTsunamis
+      if (kept.length === prev.earthquakes.length && keptWepa === prev.internationalTsunamis) return prev
+      return {
+        ...prev,
+        internationalTsunamis: keptWepa,
+        // 外した地震の印とその記憶も落とす（持ち続けると、捨てた地震の分だけ記憶が残る）
+        ...marksFromHistory(new Map(prev.quakeMarkMemory), kept, prev.lpgmByEventId, prev.quakeUpdateMarks),
+        earthquakes: kept,
+      }
+    })
+    // 件数は更新関数の外で数える（更新関数は描画のときに走ることがあり、中で数えると記録の時点で 0 のままになる）
+    const evictedCount = stateRef.current.earthquakes.filter(q => isEvictedCard(quakeCardDays(q), mainFrom, drop)).length
+    log.info(`[data] 期間から外れて 3 日たった ${expired.length} 日分（${expired[0]} ほか）を捨て、地震 ${evictedCount} 件を一覧の控えから外しました`)
+  }, [updateHistoryDays])
+
+  /**
+   * 地震タブで選んでいる期間を知らせる（期間を外したら null）。期間で読んだ日のうち、新しい期間に入る日は持ち続け、
+   * 外れた日には外れた時刻を付ける（3 日たったら `evictExpiredIslands` が捨てる）。
+   */
+  const holdHistoryPeriod = useCallback((range: DayRange | null) => {
+    activePeriodRef.current = range
+    updateHistoryDays(d => {
+      const islands = holdIslands(d.islands, range, Date.now())
+      return islands === d.islands ? d : { ...d, islands }
+    })
+    evictExpiredIslands()
+  }, [updateHistoryDays, evictExpiredIslands])
+
+  // 期間から外れた日の捨て時は、期間を選び直したときのほかに 30 分ごとにも見る（地震タブを開いたまま 3 日たった場合）
+  useEffect(() => {
+    const id = setInterval(evictExpiredIslands, 30 * 60_000)
+    return () => clearInterval(id)
+  }, [evictExpiredIslands])
 
   /**
    * テストボタンの台本（電文 XML の並び）を読み、**受信と同じイベントキューへ積む**
@@ -4426,8 +4543,8 @@ export function useEarthquakes(
     replayHistoryGenerationRef.current++
     replayLoadMoreAbortRef.current?.abort()
     replayLoadMoreAbortRef.current = null
-    replayLoadMoreRef.current = null
-    setHistoryOldestDay(null)
+    replayFetchWindowRef.current = null
+    updateHistoryDays(() => EMPTY_HISTORY_DAYS)
     clearTestSimulationTimers()
     setState(prev => ({
       ...prev,
@@ -4474,7 +4591,7 @@ export function useEarthquakes(
     // 帯の期限の予約もリセット対象。resetState 後に古い予約が残ると、リプレイモード切替→ライブ復帰後に
     // 発火して、新しく積んだ一覧を前の時間軸の一覧で上書きしうる。
     clearBandExpireTimers(bandExpireTimersRef.current)
-  }, [clearTestSimulationTimers])
+  }, [clearTestSimulationTimers, updateHistoryDays])
 
   /**
    * リプレイ開始時に、指定時刻より前の地震カードを一覧へ流し込む（音・読み上げは経由しない）。
@@ -4492,10 +4609,16 @@ export function useEarthquakes(
     // 前に覚えた口の取得が進んでいれば打ち切る（同じ再生の中で履歴が差し替わった場合）
     replayHistoryGenerationRef.current++
     replayLoadMoreAbortRef.current?.abort()
-    replayLoadMoreAbortRef.current = history.loadMore === null ? null : new AbortController()
-    replayLoadMoreRef.current = history.loadMore
-    setHistoryOldestDay(history.oldestLoadedDay)
-    const hasMore = history.loadMore !== null
+    replayLoadMoreAbortRef.current = history.fetchWindow === null ? null : new AbortController()
+    replayFetchWindowRef.current = history.fetchWindow
+    replayNoPeriodLoggedRef.current = false
+    // 今日から続く分は、再生を始めた時刻の日から読み切った日まで。期間で読んだ日は前の再生のものなので空にする
+    {
+      const oldest = history.oldestLoadedDay
+      const top = history.topDay
+      updateHistoryDays(() => ({ top, main: oldest === null ? null : { from: oldest, to: top }, islands: new Map() }))
+    }
+    const hasMore = history.fetchWindow !== null && history.hasMore
     setState(prev => (prev.hasMore === hasMore ? prev : { ...prev, hasMore }))
     const quakes = history.quakes
     if (quakes.length === 0) return
@@ -4584,9 +4707,11 @@ export function useEarthquakes(
 
   return {
     ...state,
-    historyOldestDay,
+    historyDays,
     injectEvent: handleEvent,
     loadMoreEarthquakes,
+    loadHistoryPeriod,
+    holdHistoryPeriod,
     clearTelegramLog,
     simulateEarthquake,
     simulateForeignQuake,

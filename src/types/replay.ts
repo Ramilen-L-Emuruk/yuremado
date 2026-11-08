@@ -4,6 +4,7 @@
 //   - DMDATA の日次アーカイブ（services/dmdataReplay.ts）
 //   - ローカル履歴アーカイブ: 収録済み JSON（services/localArchiveReplay.ts）
 //   - テストボタン: 読んだ電文を「いま」へ寄せたもの（utils/testScenarioReplay.ts）
+import type { GateTag } from '../utils/requestGate'
 import type {
   AppEvent, JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu,
   JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, TelegramLogEntry,
@@ -178,8 +179,8 @@ export interface QuakeHistoryResult {
   /**
    * 地震を取り込んだ最古の JST 日（`YYYY-MM-DD`）。1 件も読まなかったときは `null`。
    *
-   * **次にどこから続きを読むかを決める値。** 呼び出し側はこの日の手前を次の窓の上端にする
-   * （→ `useEarthquakes` の `historyCursorRef`）。これが無いと「もっと見る」は毎回同じ範囲を
+   * **次にどこから続きを読むかを決める値。** 呼び出し側はこの日から窓の上端までを読んだ日として覚え、
+   * この日の手前を次の窓の上端にする（→ `utils/historyDays.ts`・`useEarthquakes` の `readHistoryWindow`）。これが無いと「もっと見る」は毎回同じ範囲を
    * 最初から読み直すことになり、遡るほど 1 回の解析量が増える。
    *
    * **入るのは「最後まで読み切った日」だけ。** 次は含まない。
@@ -242,13 +243,18 @@ export interface QuakeHistoryResult {
  * `QuakeHistoryResult` には持たせていない。
  */
 export interface ReplayQuakeHistoryResult extends QuakeHistoryResult {
+  /** 読んだ窓の上端の日（再生を始めた時刻の日本時間の日）。今日から続く分（→ `utils/historyDays.ts`）の上端になる。 */
+  topDay: string
   /**
-   * さらに古い方を読む。**読む先が無ければ `null`**（「もっと見る」を出さない）。
+   * 同じ取得元で窓を 1 つ読む口（上端の時刻と、その前に何日読むか）。**読む先が無ければ `null`**（「もっと見る」と
+   * 期間の読み足しをしない）。ローカル履歴アーカイブは収録範囲の外を持たないので常に `null`。
    *
-   * 返す結果にも同じ口が付く（押すたびに 1 つ先へ進む）。ローカル履歴アーカイブは収録範囲の外を
-   * 持たないので常に `null`。
+   * 再生中の「もっと見る」と期間の読み足しは、どちらもこの口で読む（→ `useEarthquakes` の `readHistoryWindow`）。
    *
+   * @param before 窓の上端（この時刻より後に受信した電文は採らない）
+   * @param maxDays 上端の日の前に読む日数（→ `fetchDmdataQuakeHistory` の `maxDays`）
    * @param signal 止める合図（再生の停止・始め直しで立つ）
+   * @param gateTag 門の待ちに付ける印（→ `fetchDmdataQuakeHistory` の `gateTag`）
    */
-  loadMore: ((signal: AbortSignal | null) => Promise<ReplayQuakeHistoryResult>) | null
+  fetchWindow: ((before: Date, maxDays: number, signal: AbortSignal | null, gateTag: GateTag | undefined) => Promise<QuakeHistoryResult>) | null
 }

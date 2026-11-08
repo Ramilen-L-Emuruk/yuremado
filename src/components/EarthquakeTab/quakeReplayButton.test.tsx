@@ -9,6 +9,7 @@ import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
 import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 afterEach(cleanup)
 
@@ -82,7 +83,7 @@ async function renderTab(opts: { quake: JMAQuake | null; replayError?: string | 
       onSortChange={() => {}}
       filterSourceQuakes={[]}
       shown
-      historyOldestDay={null}
+      historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

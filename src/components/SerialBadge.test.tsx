@@ -15,6 +15,7 @@ import { EarthquakeTab } from './EarthquakeTab'
 import { quakeEventKey } from '../utils/quakeMerge'
 import type { EEWAlert, JMAQuake, QuakeReportRecord } from '../types/earthquake'
 import { createEmptyTelegramLoss } from '../utils/telegramLoss'
+import { EMPTY_HISTORY_DAYS } from '../utils/historyDays'
 
 afterEach(cleanup)
 
@@ -108,7 +109,7 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       onSortChange={() => {}}
       filterSourceQuakes={[]}
       shown
-      historyOldestDay={null}
+      historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

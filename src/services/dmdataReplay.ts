@@ -2396,9 +2396,9 @@ export function compareExtraTieBreak(a: ReplayPayload, b: ReplayPayload): number
  * 逐次に落として都度判定すると往復のぶんだけ再生開始が遅れるため（ライブの履歴取得が
  * 電文 1 通ずつ数百リクエストを投げているのに比べれば、余分な数ファイルは誤差）。
  *
- * **「もっと見る」はカーソルを進めて呼び直す形。** 呼び出し側は前回の `oldestLoadedDay` の
- * 手前を次の `before` にするので、**窓どうしは重ならない**（→ `useEarthquakes` の
- * `historyCursorRef`）。
+ * **「もっと見る」は読んだ日の続きから呼び直す形。** 呼び出し側は読み切った日（`oldestLoadedDay` から上端まで）を
+ * 覚え、その手前を次の `before` にするので、**窓どうしは重ならない**（→ `utils/historyDays.ts`・`useEarthquakes` の
+ * `readHistoryWindow`）。期間の読み足しも、まだ読んでいない日の窓を同じ形で渡す。
  *
  * かつては遡る日数を伸ばして**毎回いちばん新しい日から読み直して**いた。通信はアーカイブの
  * 控え（`archiveCache`）で増えないが、目録と電文は押した回数だけ解析し直していた

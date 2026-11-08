@@ -115,7 +115,7 @@ function emptyHistory(): ReplayQuakeHistoryResult {
   return {
     quakes: [], tsunamis: [], extras: [], skippedByDay: skips(0),
     failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, hasMore: false, oldestLoadedDay: null,
-    loadMore: null,
+    topDay: '2024-01-01', fetchWindow: null,
   }
 }
 

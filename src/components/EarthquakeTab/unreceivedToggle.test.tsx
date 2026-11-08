@@ -17,6 +17,7 @@ import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake, EarthquakePoint, JMAQuakeCity } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
 import { findIntensityRow } from '../../test-utils/intensityRow'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 afterEach(cleanup)
 
@@ -96,7 +97,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     onSortChange={() => {}}
     filterSourceQuakes={[]}
     shown
-    historyOldestDay={null}
+    historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}
@@ -182,7 +183,7 @@ describe('未入電トグル', () => {
         onSortChange={() => {}}
         filterSourceQuakes={[]}
         shown
-        historyOldestDay={null}
+        historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
         historyInputs={null}
         historyPickedId={null}
         historyView={null}

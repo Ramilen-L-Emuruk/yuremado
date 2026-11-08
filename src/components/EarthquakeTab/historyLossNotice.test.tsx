@@ -20,6 +20,7 @@ import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake } from '../../types/earthquake'
 import { createEmptyTelegramLoss, addTelegramLoss, type TelegramLoss } from '../../utils/telegramLoss'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 /**
  * テスト用: 取りこぼしを日ごとの Map にする。
@@ -104,7 +105,7 @@ async function renderTab(opts: {
       onSortChange={() => {}}
       filterSourceQuakes={[]}
       shown
-      historyOldestDay={null}
+      historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

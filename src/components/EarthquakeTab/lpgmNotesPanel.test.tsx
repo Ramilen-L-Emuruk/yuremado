@@ -18,6 +18,7 @@ import { quakeEventKey } from '../../utils/quakeMerge'
 import { telegramTextSubject } from '../../utils/ttsFollow'
 import type { JMAQuake, JMALpgm } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 afterEach(cleanup)
 
@@ -116,7 +117,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     onSortChange={() => {}}
     filterSourceQuakes={[]}
     shown
-    historyOldestDay={null}
+    historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}
@@ -171,7 +172,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     onSortChange={() => {}}
     filterSourceQuakes={[]}
     shown
-    historyOldestDay={null}
+    historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
     historyInputs={null}
     historyPickedId={null}
     historyView={null}

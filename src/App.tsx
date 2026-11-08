@@ -138,8 +138,7 @@ import { relayRestClassifications, restSources } from './services/dmdataClassifi
 import { dmdataKeyEndpoint } from './services/dmdataEndpoint'
 import { fetchReplayFromSources } from './services/replaySources'
 import { isValidDmdataApiKey } from './utils/dmdataApiKey'
-import { withDmdataLoadMore, withoutLoadMore } from './services/replayQuakeHistory'
-import { beginLoadMoreGateTag } from './services/dmdataRequestGates'
+import { withFetchWindow, withoutFetchWindow } from './services/replayQuakeHistory'
 import type { ReplayQuakeHistoryResult } from './types/replay'
 import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
@@ -148,6 +147,7 @@ import { log } from './utils/logger'
 import { quakeReplayStartMs } from './utils/quakeReplayStart'
 import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showTestBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
+import { isHistoryCardShown, jstDayOf, periodDayRange, quakeCardDays } from './utils/historyDays'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
@@ -1138,9 +1138,9 @@ export function App() {
   const [eewSpreadLog] = useState(createDetectionSpreadLog)
   const {
     earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentaryList, kohatsuList, quakeNoticeList, earthquakeCountList, estimatedIntensities, internationalTsunamis, tsunamiFactSteps, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
-    historyLoss, loadMoreFailed, reconnectGapLoss, historyOldestDay,
+    historyLoss, loadMoreFailed, reconnectGapLoss, historyDays,
     telegramLog, clearTelegramLog,
-    injectEvent, loadMoreEarthquakes,
+    injectEvent, loadMoreEarthquakes, loadHistoryPeriod, holdHistoryPeriod,
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
@@ -1152,6 +1152,42 @@ export function App() {
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
   } = useEarthquakes(handleLiveEventWithNotify, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore, restoreStartupEews, eewSpreadLog)
   earthquakesRef.current = earthquakes
+  // 地震タブの絞り込み（→ `utils/quakeListView.ts`）。条件の項目だけを依存に置く（設定の別の項目が変わるたびに一覧を作り直さない）
+  const quakeListFilter = useMemo(
+    () => quakeListFilterOf(settings),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [settings.quakeListScaleMin, settings.quakeListScaleMax, settings.quakeListMagnitudeMin, settings.quakeListMagnitudeMax,
+      settings.quakeListDepthMin, settings.quakeListDepthMax, settings.quakeListRegionBasis, settings.quakeListRegions,
+      settings.quakeListTypes, settings.quakeListRegionView, settings.quakeListPeriodHours, settings.quakeListPeriodFrom, settings.quakeListPeriodTo],
+  )
+  // 期間を「今から遡る時間」で絞っている間だけ、1 分ごとに「今」を進める（時間が経って範囲から出た地震を外すため）
+  const quakeListNowMs = useMinuteClock(quakeListFilter.period?.kind === 'hours')
+  // 期間の絞りが掛かる日の範囲（→ `utils/historyDays.ts` の `periodDayRange`）。期間で読んだ地震を一覧に出すかと、
+  // いつまで持つかに使う。日付の文字列で依存を取る（1 分ごとの「今」で範囲が同じなら作り直さない）
+  // 「今」は 1 分ごとの時計を使うが、時間で選ぶ期間でないときは 0 を返すので、そのときはいまの時刻で切る（0 のまま渡すと今日が 1970 年になり、
+  // 日付で選んだ期間の範囲が逆さになって、期間で読んだ地震が全部隠れる）
+  const historyPeriodRange = quakeListFilter.period === null ? null : periodDayRange(quakeListFilter.period, quakeListNowMs !== 0 ? quakeListNowMs : serverNow())
+  const historyPeriodFrom = historyPeriodRange?.from ?? null
+  const historyPeriodTo = historyPeriodRange?.to ?? null
+  // 選んでいる期間を履歴へ知らせる（期間で読んだ日のうち、外れた日は 3 日で捨てる。2026-11-08 選択「3日 (Recommended)」）
+  useEffect(() => {
+    holdHistoryPeriod(historyPeriodFrom === null || historyPeriodTo === null ? null : { from: historyPeriodFrom, to: historyPeriodTo })
+  }, [historyPeriodFrom, historyPeriodTo, holdHistoryPeriod])
+  // 期間で読んだ地震を出すかの判定（2026-11-08 選択「一覧には出さない (Recommended)」。判定は `isHistoryCardShown`）。
+  // 期間で読んだ日が無ければ隠すものも無いので null（毎回の判定を省く）
+  const historyCardShown = useMemo(() => {
+    if (historyDays.islands.size === 0) return null
+    // 今日から続く分の端。起動時の履歴が無いうちは今日で補う（捨てる側 `evictExpiredIslands` と同じ補い方）
+    const mainFrom = historyDays.main?.from ?? historyDays.top ?? jstDayOf(serverNow())
+    const active = historyPeriodFrom === null || historyPeriodTo === null ? null : { from: historyPeriodFrom, to: historyPeriodTo }
+    const islands = historyDays.islands
+    return (q: JMAQuake) => isHistoryCardShown(quakeCardDays(q), mainFrom, active, islands)
+  }, [historyDays, historyPeriodFrom, historyPeriodTo])
+  const shownEarthquakes = useMemo(() => {
+    if (historyCardShown === null) return earthquakes
+    const shown = earthquakes.filter(historyCardShown)
+    return shown.length === earthquakes.length ? earthquakes : shown
+  }, [earthquakes, historyCardShown])
   // 配信元の上限に達して取得を待たせているあいだ、地震タブにその旨を出す。
   // **損失とは別**（枠が空けばそのまま取りに行くので、欠けは出ない）。
   const fetchThrottled = useFetchThrottled(true)
@@ -1329,7 +1365,7 @@ export function App() {
     windowStartMs: heatWindowStartMs,
     completeness: heatCompleteness,
     intensityScale: heatIntensityScale,
-  } = useQuakeHeatmap(settings.showQuakeHeatmap, earthquakes, replayTimeOffset, settings.heatmapPeriod)
+  } = useQuakeHeatmap(settings.showQuakeHeatmap, shownEarthquakes, replayTimeOffset, settings.heatmapPeriod)
 
   // 最新の非解除津波電文から観測データを収集（地図バー描画用）
   const latestTsunamiObservations = useMemo(() => {
@@ -1445,24 +1481,20 @@ export function App() {
   )
   // 絞る前の全カード（英文だけのカードを含む）。時刻の新しい順
   const allQuakeCards = useMemo(
-    () => withInternationalTsunamiCards(earthquakes, internationalTsunamiIdx),
-    [earthquakes, internationalTsunamiIdx],
+    // 英文だけのカードを足した後で、期間で読んだ地震の出し分けを掛ける（英文だけのカードも期間で読んだ日のものは隠す）
+    () => {
+      const cards = withInternationalTsunamiCards(earthquakes, internationalTsunamiIdx)
+      if (historyCardShown === null) return cards
+      const shown = cards.filter(historyCardShown)
+      return shown.length === cards.length ? cards : shown
+    },
+    [earthquakes, internationalTsunamiIdx, historyCardShown],
   )
   // キャンセル表示中のカードは選択対象から除外する（フォールバック用）。**絞る前の全カードから取る** ——
   // 絞った一覧から取ると、絞りから外れる地震が届いたとき、読み上げ・通知はその地震なのにカードと地図は前の地震のまま残る
   const latestNonCancelled = allQuakeCards.find(q => !q.cancelledAt) ?? null
   const latest = allQuakeCards[0] ?? null
 
-  // 地震タブの絞り込み（→ `utils/quakeListView.ts`）。条件の項目だけを依存に置く（設定の別の項目が変わるたびに一覧を作り直さない）
-  const quakeListFilter = useMemo(
-    () => quakeListFilterOf(settings),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [settings.quakeListScaleMin, settings.quakeListScaleMax, settings.quakeListMagnitudeMin, settings.quakeListMagnitudeMax,
-      settings.quakeListDepthMin, settings.quakeListDepthMax, settings.quakeListRegionBasis, settings.quakeListRegions,
-      settings.quakeListTypes, settings.quakeListRegionView, settings.quakeListPeriodHours, settings.quakeListPeriodFrom, settings.quakeListPeriodTo],
-  )
-  // 期間を「今から遡る時間」で絞っている間だけ、1 分ごとに「今」を進める（時間が経って範囲から出た地震を外すため）
-  const quakeListNowMs = useMinuteClock(quakeListFilter.period?.kind === 'hours')
   // 隠れた地震の固定を、選択が別の地震へ移ったら外す（state は `selectQuake` の上）
   useEffect(() => {
     if (notificationPinKey !== null && selectedQuakeId !== notificationPinKey) setNotificationPinKey(null)
@@ -2248,20 +2280,18 @@ export function App() {
   const fetchReplayQuakeHistory = useCallback(
     (before: Date, signal: AbortSignal): Promise<ReplayQuakeHistoryResult> => {
       const covering = findCoveringArchiveSync(historicalArchives, new Date(before.getTime() - REPLAY_PRE_WINDOW_MS), before)
-      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS).then(withoutLoadMore)
+      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS).then(r => withoutFetchWindow(r, before))
       // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
       // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。
       const classifications = relayRestClassifications(dmdataClassifications, relayForecastGranted)
       const { dmdataTestDelivery } = settings
-      const fetchWindow = (windowBefore: Date, windowSignal: AbortSignal | null, gateTag: GateTag | undefined) =>
+      // 窓を 1 つ読む口。再生中の「もっと見る」と期間の読み足しも同じ口で読む（どの日を読むかは useEarthquakes が決める）
+      const fetchWindow = (windowBefore: Date, maxDays: number, windowSignal: AbortSignal | null, gateTag: GateTag | undefined) =>
         fetchDmdataQuakeHistoryFor(
-          classifications, relayRestEndpoint, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
+          classifications, relayRestEndpoint, windowBefore, maxDays, dmdataTestDelivery, windowSignal,
           undefined, undefined, gateTag,
         )
-      // 続きは押すたびに新しい印を付けて取る（ライブの「もっと見る」と同じ。ボタンが門の残り時間を数える）
-      return fetchWindow(before, signal, undefined).then(result => withDmdataLoadMore(
-        result, before, (windowBefore, windowSignal) => fetchWindow(windowBefore, windowSignal, beginLoadMoreGateTag()),
-      ))
+      return fetchWindow(before, HISTORY_WINDOW_DAYS, signal, undefined).then(result => withFetchWindow(result, before, fetchWindow))
     },
     [settings.dmdataTestDelivery, historicalArchives, dmdataClassifications, relayForecastGranted],
   )
@@ -3484,7 +3514,8 @@ export function App() {
                 sort={quakeListSort}
                 onSortChange={changeQuakeListSort}
                 filterSourceQuakes={allQuakeCards}
-                historyOldestDay={historyOldestDay}
+                historyDays={historyDays}
+                onLoadPeriod={loadHistoryPeriod}
                 selectedId={selectedQuakeKey}
                 selectSeq={quakeSelectSeq}
                 speakingKey={speakingQuakeKey}

@@ -4,7 +4,7 @@ import type { EarthquakePoint, IntensityScale, IssueType, JMAQuake } from '../ty
 import { sanitize } from '../hooks/useSettings'
 import {
   DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SETTINGS, nextQuakeListSort, passesQuakeListFilter, quakeFilterChipLabels,
-  quakeListFilterOf, quakeListFilterSettings, quakeListAutoLoadAllowed, quakeListPeriodStartLabel, quakeListSection, quakeListUnloadedBefore, quakeRegionBlocks, quakeRegionGroups, sortQuakeList,
+  quakeListFilterOf, quakeListFilterSettings, quakeListDayLabel, quakeListPeriodStartLabel, quakeListSection, quakeRegionBlocks, quakeRegionGroups, sortQuakeList,
   type QuakeFilterContext, type QuakeListFilter, keepIfSame, withLatestPinned, observedAreas,
   clearQuakeListFilter, wantsAttachedTypes, quakeListMatchedCount } from './quakeListView'
 
@@ -319,37 +319,11 @@ describe('地域の一覧', () => {
   })
 })
 
-describe('未読込みの注記', () => {
+describe('注記の日付', () => {
   const now = Date.parse('2026-11-07T06:00:00Z')
-  // 正: 期間の始まりが読み込んだ一番古い日より前なら、その前の日を返す
-  it('期間が読み込んだ範囲より前にかかれば、一番古い日の前の日', () => {
-    expect(quakeListUnloadedBefore({ kind: 'hours', hours: 720 }, '2026-11-01', now)).toBe('10月31日')
-  })
-  // 対照: 範囲に収まるなら出さない。安全弁: 期間を決めていない・まだ読んでいないなら出さない
-  it('範囲に収まる・期間なし・未読なら出さない', () => {
-    expect(quakeListUnloadedBefore({ kind: 'hours', hours: 24 }, '2026-11-01', now)).toBeNull()
-    expect(quakeListUnloadedBefore(null, '2026-11-01', now)).toBeNull()
-    expect(quakeListUnloadedBefore({ kind: 'hours', hours: 720 }, null, now)).toBeNull()
-  })
-})
-
-describe('期間に合わせて自動で読み足す範囲（今日から 90 日前まで）', () => {
-  // 2026-11-07 15:00 JST。今日の頭は 11-07 00:00 JST、90 日前の日の頭は 08-09 00:00 JST
-  const now = Date.parse('2026-11-07T06:00:00Z')
-  // 正: 90 日前の日の頭ちょうどから始まる期間は読み足す
-  it('始まりが 90 日前の日の頭なら読み足す', () => {
-    expect(quakeListAutoLoadAllowed({ kind: 'range', from: '2026-08-09', to: '2026-11-07' }, now)).toBe(true)
-    expect(quakeListAutoLoadAllowed({ kind: 'hours', hours: 720 }, now)).toBe(true)
-  })
-  // 対照: 1 日でも古ければ読み足さない（「もっと見る」で遡る）。今を含まない過去の期間も始まりで決まる
-  it('始まりが 91 日前なら読み足さない', () => {
-    expect(quakeListAutoLoadAllowed({ kind: 'range', from: '2026-08-08', to: '2026-11-07' }, now)).toBe(false)
-    expect(quakeListAutoLoadAllowed({ kind: 'range', from: '2026-01-01', to: '2026-03-31' }, now)).toBe(false)
-  })
-  // 安全弁: 期間を決めていない・読めない日付なら読み足さない
-  it('期間なし・読めない日付なら読み足さない', () => {
-    expect(quakeListAutoLoadAllowed(null, now)).toBe(false)
-    expect(quakeListAutoLoadAllowed({ kind: 'range', from: 'x', to: '2026-11-07' }, now)).toBe(false)
+  it('日付は「10月31日」の形（先頭の 0 を付けない）', () => {
+    expect(quakeListDayLabel('2026-10-31')).toBe('10月31日')
+    expect(quakeListDayLabel('2026-01-05')).toBe('1月5日')
   })
   it('注記に出す期間の始まりは日本時間の月日', () => {
     expect(quakeListPeriodStartLabel({ kind: 'range', from: '2026-08-09', to: '2026-11-07' }, now)).toBe('8月9日')

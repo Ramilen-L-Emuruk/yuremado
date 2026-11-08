@@ -15,6 +15,7 @@ import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake, JMALpgm, EarthquakePoint, JMAQuakeCity } from '../../types/earthquake'
 import { findIntensityRow, openIntensityRows, openIntensityRowsIn } from '../../test-utils/intensityRow'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 // `vi.mock` のファクトリより先に評価させる（巻き上げられるため、通常の定数は参照できない）。
 const f = vi.hoisted(() => {
@@ -151,7 +152,7 @@ function renderCard(
       onSortChange={() => {}}
       filterSourceQuakes={[]}
       shown
-      historyOldestDay={null}
+      historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}

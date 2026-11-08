@@ -15,6 +15,7 @@ import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake, JMALpgm } from '../../types/earthquake'
 import type { LpgmSectionFocus } from '../../utils/quakeCardScroll'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { EMPTY_HISTORY_DAYS } from '../../utils/historyDays'
 
 // jsdom は要素の `scrollTo`・`scrollIntoView` を持たない。巻いた回数だけを数える
 const scrollTo = vi.fn()
@@ -94,7 +95,7 @@ const tab = (lpgmFocus: LpgmSectionFocus | null, quake: JMAQuake = QUAKE, lpgm: 
       onSortChange={() => {}}
       filterSourceQuakes={[]}
       shown
-      historyOldestDay={null}
+      historyDays={EMPTY_HISTORY_DAYS} onLoadPeriod={async () => false}
       historyInputs={null}
       historyPickedId={null}
       historyView={null}
