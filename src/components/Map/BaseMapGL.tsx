@@ -17,11 +17,13 @@ import {
   GEBCO_SOURCE_MAX_ZOOM,
   GEBCO_TILE_SIZE,
   buildCameraTargetTiles,
+  buildOverviewHoldTiles,
   prefetchTileList,
   shouldSkipPrefetch,
   startBathymetryPrefetch,
 } from '../../utils/gebcoPrefetch'
 import { subscribeFlightTarget } from './gl/camera'
+import { startOverviewHold } from './gl/overviewHold'
 
 // 行政区域ベースマップ（MapLibre 版・Leaflet の BaseMap 相当）。ダーク背景の上に
 // 海底地形ラスタ（暗色化）＋陸地塗り＋一次細分区域の細線＋県境を描画する。
@@ -91,6 +93,9 @@ interface Props {
 export function BaseMapGL({ showBathymetry, recording }: Props) {
   const map = useMapGL()
   const popupRef = useRef<PopupHandle | null>(null)
+  // 録画モードの係が「下地を出しているか」を読む口（effect を作り直さずに今の値を渡す）
+  const showBathymetryRef = useRef(showBathymetry)
+  showBathymetryRef.current = showBathymetry
 
   useEffect(() => {
     if (!map) return
@@ -112,7 +117,8 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
     //
     // 2 層にする理由: MapLibre は現在の視野に必要なタイルしか保持しないため、沖縄→北海道のような
     // 遠距離フィットの直後は飛行先のタイルが未取得で、1 層だと素の背景色（style の bg）が数百 ms
-    // 露出する（HTTP キャッシュは先読みで温めてあるが、デコード＋テクスチャ化＋フェードの分は残る）。
+    // 露出する（HTTP キャッシュは先読みで温めてあるが、読み込み・デコード＋テクスチャ化＋フェードの分は残る。
+    // 下層も同じ待ちを持つので、録画モードでは下層のタイルを地図の控えへ先に載せて消す。下の先読みの effect）。
     // 下層は maxzoom を低く固定し、MapLibre が maxzoom 超のズームでそのタイルを拡大して描き続ける
     // 性質を使って「どのズーム・どの位置でも粗い海底地形が必ず下地にある」状態を作る。上層の高解像度が
     // 届いたらその上に載って差し替わる。下層はフェード 0（常在の下地なので、クロスフェードの対象は
@@ -262,14 +268,29 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
     const abort = new AbortController()
     startBathymetryPrefetch(abort.signal)
 
+    // 下地（オーバービュー層）のタイルを地図の控えへ先に載せておく（帯と全球の低い z。`buildOverviewHoldTiles`）。
+    // HTTP の控えを温めるだけだと、遠くへ寄せた直後に下地が貼られるまで背景の黒がのぞく。地図が読み込み済みの
+    // タイルを控えに持っていれば、寄せた瞬間にそのまま貼られる（理由と実測は gl/tileCacheAccess.ts の冒頭）。
+    // いつ載せるか・試し直し・失敗の知らせ方・持ち主が替わったときの作り直しは gl/overviewHold.ts が持つ。
+    let targetAbort: AbortController | null = null
+    let targetKey = ''
+    const hold = startOverviewHold(map, {
+      sourceId: SRC_GEBCO_OVERVIEW,
+      holdTiles: buildOverviewHoldTiles(),
+      shouldSkip: shouldSkipPrefetch,
+      isShown: () => showBathymetryRef.current,
+      // 口が無かった間の寄せは、下地まで HTTP の先読みへ回している。同じ行き先の次の寄せで控えへ載るよう、覚えを空にする
+      onReady: () => { targetKey = '' },
+    })
+
     // 寄せ始めに着地先のタイルを取りに行く。巡回の先読みは日本の枠・帯・全球の低ズームを覆うが、
     // 帯の外の深い z（遠い震源への寄せ）と、まだ巡回が届いていない範囲はここで拾う。
     // 寄せは 1 秒かけて飛ぶので、着地した時点で揃っている（着地してから取ると 2K・4K の画面では
     // 海底地形が 0.4〜2.2 秒抜けていた）。次の寄せが来たら前のぶんは打ち切る。
     // ただし着地先のタイルが前の寄せと同じなら打ち切らず、取り直しもしない（EEW の追従のように
     // 同じ画へ短い間隔で何度も寄せる場面で、同じ枚数を毎回投げ直さないため）。
-    let targetAbort: AbortController | null = null
-    let targetKey = ''
+    // 下地のぶん（z が GEBCO_OVERVIEW_MAX_ZOOM 以下）は、控えへ触れるなら控えへ載せ（帯の外へ寄せたときの備え）、
+    // HTTP の先読みからは外す（同じタイルを 2 度取らない）。
     const unsubscribe = subscribeFlightTarget(map, (target) => {
       if (shouldSkipPrefetch()) {
         targetAbort?.abort()
@@ -281,16 +302,22 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
       const key = tiles.map((t) => `${t.z}/${t.y}/${t.x}`).join(',')
       if (key !== '' && key === targetKey) return
       targetAbort?.abort()
-      targetKey = key
-      if (tiles.length === 0) return
+      if (tiles.length === 0) { targetKey = key; return }
       const next = new AbortController()
       targetAbort = next
-      prefetchTileList(tiles, next.signal)
+      const overview = tiles.filter((t) => t.z <= GEBCO_OVERVIEW_MAX_ZOOM)
+      // 控えへ載せられたら、HTTP の先読みには高解像度のぶんだけを渡す。覚え（targetKey）は載せた後に立てる
+      // （載せる途中で口を作り直すと onReady が覚えを空にするため）
+      const held = hold.loadTarget(overview, next.signal)
+      targetKey = key
+      prefetchTileList(held ? tiles.filter((t) => t.z > GEBCO_OVERVIEW_MAX_ZOOM) : tiles, next.signal)
     })
     return () => {
       unsubscribe()
       targetAbort?.abort()
       abort.abort()
+      // 上げた控えの上限を戻す（溢れた古いタイルから地図が捨てる）
+      hold.stop()
     }
   }, [map, recording])
 

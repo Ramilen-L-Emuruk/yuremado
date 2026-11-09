@@ -5,6 +5,11 @@ import {
   buildBandPrefetchTiles,
   buildGlobalPrefetchTiles,
   buildPrefetchQueue,
+  buildOverviewHoldTiles,
+  BAND_BOUNDS,
+  OVERVIEW_HOLD_GLOBAL_MAX_ZOOM,
+  OVERVIEW_HOLD_BOXES,
+  buildBoxTiles,
   buildCameraTargetTiles,
   prefetchTileList,
   CAMERA_TARGET_CONCURRENCY,
@@ -655,5 +660,46 @@ describe('prefetchTileList', () => {
     ac.abort()
     await new Promise((r) => setTimeout(r, 0))
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(CAMERA_TARGET_CONCURRENCY)
+  })
+})
+
+describe('buildOverviewHoldTiles（録画モードで地図の控えへ載せる下地）', () => {
+  const key = (t: { z: number; x: number; y: number }) => `${t.z}/${t.x}/${t.y}`
+  const tiles = buildOverviewHoldTiles()
+
+  it('290 枚で、重なりが無く、下地の層の深さ（z5）を超えない', () => {
+    // 枚数は GPU の記憶（1 枚 約 350KB）と、控えの上限を上げる幅（BaseMapGL の reserve）に効く
+    expect(tiles).toHaveLength(290)
+    expect(new Set(tiles.map(key)).size).toBe(tiles.length)
+    expect(Math.max(...tiles.map(t => t.z))).toBe(GEBCO_OVERVIEW_MAX_ZOOM)
+  })
+
+  it('全球の z0〜3 を欠けなく含む（遠地地震の引いた画に備える）', () => {
+    const have = new Set(tiles.map(key))
+    for (const t of buildGlobalPrefetchTiles(OVERVIEW_HOLD_GLOBAL_MAX_ZOOM)) expect(have.has(key(t))).toBe(true)
+  })
+
+  it('枠（OVERVIEW_HOLD_BOXES）の z4〜5 を欠けなく含み、枠の外の z4 以上は含まない', () => {
+    const inBoxes = new Set<string>()
+    for (const z of [4, 5]) for (const box of OVERVIEW_HOLD_BOXES) for (const t of buildBoxTiles(box, z, z)) inBoxes.add(key(t))
+    const deep = tiles.filter(t => t.z >= 4)
+    expect(new Set(deep.map(key))).toEqual(inBoxes)
+  })
+
+  it('日本の周りで傾けた画の地平線に映ったタイル（2026-11-08 実測で欠けたもの）を含む', () => {
+    // 00-hook-deep の傾け（中心 140.1E・27.6N、ズーム 4.6、傾き 55°、向き -20°）で、載せていなかったために黒く抜けた z4〜5
+    const have = new Set(tiles.map(key))
+    for (const k of ['5/24/11', '5/23/12', '5/24/13', '5/1/10', '5/0/9', '5/0/8', '4/15/3', '4/14/3', '4/0/4']) {
+      expect(have.has(k), k).toBe(true)
+    }
+  })
+
+  it('帯（巡回の先読みの BAND_BOUNDS）の z4〜5 はすべて含む（対照）', () => {
+    const have = new Set(tiles.map(key))
+    for (const z of [4, 5]) for (const t of buildBoxTiles(BAND_BOUNDS, z, z)) expect(have.has(key(t))).toBe(true)
+  })
+
+  it('低い z から並ぶ（地図の取得を押しのけない少ない枚数から先に載る）', () => {
+    for (let i = 1; i < tiles.length; i++) expect(tiles[i].z).toBeGreaterThanOrEqual(tiles[i - 1].z)
   })
 })
