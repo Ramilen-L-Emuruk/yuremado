@@ -19,11 +19,16 @@ export interface PushPrefsCopy {
   tsunami: boolean
   nankai: boolean
   nankaiCommentary: boolean
+  /** 定例解説の通知（`notifyNankaiRoutine`）。この欄を知らない古い中継には無視される */
+  nankaiRoutine: boolean
+  /** 地震・津波に関するお知らせの通知（`notifyQuakeNotice`）。同上 */
+  quakeNotice: boolean
   prefectures: string[]
 }
 
 type PushSettings = Pick<AppSettings,
-  'notifyEnabled' | 'notifyQuake' | 'notifyMinScale' | 'notifyEEW' | 'notifyTsunami' | 'notifyNankai' | 'nankaiCommentaryAlerts' | 'notifyPrefectures'>
+  'notifyEnabled' | 'notifyQuake' | 'notifyMinScale' | 'notifyEEW' | 'notifyTsunami' | 'notifyNankai' | 'nankaiCommentaryAlerts'
+  | 'notifyNankaiRoutine' | 'notifyQuakeNotice' | 'notifyPrefectures'>
 
 export function pushPrefsOf(s: PushSettings): PushPrefsCopy {
   const on = s.notifyEnabled
@@ -34,6 +39,8 @@ export function pushPrefsOf(s: PushSettings): PushPrefsCopy {
     tsunami: on && s.notifyTsunami,
     nankai: on && s.notifyNankai,
     nankaiCommentary: s.nankaiCommentaryAlerts,
+    nankaiRoutine: on && s.notifyNankaiRoutine,
+    quakeNotice: on && s.notifyQuakeNotice,
     prefectures: [...s.notifyPrefectures],
   }
 }

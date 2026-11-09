@@ -1,5 +1,6 @@
 import type {
   JMANankai, JMANankaiCommentary, JMAKohatsu, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami,
+  JMAQuakeNotice,
 } from '../types/earthquake'
 import { readDateTime } from './formatters'
 import { INTERNATIONAL_TSUNAMI_NAME, internationalTsunamiBody } from './internationalTsunamiSpeech'
@@ -34,6 +35,7 @@ const COMMENTARY_NAME = '南海トラフ地震関連解説情報'
 const LPGM_NAME = '長周期地震動に関する観測情報'
 const ESTIMATED_NAME = '推計震度分布図'
 const COUNT_NAME = '地震回数に関する情報'
+const QUAKE_NOTICE_NAME = '地震・津波に関するお知らせ'
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 function cancelled(name: string, tag: string, subject = name): SpecialInfoNotification {
@@ -58,8 +60,8 @@ export function kohatsuNotification(event: JMAKohatsu): SpecialInfoNotification 
 }
 
 /**
- * 関連解説情報の通知。**呼び出し側が臨時解説だけに絞る**（定例解説は毎月届くので出さない。
- * 2026-10-24 ユーザー選択「出す (Recommended)」）。見出しは電文の情報名（「（第１号）」を含む）。
+ * 関連解説情報の通知（臨時解説・定例解説とも同じ形。どちらを出すかの設定は `planSpecialInfoNotification`）。
+ * 見出しは電文の情報名（臨時解説は「（第１号）」を含む）。
  */
 export function nankaiCommentaryNotification(event: JMANankaiCommentary): SpecialInfoNotification {
   if (event.cancelled) return cancelled(COMMENTARY_NAME, 'nankai-commentary')
@@ -107,6 +109,15 @@ export function estimatedIntensityNotification(event: JMAEstimatedIntensity, isN
 export function earthquakeCountNotification(event: JMAEarthquakeCount, headline: string): SpecialInfoNotification {
   if (event.cancelled) return cancelled(COUNT_NAME, 'earthquake-count')
   return { title: COUNT_NAME, body: headline === COUNT_NAME ? '' : headline, tag: 'earthquake-count', open: null }
+}
+
+/**
+ * 地震・津波に関するお知らせの通知。見出しは情報名、本文は電文の見出し文（`Head/Headline/Text`）そのまま
+ * （2026-11-09 ユーザー選択「この文面でよい (Recommended)」）。押したらアプリを前に出すだけ（帯はどの画面でも地図の上に出ている）。
+ */
+export function quakeNoticeNotification(event: JMAQuakeNotice): SpecialInfoNotification {
+  if (event.cancelled) return cancelled(QUAKE_NOTICE_NAME, 'quake-notice')
+  return { title: QUAKE_NOTICE_NAME, body: event.headline.trim(), tag: 'quake-notice', open: null }
 }
 
 /**

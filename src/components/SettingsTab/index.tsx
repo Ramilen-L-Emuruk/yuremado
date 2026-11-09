@@ -1622,6 +1622,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
               <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
             </Row>
+            {/* 定例解説とお知らせの通知は既定オフ（2026-11-09 ユーザー選択「新設・既定オフ」） */}
+            <Row label="定例の解説情報の通知" description="南海トラフ地震関連解説情報の定例解説を受けたときに通知します。この情報は平常時も毎月届きます">
+              <Toggle checked={settings.notifyNankaiRoutine} onChange={v => onUpdate('notifyNankaiRoutine', v)} />
+            </Row>
+            <Row label="お知らせの通知" description="地震・津波に関するお知らせを受けたときに通知します">
+              <Toggle checked={settings.notifyQuakeNotice} onChange={v => onUpdate('notifyQuakeNotice', v)} />
+            </Row>
             {/* 地域の絞りは画面内の通知にもプッシュ通知にも効く（2026-11-03 ユーザー選択「両方に掛ける (Recommended)」。
                 名前と説明は 2026-11-03 ユーザー選択「通知する地域」） */}
             <Row label="通知する地域" description="選んだ都道府県に関わる情報だけを通知します。地震情報は震度を観測した都道府県、緊急地震速報は対象の地域、津波は予報区で見ます。選ばなければ全国の情報を通知します。南海トラフ・後発地震・地震回数など、地域を持たない情報は絞りません">

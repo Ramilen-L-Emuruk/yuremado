@@ -19,7 +19,7 @@ import { stepEewAnnounce, eewAnnounceNotice, eewCancelNotice } from '../utils/ee
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
 import {
-  type SpecialInfoEvent, planSpecialInfoNotification,
+  type SpecialInfoEvent, type SpecialInfoGate, planSpecialInfoNotification,
 } from '../utils/specialInfoPush'
 import { earthquakeCountHeadline } from '../utils/earthquakeCountSummary'
 import { TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
@@ -1588,14 +1588,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const lpgmNotifiedNameRef = useRef<Map<string, string>>(new Map())
   // 発表のブラウザ通知を出した電文（`<種別>:<識別子>`。長周期・地震回数・関連解説情報）。**取消の通知はここに
   // 載っているものにだけ出す**（同じ札で置き換える。2026-10-24 ユーザー選択「発表を通知したものだけ (Recommended)」）。
-  // 発表を通知していない情報（定例解説・この端末が受けていない報）への取消の通知は、何が取り消されたか手掛かりが無い
-  const notifiedSpecialInfoRef = useRef<Set<string>>(new Set())
-  const rememberNotified = (key: string) => {
+  // 発表を通知していない情報（この端末が受けていない報など）への取消の通知は、何が取り消されたか手掛かりが無い。
+  // **値は発表をどの設定で通知したか。** 取消はその設定に従う（取消の電文が定例か臨時かを運ぶとは限らないため。
+  // 2026-11-09 ユーザー選択「発表を通知した設定に従う」）
+  const notifiedSpecialInfoRef = useRef<Map<string, SpecialInfoGate>>(new Map())
+  const rememberNotified = (key: string, gate: SpecialInfoGate) => {
     if (notifiedSpecialInfoRef.current.size >= LPGM_NAME_MEMORY_MAX) notifiedSpecialInfoRef.current.clear()
-    notifiedSpecialInfoRef.current.add(key)
+    notifiedSpecialInfoRef.current.set(key, gate)
   }
-  /** 発表を通知した電文への取消か（真なら記憶から外す）。 */
-  const takeNotified = (key: string): boolean => notifiedSpecialInfoRef.current.delete(key)
   /**
    * 南海・後発・関連解説・長周期・推計・地震回数の通知を出す。出すかと文面は中継と共用の判定（`planSpecialInfoNotification`）が
    * 決め、ここは設定（種類の入り切り・地域）と、取消のための「発表を通知したか」の記憶だけを見る
@@ -1607,10 +1607,16 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     const prefectures = event.kind === 'estimatedIntensity'
       ? estimatedIntensityPrefectures(event.data, earthquakesRef.current)
       : plan.prefectures
-    if (!notificationAllowed(settings, plan.kind) || !notificationRegionAllowed(settings, prefectures)) return
-    if (plan.requires !== undefined && !takeNotified(plan.requires)) return
+    // 取消は、発表を通知したときの設定に従う（発表を通知していなければ出さない）
+    const remembered = plan.requires !== undefined ? notifiedSpecialInfoRef.current.get(plan.requires) : undefined
+    if (plan.requires !== undefined && !remembered) return
+    const gate: SpecialInfoGate = remembered ?? { kind: plan.kind, commentary: plan.commentary }
+    if (!notificationAllowed(settings, gate.kind) || !notificationRegionAllowed(settings, prefectures)) return
+    // 臨時解説は「解説情報の音・読み上げ」にも従う（中継も `commentary` で同じ判定をする）
+    if (gate.commentary && !settings.nankaiCommentaryAlerts) return
+    if (plan.requires !== undefined) notifiedSpecialInfoRef.current.delete(plan.requires)
     showBrowserNotification(plan.notification.title, plan.notification.body, plan.notification.tag, false, plan.notification.open)
-    if (plan.remember !== undefined) rememberNotified(plan.remember)
+    if (plan.remember !== undefined) rememberNotified(plan.remember, gate)
   }
   /**
    * 推計震度分布図の読み上げの主題を地震ごとに決めるための、見た地震の覚え（→ `estimatedIntensityTopicKey`）。
@@ -3052,7 +3058,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     //
     // **タブは動かさず、タイトルも書き換えない**（帯で伝える情報。震度や警報のタイトルを上書きしない）。
     if (event.kind === 'quakeNotice') {
-      // 通知を切っている種別は本文も読まない（解説情報の設定と同じ扱い）
+      // ブラウザ通知は音・読み上げの設定とは別の設定「お知らせの通知」に従うので、音・読み上げを打ち切る前に出す
+      notifySpecialInfo({ kind: 'quakeNotice', data: event.data })
+      // 音・読み上げを切っている種別は本文も読まない（解説情報の設定と同じ扱い）
       if (!settings.quakeNoticeAlerts) { skipTelegramTextRef.current = true; return }
       const notice = event.data
       if (notice.cancelled) {
@@ -3088,7 +3096,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 出す」）。臨時情報の発表期間中は解説情報が毎日届くため、書き換えると「南海トラフ臨時情報（巨大地震注意）」の
     // タイトル表示を毎日上書きしてしまう。
     if (event.kind === 'nankaiCommentary') {
-      // 通知を切っている種別は本文も読まない（この設定は音・帯・読み上げをまとめて止めるもの）。
+      // ブラウザ通知は先に出す。定例解説は自分の設定「定例の解説情報の通知」だけに従い、臨時解説は
+      // 「解説情報の音・読み上げ」にも従う（判定は `planSpecialInfoNotification` と `notifySpecialInfo`）
+      notifySpecialInfo({ kind: 'nankaiCommentary', data: event.data })
+      // 音・読み上げを切っている種別は本文も読まない（この設定は音・帯・読み上げをまとめて止めるもの）。
       if (!settings.nankaiCommentaryAlerts) { skipTelegramTextRef.current = true; return }
       const commentary = event.data
       if (commentary.cancelled) {
@@ -3097,7 +3108,6 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 「伝える (Recommended)」。→ `useEarthquakes` の `decideDispatch`）。帯は消えるのでパネルは開かない。
         // 主題は発表と共有する（理由は地震回数の取消と同じ）。
         if (settings.soundEnabled) playAlertSound('specialInfoCancel')
-        notifySpecialInfo({ kind: 'nankaiCommentary', data: commentary })
         title.releaseTitle('nankaiCommentary', commentary.id)
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
@@ -3113,8 +3123,6 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         title.setTitle(commentary.headline.trim() || '南海トラフ地震関連解説情報')
         title.scheduleTitleRevert('nankaiCommentary', commentary.id)
       }
-      // 臨時解説だけ通知する（定例解説は平常時にも毎月届く。2026-10-24 ユーザー選択「出す (Recommended)」）
-      notifySpecialInfo({ kind: 'nankaiCommentary', data: commentary })
       // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
       expandPanelForSpecialInfo()
       if (settings.soundEnabled) {

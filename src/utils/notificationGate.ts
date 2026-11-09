@@ -1,11 +1,12 @@
 import type { AppSettings } from '../hooks/useSettings'
 
 /** ブラウザ通知の種類。設定の窓の種類ごとのトグルと 1 対 1 で対応する。 */
-export type NotificationKind = 'quake' | 'detection' | 'eew' | 'tsunami' | 'nankai'
+export type NotificationKind = 'quake' | 'detection' | 'eew' | 'tsunami' | 'nankai' | 'nankaiRoutine' | 'quakeNotice'
 
 type NotificationSettings = Pick<
   AppSettings,
   'notifyEnabled' | 'notifyQuake' | 'notifyMinScale' | 'notifyDetection' | 'notifyEEW' | 'notifyTsunami' | 'notifyNankai'
+  | 'notifyNankaiRoutine' | 'notifyQuakeNotice'
 >
 
 /**
@@ -25,6 +26,8 @@ export function notificationAllowed(settings: NotificationSettings, kind: Notifi
     case 'eew': return settings.notifyEEW
     case 'tsunami': return settings.notifyTsunami
     case 'nankai': return settings.notifyNankai
+    case 'nankaiRoutine': return settings.notifyNankaiRoutine
+    case 'quakeNotice': return settings.notifyQuakeNotice
   }
 }
 

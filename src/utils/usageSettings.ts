@@ -126,6 +126,8 @@ export const USAGE_TOP_LEVEL_SPECS = {
   notifyEEW: bool('notification', '緊急地震速報の通知', true),
   notifyTsunami: bool('notification', '津波通知', true),
   notifyNankai: bool('notification', '南海トラフ・後発地震の通知', true),
+  notifyNankaiRoutine: bool('notification', '定例の解説情報の通知', false),
+  notifyQuakeNotice: bool('notification', 'お知らせの通知', false),
   notifyPrefectures: { group: 'notification', label: '通知する地域（選んだ都道府県の数。0 は全国）', rule: { kind: 'count', max: 47 }, default: '0' },
   pushNotifyEnabled: bool('push', 'プッシュ通知', false),
   // 音と読み上げ

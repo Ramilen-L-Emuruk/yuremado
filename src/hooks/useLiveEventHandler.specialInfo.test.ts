@@ -18,6 +18,7 @@ import { showBrowserNotification } from '../utils/notifications'
 import { playAlertSound } from '../utils/alertSound'
 import type {
   JMAQuake, JMATsunami, JMANankai, JMAKohatsu, JMANankaiCommentary, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity,
+  JMAQuakeNotice,
 } from '../types/earthquake'
 
 vi.mock('../utils/voicevox', () => ({
@@ -144,12 +145,23 @@ describe('南海トラフ地震関連解説情報', () => {
     handle({ kind: 'nankaiCommentary', data: commentary() })
     expect(titles()).toEqual([])
   })
-  it('正: 臨時解説は通知を出し、定例解説は出さない', () => {
+  it('正: 臨時解説は通知を出し、定例解説は「定例の解説情報の通知」が切（既定）なら出さない', () => {
     const { handle } = setup()
     handle({ kind: 'nankaiCommentary', data: commentary({ id: 'c-2', serialName: '定例解説', serialCode: '200' }) })
     expect(notify).not.toHaveBeenCalled()
     handle({ kind: 'nankaiCommentary', data: commentary() })
     expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報（第１号）', '要約。', 'nankai-commentary', false, null)
+  })
+  it('正: 「定例の解説情報の通知」を入れれば定例解説も通知し、解説情報の音・読み上げを切っていても出す', () => {
+    const { handle } = setup({ notifyNankaiRoutine: true, nankaiCommentaryAlerts: false })
+    handle({ kind: 'nankaiCommentary', data: commentary({ id: 'c-2', serialName: '定例解説', serialCode: '200', headline: '南海トラフ地震関連解説情報' }) })
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報', '要約。', 'nankai-commentary', false, null)
+    expect(sound).not.toHaveBeenCalled()
+  })
+  it('対照: 定例の通知を入れても、臨時解説は解説情報の音・読み上げが切なら今どおり出さない', () => {
+    const { handle } = setup({ notifyNankaiRoutine: true, nankaiCommentaryAlerts: false })
+    handle({ kind: 'nankaiCommentary', data: commentary() })
+    expect(notify).not.toHaveBeenCalled()
   })
   it('正: 取消は取消音を鳴らし、発表を通知した号なら取消の通知で置き換える', () => {
     const { handle } = setup()
@@ -160,17 +172,51 @@ describe('南海トラフ地震関連解説情報', () => {
     expect(sound.mock.calls).toEqual([['specialInfoCancel']])
     expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報 取消', '南海トラフ地震関連解説情報は取り消されました', 'nankai-commentary', false, null)
   })
-  it('対照: 通知していない号（定例解説）への取消は通知しない', () => {
+  it('対照: 通知していない号（定例の通知が切のときの定例解説）への取消は通知しない', () => {
     const { handle } = setup()
     handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '定例解説', serialCode: '200' }) })
     handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '定例解説', serialCode: '200', cancelled: true }) })
     expect(notify).not.toHaveBeenCalled()
+  })
+  it('正: 定例解説の取消が種別を運ばなくても、発表を通知した設定（定例）に従って出す', () => {
+    const { handle } = setup({ notifyNankaiRoutine: true, notifyNankai: false })
+    handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '定例解説', serialCode: '200', headline: '南海トラフ地震関連解説情報' }) })
+    notify.mockClear()
+    handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '解説情報', serialCode: '', cancelled: true }) })
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報 取消', '南海トラフ地震関連解説情報は取り消されました', 'nankai-commentary', false, null)
   })
   it('安全弁: 解説情報の設定を切った端末では、取消でも鳴らさず通知もしない', () => {
     const { handle } = setup({ nankaiCommentaryAlerts: false })
     handle({ kind: 'nankaiCommentary', data: commentary({ cancelled: true }) })
     expect(sound).not.toHaveBeenCalled()
     expect(notify).not.toHaveBeenCalled()
+  })
+})
+
+describe('地震・津波に関するお知らせ', () => {
+  const notice = (over: Partial<JMAQuakeNotice> = {}) => ({
+    id: 'qn-1', time: '', eventId: 'qn', headline: '和歌山県の自治体震度データ入電停止のお知らせ', body: '本文',
+    cancelled: false, reportDateTime: '', expireAt: '', ...over,
+  }) as JMAQuakeNotice
+  it('正: 「お知らせの通知」を入れれば、音・読み上げを切っていても通知を出す（本文は見出し文）', () => {
+    const { handle } = setup({ notifyQuakeNotice: true, quakeNoticeAlerts: false })
+    handle({ kind: 'quakeNotice', data: notice() })
+    expect(notify).toHaveBeenCalledWith('地震・津波に関するお知らせ', '和歌山県の自治体震度データ入電停止のお知らせ', 'quake-notice', false, null)
+    expect(sound).not.toHaveBeenCalled()
+  })
+  it('対照: 「お知らせの通知」が切（既定）なら、音・読み上げを入れていても通知は出さない', () => {
+    const { handle } = setup({ quakeNoticeAlerts: true })
+    handle({ kind: 'quakeNotice', data: notice() })
+    expect(notify).not.toHaveBeenCalled()
+    expect(sound.mock.calls).toEqual([['specialInfoCommentary']])
+  })
+  it('安全弁: 取消は発表を通知したもの（同じ EventID）にだけ出す。取消の電文は id が発表と違う', () => {
+    const { handle } = setup({ notifyQuakeNotice: true })
+    handle({ kind: 'quakeNotice', data: notice({ id: 'qn-other-cancel', eventId: 'qn-other', cancelled: true }) })
+    expect(notify).not.toHaveBeenCalled()
+    handle({ kind: 'quakeNotice', data: notice() })
+    handle({ kind: 'quakeNotice', data: notice({ id: 'qn-1-cancel', cancelled: true }) })
+    expect(notify).toHaveBeenLastCalledWith('地震・津波に関するお知らせ 取消', '地震・津波に関するお知らせは取り消されました', 'quake-notice', false, null)
   })
 })
 

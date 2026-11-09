@@ -4,8 +4,11 @@ import { sep } from 'node:path'
 import { DEFAULTS } from '../hooks/useSettings'
 import { effectiveNotifyMinScale, notificationAllowed, type NotificationKind } from './notificationGate'
 
-const KINDS: NotificationKind[] = ['quake', 'detection', 'eew', 'tsunami', 'nankai']
-const all = { ...DEFAULTS, notifyEnabled: true, notifyQuake: true, notifyDetection: true, notifyEEW: true, notifyTsunami: true, notifyNankai: true }
+const KINDS: NotificationKind[] = ['quake', 'detection', 'eew', 'tsunami', 'nankai', 'nankaiRoutine', 'quakeNotice']
+const all = {
+  ...DEFAULTS, notifyEnabled: true, notifyQuake: true, notifyDetection: true, notifyEEW: true, notifyTsunami: true, notifyNankai: true,
+  notifyNankaiRoutine: true, notifyQuakeNotice: true,
+}
 
 describe('notificationAllowed', () => {
   it('正: まとめて止めると、種類ごとの設定によらずどれも出さない', () => {
@@ -52,7 +55,7 @@ describe('ブラウザ通知の判定はすべて notificationAllowed を通る'
    * 種類ごとの値の名前。**`settings.` の形に限らず名前そのもので拾う**（分割代入・別名・括弧アクセスもこれで掛かる）。
    * あわせて、外した旧来の判定（最低震度が 0 以上なら通知する）の復活も拾う。
    */
-  const DIRECT = /\b(notifyQuake|notifyDetection|notifyEEW|notifyTsunami|notifyNankai)\b|notifyMinScale\s*(>=|<|>)\s*-?\d/
+  const DIRECT = /\b(notifyQuake|notifyDetection|notifyEEW|notifyTsunami|notifyNankai|notifyNankaiRoutine|notifyQuakeNotice)\b|notifyMinScale\s*(>=|<|>)\s*-?\d/
 
   const sources = (readdirSync('src', { recursive: true }) as string[])
     .map(p => `src/${p.split(sep).join('/')}`)
