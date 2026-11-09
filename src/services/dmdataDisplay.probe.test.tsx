@@ -261,7 +261,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
   }
   const visible = { nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: null, earthquakeCount: null, [slot[type]]: ev }
   const dom = await renderText(
-    <SpecialInfoBanner banners={{ shown: true, visible } as never} speakingTelegramTextSubject={null} readsAppendix atScreenBottom={false} />,
+    <SpecialInfoBanner banners={{ shown: true, visible } as never} speakingTelegramTextSubject={null} readsAppendix atScreenBottom={false} bodyTopInset={0} bodyTopEdgeRef={{ current: null }} />,
     { pressButtons: true },
   )
   const tts = {

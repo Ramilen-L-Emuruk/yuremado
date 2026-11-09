@@ -33,6 +33,8 @@ function Banner({ speaking, readsAppendix }: { speaking: boolean; readsAppendix:
       speakingTelegramTextSubject={speaking ? telegramTextSubject('nankai') : null}
       readsAppendix={readsAppendix}
       atScreenBottom
+      bodyTopInset={0}
+      bodyTopEdgeRef={{ current: null }}
     />
   )
 }

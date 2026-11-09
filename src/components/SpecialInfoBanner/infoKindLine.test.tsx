@@ -15,7 +15,7 @@ const EMPTY: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [
 
 function Banners({ items }: { items: Partial<SpecialInfoItems> }) {
   const banners = useSpecialInfoBanners({ ...EMPTY, ...items })
-  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom />
+  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom bodyTopInset={0} bodyTopEdgeRef={{ current: null }} />
 }
 
 const nankai = (over: Partial<JMANankai> = {}): JMANankai => ({
