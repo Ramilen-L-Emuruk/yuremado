@@ -1,18 +1,11 @@
 import type { ShareCardState } from '../hooks/useShareCard'
+import { useMessages } from '../i18n/I18nProvider'
 
 // 地図を画像にするボタン（地図の左下に重ねる）。処理の中身は useShareCard が持つ。
 
 interface ShareCardButtonProps {
   state: ShareCardState
   onClick: () => void
-}
-
-const LABELS: Record<ShareCardState, string> = {
-  idle: '地図を画像にして共有',
-  working: '画像を作成中',
-  error: '画像を作成できませんでした',
-  copied: '画像を保存し、本文をコピーしました',
-  copyFailed: '画像を保存しました（本文はコピーできませんでした）',
 }
 
 /** 状態に応じた枠と文字の色。押せるかどうか（hover・disabled）は状態によらず共通。 */
@@ -25,7 +18,8 @@ const TONES: Record<ShareCardState, string> = {
 }
 
 export function ShareCardButton({ state, onClick }: ShareCardButtonProps) {
-  const label = LABELS[state]
+  // 状態ごとの名前は辞書の `shareCard`（キーは `ShareCardState` と同じ）
+  const label = useMessages().shareCard[state]
   return (
     <button
       type="button"

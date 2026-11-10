@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { useMessages } from '../i18n/I18nProvider'
 import { log } from '../utils/logger'
 import { ROOT_FRAME_CLASS, ROOT_FRAME_TOP_INSET } from '../rootFrame'
 
@@ -108,48 +109,56 @@ export class ErrorBoundary extends Component<Props, State> {
     const props = this.props
     if (!this.state.failed) return props.children
 
-    if (props.variant === 'root') {
-      return (
-        // 外枠は App のルートと同じ固定配置・同じ上の余白にする（理由は ROOT_FRAME_CLASS・ROOT_FRAME_TOP_INSET）。
-        // 上の余白は p-6 の 1.5rem に足す
-        <div
-          className={`${ROOT_FRAME_CLASS} flex flex-col items-center justify-center gap-3 bg-app p-6 text-center text-white`}
-          style={{ paddingTop: `calc(1.5rem + ${ROOT_FRAME_TOP_INSET})` }}
-        >
-          <div className="text-lg roomy:text-2xl">画面を表示できなくなりました</div>
-          {/* 根が落ちると副作用の後始末で接続も切れる。**「見えないだけ」と誤解させないこと。** */}
-          <div className="text-sm opacity-80 roomy:text-lg">情報の受信も止まっています</div>
-          <button
-            type="button"
-            onClick={this.handleReload}
-            className="mt-1 rounded-md border border-border bg-panel px-4 py-2 text-sm transition-colors motion-reduce:transition-none hover:bg-white/10 roomy:text-lg"
-          >
-            再読み込み
-          </button>
-        </div>
-      )
-    }
-
-    // 地図・タブはどちらも `absolute inset-0` の器に収まるので、同じ形で覆える。
-    // **z を持たせない。** 地図の左上の情報ブロック（更新時刻・取得状況・描画状況）と
-    // 行動チェックリスト・特別情報バナーは `z-99999` で前に出るため、地図が落ちても隠れない。
-    const canRetry = this.state.retries < MAX_RETRIES
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-app/95 p-4 text-center text-white">
-        <div className="text-sm roomy:text-lg">{props.label}を表示できません</div>
-        {canRetry ? (
-          <button
-            type="button"
-            onClick={this.handleRetry}
-            className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs transition-colors motion-reduce:transition-none hover:bg-white/10 roomy:text-base"
-          >
-            再表示
-          </button>
-        ) : (
-          // 押しても直らないと分かった後は、`MapRenderStatus` と同じ案内へ落とす。
-          <div className="text-xs opacity-80 roomy:text-base">再読み込みで直ることがあります</div>
-        )}
-      </div>
-    )
+    if (props.variant === 'root') return <RootFallback onReload={this.handleReload} />
+    return <RegionFallback label={props.label} canRetry={this.state.retries < MAX_RETRIES} onRetry={this.handleRetry} />
   }
+}
+
+// 落ちたときの表示は関数の部品に分ける（辞書をフックで読むため。クラスの部品からはフックを呼べない）
+
+function RootFallback({ onReload }: { onReload: () => void }) {
+  const t = useMessages().errorScreen
+  return (
+    // 外枠は App のルートと同じ固定配置・同じ上の余白にする（理由は ROOT_FRAME_CLASS・ROOT_FRAME_TOP_INSET）。
+    // 上の余白は p-6 の 1.5rem に足す
+    <div
+      className={`${ROOT_FRAME_CLASS} flex flex-col items-center justify-center gap-3 bg-app p-6 text-center text-white`}
+      style={{ paddingTop: `calc(1.5rem + ${ROOT_FRAME_TOP_INSET})` }}
+    >
+      <div className="text-lg roomy:text-2xl">{t.rootTitle}</div>
+      {/* 根が落ちると副作用の後始末で接続も切れる。**「見えないだけ」と誤解させないこと。** */}
+      <div className="text-sm opacity-80 roomy:text-lg">{t.rootReceivingStopped}</div>
+      <button
+        type="button"
+        onClick={onReload}
+        className="mt-1 rounded-md border border-border bg-panel px-4 py-2 text-sm transition-colors motion-reduce:transition-none hover:bg-white/10 roomy:text-lg"
+      >
+        {t.reload}
+      </button>
+    </div>
+  )
+}
+
+function RegionFallback({ label, canRetry, onRetry }: { label: string; canRetry: boolean; onRetry: () => void }) {
+  const t = useMessages().errorScreen
+  // 地図・タブはどちらも `absolute inset-0` の器に収まるので、同じ形で覆える。
+  // **z を持たせない。** 地図の左上の情報ブロック（更新時刻・取得状況・描画状況）と
+  // 行動チェックリスト・特別情報バナーは `z-99999` で前に出るため、地図が落ちても隠れない。
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-app/95 p-4 text-center text-white">
+      <div className="text-sm roomy:text-lg">{t.cannotShow(label)}</div>
+      {canRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs transition-colors motion-reduce:transition-none hover:bg-white/10 roomy:text-base"
+        >
+          {t.showAgain}
+        </button>
+      ) : (
+        // 押しても直らないと分かった後は、`MapRenderStatus` と同じ案内へ落とす。
+        <div className="text-xs opacity-80 roomy:text-base">{t.reloadMayFix}</div>
+      )}
+    </div>
+  )
 }

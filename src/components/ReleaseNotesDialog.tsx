@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import { CANCEL_FADE_MS, fadeIn } from './EarthquakeTab/quakeMotion'
 import { OVERLAY_BACKDROP_PAD } from '../rootFrame'
+import { useMessages } from '../i18n/I18nProvider'
 import { fetchReleaseNotes } from '../services/releaseNotesSource'
 import { isAbortedByCaller } from '../utils/fetchWithTimeout'
 import { log } from '../utils/logger'
@@ -22,6 +23,7 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
   select: (entries: readonly ReleaseNoteEntry[]) => ReleaseNoteView[]
   onClose: () => void
 }) {
+  const t = useMessages().releaseNotes
   const [state, setState] = useState<{ kind: 'loading' } | { kind: 'failed' } | { kind: 'ready'; views: ReleaseNoteView[] }>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const closeRef = useRef<HTMLButtonElement | null>(null)
@@ -76,7 +78,7 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label={title ?? (state.kind === 'ready' && state.views[0] !== undefined ? `${state.views[0].version} の変更内容` : '変更内容')}
+        aria-label={title ?? (state.kind === 'ready' && state.views[0] !== undefined ? t.titleFor(state.views[0].version) : t.title)}
         className="ui-text flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto rounded-md border border-border bg-panel p-4 shadow-[0_3px_8px_rgba(0,0,0,.55)]"
       >
         {/* 文字の 2 組の値を持つ包み（並べ方は窓の flex のまま。→ index.css の ui-text） */}
@@ -89,19 +91,19 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
             onClick={onClose}
             className="rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) text-secondary hover:bg-white/10 hover:text-white"
           >
-            閉じる
+            {t.close}
           </button>
         </div>
-        {state.kind === 'loading' && <div className="text-(length:--ui-fs) text-secondary">読み込み中</div>}
+        {state.kind === 'loading' && <div className="text-(length:--ui-fs) text-secondary">{t.loading}</div>}
         {state.kind === 'failed' && (
           <div className="flex items-center gap-3 text-(length:--ui-fs) text-secondary">
-            <span>変更内容を読み込めませんでした</span>
+            <span>{t.loadFailed}</span>
             <button
               type="button"
               onClick={retry}
               className="rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) text-secondary hover:bg-white/10 hover:text-white"
             >
-              もう一度
+              {t.retry}
             </button>
           </div>
         )}
@@ -114,15 +116,16 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
 }
 
 function VersionNotes({ view }: { view: ReleaseNoteView }) {
+  const t = useMessages().releaseNotes
   return (
     <section className="flex flex-col gap-1">
-      <h3 className="text-(length:--ui-f) text-white">{view.version} の変更内容</h3>
+      <h3 className="text-(length:--ui-f) text-white">{t.titleFor(view.version)}</h3>
       {view.minorOnly
-        ? <p className="text-(length:--ui-fs) text-secondary">軽微な修正</p>
+        ? <p className="text-(length:--ui-fs) text-secondary">{t.minorOnly}</p>
         : (
           <>
-            <NoteList label="追加" items={view.added} />
-            <NoteList label="修正" items={view.fixed} />
+            <NoteList label={t.added} items={view.added} />
+            <NoteList label={t.fixed} items={view.fixed} />
           </>
         )}
     </section>
@@ -135,7 +138,7 @@ function NoteList({ label, items }: { label: string; items: string[] }) {
     <div>
       <div className="text-(length:--ui-fs) text-secondary">{label}</div>
       <ul className="ml-4 list-disc text-(length:--ui-fs) text-secondary">
-        {items.map((t, i) => <li key={i}>{t}</li>)}
+        {items.map((item, i) => <li key={i}>{item}</li>)}
       </ul>
     </div>
   )

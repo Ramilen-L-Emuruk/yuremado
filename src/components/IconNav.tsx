@@ -108,7 +108,8 @@ interface Props {
 // 歯車だけはタブを切り替えず、設定の窓を開け閉めする。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelCollapsed, settingsOpen, onToggleSettings, settingsButtonRef, tsunamiGrade, eewLevel }: Props) {
-  const names = useMessages().nav
+  const messages = useMessages()
+  const names = messages.nav
   return (
     <nav
       className="flex flex-row side:flex-col items-center justify-center side:justify-start gap-1 p-1.5 bg-panel border-t side:border-t-0 side:border-l border-border shrink-0"
@@ -153,7 +154,7 @@ export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelColl
             aria-label={label}
             aria-current={isActive}
             aria-expanded={isActive ? !panelCollapsed : undefined}
-            title={isActive ? `${label}（もう一度押すとパネルを${panelCollapsed ? '開く' : '畳む'}）` : label}
+            title={isActive ? messages.navHint.active(label, panelCollapsed) : label}
             className={`relative w-11 h-11 flex items-center justify-center rounded-md transition-colors motion-reduce:transition-none ${
               isActive
                 ? panelCollapsed

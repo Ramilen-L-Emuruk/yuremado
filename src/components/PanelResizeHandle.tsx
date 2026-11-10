@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useMessages } from '../i18n/I18nProvider'
 import { PANEL_RATIO_MIN, PANEL_RATIO_MAX, PANEL_WIDTH_MIN_REM } from '../hooks/useSettings'
 import { panelWidthRangePx, panelWidthRemFromPx, shownPanelWidthPx, type PanelWidthEnv } from '../utils/panelWidth'
 
@@ -111,6 +112,7 @@ interface Props {
 export const PanelResizeHandle = memo(function PanelResizeHandle({
   ratio, collapsed, onRatioChange, onRatioCommit, onToggleCollapse,
 }: Props) {
+  const t = useMessages().panelBorder
   const handleRef = useRef<HTMLDivElement>(null)
   // ドラッグ開始位置からの移動量でパネル高さ比率を求める。
   // ポインタの絶対位置から求めると、親コンテナ（地図＋つまみ＋パネル＋アイコンナビ）の
@@ -148,7 +150,7 @@ export const PanelResizeHandle = memo(function PanelResizeHandle({
       ref={handleRef}
       role="separator"
       aria-orientation="horizontal"
-      aria-label="地図と情報パネルの境界（ドラッグで高さ調整・タップで折りたたみ）"
+      aria-label={t.height}
       aria-valuenow={Math.round(ratio * 100)}
       aria-valuemin={Math.round(PANEL_RATIO_MIN * 100)}
       aria-valuemax={Math.round(PANEL_RATIO_MAX * 100)}
@@ -196,6 +198,7 @@ interface WidthProps {
 export const PanelWidthHandle = memo(function PanelWidthHandle({
   widthRem, defaultRem, collapsed, onWidthChange, onWidthCommit, onToggleCollapse,
 }: WidthProps) {
+  const t = useMessages().panelBorder
   // 読み上げ用の値（aria-value*）に使う画面の寸法。**描画のたびには読まない**（ルートの文字の大きさを読むと
   // スタイルの計算をやり直させる）。画面の大きさが変わったときと、操作を始めたときに読み直す。
   const [env, setEnv] = useState<PanelWidthEnv | null>(readPanelWidthEnv)
@@ -245,7 +248,7 @@ export const PanelWidthHandle = memo(function PanelWidthHandle({
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="地図と情報パネルの境界（ドラッグで幅調整・タップで折りたたみ）"
+        aria-label={t.width}
         aria-valuenow={Math.round(shownRem)}
         aria-valuemin={range && env ? Math.round(range.min / env.remPx) : PANEL_WIDTH_MIN_REM}
         aria-valuemax={range && env ? Math.round(range.max / env.remPx) : undefined}
