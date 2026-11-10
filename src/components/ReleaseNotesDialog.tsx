@@ -101,7 +101,8 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
             <button
               type="button"
               onClick={retry}
-              className="rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) text-secondary hover:bg-white/10 hover:text-white"
+              // 言語によってはボタンの語が長い（ポルトガル語の Tentar novamente）。ボタンの中では割らず、横の文の側を折り返す
+              className="shrink-0 whitespace-nowrap rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) text-secondary hover:bg-white/10 hover:text-white"
             >
               {t.retry}
             </button>
