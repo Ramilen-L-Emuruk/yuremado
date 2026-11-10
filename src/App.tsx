@@ -2418,6 +2418,8 @@ export function App() {
   // **見張るのは隅の列と地図の両方。** 隅の列だけだと、回転などで位置（`offsetTop`）だけが動いたときに気づけない。
   const topCornersRef = useRef<HTMLDivElement | null>(null)
   const [topCornersBottom, setTopCornersBottom] = useState(0)
+  // 地図に重ねる縦並びの伸びる空白。上端に並ぶもの（行動チェックリスト）の下端を、開いた帯の本文の上限に使う
+  const overlayStackSpacerRef = useRef<HTMLDivElement | null>(null)
   const [mapAreaHeight, setMapAreaHeight] = useState<number | null>(null)
   useLayoutEffect(() => {
     const el = topCornersRef.current
@@ -3449,7 +3451,7 @@ export function App() {
               )}
               {/* 伸びる空白。上端のチェックリストと下端の凡例・帯を両端へ分ける（`mt-auto` を
                   凡例と帯のどちらに付けるかを出し分けずに済む）。縮むときは 0 まで縮む。 */}
-              <div className="flex-1 min-h-0" />
+              <div ref={overlayStackSpacerRef} className="flex-1 min-h-0" />
               {settings.showMapLegend && legendBlocks.length > 0 && (
                 // `shrink-8`: 凡例を優先して縮める（特別情報の帯より軽い。縮みは高さに比例して
                 // 配られるので、帯も少しは縮む）。
@@ -3486,6 +3488,10 @@ export function App() {
                 readsAppendix={settings.ttsEnabled && settings.ttsReadTelegramText && settings.ttsTelegramBoilerplate.earthquakeInfoAppendix}
                 // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
                 atScreenBottom={!waveChartShown}
+                // 開いた帯の本文を重ねてよい上端。行動チェックリストを開いたときと同じ（上の隅の表示の下）で、
+                // 上端に行動チェックリストが並んでいればその下（伸びる空白の上端）で止まる
+                bodyTopInset={topCornersBottom + TOP_CORNERS_GAP_PX}
+                bodyTopEdgeRef={overlayStackSpacerRef}
               />
             </div>
             {/* 地図が低いときに札から開いた行動チェックリスト。**縦並びの外に重ねる** —— 縦並びに入れると

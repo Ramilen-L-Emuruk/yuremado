@@ -1,6 +1,8 @@
-import { useState, type ReactNode } from 'react'
-import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
+import { useAutoOpenWhileSpeaking, useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking'
 import { telegramTextSubject } from '../../utils/ttsFollow'
+import { log } from '../../utils/logger'
 import type {
   EarthquakeInfoMeta, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount,
   TelegramOperationStatus,
@@ -34,6 +36,68 @@ interface Props {
    * 余白が効くのは `sideShort` の画面だけで、縦積みや PC では真でも付かない。
    */
   atScreenBottom: boolean
+  /**
+   * 開いた帯の本文を重ねてよい上端（地図の上端からの px）。上の隅の表示（更新時刻・凡例の見出しなど）の下。
+   * 行動チェックリストを開いたときの上端（`ActionChecklist` の `topInset`）と同じ値を渡す。
+   */
+  bodyTopInset: number
+  /**
+   * 縦並びの中で帯より上にあるものの下端を指す要素（`App` の縦並びの伸びる空白）。本文はこの要素の上端より上へは出さない
+   * —— 上端に行動チェックリストが並んでいれば、その下で止まる。
+   */
+  bodyTopEdgeRef: RefObject<HTMLElement | null>
+}
+
+/**
+ * 開いた帯の本文を出す層（→ `BandBody`）。帯の見出しの並びの外、すぐ上に重ねる。
+ * 見出しの並びは閉じたときの高さのままなので、開いても凡例・共有ボタン・他の帯の見出しが動かない
+ * （2026-11-09 ユーザー選択「この形にする (Recommended)」。説明「帯の見出しは閉じたときの位置のまま、開いた帯の本文だけを
+ * 見出しの上に重ねて出し、上の隅の表示の下までで巻く。凡例・共有ボタンは動かないが、開いている間は本文の下に隠れる」）。
+ */
+const BandBodyLayer = createContext<HTMLElement | null>(null)
+
+/**
+ * 本文を重ねる層の中の並び。開けるのは 1 本だけだが、別の帯へ切り替えた直後は閉じかけの本文と開きかけの本文が
+ * 一瞬並ぶので、そのときも見出しと同じ順にする
+ */
+const BODY_ORDER: Record<string, number> = { nankai: 0, nankaiCommentary: 1, kohatsu: 2, earthquakeCount: 3, quakeNotice: 4 }
+
+/**
+ * いま開いている帯（`BODY_ORDER` の鍵）。**開けるのは一度に 1 本だけ**で、別の帯を開くと前の帯は閉じる
+ * （2026-11-09 ユーザー発言「どれかしか開けなくすれば」。「1 本だけ開け、別の帯を開いたら前の帯は閉じる」の確認に
+ * ユーザー選択「その意味で合っている」）。本文が層に積み重ならないので、
+ * 開いた本文はいつも層の先頭から出る。
+ */
+const OpenBand = createContext<{ openSubject: string | null; setOpenSubject: (update: (prev: string | null) => string | null) => void } | null>(null)
+
+/**
+ * 帯の開閉。開いているかは帯の束が 1 つだけ持つ（→ `OpenBand`）。読み上げのあいだ開く規約は
+ * `useAutoOpenWhileSpeakingIn` のまま —— 読み上げが始まると読んでいる帯へ切り替え、読み終えたらその帯だけ閉じる。
+ * 手で開いていた別の帯は、切り替えで閉じたまま戻さない（2026-11-09 ユーザー選択「切り替えて、戻さない」）。
+ */
+function useBandOpen(speaking: boolean, subject: string): [boolean, (open: boolean) => void] {
+  const ctx = useContext(OpenBand)
+  if (!ctx) throw new Error('帯の開閉は BannerStack の中でしか使えません')
+  const { openSubject, setOpenSubject } = ctx
+  const isOpen = openSubject === subject
+  const setOpen = (next: boolean) => setOpenSubject(prev => next ? subject : (prev === subject ? null : prev))
+  return [isOpen, useAutoOpenWhileSpeakingIn(speaking, isOpen, setOpen, subject)]
+}
+
+/**
+ * 開いた帯の本文。層（`BandBodyLayer`）へ出す。層が付く前（帯の束が現れた最初の描画）は何も描かない ——
+ * そこで見出しの下に一度組み立てると、層が付いた次の描画で組み直すことになる。
+ * 地の色と上の線は帯と同じもの（`frameClass`）を本文の箱に付ける。
+ */
+function BandBody({ open, subject, frameClass, children }: { open: boolean; subject: string; frameClass: string; children: () => ReactNode }) {
+  const layer = useContext(BandBodyLayer)
+  if (!layer) return null
+  return createPortal(
+    <div style={{ order: BODY_ORDER[subject] }} data-testid="band-body" data-band={subject}>
+      <Reveal open={open} className={frameClass}>{children}</Reveal>
+    </div>,
+    layer,
+  )
 }
 
 // 閉じた電文の id の覚え方（localStorage のキー・書式の揃え方）は useSpecialInfoBanners.ts にある。
@@ -137,7 +201,7 @@ export function shareButtonRowHeightClass(checklistShown: boolean, bannerShown: 
     : 'h-11'
 }
 
-export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsAppendix, atScreenBottom }: Props) {
+export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsAppendix, atScreenBottom, bodyTopInset, bodyTopEdgeRef }: Props) {
   /**
    * この帯の文をいま読み上げているか。**主題は `telegramText:<電文の kind>`**
    * （→ `useLiveEventHandler` の `speakTelegramText`）。
@@ -145,7 +209,82 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsA
   const speaking = (kind: string) => speakingTelegramTextSubject === telegramTextSubject(kind)
   // **閉じた帯しか残っていなければ何も描かない**（外枠の下限 2.5rem だけが空で残らないように）
   if (!banners.shown) return null
+  return (
+    <BannerStack banners={banners} speaking={speaking} readsAppendix={readsAppendix} atScreenBottom={atScreenBottom}
+      bodyTopInset={bodyTopInset} bodyTopEdgeRef={bodyTopEdgeRef} />
+  )
+}
+
+/**
+ * 本文の層の高さの上限を測る。帯の束の上端から、上の隅の表示の下（`bodyTopInset`）か、帯より上に並ぶもの
+ * （行動チェックリスト）の下端（`bodyTopEdgeRef` の上端）の低いほうまで。
+ * **測るのは大きさが変わったときだけ**（`ResizeObserver`）。描き直しのたびには読まない。
+ * 値は state に持たず層の `style.maxHeight` へ直に書く —— 行動チェックリストの開閉やつまみのドラッグの間は
+ * 毎フレーム値が変わるので、state にすると帯の束と開いた本文がフレームごとに描き直される。
+ */
+/** `ResizeObserver` が無い環境の警告は 1 度だけ出す（帯の束が現れるたびに出さない） */
+let warnedNoResizeObserver = false
+
+function useBodyLayerMax(rootRef: RefObject<HTMLElement | null>, layer: HTMLElement | null, bodyTopInset: number, bodyTopEdgeRef: RefObject<HTMLElement | null>): void {
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    const stack = root?.parentElement
+    if (!root || !stack || !layer) return
+    const edge = bodyTopEdgeRef.current
+    const measure = () => {
+      const top = root.getBoundingClientRect().top
+      const stackTop = stack.getBoundingClientRect().top
+      const limit = Math.max(stackTop + bodyTopInset, edge ? edge.getBoundingClientRect().top : stackTop)
+      const max = `${Math.max(0, Math.floor(top - limit))}px`
+      if (layer.style.maxHeight !== max) layer.style.maxHeight = max
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') {
+      if (!warnedNoResizeObserver) log.warn('[layout] 帯の束の大きさを見張れないため、開いた帯の本文の高さの上限が初回の値のままになります')
+      warnedNoResizeObserver = true
+      return
+    }
+    // 縦並びの子をすべて見る。上端（`edge`）は大きさが変わらず位置だけ動くことがある
+    // （伸びる空白が 0 のまま、行動チェックリストが伸びて凡例だけが縮むとき）ので、空白だけを見ても拾えない
+    const ro = new ResizeObserver(measure)
+    ro.observe(stack)
+    for (const child of Array.from(stack.children)) ro.observe(child)
+    if (edge && edge.parentElement !== stack) ro.observe(edge)
+    // 帯が出た後に現れる子（行動チェックリスト・凡例・共有ボタンの行）も見る。子の増減は大きさの変化として届かない
+    const mo = typeof MutationObserver === 'undefined' ? null : new MutationObserver(records => {
+      for (const r of records) for (const n of Array.from(r.addedNodes)) if (n instanceof Element) ro.observe(n)
+      measure()
+    })
+    mo?.observe(stack, { childList: true })
+    return () => { ro.disconnect(); mo?.disconnect() }
+  }, [rootRef, layer, bodyTopInset, bodyTopEdgeRef])
+}
+
+function BannerStack({ banners, speaking, readsAppendix, atScreenBottom, bodyTopInset, bodyTopEdgeRef }: {
+  banners: SpecialInfoBanners
+  speaking: (kind: string) => boolean
+  readsAppendix: boolean
+  atScreenBottom: boolean
+  bodyTopInset: number
+  bodyTopEdgeRef: RefObject<HTMLElement | null>
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [layer, setLayer] = useState<HTMLDivElement | null>(null)
+  useBodyLayerMax(rootRef, layer, bodyTopInset, bodyTopEdgeRef)
   const { nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount } = banners.visible
+  const [openSubject, setOpenSubject] = useState<string | null>(null)
+  const openBand = useMemo(() => ({ openSubject, setOpenSubject }), [openSubject])
+  // 開いていた帯が消えたら（× で閉じた・期限が切れた）、開いている印も外す。残すと、同じ種類の帯が
+  // 次に出たときに開いたまま現れる
+  const present: Record<string, boolean> = {
+    nankai: !!nankai, nankaiCommentary: nankaiCommentary.length > 0, kohatsu: kohatsu.length > 0,
+    earthquakeCount: earthquakeCount.length > 0, quakeNotice: quakeNotice.length > 0,
+  }
+  const gone = openSubject !== null && !present[openSubject] ? openSubject : null
+  // 消えた帯の名前で外す —— 同じ描き直しで別の帯の読み上げが開いていたら、それを上書きしない
+  useEffect(() => { if (gone) setOpenSubject(prev => (prev === gone ? null : prev)) }, [gone])
+  // 別の帯へ切り替えたら、層を先頭へ戻す（前の本文を巻いた位置のまま、次の本文の途中から見せない）
+  useLayoutEffect(() => { if (layer && openSubject) layer.scrollTop = 0 }, [layer, openSubject])
 
   return (
     // **自分では絶対配置しない。** 地図の下端へ積む枠は呼び出し側（`App`）が持っており、
@@ -157,16 +296,21 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsA
     // 南海トラフ臨時情報が記録も印も残さずに消える（はみ出していた頃より気づきにくい）。
     // 下限は値で書く —— 何も書かない（`auto`）と縦並びの子は中身の高さで止まり、縮まない。
     // 帯が 1 枚も無ければこのコンポーネント自体が何も描かないので、下限も場所を取らない。
-    <div className="ui-text w-full min-h-10 flex flex-col pointer-events-none">
-      {/* max-h で高さが制約されるためこの要素自身がスクロール領域になる。overflow-y だけを auto に
-          すると overflow-x も auto に格上げされ横スクロールしてしまうため、明示的に塞ぐ。
-          **上限は 2 つ掛かる。** 画面の 40%（`max-h-[40dvh]`。地図が高くても帯が地図を覆いすぎ
-          ないため）と、呼び出し側の縦並びが地図の高さから決める残り（`min-h-0` で縮む）。
-          前者だけでは地図が低いときに地図の上へはみ出す（→ docs/spec/architecture-spec.md §4）。
-          南海トラフ臨時情報は先頭なので、縮んでもスクロールの先頭に残る。
-          単位は vh ではなく dvh。vh は iOS の PWA だとビューポートではなく画面全体の高さを指すため。
+    <div ref={rootRef} className="ui-text w-full min-h-10 flex flex-col pointer-events-none relative">
+      {/* 開いた帯の本文を出す層（→ `BandBody`）。見出しの並びのすぐ上に重ね、縦並びの高さの分け合いには加わらない
+          （絶対配置）。中身が無ければ高さ 0。高さの上限は `useBodyLayerMax` が測って `style.maxHeight` へ直に書き、超えたらこの層の中で巻く
+          （`style` を JSX に書かないこと。描き直しで書いた上限が消える）。
+          `ui-text-scope` は見出しの並びと同じ字の大きさを効かせるため。 */}
+      <div ref={setLayer} className="ui-text-scope absolute inset-x-0 bottom-full flex flex-col pointer-events-auto overflow-y-auto overflow-x-hidden overscroll-contain"
+        data-testid="band-body-layer" />
+      {/* 見出しの並び。開いても本文はここに入らない（上の層へ出る）ので、高さは見出しの分だけで変わらない。
+          呼び出し側の縦並びが地図の高さから決める残りで縮み（`min-h-0`）、見出しが入りきらないときだけこの中で巻く
+          （→ docs/spec/architecture-spec.md §4）。南海トラフ臨時情報は先頭なので、縮んでもスクロールの先頭に残る。
+          overflow-y だけを auto にすると overflow-x も auto に格上げされ横スクロールしてしまうため、明示的に塞ぐ。
           SAFE_BOTTOM はここの直接の子の最後に効くので、バナー以外をこの中に足さないこと。 */}
-      <div className={`ui-text-scope pointer-events-auto min-h-0 max-h-[40dvh] overflow-y-auto overflow-x-hidden overscroll-x-none${atScreenBottom ? ` ${SAFE_BOTTOM}` : ''}`}>
+      <OpenBand.Provider value={openBand}>
+      <BandBodyLayer.Provider value={layer}>
+      <div data-testid="band-headers" className={`ui-text-scope pointer-events-auto min-h-0 overflow-y-auto overflow-x-hidden overscroll-x-none${atScreenBottom ? ` ${SAFE_BOTTOM}` : ''}`}>
         {/* 南海トラフの 2 枚（臨時情報とその解説情報）を隣り合わせる。臨時情報の発表期間中は
             解説情報が毎日届いて両方が同時に出るため、間に別の事象（後発地震＝北海道・三陸沖）を
             挟むと同じ事象の話が分断されて読みにくい。重さの順よりこちらを優先する。 */}
@@ -180,6 +324,8 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsA
             事象の話を先に読ませる。 */}
         {quakeNotice.length > 0 && <NoticeBanner list={quakeNotice} speaking={speaking('quakeNotice')} banners={banners} />}
       </div>
+      </BandBodyLayer.Provider>
+      </OpenBand.Provider>
     </div>
   )
 }
@@ -286,7 +432,7 @@ function InfoKindLine({ info }: { info: { earthquakeInfoType?: string; earthquak
 
 function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: JMANankai; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
   // 読み上げているあいだだけ開く（自分が開いた分だけ閉じる）
-  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankai')
+  const [open, setOpen] = useBandOpen(speaking, 'nankai')
   const { bg, border, badge } = nankaiColors(nankai.kindName)
 
   return (
@@ -318,13 +464,13 @@ function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: 
           <CloseIcon />
         </button>
       </div>
-      <Reveal open={open}>{() => (
+      <BandBody open={open} subject="nankai" frameClass={`${bg} border-t-2 ${border} pt-2`}>{() => (
         <EarthquakeInfoDetail info={nankai} speakingAppendix={speaking && readsAppendix} subject="nankai" footer={
           <p className="text-secondary text-(length:--ui-fs)">
             発表: {new Date(nankai.reportDateTime).toLocaleString('ja-JP')}
           </p>
         } />
-      )}</Reveal>
+      )}</BandBody>
     </div>
   )
 }
@@ -372,7 +518,7 @@ function StackedBanner<T extends { id: string; reportDateTime: string }>({
   onDismissAll: () => void
   onDismissOne: (id: string) => void
 }) {
-  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, subject)
+  const [open, setOpen] = useBandOpen(speaking, subject)
   const latest = list[0]
   return (
     <div className={frameClass}>
@@ -394,7 +540,7 @@ function StackedBanner<T extends { id: string; reportDateTime: string }>({
           <CloseIcon />
         </button>
       </div>
-      <Reveal open={open}>{() => (
+      <BandBody open={open} subject={subject} frameClass={`${frameClass} pt-2`}>{() => (
         list.length === 1
           ? detail(latest, true)
           : (
@@ -407,7 +553,7 @@ function StackedBanner<T extends { id: string; reportDateTime: string }>({
               ))}
             </div>
           )
-      )}</Reveal>
+      )}</BandBody>
     </div>
   )
 }

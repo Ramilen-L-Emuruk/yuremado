@@ -20,7 +20,7 @@ beforeEach(() => localStorage.clear())
 /** 帯の束の状態はフックが持つので、テストでは App と同じく呼び出し側でフックを呼んで渡す。 */
 function Banners({ items, atScreenBottom = true }: { items: SpecialInfoItems; atScreenBottom?: boolean }) {
   const banners = useSpecialInfoBanners(items)
-  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom={atScreenBottom} />
+  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom={atScreenBottom} bodyTopInset={0} bodyTopEdgeRef={{ current: null }} />
 }
 
 const nankai = (operationStatus?: TelegramOperationStatus): JMANankai => ({
@@ -119,7 +119,8 @@ describe('後発地震注意情報の帯の発表時刻の行', () => {
 // ここで見るのは「付けるか」の側だけ —— 包みのクラスに余白の指定が載るか。
 describe('特別情報の帯の下端の余白', () => {
   const SAFE = 'sideShort:[&>*:last-child]:pb-[env(safe-area-inset-bottom,0px)]'
-  const scroller = (container: HTMLElement) => container.querySelector('.overflow-y-auto') as HTMLElement
+  // 見出しの並び（開いた本文の層は別の要素で、余白はそちらに付けない）
+  const scroller = (container: HTMLElement) => container.querySelector('[data-testid="band-headers"]') as HTMLElement
 
   // 正: 画面の下端に接しているときは包みに余白の指定が載る
   it('下端に接していれば余白を付ける', () => {
@@ -197,7 +198,7 @@ describe('閉じた帯と「いま出す帯」', () => {
     function Probe({ items }: { items: SpecialInfoItems }) {
       const b = useSpecialInfoBanners(items)
       shown = b.shown
-      return <SpecialInfoBanner banners={b} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom />
+      return <SpecialInfoBanner banners={b} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom bodyTopInset={0} bodyTopEdgeRef={{ current: null }} />
     }
     render(<Probe items={{ ...none, earthquakeCount: [earthquakeCount()] }} />)
     expect(shown).toBe(true)
