@@ -6,6 +6,8 @@ import { createRoot } from 'react-dom/client'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './index.css'
 import { App } from './App'
+import { I18nProvider } from './i18n/I18nProvider'
+import { DEFAULT_LOCALE } from './i18n/messages'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { log } from './utils/logger'
 import { installFrameProfiler } from './utils/frameProfiler'
@@ -76,7 +78,10 @@ if (!rootEl) throw new Error('描画先の要素（#root）が見つからない
 createRoot(rootEl).render(
   <StrictMode>
     <ErrorBoundary variant="root">
-      <App />
+      {/* 言語を選ぶ設定はまだ無いので、日本語で配る（→ i18n/messages.ts） */}
+      <I18nProvider locale={DEFAULT_LOCALE}>
+        <App />
+      </I18nProvider>
     </ErrorBoundary>
   </StrictMode>,
 )
