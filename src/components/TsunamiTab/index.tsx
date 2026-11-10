@@ -1574,16 +1574,9 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // バナーの色。等級の帯は等級の枠の色で塗り、字は白（取消・解除の表示中は灰色）。等級の色そのものは変えない。
   const bannerBand = isCancelledDisplay ? '#4b5563' : topStyle.cardBorder
   const bannerFg = isCancelledDisplay ? '#9ca3af' : topStyle.headerColor
-  // 巻いたときの 1 行の帯に出す文。どれもバナーにある値（2026-11-04 ユーザー選択「地震タブと同じ規則 (Recommended)」の説明
-  // 「帯の中身は『大津波警報 発表中』・震源の 1 行（三陸沖　Mj8.9　00:50）・『更新 01:05』（どれも今バナーにある値）」）。
+  // 巻いたときの帯（1 行。等級名の長い言語では題が折り返す）に出す文。どれもバナーにある値。原因地震の行は置かない
+  // （帯を押せば戻るバナーにある。2026-11-10 ユーザー選択「原因地震の行を帯から外す」）。
   const bannerTitle = isCancelledDisplay ? cancelInfo.title : tm.inEffect(tm.grade[topGrade])
-  const bandSource = sourceEarthquake ? shownTsunamiSource(sourceEarthquake, linkedQuakes[0]) : undefined
-  const bandSourceText = bandSource ? [
-    bandSource.hypocenterName,
-    bandSource.magnitude !== undefined ? formatMagnitude(bandSource.magnitude, bandSource.magnitudeType)
-      : bandSource.magnitudeCondition ? formatMagnitudeCondition(bandSource.magnitudeCondition) : '',
-    (() => { const t = sourceEarthquakeTime(bandSource); return t ? formatTimeMin(t) ?? '' : '' })(),
-  ].filter(Boolean).join('　') : ''
 
   // h-full を持つ下記の要素自身がスクロール領域になるため、横スクロールの抑止は
   // App.tsx の TAB_SCROLLER_CLASS ではなくここで行う（祖先の指定は子に効かない）。
@@ -1609,16 +1602,16 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
             // タブの上端に覗く。`visibility` を出し入れの遷移に入れるので、引っ込む動きの間は見えたまま、
             // 引っ込み終えてから消える。出している間は `visible` を明示しない —— タブは `invisible` の付け外しで
             // 切り替わるので、明示すると隠れたタブの上に帯だけが残る（地震タブの帯 `QuakeOpenPin` と同じ作り）。
-            className={`flex items-center gap-2 cursor-pointer transition-[transform,visibility] duration-150 ease-out motion-reduce:transition-none shadow-[0_3px_8px_rgba(0,0,0,.55)]${bandShown ? '' : ' invisible pointer-events-none'}`}
+            className={`flex flex-wrap items-center gap-x-2 cursor-pointer transition-[transform,visibility] duration-150 ease-out motion-reduce:transition-none shadow-[0_3px_8px_rgba(0,0,0,.55)]${bandShown ? '' : ' invisible pointer-events-none'}`}
             style={{
               padding: '6px var(--qk-pad)',
               background: bannerBand,
               transform: bandShown ? 'translateY(0)' : 'translateY(-110%)',
             }}>
-            <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'var(--qk-f)' }}>{bannerTitle}</span>
+            {/* 等級名の長い言語（津波予報のスペイン語など）では題が折り返す。切って等級を隠さない */}
+            <span className="font-extrabold text-white" style={{ fontSize: 'var(--qk-f)' }}>{bannerTitle}</span>
             {active[0]?.operationStatus && <OperationStatusChip status={active[0].operationStatus} />}
-            <span className="min-w-0 flex-1 truncate text-white/90" style={{ fontSize: 'var(--qk-fs)' }}>{bandSourceText}</span>
-            {latestHm && <span className="whitespace-nowrap text-white/90" style={{ fontSize: 'var(--qk-fs)' }}>{tm.updated(latestHm)}</span>}
+            {latestHm && <span className="ml-auto whitespace-nowrap text-white/90" style={{ fontSize: 'var(--qk-fs)' }}>{tm.updated(latestHm)}</span>}
           </div>
         </div>
       )}
