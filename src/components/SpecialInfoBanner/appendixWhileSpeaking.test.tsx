@@ -26,13 +26,15 @@ const nankai: JMANankai = {
 } as unknown as JMANankai
 
 function Banner({ speaking, readsAppendix }: { speaking: boolean; readsAppendix: boolean }) {
-  const banners = useSpecialInfoBanners({ nankai, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] })
+  const banners = useSpecialInfoBanners({ nankai, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [], internationalTsunami: [], cancels: [] })
   return (
     <SpecialInfoBanner
       banners={banners}
       speakingTelegramTextSubject={speaking ? telegramTextSubject('nankai') : null}
       readsAppendix={readsAppendix}
       atScreenBottom
+      bodyTopInset={0}
+      bodyTopEdgeRef={{ current: null }}
     />
   )
 }

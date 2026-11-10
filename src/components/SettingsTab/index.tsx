@@ -59,6 +59,7 @@ export interface TestFunctions {
   /** 国際津波関連情報が国内の地震に付く形と、英文だけのカードになる形。 */
   internationalTsunamiDomesticAndOnly: () => void
   headlineOnlyCity: () => void
+  noIntensityQuake: () => void
   eew: () => void
   eewWarning: () => void
   eewForecast: () => void
@@ -1146,7 +1147,7 @@ function IntensityPlayButton({ kyoshinIndex }: { kyoshinIndex: number }) {
 
 /**
  * S 波到達カウントダウン音（残り 5〜1 秒）を 1 段階だけ試聴する小ボタン。
- * 実運用ではホーム位置を設定したうえで S 波到達が残り 5 秒を切らないと鳴らないため、
+ * 実運用では登録地点を設定したうえで S 波到達が残り 5 秒を切らないと鳴らないため、
  * 段階ごとの差（ゲート周波数の上昇・残り 1 秒の重ね音）はここでしか聞き分けられない。
  */
 function CountdownPlayButton({ second }: { second: number }) {
@@ -1569,7 +1570,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             />
           </Row>
         )}
-        <Row label="試験報を受信（検証用）" description="試験報・訓練報も受信します。緊急地震速報の配信テストは接続の確認だけに使い、画面には出しません">
+        <Row label="試験報を受信（検証用）" description="試験報・訓練報も受信します。国際津波関連情報の通信試験は、入のときだけ音・通知・読み上げで伝えます。緊急地震速報の配信テストは接続の確認だけに使い、画面には出しません">
           <Toggle
             checked={settings.dmdataTestDelivery}
             onChange={v => onUpdate('dmdataTestDelivery', v)}
@@ -1621,6 +1622,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </Row>
             <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
               <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
+            </Row>
+            {/* 定例解説とお知らせの通知は既定オフ（2026-11-09 ユーザー選択「新設・既定オフ」） */}
+            <Row label="定例の解説情報の通知" description="南海トラフ地震関連解説情報の定例解説を受けたときに通知します。この情報は平常時も毎月届きます">
+              <Toggle checked={settings.notifyNankaiRoutine} onChange={v => onUpdate('notifyNankaiRoutine', v)} />
+            </Row>
+            <Row label="お知らせの通知" description="地震・津波に関するお知らせを受けたときに通知します">
+              <Toggle checked={settings.notifyQuakeNotice} onChange={v => onUpdate('notifyQuakeNotice', v)} />
             </Row>
             {/* 地域の絞りは画面内の通知にもプッシュ通知にも効く（2026-11-03 ユーザー選択「両方に掛ける (Recommended)」。
                 名前と説明は 2026-11-03 ユーザー選択「通知する地域」） */}
@@ -2195,7 +2203,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
       </Section>
 
-      <Section category="location" title="ホーム地点">
+      <Section category="location" title="登録地点">
         <HomeLocationSection
           homeLat={settings.homeLat}
           homeLng={settings.homeLng}
@@ -2612,11 +2620,14 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.foreignQuakeInternationalTsunami}>国際津波関連情報テスト</TestButton>
         </Row>
-        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る / 9 秒後に通信試験の英文が届く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
+        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る / 9 秒後に通信試験の英文が届く（「試験報を受信（検証用）」が入のときだけ音・通知・読み上げと帯が出る。切なら電文ログにだけ残る）。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.internationalTsunamiDomesticAndOnly}>英文だけテスト</TestButton>
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">
           <TestButton color="purple" onClick={onTest.headlineOnlyCity}>見出しの市町村テスト</TestButton>
+        </Row>
+        <Row label="震度を観測しなかった地震" description="2024-08-08 日向灘の震源・震度に関する情報（実データ）から震度の欄を外した形 – earthquakeInfo 音 / 最低震度の設定に関係なく「日向灘 Mj7.1（震度1以上の観測なし）」の通知が出る">
+          <TestButton color="purple" onClick={onTest.noIntensityQuake}>震度なしテスト</TestButton>
         </Row>
         <Row label="訂正報" description="地震情報 → 規模を訂正した報（M7.4 → M7.6）。同じカードが更新され「震源を訂正」の印が付き、気象庁の「震源要素を訂正します。」の一文も並ぶ">
           <TestButton color="yellow" onClick={onTest.quakeAmendment}>訂正報テスト</TestButton>
@@ -2707,7 +2718,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.nankaiRetraction && (
-          <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える（発生可能性については何も述べない）">
+          <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが「取消」の表示に替わって 10 秒で消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える（発生可能性については何も述べない）">
             <TestButton color="blue" onClick={onTest.nankaiRetraction}>取消テスト</TestButton>
           </Row>
         )}
@@ -2717,7 +2728,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.nankaiCommentaryRetraction && (
-          <Row label="南海トラフ地震関連解説情報（取消）" description="臨時解説を発表し、同じ号の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
+          <Row label="南海トラフ地震関連解説情報（取消）" description="臨時解説を発表し、同じ号の取消を流す。バナーが「取消」の表示に替わって 10 秒で消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryRetraction}>解説情報 取消テスト</TestButton>
           </Row>
         )}
@@ -2737,7 +2748,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.kohatsuRetraction && (
-          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
+          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが「取消」の表示に替わって 10 秒で消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
             <TestButton color="blue" onClick={onTest.kohatsuRetraction}>取消テスト</TestButton>
           </Row>
         )}
@@ -2776,7 +2787,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.earthquakeCountRetraction && (
-          <Row label="地震回数に関する情報（取消）" description="発表 → その取消。取消では帯ごと消えるため、理由の文が届く先は読み上げだけ（実電文どおり回数の表は持たない）">
+          <Row label="地震回数に関する情報（取消）" description="発表 → その取消。バナーが「取消」の表示（理由の文つき）に替わって 10 秒で消え、読み上げも理由を伝える（実電文どおり回数の表は持たない）">
             <TestButton color="teal" onClick={onTest.earthquakeCountRetraction}>地震回数 取消テスト</TestButton>
           </Row>
         )}

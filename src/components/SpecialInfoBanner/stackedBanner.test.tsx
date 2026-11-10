@@ -3,19 +3,20 @@
 // 同じ種類の報を 1 本に積んだ帯（2026-11-04 ユーザー選択「1 本に積む (Recommended)」「「ほか 2 件」 (Recommended)」
 // 「帯は全件・行は 1 件 (Recommended)」）。見出し・残りの件数・開いた一覧・閉じ方を描いて確かめる。
 import { describe, it, expect, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { SpecialInfoBanner } from './index'
 import { DISMISSED_IDS_MAX, parseDismissed, useSpecialInfoBanners, type SpecialInfoItems } from './useSpecialInfoBanners'
 import type { JMAQuakeNotice, JMAKohatsu } from '../../types/earthquake'
+import { telegramTextSubject } from '../../utils/ttsFollow'
 
 beforeEach(() => localStorage.clear())
 
 function Banners({ items }: { items: SpecialInfoItems }) {
   const banners = useSpecialInfoBanners(items)
-  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom />
+  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom bodyTopInset={0} bodyTopEdgeRef={{ current: null }} />
 }
 
-const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [], internationalTsunami: [], cancels: [] }
 
 const notice = (id: string, headline: string, minute: number): JMAQuakeNotice => ({
   id, time: `2026-01-01T12:${String(minute).padStart(2, '0')}:00+09:00`, eventId: `2026010112${String(minute).padStart(2, '0')}00`,
@@ -120,5 +121,98 @@ describe('閉じた記録の形', () => {
     expect(stored).toHaveLength(DISMISSED_IDS_MAX)
     expect(stored[0]).toBe('old-1')
     expect(stored[stored.length - 1]).toBe('q3')
+  })
+})
+
+// 開いた帯の本文は見出しの並びの外（上に重ねる層）へ出す（2026-11-09 ユーザー選択「この形にする (Recommended)」）。
+// 見出しの並びの高さが開閉で変わらないので、凡例・共有ボタン・他の帯の見出しが動かない。
+describe('開いた帯の本文の置き場所', () => {
+  const layer = () => screen.getByTestId('band-body-layer')
+  const headers = () => screen.getByTestId('band-headers')
+
+  it('正: 開いた本文は層に出て、見出しの並びには入らない', () => {
+    render(<Banners items={{ ...none, quakeNotice: [notices[0]], kohatsu: [kohatsu('k1', '後発の本文')] }} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    expect(layer().textContent).toContain('三通目のお知らせの本文')
+    expect(headers().textContent).not.toContain('三通目のお知らせの本文')
+  })
+
+  it('対照: どの帯も閉じていれば層は空', () => {
+    render(<Banners items={{ ...none, quakeNotice: [notices[0]], kohatsu: [kohatsu('k1', '後発の本文')] }} />)
+    expect(layer().textContent).toBe('')
+  })
+
+  it('安全弁: 開いても見出し（× と表題）は見出しの並びに残り、他の帯の見出しもそのまま', () => {
+    render(<Banners items={{ ...none, quakeNotice: [notices[0]], kohatsu: [kohatsu('k1', '後発の本文')] }} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    expect(headers().textContent).toContain('三通目のお知らせ')
+    expect(headers().contains(screen.getByLabelText('お知らせを閉じる'))).toBe(true)
+    expect(headers().contains(screen.getByLabelText('後発地震注意情報を閉じる'))).toBe(true)
+  })
+
+  // 開けるのは一度に 1 本だけ（2026-11-09 ユーザー選択「その意味で合っている」）
+  const openBodies = () => Array.from(layer().querySelectorAll<HTMLElement>('[data-testid="band-body"]'))
+    .filter(el => el.textContent !== '').map(el => el.dataset.band)
+
+  it('正: 別の帯を開くと、前に開いていた帯は閉じる', () => {
+    render(<Banners items={{ ...none, quakeNotice: [notices[0]], kohatsu: [kohatsu('k1', '後発の本文')] }} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    expect(openBodies()).toEqual(['quakeNotice'])
+    fireEvent.click(within(headers()).getAllByText('北海道・三陸沖後発地震注意情報')[0])
+    expect(openBodies()).toEqual(['kohatsu'])
+  })
+
+  it('対照: 開いている帯を押せば閉じ、どれも開いていない状態に戻る', () => {
+    render(<Banners items={{ ...none, quakeNotice: [notices[0]], kohatsu: [kohatsu('k1', '後発の本文')] }} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    expect(openBodies()).toEqual([])
+  })
+
+  it('安全弁: 開いた帯を × で閉じると、その本文は層から消え、他の帯の見出しは残る', () => {
+    render(<Banners items={{ ...none, quakeNotice: [notices[0]], kohatsu: [kohatsu('k1', '後発の本文')] }} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    fireEvent.click(screen.getByLabelText('お知らせを閉じる'))
+    expect(layer().textContent).toBe('')
+    expect(headers().contains(screen.getByLabelText('後発地震注意情報を閉じる'))).toBe(true)
+  })
+
+  // 読み上げは読んでいる帯へ切り替え、読み終えたらその帯だけ閉じる。手で開いていた帯は戻さない
+  // （2026-11-09 ユーザー選択「切り替えて、戻さない」）
+  function SpeakingBanners({ speakingKind }: { speakingKind: string | null }) {
+    const banners = useSpecialInfoBanners({ ...none, quakeNotice: [notices[0]], kohatsu: [kohatsu('k1', '後発の本文')] })
+    return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={speakingKind ? telegramTextSubject(speakingKind) : null}
+      readsAppendix={false} atScreenBottom bodyTopInset={0} bodyTopEdgeRef={{ current: null }} />
+  }
+
+  it('正: 手で開いた帯があっても、読み上げが始まると読んでいる帯へ切り替わる', () => {
+    const { rerender } = render(<SpeakingBanners speakingKind={null} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    rerender(<SpeakingBanners speakingKind="kohatsu" />)
+    expect(openBodies()).toEqual(['kohatsu'])
+  })
+
+  it('対照: 読み終えたら読んでいた帯は閉じ、手で開いていた帯は閉じたまま', () => {
+    const { rerender } = render(<SpeakingBanners speakingKind={null} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    rerender(<SpeakingBanners speakingKind="kohatsu" />)
+    rerender(<SpeakingBanners speakingKind={null} />)
+    expect(openBodies()).toEqual([])
+  })
+
+  it('安全弁: 読み上げ中に手で別の帯を開いたら、読み終えてもその帯は閉じない', () => {
+    const { rerender } = render(<SpeakingBanners speakingKind="kohatsu" />)
+    expect(openBodies()).toEqual(['kohatsu'])
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    rerender(<SpeakingBanners speakingKind={null} />)
+    expect(openBodies()).toEqual(['quakeNotice'])
+  })
+
+  it('安全弁: 手で開いていた帯そのものを読み上げたら、読み終えても閉じない', () => {
+    const { rerender } = render(<SpeakingBanners speakingKind={null} />)
+    fireEvent.click(screen.getByText('三通目のお知らせ'))
+    rerender(<SpeakingBanners speakingKind="quakeNotice" />)
+    rerender(<SpeakingBanners speakingKind={null} />)
+    expect(openBodies()).toEqual(['quakeNotice'])
   })
 })

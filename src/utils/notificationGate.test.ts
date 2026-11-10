@@ -2,10 +2,31 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { sep } from 'node:path'
 import { DEFAULTS } from '../hooks/useSettings'
-import { effectiveNotifyMinScale, notificationAllowed, type NotificationKind } from './notificationGate'
+import { effectiveNotifyMinScale, noIntensityQuakeHiddenByRegion, notificationAllowed, type NotificationKind } from './notificationGate'
 
-const KINDS: NotificationKind[] = ['quake', 'detection', 'eew', 'tsunami', 'nankai']
-const all = { ...DEFAULTS, notifyEnabled: true, notifyQuake: true, notifyDetection: true, notifyEEW: true, notifyTsunami: true, notifyNankai: true }
+// 2026-11-09 ユーザー選択「地域を選んでいれば出さない (Recommended)」
+//   正: 地域を選んでいれば震度なしの国内の報は出さない／対照: 地域を選んでいなければ出す・震度のある報は県で判定する側へ回す／
+//   安全弁: 遠地地震は震度に関係なく出す
+describe('noIntensityQuakeHiddenByRegion', () => {
+  const q = (maxScale: number, type = '震源・震度に関する情報') => ({ earthquake: { maxScale }, issue: { type } })
+  it('正: 地域を選んでいれば震度なしの国内の報は出さない', () => {
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(-1))).toBe(true)
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(-1, '震源情報'))).toBe(true)
+  })
+  it('対照: 地域を選んでいない・震度のある報は、ここでは止めない', () => {
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: [] }, q(-1))).toBe(false)
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(10))).toBe(false)
+  })
+  it('安全弁: 遠地地震は地域を選んでいても止めない', () => {
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(-1, '遠地地震'))).toBe(false)
+  })
+})
+
+const KINDS: NotificationKind[] = ['quake', 'detection', 'eew', 'tsunami', 'nankai', 'nankaiRoutine', 'quakeNotice']
+const all = {
+  ...DEFAULTS, notifyEnabled: true, notifyQuake: true, notifyDetection: true, notifyEEW: true, notifyTsunami: true, notifyNankai: true,
+  notifyNankaiRoutine: true, notifyQuakeNotice: true,
+}
 
 describe('notificationAllowed', () => {
   it('正: まとめて止めると、種類ごとの設定によらずどれも出さない', () => {
@@ -52,7 +73,7 @@ describe('ブラウザ通知の判定はすべて notificationAllowed を通る'
    * 種類ごとの値の名前。**`settings.` の形に限らず名前そのもので拾う**（分割代入・別名・括弧アクセスもこれで掛かる）。
    * あわせて、外した旧来の判定（最低震度が 0 以上なら通知する）の復活も拾う。
    */
-  const DIRECT = /\b(notifyQuake|notifyDetection|notifyEEW|notifyTsunami|notifyNankai)\b|notifyMinScale\s*(>=|<|>)\s*-?\d/
+  const DIRECT = /\b(notifyQuake|notifyDetection|notifyEEW|notifyTsunami|notifyNankai|notifyNankaiRoutine|notifyQuakeNotice)\b|notifyMinScale\s*(>=|<|>)\s*-?\d/
 
   const sources = (readdirSync('src', { recursive: true }) as string[])
     .map(p => `src/${p.split(sep).join('/')}`)

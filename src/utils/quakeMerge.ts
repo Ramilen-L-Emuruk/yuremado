@@ -212,7 +212,16 @@ export function quakeHoldBack(existing: JMAQuake, incoming: JMAQuake): QuakeHold
   if (incoming.issue.type === AMENDMENT_TYPE) return null
   // 既存が実震度を持たない（VXSE61 単独カード・震度欠落）か取消表示中なら、どの電文も受け入れる。
   if (existing.cancelledAt || !hasIntensity(existing)) return null
-  if (existing.issue.type === AMENDMENT_TYPE) return { reason: 'amendment', notable: false }
+  // 既存が VXSE61（震源要素の更新）なら、**それより新しい震度を持つ報は採る**（震度・観測点を採り、震源・発生時刻・付加文は
+  // VXSE61 のまま。→ `mergeQuakeInto` の末尾。2026-11-09 ユーザー選択「新しい震度は採る (Recommended)」）。控えの実配信
+  // （VXSE61 を持つ 87 地震）では VXSE61 が常に最後の報で、この形は起きていない。起きれば電文の震度を落とすので採る側に倒す。
+  // それ以外（震度を持たない報・VXSE61 より古い報・震度速報）は今どおり据え置く
+  if (existing.issue.type === AMENDMENT_TYPE
+    && !(incoming.time && hasIntensity(incoming) && compareReportAge(incoming, existing) > 0
+      // 震度速報は完全版（各地の震度を載せた報）の後では採らない（下の `superseded` と同じ考え。VXSE61 の載ったカードは完全版の後）
+      && !SUPERSEDED_BY_FULL_TYPES.includes(incoming.issue.type))) {
+    return { reason: 'amendment', notable: false }
+  }
   if (!incoming.time) return { reason: 'noTime', notable: true }
   if (isSupersededByExistingCard(existing, incoming)) {
     // 訂正報は実配信で観測していない形なので必ず残す。時刻が新しいのに据え置いたものも残す
@@ -1201,14 +1210,16 @@ function mergeQuakeIntoBody(
     }
   }
 
-  // 既存がより新しい VXSE61 の場合、その更新後の震源・種別・発表時刻を保持しつつ
-  // incoming（震度電文）の震度を採用する。
-  if (existing.issue.type === AMENDMENT_TYPE && compareReportAge(existing, incoming) >= 0) {
+  // 既存が VXSE61 の場合、その更新後の震源・種別を保持しつつ incoming（震度電文）の震度を採用する。VXSE61 より新しい
+  // 震度の報でも同じ（2026-11-09 ユーザー選択「新しい震度は採る (Recommended)」。→ `quakeHoldBack`）。発表時刻は新しい側を残す
+  // （古い時刻へ戻すと、間に発表された報を「新しい」と取り違える）
+  if (existing.issue.type === AMENDMENT_TYPE) {
+    const existingIsNewer = compareReportAge(existing, incoming) >= 0
     // **作成時刻も発表時刻と一緒に残す**（→ `withCreatedAtOf`）。
     result = withCreatedAtOf({
       ...result,
-      time: existing.time,
-      issue: existing.issue,
+      time: existingIsNewer ? existing.time : result.time,
+      issue: existingIsNewer ? existing.issue : { ...existing.issue, time: result.issue.time },
       earthquake: { ...result.earthquake, hypocenter: existing.earthquake.hypocenter, ...originTimeFrom(existing) },
       // 自由付加文も新しい側（＝ここでは VXSE61）を残す。土台が incoming なので、
       // 明示しないと VXSE61 が伝える精査後の Mw が**震度が確定した瞬間に消える**。
@@ -1219,7 +1230,7 @@ function mergeQuakeIntoBody(
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
       // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: existing.headline ?? result.headline,
-    }, existing)
+    }, existingIsNewer ? existing : result)
   }
 
   return result

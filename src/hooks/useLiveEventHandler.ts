@@ -15,15 +15,16 @@ import {
   eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
-import { stepEewAnnounce, eewAnnounceNotice, eewCancelNotice } from '../utils/eewNotifyTracker'
+import { stepEewAnnounce, eewAnnounceNotice, eewCancelNotice, eewQuietReplaceNotice, type EewNotice } from '../utils/eewNotifyTracker'
 import { hasKnownEpicenter } from '../utils/geo'
-import { showBrowserNotification } from '../utils/notifications'
+import { notificationWouldShow, replaceBrowserNotificationQuietly, showBrowserNotification } from '../utils/notifications'
+import { forgetNotifiedSpecialInfo, loadNotifiedSpecialInfo, rememberNotifiedSpecialInfo, type NotifiedSpecialInfo } from '../utils/notifiedSpecialInfoStore'
 import {
-  type SpecialInfoEvent, planSpecialInfoNotification,
+  type SpecialInfoEvent, type SpecialInfoGate, planSpecialInfoNotification,
 } from '../utils/specialInfoPush'
 import { earthquakeCountHeadline } from '../utils/earthquakeCountSummary'
 import { TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
-import { tsunamiCardOrderBasis, tsunamiReportDropped, tsunamiCancelKey, partialRetractionKey, forgetPartialRetractionsOf, forgetRetractedObservations, type TsunamiObservationMemories, isTsunamiSameGradeReport, nextTsunamiGrade, tsunamiObservationMarks, rememberTsunamiObsDisplay, rememberObservations, rememberObservationHeights, tsunamiIssueNotificationFor, tsunamiObservationNotificationFor, tsunamiEndNotificationFor, type TsunamiCardOrderBasis, type TsunamiObsDisplayMemory } from '../utils/tsunamiNotifyTracker'
+import { tsunamiCardOrderBasis, tsunamiReportDropped, tsunamiCancelKey, partialRetractionKey, tsunamiPartialRetractionNotificationFor, forgetPartialRetractionsOf, forgetRetractedObservations, type TsunamiObservationMemories, isTsunamiSameGradeReport, nextTsunamiGrade, tsunamiObservationMarks, rememberTsunamiObsDisplay, rememberObservations, rememberObservationHeights, tsunamiIssueNotificationFor, tsunamiObservationNotificationFor, tsunamiEndNotificationFor, type TsunamiCardOrderBasis, type TsunamiObsDisplayMemory } from '../utils/tsunamiNotifyTracker'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, forecastHeightChangedAreas, rememberForecastHeights, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
 import { linkTsunamiSources, shownTsunamiSource } from '../utils/tsunamiSourceLinks'
 import {
@@ -502,9 +503,9 @@ const SEEN_QUAKE_REPORT_KEYS_MAX = 200
 // （その回だけ従来どおり割り込みで裁かれる）。
 const LATEST_SPEECH_TOPIC_MAX = 200
 
-// 長周期の発表で覚えた震央地名（`lpgmNotifiedNameRef`）の件数の上限（超えたらまとめて捨てる）。
-// 捨てても取消の通知が地名を言わなくなるだけ。
-const LPGM_NAME_MEMORY_MAX = 200
+// 通知を出した記憶（緊急地震速報の最後の文面・津波の観測の通知）の件数の上限（超えたらまとめて捨てる）。
+// 捨てても、その報の静かな差し替え・取消の通知が出なくなるだけ。
+const NOTIFIED_MEMORY_MAX = 200
 
 // 津波カードの「今回の受信で何が変わったか」を示す印（観測点の新規/更新バッジと、区域の
 // 「〇〇から切り替え」）が消えるまでの時間。
@@ -1585,32 +1586,53 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 長周期地震動情報の更新検出: 受信済み eventId を追跡する
   const seenLpgmEventIdsRef = useRef<Set<string>>(new Set())
   // 長周期の発表で読んだ震央地名（地震ごと）。取消の通知で地名を言うために使う（取消の電文は震源を持たない）
-  const lpgmNotifiedNameRef = useRef<Map<string, string>>(new Map())
+  // 下の「発表を通知したか」と一緒に端末へ保存する（→ `notifiedSpecialInfoStore`）
+  const notifiedSpecialInfoMemoryRef = useRef<NotifiedSpecialInfo | null>(null)
+  if (notifiedSpecialInfoMemoryRef.current === null) notifiedSpecialInfoMemoryRef.current = loadNotifiedSpecialInfo()
+  const notifiedMemory = (): NotifiedSpecialInfo => notifiedSpecialInfoMemoryRef.current ?? (notifiedSpecialInfoMemoryRef.current = loadNotifiedSpecialInfo())
   // 発表のブラウザ通知を出した電文（`<種別>:<識別子>`。長周期・地震回数・関連解説情報）。**取消の通知はここに
   // 載っているものにだけ出す**（同じ札で置き換える。2026-10-24 ユーザー選択「発表を通知したものだけ (Recommended)」）。
-  // 発表を通知していない情報（定例解説・この端末が受けていない報）への取消の通知は、何が取り消されたか手掛かりが無い
-  const notifiedSpecialInfoRef = useRef<Set<string>>(new Set())
-  const rememberNotified = (key: string) => {
-    if (notifiedSpecialInfoRef.current.size >= LPGM_NAME_MEMORY_MAX) notifiedSpecialInfoRef.current.clear()
-    notifiedSpecialInfoRef.current.add(key)
-  }
-  /** 発表を通知した電文への取消か（真なら記憶から外す）。 */
-  const takeNotified = (key: string): boolean => notifiedSpecialInfoRef.current.delete(key)
+  // 発表を通知していない情報（この端末が受けていない報など）への取消の通知は、何が取り消されたか手掛かりが無い。
+  // **値は発表をどの設定で通知したか。** 取消はその設定に従う（取消の電文が定例か臨時かを運ぶとは限らないため。
+  // 2026-11-09 ユーザー選択「発表を通知した設定に従う」）。**端末に保存し、通知が実際に出たときだけ覚える**
+  // （2026-11-09 ユーザー選択「端末に保存＋出したときだけ覚える (Recommended)」）—— 毎朝の読み直し・版の更新を挟んでも
+  // 取消の通知が出るように。上限は `NOTIFIED_SPECIAL_INFO_MAX` 件で、古いものから捨てる
   /**
    * 南海・後発・関連解説・長周期・推計・地震回数の通知を出す。出すかと文面は中継と共用の判定（`planSpecialInfoNotification`）が
-   * 決め、ここは設定（種類の入り切り・地域）と、取消のための「発表を通知したか」の記憶だけを見る
+   * 決め、ここは設定（種類の入り切り・地域）と、取消のための「発表を通知したか」の記憶だけを見る。
+   * 通知が実際に出たら真を返す（設定で止めた・許可が無い・開いている間は出さない、のときは偽）
    */
-  const notifySpecialInfo = (event: SpecialInfoEvent) => {
-    const plan = planSpecialInfoNotification(event, id => lpgmNotifiedNameRef.current.get(id))
-    if (!plan) return
+  const notifySpecialInfo = (event: SpecialInfoEvent): boolean => {
+    const memory = notifiedMemory()
+    const plan = planSpecialInfoNotification(event, id => memory.lpgmNames.get(id))
+    if (!plan) return false
+    // 試験の報は試験報を受け取る設定のときだけ（受信の入口でも止めている。中継と同じ判定をここでも持つ）
+    if (plan.test && !settings.dmdataTestDelivery) return false
     // 推計震度分布図は、元の地震の地震カードの県で絞る（電文は県を持たない。→ `estimatedIntensityPrefectures`）
     const prefectures = event.kind === 'estimatedIntensity'
       ? estimatedIntensityPrefectures(event.data, earthquakesRef.current)
       : plan.prefectures
-    if (!notificationAllowed(settings, plan.kind) || !notificationRegionAllowed(settings, prefectures)) return
-    if (plan.requires !== undefined && !takeNotified(plan.requires)) return
+    // 取消は、発表を通知したときの設定に従う（発表を通知していなければ出さない）
+    const remembered = plan.requires !== undefined ? memory.gates.get(plan.requires) : undefined
+    if (plan.requires !== undefined && !remembered) {
+      log.debug(`[notify] 発表を通知した記憶が無いので、取消の通知を出さない（${plan.requires}）`)
+      return false
+    }
+    const gate: SpecialInfoGate = remembered ?? { kind: plan.kind, commentary: plan.commentary }
+    if (!notificationAllowed(settings, gate.kind) || !notificationRegionAllowed(settings, prefectures)) return false
+    // 臨時解説は「解説情報の音・読み上げ」にも従う（中継も `commentary` で同じ判定をする）
+    if (gate.commentary && !settings.nankaiCommentaryAlerts) return false
+    const shown = notificationWouldShow()
+    if (plan.requires !== undefined) forgetNotifiedSpecialInfo(memory, plan.requires)
     showBrowserNotification(plan.notification.title, plan.notification.body, plan.notification.tag, false, plan.notification.open)
-    if (plan.remember !== undefined) rememberNotified(plan.remember)
+    // 長周期は、取消の通知で地名を言うために地名も一緒に覚える（取消の電文は震源を持たない）。保存は 1 回
+    if (shown && plan.remember !== undefined) {
+      const lpgm = event.kind === 'lpgm' && !event.data.cancelled
+        ? { eventId: event.data.eventId, name: event.data.hypocenter?.name.trim() ?? '' }
+        : undefined
+      rememberNotifiedSpecialInfo(memory, plan.remember, gate, lpgm)
+    }
+    return shown
   }
   /**
    * 推計震度分布図の読み上げの主題を地震ごとに決めるための、見た地震の覚え（→ `estimatedIntensityTopicKey`）。
@@ -1652,6 +1674,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    */
   const skipTelegramTextRef = useRef(false)
   const spokenTsunamiCancelEventIdsRef = useRef<Set<string>>(new Set())
+  // 観測情報の通知（札 `tsunami-obs`）を出した報（`partialRetractionKey`）。津波情報だけの取消は、ここにある報への取消にだけ
+  // 通知を出す（2026-11-09 ユーザー選択「音は全部・通知は通知した報だけ (Recommended)」）
+  const tsunamiObsNotifiedRef = useRef<Set<string>>(new Set())
+  // 緊急地震速報で最後に出した通知の字面（地震ごと）。格上げも引き上げも無い続報は、これと変わったときだけ鳴らさずに差し替える
+  const eewLastNoticeRef = useRef<Map<string, Pick<EewNotice, 'title' | 'body'>>>(new Map())
+  const rememberEewLastNotice = (key: string, notice: EewNotice) => {
+    if (eewLastNoticeRef.current.size >= NOTIFIED_MEMORY_MAX) eewLastNoticeRef.current.clear()
+    eewLastNoticeRef.current.set(key, { title: notice.title, body: notice.body })
+  }
   /**
    * 閉じるまで残す津波の通知（札 `tsunami`・`requireInteraction`）を出していて、まだ終わりの通知で置き換えていないか。
    *
@@ -2854,7 +2885,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         if (settings.soundEnabled) playAlertSound('earthquakeCancel')
         // 発表の通知を同じ札で置き換える（2026-10-24 ユーザー選択「出す (Recommended)」）。地名は発表で覚えた値から引く
         notifySpecialInfo({ kind: 'lpgm', data: lpgmEvent })
-        lpgmNotifiedNameRef.current.delete(lpgmEvent.eventId)
+        forgetNotifiedSpecialInfo(notifiedMemory(), undefined, lpgmEvent.eventId)
         title.releaseTitle('lpgm', lpgmEvent.eventId)
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
@@ -2864,7 +2895,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             () => speakDeferredCancelReason('長周期地震動に関する観測情報', lpgmEvent.cancelText, `lpgm:${lpgmEvent.eventId}`),
           )
         } else {
-          // 読み上げが無効な端末では、取消は一覧とバッジが消えるだけで理由がどこにも残らない
+          // 読み上げが無効な端末でも理由は地震カードの報の一覧に残る（→ `lpgmRetraction`）。記録にも残す
           log.info(`[lpgm] 長周期地震動が取り消されました（${lpgmEvent.eventId}）${lpgmEvent.cancelText ? `: ${lpgmEvent.cancelText}` : ''}`)
         }
         return
@@ -2897,10 +2928,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const lpgmName = lpgmEvent.hypocenter?.name.trim() ?? ''
       title.setTitle(joinTitleParts('長周期地震動', lpgmName, `最大階級${lpgmEvent.maxClass}`))
       title.scheduleTitleRevert('lpgm', lpgmEvent.eventId)
+      // 取消の通知で言う地名は、通知を出したときだけ `notifySpecialInfo` が一緒に覚える（取消の電文は震源を持たない）
       notifySpecialInfo({ kind: 'lpgm', data: lpgmEvent })
-      // 取消の通知で地名を言うために覚える（取消の電文は震源を持たない）
-      if (lpgmNotifiedNameRef.current.size >= LPGM_NAME_MEMORY_MAX) lpgmNotifiedNameRef.current.clear()
-      lpgmNotifiedNameRef.current.set(lpgmEvent.eventId, lpgmName)
       if (lpgmSpeech) {
         // 主題は地震情報と分ける。内容が別軸（震度と長周期地震動階級）なので、片方が
         // もう片方の言い換えにはならない（割り込みは従来どおり許す）。
@@ -3052,7 +3081,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     //
     // **タブは動かさず、タイトルも書き換えない**（帯で伝える情報。震度や警報のタイトルを上書きしない）。
     if (event.kind === 'quakeNotice') {
-      // 通知を切っている種別は本文も読まない（解説情報の設定と同じ扱い）
+      // ブラウザ通知は音・読み上げの設定とは別の設定「お知らせの通知」に従うので、音・読み上げを打ち切る前に出す
+      notifySpecialInfo({ kind: 'quakeNotice', data: event.data })
+      // 音・読み上げを切っている種別は本文も読まない（解説情報の設定と同じ扱い）
       if (!settings.quakeNoticeAlerts) { skipTelegramTextRef.current = true; return }
       const notice = event.data
       if (notice.cancelled) {
@@ -3088,7 +3119,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 出す」）。臨時情報の発表期間中は解説情報が毎日届くため、書き換えると「南海トラフ臨時情報（巨大地震注意）」の
     // タイトル表示を毎日上書きしてしまう。
     if (event.kind === 'nankaiCommentary') {
-      // 通知を切っている種別は本文も読まない（この設定は音・帯・読み上げをまとめて止めるもの）。
+      // ブラウザ通知は先に出す。定例解説は自分の設定「定例の解説情報の通知」だけに従い、臨時解説は
+      // 「解説情報の音・読み上げ」にも従う（判定は `planSpecialInfoNotification` と `notifySpecialInfo`）
+      notifySpecialInfo({ kind: 'nankaiCommentary', data: event.data })
+      // 音・読み上げを切っている種別は本文も読まない（この設定は音・帯・読み上げをまとめて止めるもの）。
       if (!settings.nankaiCommentaryAlerts) { skipTelegramTextRef.current = true; return }
       const commentary = event.data
       if (commentary.cancelled) {
@@ -3097,7 +3131,6 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 「伝える (Recommended)」。→ `useEarthquakes` の `decideDispatch`）。帯は消えるのでパネルは開かない。
         // 主題は発表と共有する（理由は地震回数の取消と同じ）。
         if (settings.soundEnabled) playAlertSound('specialInfoCancel')
-        notifySpecialInfo({ kind: 'nankaiCommentary', data: commentary })
         title.releaseTitle('nankaiCommentary', commentary.id)
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
@@ -3113,8 +3146,6 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         title.setTitle(commentary.headline.trim() || '南海トラフ地震関連解説情報')
         title.scheduleTitleRevert('nankaiCommentary', commentary.id)
       }
-      // 臨時解説だけ通知する（定例解説は平常時にも毎月届く。2026-10-24 ユーザー選択「出す (Recommended)」）
-      notifySpecialInfo({ kind: 'nankaiCommentary', data: commentary })
       // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
       expandPanelForSpecialInfo()
       if (settings.soundEnabled) {
@@ -3193,7 +3224,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     }
 
     // 国際津波関連情報（WEPA60）。**音・通知・読み上げで伝える**（2026-11-06 ユーザー選択「読み上げ・通知・音をまとめて足す」）。
-    // 音は遠地地震と同じ（同日の選択「遠地地震の音・試験も伝える (Recommended)」。通信試験も同じく伝える）。通知は津波の
+    // 音は遠地地震と同じ（同日の選択「遠地地震の音・試験も伝える (Recommended)」）。**通信試験がここへ来るのは設定「試験報を
+    // 受信（検証用）」が入のときだけ**（受信の入口 `admitInternationalTsunami` が止める。2026-11-09 ユーザー選択「試験報の設定で
+    // 止める (Recommended)」。試験報の設定との関係を書かずに諮った 11-06 の選択の扱いを改めた）。通知は津波の
     // 通知の設定に従う（同日の選択「津波の通知の設定で出す (Recommended)」）。読む文は `internationalTsunamiToText`。
     // 英文の本文そのものは読まない（日本語の声では読めない。上の `telegramTextToSpeak` も外している）。
     //
@@ -3360,6 +3393,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     tsunamiMemoryGenRef.current += 1
     lastTsunamiGradeRef.current = null
     lastTsunamiRef.current = null
+    // 観測の通知を出した報の記憶も落とす。取消の照合は種類だけで当てる（→ `tsunamiPartialRetractionNotificationFor`）ので、
+    // 残すと次の津波の取消が前の津波の観測の通知に当たり、通知していない報の取消を出してしまう（解除を待たずに次の津波が
+    // 来る経路もここを通る）
+    tsunamiObsNotifiedRef.current.clear()
     // 観測点の記憶は**波高と名前の両方**を、**画面用と読み上げ用の両方**で落とす。
     //
     // 波高だけ落として名前を残すと、前の津波で「観測中」（波高未確定）のまま終わった観測点は、
@@ -3794,8 +3831,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     } else if (event.kind === 'tsunami' && isPartialTsunamiRetraction(event)) {
       // **津波情報・沖合の観測だけの取消。** 警報等は生きているので、解除・誤報取消の分岐へ落とさない
       // （落とすと「津波警報等は誤って発表されたため取り消されました」と読み、観測点の記憶も全部捨てる）。
-      // カードはその種類の報を抜いて組み直す（`useEarthquakes`）。ここでは音を鳴らさず、取り消された
-      // 事実だけを読む（2026-10-15 ユーザー承認「読み上げて組み直す（推奨）」）。
+      // カードはその種類の報を抜いて組み直す（`useEarthquakes`）。取り消された事実を読む（2026-10-15 ユーザー承認
+      // 「読み上げて組み直す（推奨）」）。**音は津波の取消音を鳴らし、通知は観測情報を通知した報への取消にだけ出す**
+      // （2026-11-09 ユーザー選択「音は全部・通知は通知した報だけ (Recommended)」）。
       const retractKey = partialRetractionKey(event)
       // 照合と組み直しは、受信した報を状態更新と同じ規則で当てた津波で行う（→ `receivedTsunamiRef`）。
       if (!tsunamiStep || tsunamiStep.kind === 'ignored' || !tsunamiBeforeReport) {
@@ -3804,6 +3842,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         log.debug(`[tsunami] ${event.headType} の取消は既に伝えたので読みません: ${retractKey}`)
       } else {
         spokenTsunamiCancelEventIdsRef.current.add(retractKey)
+        // 観測の通知を出したかは、組み直す報が残らないときの後始末（`forgetEndedTsunami`）が記憶を消す前に読む
+        const retractNotice = tsunamiPartialRetractionNotificationFor(event, tsunamiObsNotifiedRef.current)
         const refolded = tsunamiStep.kind === 'live' ? tsunamiStep.tsunami : null
         // 録画ツール向けの記録。`alert` は全体の等級が動いたときだけ出す（→ recording-interface-spec.md）——
         // 組み直す報が残らなければ津波は画面から消えるので取消、残れば組み直した津波の等級が動いたときだけ。
@@ -3828,6 +3868,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           lastTsunamiRef.current = refolded
           // 等級の基準も組み直した津波に揃える（取り消された報の等級を基準に、次の報の引き下げ・格上げを判定しない）。
           lastTsunamiGradeRef.current = gradeAfter === 'Unknown' ? null : gradeAfter
+        }
+        if (settings.soundEnabled) playAlertSound('tsunamiCancel')
+        if (event.headType) forgetPartialRetractionsOf(tsunamiObsNotifiedRef.current, event.headType)
+        if (retractNotice && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
+          showBrowserNotification(retractNotice.title, retractNotice.body, TSUNAMI_OBS_NOTIFICATION_TAG, retractNotice.requireInteraction, retractNotice.open)
         }
         if (settings.ttsEnabled && (event.headType === 'VTSE51' || event.headType === 'VTSE52')) {
           speakNonEEWDelayed(
@@ -4136,7 +4181,22 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // `event` は入口で統合した報で、印（`everSpecialWarning`）を運んでいる（`useEarthquakes` の `mergeEewReport`）。
         // 出すかどうか（格上げ・予想の引き上げ）は生の区分のまま —— 下げ止まりは見出しの文言だけに効かせる
         const notice = eewAnnounceNotice(key, event, announce.forecast)
+        const shown = notificationWouldShow()
         showBrowserNotification(notice.title, notice.body, notice.tag, true, notice.open)
+        // 差し替えの相手は、実際に出た通知だけ（出ていない通知を、後の続報で初めて静かに出さない）
+        if (shown) rememberEewLastNotice(key, notice)
+        else eewLastNoticeRef.current.delete(key)
+      } else if (!eewSameReport && eewNotifiedKeysRef.current.has(key) && eewLastNoticeRef.current.has(key)
+        && notificationAllowed(settings, 'eew') && notificationRegionAllowed(settings, eewPrefectures(event))) {
+        // 格上げも引き上げも無い続報は、通知の字面（規模・最終報・震央地名・予想）が変わったときだけ**鳴らさずに**同じ札で
+        // 差し替える（2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
+        const quiet = eewQuietReplaceNotice(eewAnnounceNotice(key, event, announce.forecast), eewLastNoticeRef.current.get(key))
+        // 差し替えが出せないとき（「アプリを開いている間は通知しない」など）は字面を進めない。進めると、裏へ回った後の
+        // 同じ字面の続報で差し替えず、通知が古い字面のまま残る
+        if (quiet && notificationWouldShow()) {
+          replaceBrowserNotificationQuietly(quiet.title, quiet.body, quiet.tag, true, quiet.open)
+          rememberEewLastNotice(key, quiet)
+        }
       }
       // EEW タイトルをイベントデータから構築（state は未更新のため event 直接参照）
       title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event))
@@ -5981,7 +6041,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 出すかと中身は `tsunamiObservationNotificationFor`（中継のプッシュ通知と共用）。
       if (notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
         const n = tsunamiObservationNotificationFor(event, marks552, tsunamiCardBasis)
-        if (n) showBrowserNotification(n.title, n.body, TSUNAMI_OBS_NOTIFICATION_TAG, n.requireInteraction, n.open)
+        if (n) {
+          const shown = notificationWouldShow()
+          showBrowserNotification(n.title, n.body, TSUNAMI_OBS_NOTIFICATION_TAG, n.requireInteraction, n.open)
+          // 津波情報だけの取消の通知は、実際に出た観測の通知にだけ出す（「音は全部・通知は通知した報だけ (Recommended)」）
+          if (shown) {
+            if (tsunamiObsNotifiedRef.current.size >= NOTIFIED_MEMORY_MAX) tsunamiObsNotifiedRef.current.clear()
+            tsunamiObsNotifiedRef.current.add(partialRetractionKey(event))
+          }
+        }
       }
       window.clearTimeout(obsStatusClearTimerRef.current)
       obsStatusClearTimerRef.current = window.setTimeout(() => setObsUpdateStatus(new Map()), TSUNAMI_BADGE_TTL_MS)
@@ -6159,13 +6227,16 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     spokenAreaGradeRef.current.clear()
     spokenForecastHeightRef.current.clear()
     seenLpgmEventIdsRef.current.clear()
-    lpgmNotifiedNameRef.current.clear()
-    notifiedSpecialInfoRef.current.clear()
+    // 通知した特別な情報の記憶は端末に保存しているので、捨てずに保存した値から読み直す（時間軸をまたいでも、
+    // 通知した発表の取消は出す）
+    notifiedSpecialInfoMemoryRef.current = loadNotifiedSpecialInfo()
     // 津波の取消・解除・失効を「もう伝えた」記憶も落とす。**残すと、同じ `eventId` の取消を
     // リプレイで流したときに音・読み上げ・タブ移動のすべてが黙る**（`alreadySpoken` が真に
     // なる経路）。しかも 200 件溜まるまで自己クリアされないので、実質そのセッション中ずっと
     // 効き続ける。他の既読系と揃える。
     spokenTsunamiCancelEventIdsRef.current.clear()
+    tsunamiObsNotifiedRef.current.clear()
+    eewLastNoticeRef.current.clear()
     // 閉じるまで残る津波の通知を出した印も下ろす。残すと、通知を止めた端末で、時間軸の違う津波の終わりの報が
     // 前の通知を置き換えに行く（`tsunamiPersistentNotificationShownRef`）
     tsunamiPersistentNotificationShownRef.current = false

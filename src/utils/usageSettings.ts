@@ -40,7 +40,7 @@ export const USAGE_SETTING_GROUPS = {
   map: '地図',
   behavior: '動作設定',
   actionChecklist: '行動チェックリスト',
-  location: 'ホーム地点',
+  location: '登録地点',
   seismo: '自作地震計',
   wave: '波形グラフ',
   share: '共有と保存',
@@ -126,6 +126,8 @@ export const USAGE_TOP_LEVEL_SPECS = {
   notifyEEW: bool('notification', '緊急地震速報の通知', true),
   notifyTsunami: bool('notification', '津波通知', true),
   notifyNankai: bool('notification', '南海トラフ・後発地震の通知', true),
+  notifyNankaiRoutine: bool('notification', '定例の解説情報の通知', false),
+  notifyQuakeNotice: bool('notification', 'お知らせの通知', false),
   notifyPrefectures: { group: 'notification', label: '通知する地域（選んだ都道府県の数。0 は全国）', rule: { kind: 'count', max: 47 }, default: '0' },
   pushNotifyEnabled: bool('push', 'プッシュ通知', false),
   // 音と読み上げ
@@ -186,9 +188,9 @@ export const USAGE_TOP_LEVEL_SPECS = {
   actionChecklistMinScale: choice('actionChecklist', '行動チェックリストを出す最低震度', INTENSITY_SCALES, 45),
   periodicReloadHours: num('behavior', '定期自動リロード（時間・0 は切）', 0, 168, 1),
   recordingMode: bool('behavior', '録画モード', false),
-  // ホーム地点
-  homeLat: present('location', 'ホーム地点（緯度を入れたか）'),
-  homeLng: present('location', 'ホーム地点（経度を入れたか）'),
+  // 登録地点
+  homeLat: present('location', '登録地点（緯度を入れたか）'),
+  homeLng: present('location', '登録地点（経度を入れたか）'),
   arrivalToken: present('location', '到達予想キー'),
   // 自作地震計
   seismoEnabled: bool('seismo', '自作地震計と接続', false),

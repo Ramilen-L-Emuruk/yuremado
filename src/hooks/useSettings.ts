@@ -66,7 +66,7 @@ export interface AppSettings extends QuakeListSettings {
   notifyMinScale: number    // 地震情報を通知する最低震度（階級値。入り切りは `notifyQuake`）
   // 地震後の行動チェックリストを出すか。最低震度とは別に持つ（切って入れ直しても最低震度を忘れないため）
   actionChecklistEnabled: boolean
-  // 地震後の行動チェックリストを出す最低震度。ホーム地点を設定していれば
+  // 地震後の行動チェックリストを出す最低震度。登録地点を設定していれば
   // その周り（半径 NEARBY_RADIUS_KM）で、していなければ全国のどこかで、この震度に達したら出す
   actionChecklistMinScale: number
   soundEnabled: boolean     // 地震・EEW・津波の受信時に音を鳴らす
@@ -124,6 +124,8 @@ export interface AppSettings extends QuakeListSettings {
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
   notifyDetection: boolean         // 強震モニタの揺れ検知時にブラウザ通知を送る
   notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
+  notifyNankaiRoutine: boolean     // 南海トラフ地震関連解説情報の定例解説のブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
+  notifyQuakeNotice: boolean       // 地震・津波に関するお知らせのブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
   /**
    * アプリを閉じている間も中継からプッシュ通知を受け取る（docs/relay-server-design.md §6.7）。既定はオフ
    * （2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）。入れた端末だけが中継へ送り先と通知の設定の写しを登録する
@@ -140,12 +142,12 @@ export interface AppSettings extends QuakeListSettings {
    * （2026-11-03 ユーザー選択「都道府県を選べる・既定は全国 (Recommended)」「両方に掛ける (Recommended)」）
    */
   notifyPrefectures: string[]
-  homeLat: number | null           // ホーム地点 緯度（null = 未設定）
-  homeLng: number | null           // ホーム地点 経度（null = 未設定）
+  homeLat: number | null           // 登録地点 緯度（null = 未設定）
+  homeLng: number | null           // 登録地点 経度（null = 未設定）
   /**
    * 到達予想トークン（空文字 = 未設定）。
    *
-   * これが有効なときだけ、ホーム地点への主要動到達を自前の走時計算で出す。既定では気象庁が
+   * これが有効なときだけ、登録地点への主要動到達を自前の走時計算で出す。既定では気象庁が
    * 区域ごとに出した到達予測時刻を伝えるだけ —— 地点ごとの予想を自前で出すのは気象業務法
    * 第 17 条の許可を要する地震動の予報業務に当たりうるため（→ `utils/arrivalToken.ts`）。
    */
@@ -397,6 +399,8 @@ export const DEFAULTS: AppSettings = {
   // 揺れ検知の通知は既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」。検知ベンチの静かな窓 22 本・11.3 時間のうち 2 本で確定まで進んだ）。
   notifyDetection: false,
   notifyNankai: true,
+  notifyNankaiRoutine: false,
+  notifyQuakeNotice: false,
   pushNotifyEnabled: false,
   notifyQuietWhileOpen: false,
   notifyPrefectures: [],
@@ -710,6 +714,8 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyTsunami: ensureBool(partial.notifyTsunami, DEFAULTS.notifyTsunami),
     notifyDetection: ensureBool(partial.notifyDetection, DEFAULTS.notifyDetection),
     notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
+    notifyNankaiRoutine: ensureBool(partial.notifyNankaiRoutine, DEFAULTS.notifyNankaiRoutine),
+    notifyQuakeNotice: ensureBool(partial.notifyQuakeNotice, DEFAULTS.notifyQuakeNotice),
     pushNotifyEnabled: ensureBool(partial.pushNotifyEnabled, DEFAULTS.pushNotifyEnabled),
     notifyQuietWhileOpen: ensureBool(partial.notifyQuietWhileOpen, DEFAULTS.notifyQuietWhileOpen),
     notifyPrefectures: ensurePrefectureCodes(partial.notifyPrefectures),
@@ -812,7 +818,7 @@ export function injectDevApiKey(settings: AppSettings, key: string | undefined):
 /**
  * dev サーバーが注入した到達予想トークンを読む。
  *
- * トークンが開くのはホーム地点への到達予想。注入の可否そのものは
+ * トークンが開くのは登録地点への到達予想。注入の可否そのものは
  * `scripts/dev-api-key-gate.ts` の `shouldInjectDevArrivalToken` が判定しており、
  * build には渡らない。
  */

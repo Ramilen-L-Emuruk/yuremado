@@ -3871,8 +3871,8 @@ export function nankaiToText(event: JMANankai): string {
   // 取り消された事実だけを伝え、状況の断定も行動指示も足さない。
   //
   // **取消の理由（電文の `Body/Text`。パーサーは `body` に入れる）も読む**（2026-10-22 ユーザー選択「理由を声にする
-  // (Recommended)」。地震・津波・地震回数の取消と同じ書き方 → `cancelReasonSentence`）。帯は取消で消えるので、
-  // 理由が届く先は読み上げだけ。長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+  // (Recommended)」。地震・津波・地震回数の取消と同じ書き方 → `cancelReasonSentence`）。理由は帯の取消の表示と
+  // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
   if (event.retracted) {
     return '南海トラフ地震臨時情報は取り消されました。' + cancelReasonSentence(event.body)
   }
@@ -3948,8 +3948,8 @@ export function earthquakeCountToText(event: JMAEarthquakeCount): string {
   if (event.cancelled) {
     // 理由（電文の `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
     // **地震・津波・EEW の取消と揃える** —— 片方だけ拾うと、
-    // 同じ「取り消した」でも種別によって理由が出たり出なかったりする。**この種別はカードが
-    // 消えるので、理由が届く先は読み上げだけ**（他の 3 種別は取消後もカードが残って全文を出す）。
+    // 同じ「取り消した」でも種別によって理由が出たり出なかったりする。理由は帯の取消の表示と
+    // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。
     // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
     return '地震回数に関する情報は取り消されました。' + cancelReasonSentence(event.cancelText)
   }
@@ -4001,7 +4001,7 @@ function formatCountSpanForSpeech(startTime: string, endTime: string): string {
  * 自由付加文（`freeText`）もそちらで本文に続けて読む。
  *
  * 取消は他の種別と同じく「取り消された事実」と理由を読む（→ `cancelReasonSentence`）。
- * 帯ごと消えるので、理由が届く先は読み上げだけ（地震回数と同じ）。
+ * 理由は帯の取消の表示と通知の本文にも出る（地震回数と同じ。→ `utils/specialInfoCancelBand.ts`）。
  */
 export function quakeNoticeToText(event: JMAQuakeNotice): string {
   if (event.cancelled) {
@@ -4127,7 +4127,7 @@ export function lpgmToText(lpgm: JMALpgm, opts: TtsSpeechOptions, isNew: boolean
   if (lpgm.cancelled) {
     // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。理由（電文の
     // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
-    // 取消で長周期の表示（一覧・バッジ）ごと消え、理由が届く先は読み上げだけ（地震回数と同じ）。
+    // 取消で長周期の表示（一覧・バッジ）は消えるが、理由は地震カードの報の一覧にも残る（→ `lpgmRetraction`）。
     // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
     return '長周期地震動に関する観測情報は取り消されました。' + cancelReasonSentence(lpgm.cancelText)
   }

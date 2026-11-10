@@ -171,7 +171,7 @@ function eewReachesSeismo(
  */
 export function seismoWaveTriggered(params: {
   /**
-   * 自作地震計の周り（半径 30 km）。**中心は地震計の座標で、座標が無ければホーム地点**
+   * 自作地震計の周り（半径 30 km）。**中心は地震計の座標で、座標が無ければ登録地点**
    * （2026-10-22 ユーザー承認。`hooks/useSeismoScope.ts`）。
    */
   scope: NearbyScope

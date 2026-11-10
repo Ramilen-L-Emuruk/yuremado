@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { JMAInternationalTsunami, JMAQuake } from '../types/earthquake'
 import {
-  NO_INTERNATIONAL_TSUNAMIS, ORIGIN_MATCH_TOLERANCE_MS, internationalTsunamiIndex, internationalTsunamiQuakeName,
-  internationalTsunamiOpenKey, internationalTsunamiTarget, upsertInternationalTsunami,
+  NO_INTERNATIONAL_TSUNAMIS, admitInternationalTsunami, ORIGIN_MATCH_TOLERANCE_MS, internationalTsunamiIndex, internationalTsunamiQuakeName,
+  internationalTsunamiBandItem, internationalTsunamiOpenKey, internationalTsunamiTarget, upsertInternationalTsunami,
   withInternationalTsunamiCards,
 } from './internationalTsunami'
 
@@ -132,6 +132,22 @@ describe('upsertInternationalTsunami', () => {
   })
 })
 
+// 受信の入口で入れるか。
+//   正  : 通信試験は試験報の設定が切なら入れない／対照: 設定が入なら入れる／安全弁: 地震の報は設定に関わらず入れる
+describe('admitInternationalTsunami', () => {
+  const test = bulletin({ title: 'NWPTA COMMUNICATIONS TEST', isCommunicationsTest: true, originTime: undefined })
+  it('正: 通信試験は試験報を受け取らない設定では入れない', () => {
+    expect(admitInternationalTsunami(test, false)).toBe(false)
+  })
+  it('対照: 試験報を受け取る設定なら通信試験も入れる', () => {
+    expect(admitInternationalTsunami(test, true)).toBe(true)
+  })
+  it('安全弁: 地震の報は設定に関わらず入れる', () => {
+    expect(admitInternationalTsunami(bulletin(), false)).toBe(true)
+    expect(admitInternationalTsunami(bulletin(), true)).toBe(true)
+  })
+})
+
 // 付く先の無い報を拾う。
 //   正  : 付く地震カードが無ければ拾う／対照: 付くカードがあれば拾わない／安全弁: 通信試験は拾わない
 describe('internationalTsunamiIndex の付く先の無い報', () => {
@@ -242,5 +258,25 @@ describe('読み上げ・通知の付く先（internationalTsunamiQuakeName / in
     const main = named(quake('震源・震度情報', '2021-01-21T12:23:41.000Z', 4.8, 127.4), 'インドネシア付近')
     expect(internationalTsunamiOpenKey([foreshock, main], origin, 4.8, 127.4)).toBe(main.eventKey)
     expect(attachedTo(main, [foreshock, main], [bulletin()])).toHaveLength(1)
+  })
+})
+
+// 地震カードに付かない報を特別な情報の帯へ（2026-11-09 ユーザー選択「帯に出す (Recommended)」）
+//   正: 通信試験と発生時刻を読めない報は帯の 1 通になり、期限は発表から 7 日／対照: 地震カードに付く報は帯に出さない／
+//   安全弁: 発表時刻を読めない報は期限を数えられないので帯に出さない
+describe('internationalTsunamiBandItem', () => {
+  const x = (over: Partial<JMAInternationalTsunami>): JMAInternationalTsunami =>
+    ({ id: 'w1', title: 'T', time: '2026-01-01T12:00:00Z', isCommunicationsTest: false, text: 'x', ...over } as JMAInternationalTsunami)
+  it('正: 通信試験と発生時刻を読めない報は帯の 1 通になる（期限は発表から 7 日）', () => {
+    expect(internationalTsunamiBandItem(x({ isCommunicationsTest: true }))).toEqual({
+      id: 'w1', reportDateTime: '2026-01-01T12:00:00Z', expireAt: '2026-01-08T12:00:00.000Z', report: expect.objectContaining({ id: 'w1' }),
+    })
+    expect(internationalTsunamiBandItem(x({ originTime: undefined }))).not.toBeNull()
+  })
+  it('対照: 発生時刻を読める報（地震カードに付く）は帯に出さない', () => {
+    expect(internationalTsunamiBandItem(x({ originTime: '2026-01-01T11:50:00Z' }))).toBeNull()
+  })
+  it('安全弁: 発表時刻を読めない報は帯に出さない', () => {
+    expect(internationalTsunamiBandItem(x({ isCommunicationsTest: true, time: 'bad' }))).toBeNull()
   })
 })

@@ -19,11 +19,21 @@ export interface PushPrefsCopy {
   tsunami: boolean
   nankai: boolean
   nankaiCommentary: boolean
+  /** 定例解説の通知（`notifyNankaiRoutine`）。この欄を知らない古い中継には無視される */
+  nankaiRoutine: boolean
+  /** 地震・津波に関するお知らせの通知（`notifyQuakeNotice`）。同上 */
+  quakeNotice: boolean
+  /**
+   * 試験報を受け取るか（`dmdataTestDelivery`）。入でなければ、国際津波関連情報の通信試験を送らない（2026-11-09 ユーザー選択
+   * 「試験報の設定で止める (Recommended)」）。この欄を知らない古い購読は、中継が切として扱う
+   */
+  testDelivery: boolean
   prefectures: string[]
 }
 
 type PushSettings = Pick<AppSettings,
-  'notifyEnabled' | 'notifyQuake' | 'notifyMinScale' | 'notifyEEW' | 'notifyTsunami' | 'notifyNankai' | 'nankaiCommentaryAlerts' | 'notifyPrefectures'>
+  'notifyEnabled' | 'notifyQuake' | 'notifyMinScale' | 'notifyEEW' | 'notifyTsunami' | 'notifyNankai' | 'nankaiCommentaryAlerts'
+  | 'notifyNankaiRoutine' | 'notifyQuakeNotice' | 'notifyPrefectures' | 'dmdataTestDelivery'>
 
 export function pushPrefsOf(s: PushSettings): PushPrefsCopy {
   const on = s.notifyEnabled
@@ -34,6 +44,9 @@ export function pushPrefsOf(s: PushSettings): PushPrefsCopy {
     tsunami: on && s.notifyTsunami,
     nankai: on && s.notifyNankai,
     nankaiCommentary: s.nankaiCommentaryAlerts,
+    nankaiRoutine: on && s.notifyNankaiRoutine,
+    quakeNotice: on && s.notifyQuakeNotice,
+    testDelivery: s.dmdataTestDelivery,
     prefectures: [...s.notifyPrefectures],
   }
 }

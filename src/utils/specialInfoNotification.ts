@@ -1,5 +1,6 @@
 import type {
   JMANankai, JMANankaiCommentary, JMAKohatsu, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami,
+  JMAQuakeNotice,
 } from '../types/earthquake'
 import { readDateTime } from './formatters'
 import { INTERNATIONAL_TSUNAMI_NAME, internationalTsunamiBody } from './internationalTsunamiSpeech'
@@ -15,7 +16,9 @@ import type { NotificationOpen } from './notificationOpen'
  *
  * - 見出しは電文の情報名。本文は気象庁の要約（見出し文）か、帯・読み上げと同じ言い方
  * - **同じ種類の通知は後から来た報で置き換える**（`tag` を種類ごとに固定する。長周期・推計は地震ごと）
- * - 取消は「〇〇 取消」／「〇〇は取り消されました」。緊急地震速報の取消の通知と同じ形
+ * - 取消は「〇〇 取消」／「〇〇は取り消されました」。緊急地震速報の取消の通知と同じ形。南海トラフ・後発・関連解説・
+ *   地震回数・お知らせは、電文が取消の理由（`Body/Text`）を持てば本文をその文にする（2026-11-09 ユーザー選択
+ *   「帯を取消に切り替え＋通知に理由 (Recommended)」。説明「ブラウザ通知・プッシュ通知の本文を理由の文に（空なら今の定型文）」）
  */
 export interface SpecialInfoNotification {
   readonly title: string
@@ -28,16 +31,18 @@ export interface SpecialInfoNotification {
   readonly open: NotificationOpen | null
 }
 
-const NANKAI_NAME = '南海トラフ地震臨時情報'
-const KOHATSU_NAME = '北海道・三陸沖後発地震注意情報'
-const COMMENTARY_NAME = '南海トラフ地震関連解説情報'
+// 情報名。取消の帯（→ `specialInfoCancelBand.ts`）も同じ名前で言う
+export const NANKAI_NAME = '南海トラフ地震臨時情報'
+export const KOHATSU_NAME = '北海道・三陸沖後発地震注意情報'
+export const COMMENTARY_NAME = '南海トラフ地震関連解説情報'
 const LPGM_NAME = '長周期地震動に関する観測情報'
 const ESTIMATED_NAME = '推計震度分布図'
-const COUNT_NAME = '地震回数に関する情報'
+export const COUNT_NAME = '地震回数に関する情報'
+export const QUAKE_NOTICE_NAME = '地震・津波に関するお知らせ'
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
-function cancelled(name: string, tag: string, subject = name): SpecialInfoNotification {
-  return { title: `${name} 取消`, body: `${subject}は取り消されました`, tag, open: null }
+function cancelled(name: string, tag: string, subject = name, reason = ''): SpecialInfoNotification {
+  return { title: `${name} 取消`, body: reason.trim() || `${subject}は取り消されました`, tag, open: null }
 }
 
 /**
@@ -46,23 +51,23 @@ function cancelled(name: string, tag: string, subject = name): SpecialInfoNotifi
  * 段階名を読めない報は情報名だけを見出しにする。要約の無い報は本文なし。
  */
 export function nankaiNotification(event: JMANankai): SpecialInfoNotification {
-  if (event.retracted) return cancelled(NANKAI_NAME, 'nankai')
+  if (event.retracted) return cancelled(NANKAI_NAME, 'nankai', NANKAI_NAME, event.body)
   const stage = event.kindName || (event.cancelled ? '調査終了' : '')
   return { title: stage ? `${NANKAI_NAME}（${stage}）` : NANKAI_NAME, body: event.summary ?? '', tag: 'nankai', open: null }
 }
 
 /** 後発地震注意情報の通知。この電文に終了の報は無いので、`cancelled` が立つのは取消だけ。 */
 export function kohatsuNotification(event: JMAKohatsu): SpecialInfoNotification {
-  if (event.cancelled) return cancelled(KOHATSU_NAME, 'kohatsu')
+  if (event.cancelled) return cancelled(KOHATSU_NAME, 'kohatsu', KOHATSU_NAME, event.body)
   return { title: KOHATSU_NAME, body: event.summary ?? '', tag: 'kohatsu', open: null }
 }
 
 /**
- * 関連解説情報の通知。**呼び出し側が臨時解説だけに絞る**（定例解説は毎月届くので出さない。
- * 2026-10-24 ユーザー選択「出す (Recommended)」）。見出しは電文の情報名（「（第１号）」を含む）。
+ * 関連解説情報の通知（臨時解説・定例解説とも同じ形。どちらを出すかの設定は `planSpecialInfoNotification`）。
+ * 見出しは電文の情報名（臨時解説は「（第１号）」を含む）。
  */
 export function nankaiCommentaryNotification(event: JMANankaiCommentary): SpecialInfoNotification {
-  if (event.cancelled) return cancelled(COMMENTARY_NAME, 'nankai-commentary')
+  if (event.cancelled) return cancelled(COMMENTARY_NAME, 'nankai-commentary', COMMENTARY_NAME, event.body)
   return { title: event.headline.trim() || COMMENTARY_NAME, body: event.summary ?? '', tag: 'nankai-commentary', open: null }
 }
 
@@ -105,8 +110,17 @@ export function estimatedIntensityNotification(event: JMAEstimatedIntensity, isN
  * 見出しが種別名だけ（伝える回数が無い報）なら本文なし。
  */
 export function earthquakeCountNotification(event: JMAEarthquakeCount, headline: string): SpecialInfoNotification {
-  if (event.cancelled) return cancelled(COUNT_NAME, 'earthquake-count')
+  if (event.cancelled) return cancelled(COUNT_NAME, 'earthquake-count', COUNT_NAME, event.cancelText ?? '')
   return { title: COUNT_NAME, body: headline === COUNT_NAME ? '' : headline, tag: 'earthquake-count', open: null }
+}
+
+/**
+ * 地震・津波に関するお知らせの通知。見出しは情報名、本文は電文の見出し文（`Head/Headline/Text`）そのまま
+ * （2026-11-09 ユーザー選択「この文面でよい (Recommended)」）。押したらアプリを前に出すだけ（帯はどの画面でも地図の上に出ている）。
+ */
+export function quakeNoticeNotification(event: JMAQuakeNotice): SpecialInfoNotification {
+  if (event.cancelled) return cancelled(QUAKE_NOTICE_NAME, 'quake-notice', QUAKE_NOTICE_NAME, event.body)
+  return { title: QUAKE_NOTICE_NAME, body: event.headline.trim(), tag: 'quake-notice', open: null }
 }
 
 /**

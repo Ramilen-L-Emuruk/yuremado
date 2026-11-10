@@ -72,6 +72,7 @@ Windows の Git Bash（MSYS2）は、コマンドへ渡す前に引数を書き�
 |---|---|---|
 | `grep` のパターンに、バックスラッシュそのものの直後に `/` が続く形（`'https:\\/'`）を含めると、当たるはずのものが **0 件**になる。`/` だけ・`\/`・`\|` は当たる（2026-10-21 に Git Bash で実測） | MSYS2 の引数変換 | 固定文字列なら **`grep -F`**（複数は `-e` を並べる）。正規表現が要るなら `Grep` ツール（ripgrep。この変換を受けない） |
 | `/` で始まる引数（`/api/items` のような API のパス）が `C:/Program Files/Git/api/items` に化け、URL が壊れて `getaddrinfo failed` のような**名前解決の失敗**に見える | MSYS2 のパス変換 | そのコマンドの前に **`MSYS_NO_PATHCONV=1`** を付ける |
+| `TZ=Asia/Tokyo date` が日本時間ではなく **UTC の時刻**を返し（`+%z` が `+0000`。2026-11-09 に実測）、時刻を使った判断（何分前か・取る範囲）が 9 時間ずれる | 引数ではなく環境変数の話。`Asia/Tokyo` のような地域名を解釈せず、黙って UTC に落ちる（`JST-9` の形は効く） | 日本時間は **`TZ=JST-9 date`** か PowerShell の `Get-Date`。**時刻を判断に使う前に `+%z` を付けて `+0900` を確かめる** |
 | `curl -o /tmp/x.json` で書いたファイルを、Windows のプログラム（`node` など）が `ENOENT` で読めない | Git Bash の `/tmp` は Git Bash の中だけの場所で、Windows のプログラムは `C:\tmp` を探す | Windows のプログラムにも渡すファイルは、Windows 形の絶対パス（`C:/Users/...`）へ書く |
 
 実例（固定文字列 `https:\/\/` が 2 箇所あるファイルで実測）:

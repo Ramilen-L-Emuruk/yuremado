@@ -788,17 +788,19 @@ export function eewNotifiedForecast(eew: EEWAlert): EewNotifiedForecast {
 }
 
 /**
- * 緊急地震速報のブラウザ通知の本文。「石川県能登地方 最大震度5弱予想 長周期地震動階級2予想」の形で、
+ * 緊急地震速報のブラウザ通知の本文。「石川県能登地方 M6.3 最大震度5弱予想 長周期地震動階級2予想」の形で、
  * 震度・階級は予想があるときだけ添える（2026-10-21 ユーザー承認「それで進めて。」）。
  * **最大予想震度 0 の報は「最大震度0予想」と出す**（2026-10-30 ユーザー選択「最大震度0予想 (Recommended)」。
  * 例「八丈島東方沖 最大震度0予想」）。電文が長周期地震動階級 0 と言い切った報は「長周期地震動階級0予想」を添える
  * （2026-10-30 ユーザー決定「全部出す」・同日ユーザー選択「震度と並べて出す (Recommended)」）。
  */
-export function eewNotificationBody(name: string, forecast: EewNotifiedForecast): string {
+export function eewNotificationBody(name: string, forecast: EewNotifiedForecast, magnitude: string): string {
   const { scale, scaleZero, lpgm } = forecast
   // 震央地名が空の報（実配信では未観測）でも先頭に空白を残さない（2026-10-24 ユーザー選択「備えとして直す (Recommended)」）
   return [
     name.trim(),
+    // 規模（例「M6.3」。添えないときは空。2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
+    magnitude,
     scale.scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale.scale, scale.orAbove)}予想`
       : scaleZero ? '最大震度0予想' : '',
     lpgm.cls > 0 ? `長周期地震動${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}予想`

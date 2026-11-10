@@ -2,7 +2,7 @@
 //
 // 自作地震計の周りの範囲（地図の下端の波形を出すかの判定に使う）の回帰テスト。
 //
-// 固定するのは「中心は地震計の座標・座標が無ければホーム地点」（2026-10-22 ユーザー承認「地震計の座標」）。
+// 固定するのは「中心は地震計の座標・座標が無ければ登録地点」（2026-10-22 ユーザー承認「地震計の座標」）。
 // 座標は架空の丸めた値。
 
 import { describe, it, expect } from 'vitest'
@@ -22,7 +22,7 @@ const COORDS = {
 } as unknown as StationCoordsData
 const SITES: SiteCoords = [[35.0, 135.0], [35.0, 138.3]]
 
-const HOME_SCOPE: NearbyScope = { ...NO_SCOPE, regionNames: new Set(['ホームの区域']) }
+const HOME_SCOPE: NearbyScope = { ...NO_SCOPE, regionNames: new Set(['登録地点の区域']) }
 
 describe('seismoScopeCenters', () => {
   it('座標を持つ観測点だけを中心にする', () => {
@@ -38,15 +38,15 @@ describe('scopeAround', () => {
 })
 
 describe('useSeismoScope', () => {
-  // 対照: 地震計に座標が無ければ、ホーム地点の範囲をそのまま使う。
-  it('座標を持つ観測点が無ければホーム地点の範囲を返す', () => {
+  // 対照: 地震計に座標が無ければ、登録地点の範囲をそのまま使う。
+  it('座標を持つ観測点が無ければ登録地点の範囲を返す', () => {
     const { result } = renderHook(() =>
       useSeismoScope({ stations: [{ lat: null, lon: null }], homeScope: HOME_SCOPE, stationCoords: COORDS, kyoshinSites: SITES }),
     )
     expect(result.current).toBe(HOME_SCOPE)
   })
 
-  // 正: 座標があれば、ホーム地点ではなく地震計の周りで作る。
+  // 正: 座標があれば、登録地点ではなく地震計の周りで作る。
   it('座標を持つ観測点があれば、その周りで作る', () => {
     const { result } = renderHook(() =>
       useSeismoScope({ stations: [{ lat: 35.0, lon: 135.0 }], homeScope: HOME_SCOPE, stationCoords: COORDS, kyoshinSites: SITES }),

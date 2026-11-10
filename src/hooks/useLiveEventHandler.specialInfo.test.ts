@@ -14,10 +14,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useLiveEventHandler } from './useLiveEventHandler'
 import { DEFAULTS, type AppSettings } from './useSettings'
-import { showBrowserNotification } from '../utils/notifications'
+import { notificationWouldShow, showBrowserNotification } from '../utils/notifications'
 import { playAlertSound } from '../utils/alertSound'
 import type {
   JMAQuake, JMATsunami, JMANankai, JMAKohatsu, JMANankaiCommentary, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity,
+  JMAQuakeNotice,
 } from '../types/earthquake'
 
 vi.mock('../utils/voicevox', () => ({
@@ -29,9 +30,10 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 const notify = vi.mocked(showBrowserNotification)
+const wouldShow = vi.mocked(notificationWouldShow)
 const sound = vi.mocked(playAlertSound)
 
 function setup(over: Partial<AppSettings> = {}, nankaiActive = false) {
@@ -58,8 +60,9 @@ function setup(over: Partial<AppSettings> = {}, nankaiActive = false) {
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), openEstimatedIntensity: vi.fn(() => true), closeDistributionOnQuakeReport: vi.fn(),
   }))
   const handle = (e: unknown) => { act(() => { result.current.handleLiveEvent(e as never) }) }
+  const reset = () => { act(() => { result.current.resetTracking() }) }
   const titles = () => titleCalls.filter(([k]) => k === 'setTitle').map(([, v]) => v)
-  return { handle, titles, titleCalls, expandPanel }
+  return { handle, titles, titleCalls, expandPanel, reset }
 }
 
 const nankai = (over: Partial<JMANankai> = {}): JMANankai => ({
@@ -88,6 +91,9 @@ beforeEach(() => {
   vi.useFakeTimers()
   notify.mockClear()
   sound.mockClear()
+  wouldShow.mockReturnValue(true)
+  // 通知した記憶は端末に保存される。テストをまたいで持ち越さない
+  localStorage.clear()
 })
 afterEach(() => { vi.useRealTimers() })
 
@@ -144,12 +150,23 @@ describe('南海トラフ地震関連解説情報', () => {
     handle({ kind: 'nankaiCommentary', data: commentary() })
     expect(titles()).toEqual([])
   })
-  it('正: 臨時解説は通知を出し、定例解説は出さない', () => {
+  it('正: 臨時解説は通知を出し、定例解説は「定例の解説情報の通知」が切（既定）なら出さない', () => {
     const { handle } = setup()
     handle({ kind: 'nankaiCommentary', data: commentary({ id: 'c-2', serialName: '定例解説', serialCode: '200' }) })
     expect(notify).not.toHaveBeenCalled()
     handle({ kind: 'nankaiCommentary', data: commentary() })
     expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報（第１号）', '要約。', 'nankai-commentary', false, null)
+  })
+  it('正: 「定例の解説情報の通知」を入れれば定例解説も通知し、解説情報の音・読み上げを切っていても出す', () => {
+    const { handle } = setup({ notifyNankaiRoutine: true, nankaiCommentaryAlerts: false })
+    handle({ kind: 'nankaiCommentary', data: commentary({ id: 'c-2', serialName: '定例解説', serialCode: '200', headline: '南海トラフ地震関連解説情報' }) })
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報', '要約。', 'nankai-commentary', false, null)
+    expect(sound).not.toHaveBeenCalled()
+  })
+  it('対照: 定例の通知を入れても、臨時解説は解説情報の音・読み上げが切なら今どおり出さない', () => {
+    const { handle } = setup({ notifyNankaiRoutine: true, nankaiCommentaryAlerts: false })
+    handle({ kind: 'nankaiCommentary', data: commentary() })
+    expect(notify).not.toHaveBeenCalled()
   })
   it('正: 取消は取消音を鳴らし、発表を通知した号なら取消の通知で置き換える', () => {
     const { handle } = setup()
@@ -160,17 +177,51 @@ describe('南海トラフ地震関連解説情報', () => {
     expect(sound.mock.calls).toEqual([['specialInfoCancel']])
     expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報 取消', '南海トラフ地震関連解説情報は取り消されました', 'nankai-commentary', false, null)
   })
-  it('対照: 通知していない号（定例解説）への取消は通知しない', () => {
+  it('対照: 通知していない号（定例の通知が切のときの定例解説）への取消は通知しない', () => {
     const { handle } = setup()
     handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '定例解説', serialCode: '200' }) })
     handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '定例解説', serialCode: '200', cancelled: true }) })
     expect(notify).not.toHaveBeenCalled()
+  })
+  it('正: 定例解説の取消が種別を運ばなくても、発表を通知した設定（定例）に従って出す', () => {
+    const { handle } = setup({ notifyNankaiRoutine: true, notifyNankai: false })
+    handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '定例解説', serialCode: '200', headline: '南海トラフ地震関連解説情報' }) })
+    notify.mockClear()
+    handle({ kind: 'nankaiCommentary', data: commentary({ serialName: '解説情報', serialCode: '', cancelled: true }) })
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報 取消', '南海トラフ地震関連解説情報は取り消されました', 'nankai-commentary', false, null)
   })
   it('安全弁: 解説情報の設定を切った端末では、取消でも鳴らさず通知もしない', () => {
     const { handle } = setup({ nankaiCommentaryAlerts: false })
     handle({ kind: 'nankaiCommentary', data: commentary({ cancelled: true }) })
     expect(sound).not.toHaveBeenCalled()
     expect(notify).not.toHaveBeenCalled()
+  })
+})
+
+describe('地震・津波に関するお知らせ', () => {
+  const notice = (over: Partial<JMAQuakeNotice> = {}) => ({
+    id: 'qn-1', time: '', eventId: 'qn', headline: '和歌山県の自治体震度データ入電停止のお知らせ', body: '本文',
+    cancelled: false, reportDateTime: '', expireAt: '', ...over,
+  }) as JMAQuakeNotice
+  it('正: 「お知らせの通知」を入れれば、音・読み上げを切っていても通知を出す（本文は見出し文）', () => {
+    const { handle } = setup({ notifyQuakeNotice: true, quakeNoticeAlerts: false })
+    handle({ kind: 'quakeNotice', data: notice() })
+    expect(notify).toHaveBeenCalledWith('地震・津波に関するお知らせ', '和歌山県の自治体震度データ入電停止のお知らせ', 'quake-notice', false, null)
+    expect(sound).not.toHaveBeenCalled()
+  })
+  it('対照: 「お知らせの通知」が切（既定）なら、音・読み上げを入れていても通知は出さない', () => {
+    const { handle } = setup({ quakeNoticeAlerts: true })
+    handle({ kind: 'quakeNotice', data: notice() })
+    expect(notify).not.toHaveBeenCalled()
+    expect(sound.mock.calls).toEqual([['specialInfoCommentary']])
+  })
+  it('安全弁: 取消は発表を通知したもの（同じ EventID）にだけ出す。取消の電文は id が発表と違う', () => {
+    const { handle } = setup({ notifyQuakeNotice: true })
+    handle({ kind: 'quakeNotice', data: notice({ id: 'qn-other-cancel', eventId: 'qn-other', cancelled: true }) })
+    expect(notify).not.toHaveBeenCalled()
+    handle({ kind: 'quakeNotice', data: notice() })
+    handle({ kind: 'quakeNotice', data: notice({ id: 'qn-1-cancel', cancelled: true, body: '' }) })
+    expect(notify).toHaveBeenLastCalledWith('地震・津波に関するお知らせ 取消', '地震・津波に関するお知らせは取り消されました', 'quake-notice', false, null)
   })
 })
 
@@ -249,6 +300,44 @@ describe('地震回数に関する情報', () => {
     const { handle } = setup()
     handle({ kind: 'earthquakeCount', data: count({ cancelled: true }) })
     expect(sound.mock.calls).toEqual([['earthquakeCancel']])
+    expect(notify).not.toHaveBeenCalled()
+  })
+})
+
+// 2026-11-09 ユーザー選択「端末に保存＋出したときだけ覚える (Recommended)」
+describe('通知した記憶を端末に保つ', () => {
+  it('正: 読み込み直した後（新しく立てたフック）でも、発表を通知した取消の通知を出す', () => {
+    setup().handle({ kind: 'lpgm', data: lpgm() })
+    notify.mockClear()
+    setup().handle({ kind: 'lpgm', data: lpgm({ id: 'l-2', cancelled: true, hypocenter: undefined, maxClass: 0 }) })
+    expect(notify).toHaveBeenCalledWith(
+      '長周期地震動に関する観測情報 取消', '石川県能登地方の長周期地震動に関する観測情報は取り消されました', 'lpgm-20260101161000',
+      false, null,
+    )
+  })
+  it('正: 時間軸を切り替えても（resetTracking）記憶を捨てない', () => {
+    const { handle, reset } = setup()
+    handle({ kind: 'earthquakeCount', data: count() })
+    reset()
+    notify.mockClear()
+    handle({ kind: 'earthquakeCount', data: count({ id: 'ec-2', cancelled: true }) })
+    expect(notify).toHaveBeenCalledWith('地震回数に関する情報 取消', '地震回数に関する情報は取り消されました', 'earthquake-count', false, null)
+  })
+  it('対照: 通知が出ない状態（許可なし・開いている間は出さない）で受けた発表は覚えず、取消も通知しない', () => {
+    const { handle } = setup()
+    wouldShow.mockReturnValue(false)
+    handle({ kind: 'earthquakeCount', data: count() })
+    wouldShow.mockReturnValue(true)
+    notify.mockClear()
+    handle({ kind: 'earthquakeCount', data: count({ id: 'ec-2', cancelled: true }) })
+    expect(notify).not.toHaveBeenCalled()
+  })
+  it('安全弁: 取消を通知したら記憶から外す（2 通目の取消は通知しない）', () => {
+    const { handle } = setup()
+    handle({ kind: 'earthquakeCount', data: count() })
+    handle({ kind: 'earthquakeCount', data: count({ id: 'ec-2', cancelled: true }) })
+    notify.mockClear()
+    setup().handle({ kind: 'earthquakeCount', data: count({ id: 'ec-3', cancelled: true }) })
     expect(notify).not.toHaveBeenCalled()
   })
 })
