@@ -8,7 +8,7 @@ import { isValidIntensityScale, getIntensityLabelWithApproxAbove } from './inten
 import { isValidLpgmClass, getLpgmClassLabel, getLpgmClassLabelWithApproxAbove } from './lpgm'
 import { isEewArrivedKindCode, isEewPlumKindCode } from './eewKind'
 import { EEW_WARNING_REGION_ORDER } from './eewWarningRegions'
-import { EPICENTER_RANK_LABEL, MAGNITUDE_RANK_LABEL } from './eewAccuracyRanks'
+import type { Messages } from '../i18n/messages'
 import { log } from './logger'
 
 // 司・翠川(1999)の距離減衰式を使ってEEW最終報後の自動解除秒数を計算する。
@@ -1531,13 +1531,16 @@ export function selectEEWSoundType(isNew: boolean, levelUpgraded: boolean, curre
 // 要約すると、資料と突き合わせられなくなるうえ、こちらが評価を足したことになる。
 // ============================================================================
 
+/** リアルタイムタブの語（精度の語・予想の変化の文を引く辞書の節） */
+export type RealtimeWords = Messages['realtime']
+
 /**
  * 精度ランクの意味。**0（不明）と未知の値では何も返さない** ―― 「不明」と書いても
  * 利用者には伝わらず、欄が埋まるだけになる（画面の欄を消すことは 2026-10-21 ユーザー承認
  * 「記録し、表外はログへ (Recommended)」。表外の値の記録は `unknownEewAccuracyRanks`）。
  */
-export function eewEpicenterRankLabel(rank: number | undefined): string {
-  return rank === undefined ? '' : (EPICENTER_RANK_LABEL[rank] ?? '')
+export function eewEpicenterRankLabel(rank: number | undefined, w: RealtimeWords): string {
+  return rank === undefined ? '' : (w.epicenterRank[rank] ?? '')
 }
 
 /**
@@ -1548,23 +1551,23 @@ export function eewEpicenterRankLabel(rank: number | undefined): string {
  * （2026-10-30 に数えた）。同じ値なら行を足しても情報は増えないので出さない。0（不明）と 9（別の行で出す）も出さない
  * （2026-10-30 ユーザー選択「rank と違うときだけ出す (Recommended)」）。
  */
-export function eewEpicenterRank2Label(accuracy: EEWAlert['accuracy']): string {
+export function eewEpicenterRank2Label(accuracy: EEWAlert['accuracy'], w: RealtimeWords): string {
   const rank2 = accuracy?.epicenterRank2
   if (rank2 === undefined || rank2 < 1 || rank2 > 4 || rank2 === accuracy?.epicenterRank) return ''
-  return EPICENTER_RANK_LABEL[rank2] ?? ''
+  return w.epicenterRank[rank2] ?? ''
 }
 
-export function eewMagnitudeRankLabel(rank: number | undefined): string {
-  return rank === undefined ? '' : (MAGNITUDE_RANK_LABEL[rank] ?? '')
+export function eewMagnitudeRankLabel(rank: number | undefined, w: RealtimeWords): string {
+  return rank === undefined ? '' : (w.magnitudeRank[rank] ?? '')
 }
 
 /**
  * マグニチュード計算に使った観測点数の表示。**5 は「5点以上」**（解説資料 Ⅱ.21 1-4-2-4）。
  * 上限を「5点」と書くと、実際にはもっと多いかもしれないことが消える。
  */
-export function eewMagnitudePointsLabel(points: number | undefined): string {
+export function eewMagnitudePointsLabel(points: number | undefined, w: RealtimeWords): string {
   if (points === undefined || points <= 0) return ''
-  return points >= 5 ? '5点以上' : `${points}点`
+  return w.magnitudePoints(points)
 }
 
 /**
@@ -1578,15 +1581,6 @@ export function isEewHypocenterSettled(eew: EEWAlert): boolean {
   return eew.accuracy?.epicenterRank2 === 9
 }
 
-/** 最大予測値の変化の理由（`MaxIntChangeReason`）。解説資料 Ⅱ.21 2-1-4-3。 */
-const FORECAST_CHANGE_REASON_LABEL: Readonly<Record<number, string>> = {
-  1: 'マグニチュードが変わったため',
-  2: '震央の位置が変わったため',
-  3: 'マグニチュードと震央の位置が変わったため',
-  4: '震源の深さが変わったため',
-  9: 'PLUM法による予測で変わったため',
-}
-
 /**
  * 最大予測値が変わったことを伝える一文。変化が無い（0）・読めない報では空を返す。
  *
@@ -1597,7 +1591,7 @@ const FORECAST_CHANGE_REASON_LABEL: Readonly<Record<number, string>> = {
  * 0 に戻してくる。この戻り値をそのまま描くと帯は 1 秒で消えるので、出し続ける長さは呼び出し側が
  * 持つ（→ `RealtimeTab` の `useHeldForecastChange`）。
  */
-export function eewForecastChangeText(eew: EEWAlert): string {
+export function eewForecastChangeText(eew: EEWAlert, w: RealtimeWords): string {
   const c = eew.forecastChange
   if (!c) return ''
   const increased = c.maxInt === 1 || c.maxLgInt === 1
@@ -1605,9 +1599,10 @@ export function eewForecastChangeText(eew: EEWAlert): string {
   if (!increased && !decreased) return ''
   // 上下が同時に立つ報（震度は上がり階級は下がった等）は「変わりました」に倒す。
   // どちらか一方に決めると、立っていない側を無かったことにする。
-  const direction = increased && decreased ? '変わりました' : increased ? '大きくなりました' : '小さくなりました'
-  const reasonText = c.reason !== undefined ? FORECAST_CHANGE_REASON_LABEL[c.reason] : undefined
-  return reasonText ? `予想が${direction}（${reasonText}）` : `予想が${direction}`
+  const direction = increased && decreased ? 'changed' : increased ? 'up' : 'down'
+  // 理由の語は最大予測値の変化の理由（`MaxIntChangeReason`。解説資料 Ⅱ.21 2-1-4-3）の表から引く。表に無い値は理由を添えない
+  const reasonText = c.reason !== undefined ? w.forecastChangeReason[c.reason] : undefined
+  return w.forecastChange(direction, reasonText)
 }
 
 

@@ -15,10 +15,12 @@ import { createElement } from 'react'
 import { render, cleanup, screen, act } from '@testing-library/react'
 import { RealtimeTab } from './index'
 import type { EnsembleDetection } from '../../utils/kyoshinEnsembleTracker'
-import { ENSEMBLE_EVIDENCE_FOOTNOTE } from '../../utils/kyoshinEnsembleEvidence'
+import { ja } from '../../i18n/messages/ja'
 import { fakeEnsembleDetection } from '../../test-utils/ensembleDetection'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { EEWAlert } from '../../types/earthquake'
+
+const ENSEMBLE_EVIDENCE_FOOTNOTE = ja.realtime.evidence.footnote
 
 afterEach(cleanup)
 // `document.visibilityState` を差し替えるテストがあるため、モックはテストごとに戻す

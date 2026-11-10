@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, eewFeltRadiusKm, predictMeasuredIntensity, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, eewSerialSeries, eewDisplaySerial, supersedesEewReport, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
 import { diffHypoInfoEvents, type HypoInfoPendingMissing } from './eewHypoInfoDiff'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
 import { travelTimeSec } from './travelTime'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
@@ -1093,46 +1095,48 @@ describe('eewPhase2ScaleStabilityMs: 震度の跳躍幅から安定待ち時間�
 // 震源要素の精度・最大予測値の変化の表示（電文解説資料 Ⅱ.21 1-4-2・2-1-4）。
 // **語は資料の原文から採り、言い換えない。** 「IPF法（5点以上）」を「精度が高い」と要約すると、
 // 資料と突き合わせられなくなるうえ、こちらが評価を足したことになる。
+const RT = ja.realtime
+
 describe('震源要素の精度の表示', () => {
   it('ランクを資料の語で出す', () => {
-    expect(eewEpicenterRankLabel(1)).toBe('P波／S波レベル超え、IPF法（1点）、または仮定震源要素')
-    expect(eewEpicenterRankLabel(4)).toBe('IPF法（5点以上）')
-    expect(eewMagnitudeRankLabel(4)).toBe('P相／全相混在')
-    expect(eewMagnitudeRankLabel(8)).toBe('P波／S波レベル超え、または仮定震源要素')
+    expect(eewEpicenterRankLabel(1, RT)).toBe('P波／S波レベル超え、IPF法（1点）、または仮定震源要素')
+    expect(eewEpicenterRankLabel(4, RT)).toBe('IPF法（5点以上）')
+    expect(eewMagnitudeRankLabel(4, RT)).toBe('P相／全相混在')
+    expect(eewMagnitudeRankLabel(8, RT)).toBe('P波／S波レベル超え、または仮定震源要素')
   })
 
   // 正: **EPOS の括弧書きを落とさない。** 資料は「EPOS（海域〔観測網外〕）」
   // 「EPOS（内陸〔観測網内〕）」と書いており、この括弧が**観測網の外か内か**を言っている。
   // 「海域」「内陸」だけに縮めると、何と対比しているのか画面から読めなくなる。
   it('EPOS は観測網の内外まで出す', () => {
-    expect(eewEpicenterRankLabel(7)).toBe('EPOS（海域〔観測網外〕）')
-    expect(eewEpicenterRankLabel(8)).toBe('EPOS（内陸〔観測網内〕）')
+    expect(eewEpicenterRankLabel(7, RT)).toBe('EPOS（海域〔観測網外〕）')
+    expect(eewEpicenterRankLabel(8, RT)).toBe('EPOS（内陸〔観測網内〕）')
   })
 
   // 安全弁: 括弧書きを戻したのは EPOS の 2 つだけ。**他のランクへ波及していないこと。**
   // 資料は 1〜4 に〔 〕を持たせておらず、足すとこちらが原文に無いものを書いたことになる。
   it('EPOS 以外のランクに〔 〕を足していない', () => {
     for (const rank of [1, 2, 3, 4, 5, 6]) {
-      expect(eewEpicenterRankLabel(rank), `rank ${rank}`).not.toContain('〔')
+      expect(eewEpicenterRankLabel(rank, RT), `rank ${rank}`).not.toContain('〔')
     }
-    expect(eewMagnitudeRankLabel(6)).toBe('EPOS')   // Ｍ側の EPOS には括弧書きが無い
+    expect(eewMagnitudeRankLabel(6, RT)).toBe('EPOS')   // Ｍ側の EPOS には括弧書きが無い
   })
 
   // 対照: 0（不明）と未知の値では何も返さない。「不明」と書いても伝わらず、欄が埋まるだけ。
   it('不明・未知・未設定では何も返さない', () => {
-    expect(eewEpicenterRankLabel(0)).toBe('')
-    expect(eewEpicenterRankLabel(99)).toBe('')
-    expect(eewEpicenterRankLabel(undefined)).toBe('')
-    expect(eewMagnitudeRankLabel(0)).toBe('')
-    expect(eewMagnitudeRankLabel(undefined)).toBe('')
+    expect(eewEpicenterRankLabel(0, RT)).toBe('')
+    expect(eewEpicenterRankLabel(99, RT)).toBe('')
+    expect(eewEpicenterRankLabel(undefined, RT)).toBe('')
+    expect(eewMagnitudeRankLabel(0, RT)).toBe('')
+    expect(eewMagnitudeRankLabel(undefined, RT)).toBe('')
   })
 
   // 正: 5 は「5点以上」。上限を「5点」と書くと、実際にはもっと多いかもしれないことが消える。
   it('観測点数の 5 は「5点以上」', () => {
-    expect(eewMagnitudePointsLabel(3)).toBe('3点')
-    expect(eewMagnitudePointsLabel(5)).toBe('5点以上')
-    expect(eewMagnitudePointsLabel(0)).toBe('')
-    expect(eewMagnitudePointsLabel(undefined)).toBe('')
+    expect(eewMagnitudePointsLabel(3, RT)).toBe('3点')
+    expect(eewMagnitudePointsLabel(5, RT)).toBe('5点以上')
+    expect(eewMagnitudePointsLabel(0, RT)).toBe('')
+    expect(eewMagnitudePointsLabel(undefined, RT)).toBe('')
   })
 
   // 正・対照: rank2 の 9 だけが「これ以降変化しない」。rank の 9 では立たない。
@@ -1145,50 +1149,58 @@ describe('震源要素の精度の表示', () => {
 
   // 2026-10-30 に足した（ユーザー選択「rank と違うときだけ出す (Recommended)」）
   it('【正】rank2 が rank と違えば、rank2 を資料の語で返す', () => {
-    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 3 })).toBe('IPF法（3点／4点）')
-    expect(eewEpicenterRank2Label({ epicenterRank: 6, epicenterRank2: 1 })).toBe('P波／S波レベル超え、IPF法（1点）、または仮定震源要素')
+    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 3 }, RT)).toBe('IPF法（3点／4点）')
+    expect(eewEpicenterRank2Label({ epicenterRank: 6, epicenterRank2: 1 }, RT)).toBe('P波／S波レベル超え、IPF法（1点）、または仮定震源要素')
   })
   it('【対照】rank と同じ値なら出さない', () => {
-    expect(eewEpicenterRank2Label({ epicenterRank: 4, epicenterRank2: 4 })).toBe('')
+    expect(eewEpicenterRank2Label({ epicenterRank: 4, epicenterRank2: 4 }, RT)).toBe('')
   })
   it('【安全弁】0（不明）・9（これ以降変化しない）・持たない報は出さない', () => {
-    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 0 })).toBe('')
-    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 9 })).toBe('')
-    expect(eewEpicenterRank2Label({ epicenterRank: 7 })).toBe('')
-    expect(eewEpicenterRank2Label(undefined)).toBe('')
+    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 0 }, RT)).toBe('')
+    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 9 }, RT)).toBe('')
+    expect(eewEpicenterRank2Label({ epicenterRank: 7 }, RT)).toBe('')
+    expect(eewEpicenterRank2Label(undefined, RT)).toBe('')
   })
 })
 
 describe('最大予測値の変化の一文', () => {
   it('上がった・下がったを理由つきで出す', () => {
-    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 1, reason: 2 } })))
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 1, reason: 2 } }), RT))
       .toBe('予想が大きくなりました（震央の位置が変わったため）')
-    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 2, reason: 9 } })))
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 2, reason: 9 } }), RT))
       .toBe('予想が小さくなりました（PLUM法による予測で変わったため）')
   })
 
   // 正: 長周期階級だけが動いた報でも出す（震度は据え置きでも予想は変わっている）。
   it('長周期階級だけの変化でも出す', () => {
-    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 0, maxLgInt: 1, reason: 1 } })))
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 0, maxLgInt: 1, reason: 1 } }), RT))
       .toBe('予想が大きくなりました（マグニチュードが変わったため）')
   })
 
   // 安全弁: 震度は上がり階級は下がった報では「変わりました」に倒す。
   // **どちらか一方に決めると、立っていない側を無かったことにする。**
   it('上下が同時に立つ報は「変わりました」に倒す', () => {
-    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 1, maxLgInt: 2, reason: 3 } })))
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 1, maxLgInt: 2, reason: 3 } }), RT))
       .toBe('予想が変わりました（マグニチュードと震央の位置が変わったため）')
   })
 
   // 正: 理由が読めなければ括弧を出さない。
   it('理由が無ければ括弧を出さない', () => {
-    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 1 } }))).toBe('予想が大きくなりました')
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 1 } }), RT)).toBe('予想が大きくなりました')
   })
 
   // 対照: 変化なし（0）と要素が無い報では何も出さない。
   it('変化なし・未設定では出さない', () => {
-    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 0, maxLgInt: 0, reason: 0 } }))).toBe('')
-    expect(eewForecastChangeText(makeEEW())).toBe('')
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 0, maxLgInt: 0, reason: 0 } }), RT)).toBe('')
+    expect(eewForecastChangeText(makeEEW(), RT)).toBe('')
+  })
+  // 正: 日本語以外の辞書を渡すと、同じ判定をその言語の語で組む（理由の表に無い値は括弧を出さないのも同じ）
+  it('英語の辞書では英語の語で組む', () => {
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 1, reason: 2 } }), en.realtime)).toBe('Forecast raised (epicenter location changed)')
+    expect(eewForecastChangeText(makeEEW({ forecastChange: { maxInt: 2 } }), en.realtime)).toBe('Forecast lowered')
+    expect(eewEpicenterRankLabel(7, en.realtime)).toBe('EPOS (offshore [outside network])')
+    expect(eewMagnitudePointsLabel(1, en.realtime)).toBe('1 station')
+    expect(eewMagnitudePointsLabel(5, en.realtime)).toBe('5+ stations')
   })
 })
 
