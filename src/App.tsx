@@ -155,6 +155,11 @@ import { ROOT_FRAME_CLASS, ROOT_FRAME_TOP_INSET } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
 import { effectiveNotifyMinScale, notificationRegionAllowed } from './utils/notificationGate'
 import { quakePrefectures } from './utils/notificationRegions'
+import { AlertDock } from './components/AlertDock'
+import { buildEewDockItems, buildTsunamiDockItem, homePrefectureCode } from './utils/alertDock'
+import { usePrefectures } from './hooks/usePrefectures'
+import { PREFECTURES } from './data/prefectureCodes'
+import { TSUNAMI_ZONE_PREFECTURES } from './data/tsunamiZonePrefectures'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -2804,7 +2809,27 @@ export function App() {
   // 知る手段がこれしか無い（判定からは向こうで外す。理由は useActionChecklist の `eews`）。
   const eewListForChecklist = useMemo(() => [...activeEEWs.values()], [activeEEWs])
   const eewListNoCancelled = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
-  // ホーム地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
+  // どのタブからでも見える速報・津波の帯（→ components/AlertDock・utils/alertDock.ts）。
+  // **今いるタブの項目は出さない**（速報はリアルタイムタブ、津波は津波タブ。2026-11-09 ユーザー選択「移った先では消す」）。
+  // 登録地点の県は、県の境界の点内判定で引く（津波の登録地点の段は、その県に掛かる津波予報区から選ぶ）。
+  const prefectureShapes = usePrefectures()
+  const homePrefCode = useMemo(
+    () => (home && prefectureShapes ? homePrefectureCode(home.lat, home.lng, prefectureShapes, PREFECTURES) : null),
+    [home, prefectureShapes],
+  )
+  // 登録地点があるのに県が引けないと、津波の帯の登録地点の段が黙って消える。座標が海上・県境データの外なら起きうるので記録する
+  useEffect(() => {
+    if (home && prefectureShapes && homePrefCode === null) log.warn('[帯] 登録地点の座標がどの都道府県にも入らず 5 km 以内にも無いので、津波の帯に登録地点の段を出さない')
+  }, [home, prefectureShapes, homePrefCode])
+  const dockEews = useMemo(
+    () => (activeTab === 'realtime' ? [] : buildEewDockItems(eewListNoCancelled, swaveArrival)),
+    [activeTab, eewListNoCancelled, swaveArrival],
+  )
+  const dockTsunami = useMemo(
+    () => (activeTab === 'tsunami' ? null : buildTsunamiDockItem(tsunamis, homePrefCode, TSUNAMI_ZONE_PREFECTURES)),
+    [activeTab, tsunamis, homePrefCode],
+  )
+  // 登録地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。
   const nearbyScope = useNearbyScope({
     home,
@@ -3515,9 +3540,16 @@ export function App() {
             折りたたみを含め display:none（hidden クラス）を使わないのは、scrollTop がリセットされるため。
             左右分割時の幅は `w-panel` / `w-panel-narrow`（src/index.css で定義）。境のつまみで変えた幅は
             --panel-w-side / --panel-w-narrow で受ける（→ utils/panelWidth.ts）。 */}
-        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border bg-app relative z-10 ${
+        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border bg-app relative z-10 flex flex-col ${
           panelCollapsed ? 'side:w-0 side:border-l-0' : 'side:w-panel sideNarrow:w-panel-narrow side:border-l'
         }`}>
+          {/* 速報・津波の帯。上下分割では一覧の下（ナビの上）、左右分割では一番上（→ components/AlertDock）。
+              パネルを畳むとパネルごと隠れる（2026-11-09 ユーザー選択「畳んだら帯も隠す」） */}
+          <div className="order-last side:order-first">
+            <AlertDock eews={dockEews} tsunami={dockTsunami} onOpen={handleTabChange} />
+          </div>
+          {/* 各タブのスクロール容器（`absolute inset-0`）の基準。帯が場所を取った残りの高さになる */}
+          <div className="relative min-h-0 flex-1">
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'earthquake' ? ' invisible pointer-events-none' : ''}`}>
             {/* **タブごとに境界を置く。** 6 タブは常時マウントで `invisible` を付け外ししている
                 だけなので、1 つのタブが投げた例外は境界が無ければ App ごと巻き込む。ここで
@@ -3643,6 +3675,7 @@ export function App() {
             <ErrorBoundary variant="region" label={TAB_LABELS.telegrams}>
               <TelegramTab telegramLog={telegramLog} onClear={clearTelegramLog} active={activeTab === 'telegrams'} />
             </ErrorBoundary>
+          </div>
           </div>
         </div>
 
