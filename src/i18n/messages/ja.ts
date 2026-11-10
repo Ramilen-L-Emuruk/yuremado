@@ -1,5 +1,6 @@
 import type { TelegramLogKind, TsunamiGrade } from '../../types/earthquake'
 import { TELEGRAM_LOG_ERROR, type TelegramLogErrorMark } from '../../utils/telegramLogErrorMark'
+import type { CatalogColorBy } from '../../utils/hypocenterCatalogView'
 
 /** 等級ごとの避難の呼びかけ（気象庁の付加文が採れなかったときに出す。読み上げも同じ文を読む → `utils/tsunami.ts` の `fallbackEvacuationAction`）。 */
 const TSUNAMI_EVACUATION: Record<Exclude<TsunamiGrade, 'Unknown'>, string> = {
@@ -270,5 +271,78 @@ export const ja = {
       [TELEGRAM_LOG_ERROR.bufrDecodeFailed]: '推計震度分布図を読めませんでした',
       [TELEGRAM_LOG_ERROR.fetchFailed]: '本文を取得できませんでした',
     } satisfies Record<TelegramLogErrorMark, string>,
+  },
+  /**
+   * 震源カタログ（`components/CatalogTab` と、見出しの語を組む `utils/hypocenterCatalogView.ts`）。
+   * 数は、呼び出し側が言語に合わせて桁を区切った文字も添えて渡す。出典の欄の中身（索引の `source`・`license`）は辞書を通さない
+   */
+  catalog: {
+    showing: '表示中',
+    showingHint: {
+      loading: '年ごとのデータを取得しています',
+      pending: '絞り込みを変えた直後です。数えなおしが終わると入れ替わります',
+      idle: '地図に出ている点の数です',
+    },
+    /** 件数。`n` は数そのもの（複数形を分ける言語が使う）、`shown` は桁を区切った文字 */
+    count: (_n: number, shown: string) => `${shown} 件`,
+    unknownMagnitude: (_n: number, shown: string) => `（うち M 不明 ${shown} 件）`,
+    loading: '読み込み中',
+    updating: '更新中',
+    indexFailed: '震源カタログを取得できず',
+    /** 取りに行った年がすべて取れなかったとき（`years` は `missingYears` で詰めた年） */
+    missingAllYears: (years: string) => `${years} 年を取得できず（この期間の地震は 1 件も出ていません）`,
+    missingSomeYears: (years: string) => `${years} 年を取得できず（件数はそのぶん少なく出ています）`,
+    /** 取れなかった年の続き（`1990〜1992`）と、その区切り */
+    yearRun: (from: number, to: number) => `${from}〜${to}`,
+    yearRunSeparator: ', ',
+    retry: '再試行',
+    completeness: (year: number, magnitude: string) =>
+      `${year} 年まで遡ると、記録が揃うのは M ${magnitude} 以上です。 それより小さい地震は少なく見えます。`,
+    filterSection: '絞り込み',
+    viewSection: '見せ方',
+    period: '期間',
+    periodHint: '表示する期間です。スライダーは年ごとに動き、日付を選ぶと年の途中から指定できます。日付を選んだ側は、もう一方のつまみを動かしても保たれます',
+    periodValue: (from: string, to: string, _days: number, shownDays: string) => `${from} 〜 ${to}（${shownDays}日ぶん）`,
+    /** 期間のつまみの読み上げ名（`RangeSlider` の `ends`） */
+    periodEnds: ['開始', '終了'],
+    startDate: '期間の開始日',
+    endDate: '期間の終了日',
+    dateSeparator: '〜',
+    /** 期間の下に添える行（`preliminaryNote`）。2 つ出るときは `joinNotes` で繋ぐ */
+    preliminaryFrom: (date: string) => `${date}以降は速報値`,
+    telegramTailFrom: (date: string) => `${date}以降は地震情報の電文から（無感の地震は載らない）`,
+    joinNotes: (notes: readonly string[]) => notes.join('。'),
+    magnitude: 'マグニチュード',
+    magnitudeHint: '表示する規模の範囲です。端に置くとその側の制限を外します',
+    depth: '深さ',
+    depthHint: '表示する震源の深さの範囲です。端に置くとその側の制限を外します',
+    latitude: '緯度',
+    latitudeHint: '表示する南北の範囲です。経度・深さと合わせて、直方体で切り出せます。端に置くとその側の制限を外します',
+    longitude: '経度',
+    longitudeHint: '表示する東西の範囲です。端に置くとその側の制限を外します',
+    /** 範囲の見出し（`rangeLabel` と `*BoundLabel`）。値は小数 1 桁に整えてから渡す */
+    noLimit: '制限なし',
+    range: (min: string, max: string) => `${min} 〜 ${max}`,
+    magnitudeAtLeast: (m: string) => `M ${m} 以上`,
+    magnitudeAtMost: (m: string) => `M ${m} 以下`,
+    depthAtLeast: (km: number) => `${km} km 以深`,
+    depthAtMost: (km: number) => `${km} km 以浅`,
+    northOf: (lat: string) => `北緯 ${lat}° 以北`,
+    southOf: (lat: string) => `北緯 ${lat}° 以南`,
+    eastOf: (lng: string) => `東経 ${lng}° 以東`,
+    westOf: (lng: string) => `東経 ${lng}° 以西`,
+    external: '気象庁以外の機関の震源',
+    externalHint: '気象庁以外の機関が決めた震源も表示します。ほとんどが海外の地震で、日本付近の一部は気象庁の震源と重なります。',
+    colorBy: '色分け',
+    colorByHint: '点の色を何で決めるかです。深さは浅いほど暖色、マグニチュードは大きいほど暖色、発生年は新しいほど明るくなります',
+    /** 色分けの選択肢（書いた順が並び） */
+    colorByOption: { depth: '深さ', magnitude: 'マグニチュード', time: '発生年' } as Record<CatalogColorBy, string>,
+    emphasis: '強調表示',
+    /** 倍率は実装（`pointSizePx`）から引いて渡す */
+    emphasisHint: (atM3: string, atM9: string) =>
+      `マグニチュードが大きいほど点を大きくします。下の基準サイズに対して、M3 で ${atM3} 倍・M9 で ${atM9} 倍です`,
+    pointSize: '点の基準サイズ',
+    pointSizeHint: '点の直径です。強調表示がオンのときは、この大きさに倍率が掛かります',
+    source: '出典',
   },
 } as const

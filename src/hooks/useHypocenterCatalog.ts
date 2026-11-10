@@ -36,8 +36,8 @@ export interface HypocenterCatalogState {
   catalogEndMs: number | null
   /** 索引または年ファイルを取得中か。 */
   loading: boolean
-  /** 索引を取得できなかった理由（利用者に見せる文言）。年ファイルの欠けは `missingYears`。 */
-  error: string | null
+  /** 索引を取得できなかったか（画面の文は辞書の `catalog.indexFailed`）。年ファイルの欠けは `missingYears`。 */
+  indexFailed: boolean
   /** 取得できなかった年（昇順）。空なら欠けなし。**件数はこのぶん少なく出る。** */
   missingYears: number[]
   /**
@@ -111,7 +111,7 @@ export function useHypocenterCatalog(
   const [index, setIndex] = useState<HypocenterIndex | null>(null)
   const [years, setYears] = useState<HypocenterYear[]>(EMPTY_YEARS)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [indexFailed, setIndexFailed] = useState(false)
   const [missingYears, setMissingYears] = useState<number[]>(EMPTY_MISSING)
   const [requestedYears, setRequestedYears] = useState(0)
   // 取り直しの合図。期間が変わらなくても効果を回し直すために連番で持つ。
@@ -125,7 +125,7 @@ export function useHypocenterCatalog(
     setLoading(true)
     // **始める前に前回の失敗を消す。** 残すと、新しい取得の最中に古いエラーと
     // 「読み込み中」が同時に出る。
-    setError(null)
+    setIndexFailed(false)
     loadHypocenterIndex()
       .then((idx) => {
         if (cancelled) return
@@ -136,7 +136,7 @@ export function useHypocenterCatalog(
         // 痕跡が一つも残らない。画面へ出すのは打ち切られていないときだけ。
         log.error('[useHypocenterCatalog] 索引を取得できませんでした', err)
         if (cancelled) return
-        setError('震源カタログを取得できず')
+        setIndexFailed(true)
         setLoading(false)
       })
     return () => {
@@ -280,5 +280,5 @@ export function useHypocenterCatalog(
     [tailFromMs, tailUntilMs],
   )
 
-  return { index, catalogEndMs, years: merged, catalogYears: years, loading, error, missingYears, requestedYears, retry, tail: tailRange }
+  return { index, catalogEndMs, years: merged, catalogYears: years, loading, indexFailed, missingYears, requestedYears, retry, tail: tailRange }
 }
