@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ReloadSchedule } from '../hooks/useReloadSchedule'
+import { useMessages } from '../i18n/I18nProvider'
 import { log } from '../utils/logger'
 import { compareVersions, notesBetween, notesForUpdate, type ReleaseNoteEntry } from '../utils/releaseNotes'
 import { LAST_OPENED_VERSION_KEY, previousVersionToAnnounce } from '../utils/updatedNotice'
@@ -41,6 +42,7 @@ export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
     }
   }, [])
 
+  const t = useMessages().appUpdate
   const newVersion = schedule.update.newVersion
   const showingUpdated = schedule.countdown === null && !schedule.update.waiting && updatedFrom !== null && notes === null
   // 30 秒は「更新しました」の札が見えている間だけ数える（秒読みや窓の陰にいる間に消えないように）
@@ -75,27 +77,27 @@ export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
 
   let body: ReactNode = null
   if (schedule.countdown !== null) {
-    const verb = schedule.countdownReason === 'periodic' ? '再読み込みします' : '更新します'
+    const text = schedule.countdownReason === 'periodic' ? t.reloadIn(schedule.countdown) : t.updateIn(schedule.countdown)
     body = (
       <>
-        <span>{schedule.countdown} 秒後に{verb}</span>
-        <BadgeButton onClick={schedule.postpone}>後で</BadgeButton>
+        <span>{text}</span>
+        <BadgeButton onClick={schedule.postpone}>{t.later}</BadgeButton>
       </>
     )
   } else if (schedule.update.waiting) {
     body = (
       <>
-        <span>新しいバージョン{newVersion !== null ? ` ${newVersion}` : ''}</span>
-        <BadgeButton onClick={openWaitingNotes}>変更内容</BadgeButton>
-        <BadgeButton onClick={schedule.applyNow}>今すぐ更新</BadgeButton>
+        <span>{t.newVersion(newVersion)}</span>
+        <BadgeButton onClick={openWaitingNotes}>{t.whatsNew}</BadgeButton>
+        <BadgeButton onClick={schedule.applyNow}>{t.updateNow}</BadgeButton>
       </>
     )
   } else if (updatedFrom !== null) {
     body = (
       <>
-        <span>バージョン {__APP_VERSION__} に更新しました</span>
-        <BadgeButton onClick={() => openNotes({ kind: 'updated', from: updatedFrom })}>変更内容</BadgeButton>
-        <BadgeButton onClick={() => setUpdatedFrom(null)}>閉じる</BadgeButton>
+        <span>{t.updatedTo(__APP_VERSION__)}</span>
+        <BadgeButton onClick={() => openNotes({ kind: 'updated', from: updatedFrom })}>{t.whatsNew}</BadgeButton>
+        <BadgeButton onClick={() => setUpdatedFrom(null)}>{t.close}</BadgeButton>
       </>
     )
   }

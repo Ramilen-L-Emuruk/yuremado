@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useMessages } from '../i18n/I18nProvider'
 
 // 範囲を 1 本のスライダーで選ぶ（つまみが 2 つ）。震源カタログの期間・マグニチュード・深さで使う。
 //
@@ -19,7 +20,7 @@ interface Props {
   /** 読み上げ用の名前。下の `ends` と組にして各つまみの名前にする。 */
   label: string
   /**
-   * 読み上げでつまみを言い分ける対語（既定は「下端」「上端」）。
+   * 読み上げでつまみを言い分ける対語（既定は辞書の `rangeSlider.lower`・`upper`。日本語では「下端」「上端」）。
    *
    * **期間には「開始」「終了」を渡すこと。**「期間の下端」は日本語として不自然で、
    * 聞いたときに何を指すか掴みにくい。値の範囲（マグニチュード・深さ・緯度・経度）は
@@ -45,9 +46,11 @@ export const RangeSlider = memo(function RangeSlider({
   to,
   onChange,
   label,
-  ends = ['下端', '上端'],
+  ends: endsProp,
   disabled = false,
 }: Props) {
+  const t = useMessages().rangeSlider
+  const ends = endsProp ?? [t.lower, t.upper]
   const left = percentOf(from, min, max)
   const right = percentOf(to, min, max)
   // **つまみが重なったときは下端を上に置く。** 下になった側は掴めない。下端が上なら、
@@ -66,7 +69,7 @@ export const RangeSlider = memo(function RangeSlider({
       />
       <input
         type="range"
-        aria-label={`${label}の${ends[0]}`}
+        aria-label={t.thumb(label, ends[0])}
         min={min}
         max={max}
         step={step}
@@ -81,7 +84,7 @@ export const RangeSlider = memo(function RangeSlider({
       />
       <input
         type="range"
-        aria-label={`${label}の${ends[1]}`}
+        aria-label={t.thumb(label, ends[1])}
         min={min}
         max={max}
         step={step}

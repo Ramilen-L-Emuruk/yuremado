@@ -211,7 +211,8 @@ const LPGM_FOCUS_WAIT_MS = 10_000
 export function App() {
   const { settings, updateSetting, updateSettings, replaceSettings, adoptExternalSetting } = useSettings()
   // 各画面が落ちたときの表示に出す画面の名前（ナビのボタン名と同じ辞書の語）
-  const tabNames = useMessages().nav
+  const messages = useMessages()
+  const tabNames = messages.nav
   // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
   usePushSubscription(settings, updateSetting)
   // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す
@@ -3313,7 +3314,7 @@ export function App() {
                 行動チェックリスト・特別情報バナーは境界の外に残す——中へ入れると地図と一緒に消える。
                 **MapLibre のカスタムレイヤーが描画ループ（rAF）で投げた例外はここへ届かない**。
                 そちらは各レイヤーの render() を包んで utils/renderHealth.ts へ報告する側の担当。 */}
-            <ErrorBoundary variant="region" label="地図">
+            <ErrorBoundary variant="region" label={messages.errorScreen.mapLabel}>
               <MapView
                 mode={mapMode}
                 publicStationMarkers={publicStationMarkers}

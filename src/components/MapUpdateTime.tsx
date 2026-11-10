@@ -1,3 +1,5 @@
+import { useMessages } from '../i18n/I18nProvider'
+
 interface Props {
   lastUpdate: Date | null
   /** 更新がエラーで停止している場合 true（赤文字で表示） */
@@ -18,13 +20,14 @@ function formatDatetime(date: Date): string {
 // **折り返さない**（`whitespace-nowrap`）—— 日時が 2 行に割れると読みにくい。狭い画面では右上の観測点名が先に縮む。
 export function MapUpdateTime({ lastUpdate, error = false }: Props) {
   const valid = lastUpdate && !Number.isNaN(lastUpdate.getTime())
+  const t = useMessages().mapCorner
   return (
     <div
       className={`bg-panel/90 font-mono rounded-sm text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1 whitespace-nowrap ${
         error ? 'text-red-400' : 'text-white'
       }`}
     >
-      更新 {valid ? formatDatetime(lastUpdate) : '受信待機中…'}
+      {t.updatedAt(valid ? formatDatetime(lastUpdate) : null)}
     </div>
   )
 }

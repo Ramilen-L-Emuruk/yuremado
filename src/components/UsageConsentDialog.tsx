@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { CANCEL_FADE_MS, fadeIn } from './EarthquakeTab/quakeMotion'
+import { useMessages } from '../i18n/I18nProvider'
 import { OVERLAY_BACKDROP_PAD } from '../rootFrame'
 
 const PRIVACY_POLICY_URL = 'https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/privacy-policy.md'
@@ -15,6 +16,7 @@ export function UsageConsentDialog({ onAnswer }: {
   /** 許可したら true。許可しない・閉じたら false */
   onAnswer: (allowed: boolean) => void
 }) {
+  const t = useMessages().usageConsent
   const denyRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   // 窓は地震タブの取消の覆いと同じ 250ms で薄くから出す（2026-11-04 ユーザー選択「揃える (Recommended)」。動きを減らす設定では出さない）
@@ -53,20 +55,19 @@ export function UsageConsentDialog({ onAnswer }: {
       >
         {/* 文字の 2 組の値を持つ包み（並べ方は窓の flex のまま。→ index.css の ui-text） */}
         <div className="ui-text-scope contents text-(length:--ui-f)">
-        <div id="usage-consent-title" className="text-white">揺れ窓の改善にご協力ください</div>
+        <div id="usage-consent-title" className="text-white">{t.title}</div>
         <p className="text-(length:--ui-fs) leading-relaxed text-secondary">
-          使用状況データ（開いたタブ・使っている機能・設定・端末の種類など）を開発者に送信することを許可しますか？
-          名前・IP アドレス・登録した地点は送信しません。この設定はいつでも変更できます。
+          {t.body}
         </p>
         <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer" className="text-(length:--ui-fs) text-blue-400 hover:text-blue-300">
-          プライバシーポリシー
+          {t.privacyPolicy}
         </a>
         <div className="flex justify-end gap-2">
           <button ref={denyRef} type="button" onClick={() => onAnswer(false)} className={`${button} text-secondary`}>
-            許可しない
+            {t.deny}
           </button>
           <button type="button" onClick={() => onAnswer(true)} className={`${button} text-white`}>
-            許可する
+            {t.allow}
           </button>
         </div>
         </div>

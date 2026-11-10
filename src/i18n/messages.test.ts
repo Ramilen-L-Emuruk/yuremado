@@ -32,18 +32,26 @@ describe('辞書の形', () => {
     expect(empties).toEqual([])
   })
 
-  it('キーが欠けた辞書・余った辞書は型チェックで落ちる', () => {
+  it('キーが欠けた辞書・余った辞書・引数の違う関数は型チェックで落ちる', () => {
+    // 試す節（nav・appUpdate）の外は日本語の辞書をそのまま借りる
     // 正: 欠けている
     // @ts-expect-error nav.telegrams が無い
-    const missing: Messages = { nav: { earthquake: 'a', realtime: 'a', tsunami: 'a', catalog: 'a', settings: 'a' } }
+    const missing: Messages = { ...JA_MESSAGES, nav: { earthquake: 'a', realtime: 'a', tsunami: 'a', catalog: 'a', settings: 'a' } }
     // 安全弁: 余っている（欠けを防いでも、別名で足したキーは素通りしない）
     const extra: Messages = {
+      ...JA_MESSAGES,
       // @ts-expect-error nav.unknown は日本語の辞書に無い
       nav: { earthquake: 'a', realtime: 'a', tsunami: 'a', catalog: 'a', settings: 'a', telegrams: 'a', unknown: 'a' },
     }
+    // 正: 差し込む値の型が違う関数
+    const wrongArgs: Messages = {
+      ...JA_MESSAGES,
+      // @ts-expect-error reloadIn は秒（数）を受け取る
+      appUpdate: { ...JA_MESSAGES.appUpdate, reloadIn: (seconds: string) => seconds },
+    }
     // 対照: そろっていれば通る
-    const complete: Messages = { nav: { earthquake: 'a', realtime: 'a', tsunami: 'a', catalog: 'a', settings: 'a', telegrams: 'a' } }
-    expect([missing, extra, complete]).toHaveLength(3)
+    const complete: Messages = { ...JA_MESSAGES, nav: { earthquake: 'a', realtime: 'a', tsunami: 'a', catalog: 'a', settings: 'a', telegrams: 'a' } }
+    expect([missing, extra, wrongArgs, complete]).toHaveLength(4)
   })
 })
 

@@ -1,5 +1,6 @@
 import { Marquee } from './Marquee'
 import { useSyncExternalStore } from 'react'
+import { useMessages } from '../i18n/I18nProvider'
 import { subscribeRenderHealth, getRenderHealth } from '../utils/renderHealth'
 
 /**
@@ -19,6 +20,9 @@ const MAX_NAMES = 3
  */
 export function MapRenderStatus() {
   const health = useSyncExternalStore(subscribeRenderHealth, getRenderHealth, getRenderHealth)
+  const messages = useMessages()
+  const t = messages.mapCorner
+  const nameList = (names: readonly string[]): string => t.nameList(names.slice(0, MAX_NAMES), Math.max(0, names.length - MAX_NAMES))
   if (health.broken.length === 0 && health.uninteractive.length === 0) return null
 
   return (
@@ -26,23 +30,17 @@ export function MapRenderStatus() {
       {/* 文の形（言い切り・名前を主語に置く・この帯だけ括弧を使わない）の規約と理由は
           `docs/spec/settings-pwa-spec.md` §5.5「通知の文の形」。 */}
       {health.broken.length > 0 && (
-        <Marquee text={`${nameList(health.broken)}を描けず`} />
+        <Marquee text={t.cannotDraw(nameList(health.broken))} />
       )}
       {health.uninteractive.length > 0 && (
-        <Marquee text={`${nameList(health.uninteractive)}はクリックに応じず`} />
+        <Marquee text={t.notClickable(nameList(health.uninteractive))} />
       )}
       {/* **手掛かりは 2 つに共通なので 1 行にまとめる。** 片方にだけ添えると、もう片方は
           打つ手が無いように読める（実際にはどちらも同じ——一時的な不調なら作り直しで直り、
           恒久的なものならどちらも直らない）。
           再読み込みを挙げているのは、地図ごと作り直すとシェーダーも判定も新しく用意されるため。
           アプリが自分で作り直す機会（投影の切り替え）もあるが、利用者に案内できる操作ではない。 */}
-      <Marquee className="opacity-80" text="再読み込みで直ることがあります" />
+      <Marquee className="opacity-80" text={messages.errorScreen.reloadMayFix} />
     </div>
   )
-}
-
-/** 名前を並べる。上限を超えたぶんは「ほか N 件」にまとめる。 */
-function nameList(names: readonly string[]): string {
-  if (names.length <= MAX_NAMES) return names.join('・')
-  return `${names.slice(0, MAX_NAMES).join('・')} ほか ${names.length - MAX_NAMES} 件`
 }

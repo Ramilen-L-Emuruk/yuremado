@@ -1,6 +1,7 @@
 import { Marquee } from './Marquee'
 import { useEffect, useState } from 'react'
 import type { SeismoStreamState } from '../services/seismoStream'
+import { useMessages } from '../i18n/I18nProvider'
 import { READING_STALE_MS } from '../hooks/useSeismoStation'
 
 /**
@@ -23,20 +24,6 @@ import { READING_STALE_MS } from '../hooks/useSeismoStation'
  * 「繋がらなくなったことを地図の左上へ出す」の「拾えない形」）。
  */
 const GRACE_MS = READING_STALE_MS
-
-/**
- * 出す文言。
- *
- * **「【何が】【どうなった】」だけ。** 隣に並ぶ波形の「波形 途絶」と同じ形で、
- * 地図の隅は 1 行しか使えない —— 折り返すと何本出ているか読めなくなる。
- *
- * **行動の案内（「ホストが起動しているか確認」の類）は付けない。** この行が出る理由は
- * 3 通りあり（URL が空・URL の形が違う・ホストが応えない。機能を切っているときは出ない）、**どれか 1 つを
- * 括弧へ書くと残りでは誤った案内になる** —— 購読の上限（同時 8 本）で断られている
- * ときは、ホストは元気に動いている。切り分けは設定の窓の 1 行が受け持つ
- * （`SettingsTab/seismoStatusLine.ts`）。
- */
-const TEXT = '地震計 未接続'
 
 interface Props {
   /** 押し出しの繋がり具合。**機能が切れている・URL の形が違うときは `null`。** */
@@ -71,6 +58,19 @@ export function SeismoLinkStatus({ stream, urlUnusable }: Props) {
   // 張り直され続けて永久に出ない**。見るのは「繋がっていないか」の真偽だけ。
   const down = urlUnusable || (stream !== null && stream.kind !== 'open')
   const [shown, setShown] = useState(false)
+  /**
+   * 出す文言（辞書の `mapCorner.seismoDisconnected`）。
+   *
+   * **「【何が】【どうなった】」だけ。** 隣に並ぶ波形の「波形 途絶」と同じ形で、
+   * 地図の隅は 1 行しか使えない —— 折り返すと何本出ているか読めなくなる。
+   *
+   * **行動の案内（「ホストが起動しているか確認」の類）は付けない。** この行が出る理由は
+   * 3 通りあり（URL が空・URL の形が違う・ホストが応えない。機能を切っているときは出ない）、**どれか 1 つを
+   * 括弧へ書くと残りでは誤った案内になる** —— 購読の上限（同時 8 本）で断られている
+   * ときは、ホストは元気に動いている。切り分けは設定の窓の 1 行が受け持つ
+   * （`SettingsTab/seismoStatusLine.ts`）。
+   */
+  const t = useMessages().mapCorner
 
   useEffect(() => {
     if (!down) {
@@ -88,7 +88,7 @@ export function SeismoLinkStatus({ stream, urlUnusable }: Props) {
 
   return (
     <div className="bg-panel/90 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 text-amber-300">
-      <Marquee text={TEXT} />
+      <Marquee text={t.seismoDisconnected} />
     </div>
   )
 }

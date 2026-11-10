@@ -32,6 +32,10 @@ describe('I18nProvider の読み込みの失敗', () => {
       await act(async () => { view.rerender(<I18nProvider locale="ko"><Probe /></I18nProvider>); await settle('ko') })
       expect(screen.getByTestId('probe').textContent).toBe('ja:地震情報')
       expect(document.documentElement.lang).toBe('ja')
+      // 日本語へ戻したことで効果が走り直しても、読めなかった言語を読み直さない（記録も 1 回だけ）
+      await act(async () => { await settle('ko') })
+      const i18nErrors = muted.mock.calls.filter((args) => args.some((a) => typeof a === 'string' && a.includes('[i18n]')))
+      expect(i18nErrors).toHaveLength(1)
     } finally {
       muted.mockRestore()
     }
