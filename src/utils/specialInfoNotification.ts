@@ -31,13 +31,14 @@ export interface SpecialInfoNotification {
   readonly open: NotificationOpen | null
 }
 
-const NANKAI_NAME = '南海トラフ地震臨時情報'
-const KOHATSU_NAME = '北海道・三陸沖後発地震注意情報'
-const COMMENTARY_NAME = '南海トラフ地震関連解説情報'
+// 情報名。取消の帯（→ `specialInfoCancelBand.ts`）も同じ名前で言う
+export const NANKAI_NAME = '南海トラフ地震臨時情報'
+export const KOHATSU_NAME = '北海道・三陸沖後発地震注意情報'
+export const COMMENTARY_NAME = '南海トラフ地震関連解説情報'
 const LPGM_NAME = '長周期地震動に関する観測情報'
 const ESTIMATED_NAME = '推計震度分布図'
-const COUNT_NAME = '地震回数に関する情報'
-const QUAKE_NOTICE_NAME = '地震・津波に関するお知らせ'
+export const COUNT_NAME = '地震回数に関する情報'
+export const QUAKE_NOTICE_NAME = '地震・津波に関するお知らせ'
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 function cancelled(name: string, tag: string, subject = name, reason = ''): SpecialInfoNotification {

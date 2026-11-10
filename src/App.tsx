@@ -1153,7 +1153,7 @@ export function App() {
   // 揺れ検知の束の広がり。下の検知結果から毎秒流し込み、EEW の自動解除を広がっている間は待たせる（eew-spec §7）
   const [eewSpreadLog] = useState(createDetectionSpreadLog)
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentaryList, kohatsuList, quakeNoticeList, earthquakeCountList, estimatedIntensities, internationalTsunamis, tsunamiFactSteps, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentaryList, kohatsuList, quakeNoticeList, earthquakeCountList, internationalTsunamiBandList, specialInfoCancels, estimatedIntensities, internationalTsunamis, tsunamiFactSteps, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss, historyDays,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes, loadHistoryPeriod, holdHistoryPeriod,
@@ -3241,10 +3241,22 @@ export function App() {
   })
   // 地図に重ねる特別情報の帯の束。**閉じた帯を除いた「いま出す帯」を、帯の描画と共有ボタンの置き場所が同じ値で見る。**
   // お知らせの帯は設定で隠せるので、隠しているときは元データごと渡さない。
+  // 国際津波関連情報の通信試験は、設定「試験報を受信」を入れている間だけ出す（切った後に残っていた分も隠す。→ `admitInternationalTsunami`）
+  const internationalTsunamiBand = useMemo(
+    () => settings.dmdataTestDelivery ? internationalTsunamiBandList : internationalTsunamiBandList.filter(x => !x.report.isCommunicationsTest),
+    [settings.dmdataTestDelivery, internationalTsunamiBandList],
+  )
+  // 取消の表示も、その種類の帯を隠している間は出さない（お知らせの帯の設定）
+  const bandCancels = useMemo(
+    () => settings.quakeNoticeBanner ? specialInfoCancels : specialInfoCancels.filter(c => c.kind !== 'quakeNotice'),
+    [settings.quakeNoticeBanner, specialInfoCancels],
+  )
   const specialInfoBanners = useSpecialInfoBanners({
     nankai, nankaiCommentary: nankaiCommentaryList, kohatsu: kohatsuList,
     quakeNotice: settings.quakeNoticeBanner ? quakeNoticeList : NO_BAND_ITEMS,
     earthquakeCount: earthquakeCountList,
+    internationalTsunami: internationalTsunamiBand,
+    cancels: bandCancels,
   })
   // 地図の下の波形の枠に渡すもの。**出さないなら空・null**（出すかどうかはここで決める）。
   const waveChartStations = showSeismoWave ? seismoView.stations : EMPTY_SEISMO_STATIONS

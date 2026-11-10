@@ -11,6 +11,9 @@ import { EarthquakeCountDetail } from './EarthquakeCountDetail'
 import { Marquee } from '../Marquee'
 import { DisclosureCaret, Reveal } from '../EarthquakeTab/quakeMotion'
 import { earthquakeCountHeadline } from '../../utils/earthquakeCountSummary'
+import type { InternationalTsunamiBandItem } from '../../utils/internationalTsunami'
+import type { SpecialInfoCancelBand, SpecialInfoCancelKind } from '../../utils/specialInfoCancelBand'
+import { InternationalTsunamiText } from '../EarthquakeTab/InternationalTsunamiText'
 import type { SpecialInfoBanners, StackedSpecialInfo } from './useSpecialInfoBanners'
 
 interface Props {
@@ -60,7 +63,7 @@ const BandBodyLayer = createContext<HTMLElement | null>(null)
  * 本文を重ねる層の中の並び。開けるのは 1 本だけだが、別の帯へ切り替えた直後は閉じかけの本文と開きかけの本文が
  * 一瞬並ぶので、そのときも見出しと同じ順にする
  */
-const BODY_ORDER: Record<string, number> = { nankai: 0, nankaiCommentary: 1, kohatsu: 2, earthquakeCount: 3, quakeNotice: 4 }
+const BODY_ORDER: Record<string, number> = { nankai: 0, nankaiCommentary: 1, kohatsu: 2, earthquakeCount: 3, quakeNotice: 4, internationalTsunami: 5 }
 
 /**
  * いま開いている帯（`BODY_ORDER` の鍵）。**開けるのは一度に 1 本だけ**で、別の帯を開くと前の帯は閉じる
@@ -271,15 +274,19 @@ function BannerStack({ banners, speaking, readsAppendix, atScreenBottom, bodyTop
   const rootRef = useRef<HTMLDivElement>(null)
   const [layer, setLayer] = useState<HTMLDivElement | null>(null)
   useBodyLayerMax(rootRef, layer, bodyTopInset, bodyTopEdgeRef)
-  const { nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount } = banners.visible
+  const { nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, internationalTsunami, cancels } = banners.visible
   const [openSubject, setOpenSubject] = useState<string | null>(null)
   const openBand = useMemo(() => ({ openSubject, setOpenSubject }), [openSubject])
   // 開いていた帯が消えたら（× で閉じた・期限が切れた）、開いている印も外す。残すと、同じ種類の帯が
   // 次に出たときに開いたまま現れる
   const present: Record<string, boolean> = {
     nankai: !!nankai, nankaiCommentary: nankaiCommentary.length > 0, kohatsu: kohatsu.length > 0,
-    earthquakeCount: earthquakeCount.length > 0, quakeNotice: quakeNotice.length > 0,
+    earthquakeCount: earthquakeCount.length > 0, quakeNotice: quakeNotice.length > 0, internationalTsunami: internationalTsunami.length > 0,
   }
+  // 取消の表示は、その種類の帯のすぐ上に出す（その種類の帯が無くなっていれば、帯があった場所に出る）
+  const cancelBands = (kind: SpecialInfoCancelKind) => cancels.filter(c => c.kind === kind).map(c => (
+    <CancelBand key={c.id} cancel={c} onDismiss={() => banners.dismissCancel(c.id)} />
+  ))
   const gone = openSubject !== null && !present[openSubject] ? openSubject : null
   // 消えた帯の名前で外す —— 同じ描き直しで別の帯の読み上げが開いていたら、それを上書きしない
   useEffect(() => { if (gone) setOpenSubject(prev => (prev === gone ? null : prev)) }, [gone])
@@ -314,15 +321,22 @@ function BannerStack({ banners, speaking, readsAppendix, atScreenBottom, bodyTop
         {/* 南海トラフの 2 枚（臨時情報とその解説情報）を隣り合わせる。臨時情報の発表期間中は
             解説情報が毎日届いて両方が同時に出るため、間に別の事象（後発地震＝北海道・三陸沖）を
             挟むと同じ事象の話が分断されて読みにくい。重さの順よりこちらを優先する。 */}
+        {cancelBands('nankai')}
         {nankai && <NankaiBanner nankai={nankai} speaking={speaking('nankai')} readsAppendix={readsAppendix} onDismiss={() => banners.dismiss('nankai')} />}
-        {/* 積む 4 種は、同じ種類が何通あっても 1 本の帯（→ `StackedBanner`）。閉じ方は帯の × が全件・行の × が 1 件 */}
+        {/* 積む 5 種は、同じ種類が何通あっても 1 本の帯（→ `StackedBanner`）。閉じ方は帯の × が全件・行の × が 1 件 */}
+        {cancelBands('nankaiCommentary')}
         {nankaiCommentary.length > 0 && <CommentaryBanner list={nankaiCommentary} speaking={speaking('nankaiCommentary')} readsAppendix={readsAppendix} banners={banners} />}
+        {cancelBands('kohatsu')}
         {kohatsu.length > 0 && <KohatsuBanner list={kohatsu} speaking={speaking('kohatsu')} readsAppendix={readsAppendix} banners={banners} />}
+        {cancelBands('earthquakeCount')}
         {earthquakeCount.length > 0 && <EarthquakeCountBanner list={earthquakeCount} speaking={speaking('earthquakeCount')} banners={banners} />}
-        {/* お知らせ（運用連絡）は最後。上の 4 枚は「いま起きている・起こりうる地震」の話で、
+        {/* お知らせ（運用連絡）は事象の帯の後。上の 4 枚は「いま起きている・起こりうる地震」の話で、
             こちらは観測点の入電停止・配信試験といった裏方の連絡。同時に出たときに
             事象の話を先に読ませる。 */}
+        {cancelBands('quakeNotice')}
         {quakeNotice.length > 0 && <NoticeBanner list={quakeNotice} speaking={speaking('quakeNotice')} banners={banners} />}
+        {/* 地震カードに付かない国際津波関連情報（通信試験など）は最後。受信機関への運用連絡で、お知らせと同じ性質 */}
+        {internationalTsunami.length > 0 && <InternationalTsunamiBanner list={internationalTsunami} banners={banners} />}
       </div>
       </BandBodyLayer.Provider>
       </OpenBand.Provider>
@@ -813,6 +827,90 @@ function EarthquakeCountBanner({ list, speaking, banners }: { list: readonly JMA
       dismissOneLabel="この地震回数の情報を閉じる"
       onDismissAll={() => banners.dismiss('earthquakeCount')}
       onDismissOne={id => banners.dismissOne('earthquakeCount', id)}
+    />
+  )
+}
+
+/** 取消の表示に出す印（その種類の帯と同じ形を灰で） */
+const CANCEL_ICONS: Record<SpecialInfoCancelKind, () => ReactNode> = {
+  nankai: NankaiIcon,
+  nankaiCommentary: CommentaryIcon,
+  kohatsu: KohatsuIcon,
+  quakeNotice: NoticeIcon,
+  earthquakeCount: CountIcon,
+}
+
+/** 取消の表示の地と線・字の色（津波タブの取消の表示 `TsunamiTab` の `bannerBand`・`bannerFg` と同じ灰） */
+const CANCEL_BAND = '#4b5563'
+const CANCEL_FG = '#9ca3af'
+
+/**
+ * 帯に出していた報が取り消されたときの表示（→ `utils/specialInfoCancelBand.ts`）。帯の中に 3 行 —— 見出し「〇〇 取消」・
+ * 1 行目「〇〇は取り消されました」・2 行目に電文の取消しの理由（無ければ出さない）。押して開く形にしない（10 秒で消えるので、
+ * 押さずに読めるように。2026-11-10 ユーザー選択「A 帯の中に 3 行 (Recommended)」）。× で 10 秒を待たずに閉じられる
+ */
+function CancelBand({ cancel, onDismiss }: { cancel: SpecialInfoCancelBand; onDismiss: () => void }) {
+  const Icon = CANCEL_ICONS[cancel.kind]
+  return (
+    <div className="bg-gray-800/95 border-t-2" style={{ borderTopColor: CANCEL_BAND }} data-testid="band-cancel" data-band={cancel.kind}>
+      <div className="w-full px-3 py-2 flex items-start gap-2">
+        <span className="shrink-0" style={{ color: CANCEL_FG }}><Icon /></span>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-(length:--ui-f) leading-tight" style={{ color: CANCEL_FG }}>{cancel.name} 取消</p>
+          <p className="mt-1 font-bold text-(length:--ui-f) leading-tight" style={{ color: CANCEL_FG }}>{cancel.name}は取り消されました</p>
+          {cancel.reason && (
+            <p className="mt-0.5 text-secondary text-(length:--ui-fs) leading-relaxed whitespace-pre-line">{cancel.reason}</p>
+          )}
+        </div>
+        <button
+          className="shrink-0 p-1 text-secondary hover:text-white"
+          onClick={onDismiss}
+          aria-label={`${cancel.name}の取消の表示を閉じる`}
+        >
+          <CloseIcon />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** 国際津波関連情報の帯の見出し。通信試験はそうと書く（2026-11-09 ユーザー選択「帯に出す (Recommended)」の説明の見出し） */
+function internationalTsunamiBandTitle(item: InternationalTsunamiBandItem): string {
+  return item.report.isCommunicationsTest ? '国際津波関連情報 通信試験' : '国際津波関連情報'
+}
+
+// 地震カードに付かない国際津波関連情報（WEPA60）の帯。通信試験（設定「試験報を受信」が入の端末だけ）と、発生時刻を読めない報。
+//
+// 色はお知らせと同じ無彩色（2026-11-10 ユーザー選択「灰（お知らせと同じ）」）。中身は受信機関への運用連絡で、お知らせと同じ性質。
+// 開くと英文（地震カードの欄と同じ部品。訳せる行は日本語訳、「原文」で英文へ切り替える。通信試験の文は訳の対象外なので原文のまま）。
+// 期限（発表から 7 日）は出さない（他の帯と同じく表示上の都合で、気象庁が定めた期限ではない）。
+function InternationalTsunamiBanner({ list, banners }: { list: readonly InternationalTsunamiBandItem[]; banners: SpecialInfoBanners }) {
+  return (
+    <StackedBanner
+      list={list}
+      frameClass="bg-slate-800/95 border-t-2 border-slate-400"
+      icon={<NoticeIcon />}
+      speaking={false}
+      subject="internationalTsunami"
+      header={(item, more) => (
+        <div className="min-w-0 flex-1 flex items-center gap-2">
+          {more}
+          <Marquee className="flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={internationalTsunamiBandTitle(item)} />
+        </div>
+      )}
+      rowTitle={item => <Marquee className={ROW_TITLE} text={internationalTsunamiBandTitle(item)} />}
+      detail={item => (
+        <div className="px-3 pb-2 text-white text-(length:--ui-fs)">
+          <InternationalTsunamiText report={item.report} startWithOriginal={item.report.isCommunicationsTest} />
+          <p className="text-secondary text-(length:--ui-fs)">
+            発表: {new Date(item.reportDateTime).toLocaleString('ja-JP')}
+          </p>
+        </div>
+      )}
+      dismissAllLabel="国際津波関連情報を閉じる"
+      dismissOneLabel="この国際津波関連情報を閉じる"
+      onDismissAll={() => banners.dismiss('internationalTsunami')}
+      onDismissOne={id => banners.dismissOne('internationalTsunami', id)}
     />
   )
 }

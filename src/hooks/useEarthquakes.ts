@@ -43,7 +43,13 @@ import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEvent
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
 import { recordTsunamiFactStep, type TsunamiFactStep } from '../utils/quakeReportHistory'
-import { admitInternationalTsunami, internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import {
+  admitInternationalTsunami, internationalTsunamiBandItem, internationalTsunamiIndex, upsertInternationalTsunami, type InternationalTsunamiBandItem,
+} from '../utils/internationalTsunami'
+import {
+  SPECIAL_INFO_CANCEL_SHOW_MS, addSpecialInfoCancelBand, removeSpecialInfoCancelBand, specialInfoCancelBand,
+  type SpecialInfoCancelBand, type SpecialInfoCancelTelegram,
+} from '../utils/specialInfoCancelBand'
 import { fetchFailureReason } from '../utils/fetchFailure'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
@@ -111,21 +117,23 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
 /** 何も届かない間に 24 時間より古いライブの行を捨てる間隔（ミリ秒）。 */
 const TELEGRAM_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000
 
-/** 帯に複数を積む 4 種（→ `utils/specialInfoBandList.ts`） */
-type BandListKind = 'nankaiCommentary' | 'kohatsu' | 'quakeNotice' | 'earthquakeCount'
+/** 帯に複数を積む 5 種（→ `utils/specialInfoBandList.ts`） */
+type BandListKind = 'nankaiCommentary' | 'kohatsu' | 'quakeNotice' | 'earthquakeCount' | 'internationalTsunami'
 interface BandLists {
   nankaiCommentary: readonly JMANankaiCommentary[]
   kohatsu: readonly JMAKohatsu[]
   quakeNotice: readonly JMAQuakeNotice[]
   earthquakeCount: readonly JMAEarthquakeCount[]
+  internationalTsunami: readonly InternationalTsunamiBandItem[]
 }
-const EMPTY_BAND_LISTS: BandLists = { nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+const EMPTY_BAND_LISTS: BandLists = { nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [], internationalTsunami: [] }
 /** 一覧を置く state の欄 */
 const BAND_LIST_FIELDS = {
   nankaiCommentary: 'nankaiCommentaryList',
   kohatsu: 'kohatsuList',
   quakeNotice: 'quakeNoticeList',
   earthquakeCount: 'earthquakeCountList',
+  internationalTsunami: 'internationalTsunamiBandList',
 } as const satisfies Record<BandListKind, keyof EarthquakeState>
 
 /** 帯の期限の予約をすべて落とす（アンマウント・リセット） */
@@ -151,6 +159,8 @@ type QueuePayload =
   | { kind: 'purge-cancelled-quake'; id: string }
   | { kind: 'purge-cancelled-eew'; key: string }
   | { kind: 'purge-cancelled-tsunami'; id: string }
+  /** 特別な情報の帯の取消の表示を外す予約（→ `SPECIAL_INFO_CANCEL_SHOW_MS`） */
+  | { kind: 'purge-special-info-cancel'; id: string }
   /**
    * 電文ログにだけ積む行（再生の `ReplayFetchResult.logOnlyEntries`）。発火のときに `logEntry` を積むだけで、
    * 地図・カード・音・読み上げには何も流さない。**発火の時刻に積むのは、ほかの電文の行と並びの意味を揃えるため**
@@ -636,6 +646,16 @@ export interface EarthquakeState {
   /** 地震回数に関する情報（VXSE60）の一覧（新しい順）。同じ群発（`eventId`）の報は置き換える */
   earthquakeCountList: readonly JMAEarthquakeCount[]
   /**
+   * 特別な情報の帯に出す国際津波関連情報（通信試験と、発生時刻を読めない報。新しい順・発表から 7 日。
+   * → `internationalTsunamiBandItem`）。報そのものは `internationalTsunamis` にも入っている
+   */
+  internationalTsunamiBandList: readonly InternationalTsunamiBandItem[]
+  /**
+   * 特別な情報の帯の取消の表示（→ `utils/specialInfoCancelBand.ts`）。帯に出していた報への取消を音・読み上げへも流したときに足し、
+   * 10 秒で外す（待ち行列の `purge-special-info-cancel`）
+   */
+  specialInfoCancels: readonly SpecialInfoCancelBand[]
+  /**
    * 推計震度分布図（IXAC41・IXAC40）。**地震ごとに 1 通**（その地震の最新）を持つ。
    *
    * 地震カードとの引き当ては地震発現時刻と震源（→ `estimatedIntensityFor`）。かつては最新の
@@ -832,6 +852,8 @@ export function useEarthquakes(
     kohatsuList: EMPTY_BAND_LISTS.kohatsu,
     quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
     earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
+    internationalTsunamiBandList: EMPTY_BAND_LISTS.internationalTsunami,
+    specialInfoCancels: [],
     estimatedIntensities: [],
     internationalTsunamis: [],
     tsunamiFactSteps: [],
@@ -872,14 +894,14 @@ export function useEarthquakes(
   }, [])
 
   // 国際津波関連情報で付く地震カードの無い報は、英文だけのカードとして一覧に出る（→ `internationalTsunamiIndex`）。
-  // 発生時刻を読めなかった報だけはどこにも出ないので、黙って消えないよう 1 報につき 1 回だけ記録する
+  // 発生時刻を読めなかった報はどのカードにも付かず、国際津波関連情報の帯にだけ出る（→ `internationalTsunamiBandItem`）。書式が変わった印なので 1 報につき 1 回だけ記録する
   const reportedUnattachedRef = useRef(new Set<string>())
   useEffect(() => {
     for (const x of internationalTsunamiIndex(state.earthquakes, state.internationalTsunamis).unattached) {
       if (reportedUnattachedRef.current.has(x.id)) continue
       reportedUnattachedRef.current.add(x.id)
       if (x.originTime === undefined) {
-        log.warn(`[quake] 国際津波関連情報の発生時刻を読めず、どの地震カードにも付きません（画面に出ません）: ${x.title} ${x.time}`)
+        log.warn(`[quake] 国際津波関連情報の発生時刻を読めず、どの地震カードにも付きません（発表から 7 日以内なら国際津波関連情報の帯に出します）: ${x.title} ${x.time}`)
       } else {
         log.info(`[quake] 国際津波関連情報に付く地震カードが無いので、英文だけのカードで出します（地震情報が届けばそのカードに付きます）: ${x.title} 発生 ${x.originTime}`)
       }
@@ -965,10 +987,15 @@ export function useEarthquakes(
   // 1 ティックの中で複数のイベントを処理する（理由は `eewAcceptanceRef` の宣言箇所に同じ）。
   // こちらは反映した時点で即座に進むため、同じティックの中でも正しく比べられる。
   const shownNankaiEventIdRef = useRef<string | null>(null)
+  // 表示中の臨時情報の電文 id（取消の表示の照合先）。同じ理由で `stateRef` から取らない
+  const shownNankaiIdRef = useRef<string | null>(null)
   // 帯に積んでいる 4 種の一覧（state の `nankaiCommentaryList` 等と同じもの）。**取消が自分宛かを同期的に判定する**ために
   // ref でも持つ（理由は上に同じ。`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
   // 書くのは `commitBandList` とリセットだけ。要素は state と同じ参照なので、本体を二重に抱えることはない。
   const bandListsRef = useRef<BandLists>(EMPTY_BAND_LISTS)
+  // 直前の `applyXxx`（帯の 5 種）が取消で帯から外した報の、まだ出していない取消の表示。出すかは呼び出し側が音・読み上げへ
+  // 流すと決めてから `settleCancelBand` で決める（履歴の取り込み・再生の初期状態の取消では出さない）。`applyXxx` は入るたびに空にする
+  const pendingCancelBandRef = useRef<SpecialInfoCancelBand | null>(null)
   // 現在の state を WS コールバック内から参照するための ref
   const stateRef = useRef(state)
   stateRef.current = state
@@ -1270,8 +1297,10 @@ export function useEarthquakes(
    *   情報への取消も伝える。→ `decideDispatch`）。
    */
   const applyNankai = useCallback((nankai: JMANankai): boolean => {
+    pendingCancelBandRef.current = null
     if (!nankai.cancelled) {
       shownNankaiEventIdRef.current = nankai.eventId
+      shownNankaiIdRef.current = nankai.id
       setState(prev => ({ ...prev, nankai }))
       return true
     }
@@ -1292,6 +1321,12 @@ export function useEarthquakes(
       return false
     }
     shownNankaiEventIdRef.current = null
+    const shownId = shownNankaiIdRef.current
+    shownNankaiIdRef.current = null
+    // 取消の表示は取消（`retracted`）だけ。調査終了は取り消しではないので、帯を黙って下ろす（今どおり）
+    if (nankai.retracted && shownId !== null) {
+      pendingCancelBandRef.current = specialInfoCancelBand({ kind: 'nankai', data: nankai }, [shownId])
+    }
     setState(prev => ({ ...prev, nankai: null }))
     return true
   }, [])
@@ -1322,11 +1357,38 @@ export function useEarthquakes(
     }, Math.max(0, untilMs - getTimeRef.current().getTime()))
   }, [])
 
+  /** 取消で帯から外した報を、取消の表示に出すものとして控える（出すかは `settleCancelBand`） */
+  const holdCancelBand = useCallback((t: SpecialInfoCancelTelegram, targetIds: readonly string[]): void => {
+    pendingCancelBandRef.current = specialInfoCancelBand(t, targetIds)
+  }, [])
+
+  /**
+   * 直前の `applyXxx` が控えた取消の表示を、`show` が真なら出して 10 秒後に外す予約を積む（→ `utils/specialInfoCancelBand.ts`）。
+   * **呼び出し側は、取消を音・読み上げへ流すと決めたときに真を渡す** —— 帯に出していない報への取消は控えが無く、履歴の取り込み・
+   * 再生の初期状態の取消（流さない）は偽なので出ない。外す予約は待ち行列に積む（地震カードの取消と同じ。リセットで一緒に落ちる）
+   */
+  const settleCancelBand = useCallback((show: boolean): void => {
+    const pending = pendingCancelBandRef.current
+    pendingCancelBandRef.current = null
+    if (!pending || !show) return
+    setState(prev => {
+      const next = addSpecialInfoCancelBand(prev.specialInfoCancels, pending)
+      return next === prev.specialInfoCancels ? prev : { ...prev, specialInfoCancels: next }
+    })
+    eventQueueRef.current.push({
+      eventTime: new Date(getTimeRef.current().getTime() + SPECIAL_INFO_CANCEL_SHOW_MS),
+      payload: { kind: 'purge-special-info-cancel', id: pending.id },
+      silent: true,
+      logEntry: null,
+    })
+  }, [eventQueueRef])
+
   /**
    * 後発地震注意情報を帯へ反映する。**同じ `eventId` の報は置き換え、別の `eventId` は積む。**
    * 呼ぶ場所と戻り値の意味は `applyNankai` に同じ。
    */
   const applyKohatsu = useCallback((kohatsu: JMAKohatsu): boolean => {
+    pendingCancelBandRef.current = null
     const list = bandListsRef.current.kohatsu
     // 判定は中継のプッシュ通知と共用する（→ `kohatsuBandDecision`。一覧から照合先を選ぶのが `kohatsuListDecision`）
     const kohatsuDecision = kohatsuListDecision(list.map(k => k.eventId), kohatsu, getTimeRef.current().getTime())
@@ -1353,15 +1415,17 @@ export function useEarthquakes(
         : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${list.map(k => k.eventId).join(',')}`)
       return false
     }
+    holdCancelBand({ kind: 'kohatsu', data: kohatsu }, list.filter(k => k.eventId === kohatsu.eventId).map(k => k.id))
     commitBandList('kohatsu', list.filter(k => k.eventId !== kohatsu.eventId))
     return true
-  }, [commitBandList])
+  }, [commitBandList, holdCancelBand])
 
   /**
    * 南海トラフ地震関連解説情報を反映する。**同じ期間の臨時解説（同じ `eventId`）の号は置き換え、別の期間・定例解説は積む**
    * （定例解説は電文ごとに `eventId` が変わるので別件になる）。期限切れの報は出さない。
    */
   const applyNankaiCommentary = useCallback((commentary: JMANankaiCommentary): boolean => {
+    pendingCancelBandRef.current = null
     const list = bandListsRef.current.nankaiCommentary
     // 判定は中継のプッシュ通知と共用する（→ `nankaiCommentaryBandDecision`。一覧から照合先を選ぶのが `nankaiCommentaryListDecision`）
     const commentaryDecision = nankaiCommentaryListDecision(list.map(c => c.id), commentary, getTimeRef.current().getTime())
@@ -1380,6 +1444,7 @@ export function useEarthquakes(
         log.info(`[nankaiCommentary] 帯に積んでいない号への取消のため帯を残します received=${commentary.id} shown=${list.map(c => c.id).join(',')}`)
         return false
       }
+      holdCancelBand({ kind: 'nankaiCommentary', data: commentary }, [commentary.id])
       commitBandList('nankaiCommentary', list.filter(c => c.id !== commentary.id))
       return true
     }
@@ -1396,7 +1461,7 @@ export function useEarthquakes(
     }
     commitBandList('nankaiCommentary', next)
     return true
-  }, [commitBandList])
+  }, [commitBandList, holdCancelBand])
 
   /**
    * 地震・津波に関するお知らせ（VZSE40）を反映する。**1 通ずつが別件**（`id` は `EventID` と `Control/DateTime` の組。
@@ -1409,6 +1474,7 @@ export function useEarthquakes(
    * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。記録はこの関数の中で行わない。
    */
   const applyQuakeNotice = useCallback((notice: JMAQuakeNotice): boolean => {
+    pendingCancelBandRef.current = null
     const list = bandListsRef.current.quakeNotice
     if (notice.cancelled) {
       // **照合は `EventID` で行う。`id` ではない。** 取消は元のお知らせの `EventID` を引き継ぐ ——
@@ -1437,9 +1503,9 @@ export function useEarthquakes(
         return false
       }
       log.info(`[quakeNotice] 取消で一覧から外します eventId=${notice.eventId} shown=${targets.map(n => n.id).join(',')} cancel=${notice.id}`)
+      // 取消しの理由（パーサーは `body` に読んでいる）は取消の表示の 2 行目に出す（→ `utils/specialInfoCancelBand.ts`）
+      holdCancelBand({ kind: 'quakeNotice', data: notice }, targets.map(n => n.id))
       commitBandList('quakeNotice', list.filter(n => !sameUnit(n)))
-      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 中身が運用連絡なので、外すためだけに帯を
-      // 出し直すほどのものでもない。読み上げを有効にした端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
       // **真を返す** —— 一覧を変えた（画面が変わった）ので、受け手へ流して取消を読ませる。
       return true
     }
@@ -1458,7 +1524,7 @@ export function useEarthquakes(
     }
     commitBandList('quakeNotice', next)
     return true
-  }, [commitBandList])
+  }, [commitBandList, holdCancelBand])
 
   /**
    * 地震回数に関する情報（VXSE60）を反映する。**同じ群発（`eventId`）の報は置き換え、別の群発は積む。**
@@ -1473,6 +1539,7 @@ export function useEarthquakes(
    * 「-1 を「発表なし」に (推奨)」）。
    */
   const applyEarthquakeCount = useCallback((count: JMAEarthquakeCount): boolean => {
+    pendingCancelBandRef.current = null
     const list = bandListsRef.current.earthquakeCount
     // 判定は中継のプッシュ通知と共用する（→ `earthquakeCountBandDecision`。一覧から照合先を選ぶのが `earthquakeCountListDecision`）
     const countDecision = earthquakeCountListDecision(list.map(c => c.eventId), count, getTimeRef.current().getTime())
@@ -1483,6 +1550,7 @@ export function useEarthquakes(
         log.info(`[earthquakeCount] 帯に積んでいない群発への取消のため帯を残します received=${count.eventId} shown=${list.map(c => c.eventId).join(',')}`)
         return false
       }
+      holdCancelBand({ kind: 'earthquakeCount', data: count }, list.filter(c => c.eventId === count.eventId).map(c => c.id))
       commitBandList('earthquakeCount', list.filter(c => c.eventId !== count.eventId))
       // **true を返す。** 読み上げ側が「取り消された」ことを伝えるため。false にすると
       // 取消がどこへも流れず、直前に読み上げた回数が訂正されないまま残る。
@@ -1500,7 +1568,7 @@ export function useEarthquakes(
     }
     commitBandList('earthquakeCount', next)
     return true
-  }, [commitBandList])
+  }, [commitBandList, holdCancelBand])
 
   /**
    * 推計震度分布図（IXAC41）を反映する。**地震ごとに 1 通**を持つ（→ `upsertEstimatedIntensity`）。
@@ -1547,14 +1615,30 @@ export function useEarthquakes(
     return { isNew }
   }, [])
 
-  /** 国際津波関連情報を一覧へ足す。同じ報（`id`）は 2 度足さない。足したら真。 */
+  /**
+   * 国際津波関連情報を一覧へ足す。同じ報（`id`）は 2 度足さない。足したら真。
+   * 地震カードに付かない報（通信試験・発生時刻を読めない報）は、特別な情報の帯の一覧へも積む（発表から 7 日。期限切れの報は積まない。
+   * → `internationalTsunamiBandItem`）
+   */
   const applyInternationalTsunami = useCallback((data: JMAInternationalTsunami): boolean => {
     const list = upsertInternationalTsunami(internationalTsunamisRef.current, data)
     if (list === null) return false
     internationalTsunamisRef.current = list
     setState(prev => ({ ...prev, internationalTsunamis: list }))
+    const item = internationalTsunamiBandItem(data)
+    if (item === null) {
+      // 帯に積む報（通信試験・発生時刻を読めない報）なのに発表時刻を読めなかった。地震カードにも帯にも出ない
+      if (data.isCommunicationsTest || data.originTime === undefined) {
+        log.warn(`[quake] 国際津波関連情報の発表時刻を読めず、帯に積めません: ${data.title} ${data.time}`)
+      }
+    } else if (Date.parse(item.expireAt) > getTimeRef.current().getTime()) {
+      const next = putBandItem(bandListsRef.current.internationalTsunami, item, shown => shown.id === item.id)
+      if (next) commitBandList('internationalTsunami', next)
+    } else {
+      log.info(`[quake] 国際津波関連情報は発表から 7 日を過ぎているので帯に積みません: ${data.title} ${data.time}`)
+    }
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
    * 取消を見た事実を台帳へ積む。件数に上限を置き、古いものから落とす。
@@ -2537,6 +2621,7 @@ export function useEarthquakes(
           // 取消は帯へ当てたかによらず伝える（→ `decideDispatch`）
           const otherUnit = cancelOverOtherUnit(shownNankaiEventIdRef.current, nankai)
           const decision = decideDispatch('nankai', nankai, applyNankai(nankai), silent, otherUnit)
+          settleCancelBand(decision === 'dispatch')
           if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'nankai', data: nankai })
           } else {
@@ -2547,6 +2632,7 @@ export function useEarthquakes(
           // 期限切れなら反映も通知もしない（画面に出ないものを読み上げても意味がない）。取消は帯へ当てたかに
           // よらず伝える（→ `decideDispatch`）
           const decision = decideDispatch('nankaiCommentary', commentary, applyNankaiCommentary(commentary), silent, false)
+          settleCancelBand(decision === 'dispatch')
           if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'nankaiCommentary', data: commentary })
           } else {
@@ -2585,10 +2671,17 @@ export function useEarthquakes(
             if (prev.tsunamis[0].id !== payload.id) return prev
             return { ...prev, tsunamis: [] }
           })
+        } else if (payload.kind === 'purge-special-info-cancel') {
+          const { id } = payload
+          setState(prev => {
+            const next = removeSpecialInfoCancelBand(prev.specialInfoCancels, id)
+            return next === prev.specialInfoCancels ? prev : { ...prev, specialInfoCancels: next }
+          })
         } else if (payload.kind === 'kohatsu') {
           const kohatsu = payload.data
           const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
           const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), silent, otherUnit)
+          settleCancelBand(decision === 'dispatch')
           if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
           } else {
@@ -2599,6 +2692,7 @@ export function useEarthquakes(
           // 帯へ反映できたものだけ流す（他の帯と同じ形）。読み上げるかは受け手が設定で決める
           // （既定は読まない → `handleExtraLiveEvent`）。
           const applied = applyQuakeNotice(notice)
+          settleCancelBand(applied && !silent)
           if (applied && !silent) {
             onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
           } else {
@@ -2607,6 +2701,7 @@ export function useEarthquakes(
         } else if (payload.kind === 'earthquakeCount') {
           const count = payload.data
           const decision = decideDispatch('earthquakeCount', count, applyEarthquakeCount(count), silent, false)
+          settleCancelBand(decision === 'dispatch')
           if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'earthquakeCount', data: count })
           } else {
@@ -3313,6 +3408,7 @@ export function useEarthquakes(
         // キュー経路と同じ関数を通す（規則を 2 箇所に書かない。理由は `applyNankai`）。
         const otherUnit = cancelOverOtherUnit(shownNankaiEventIdRef.current, nankai)
         const decision = decideDispatch('nankai', nankai, applyNankai(nankai), false, otherUnit)
+        settleCancelBand(decision === 'dispatch')
         if (decision === 'dispatch') {
           onLiveEventRef.current?.({ kind: 'nankai', data: nankai })
         } else {
@@ -3321,6 +3417,7 @@ export function useEarthquakes(
       } else if (ev.kind === 'nankaiCommentary') {
         const commentary = ev.data
         const decision = decideDispatch('nankaiCommentary', commentary, applyNankaiCommentary(commentary), false, false)
+        settleCancelBand(decision === 'dispatch')
         if (decision === 'dispatch') {
           onLiveEventRef.current?.({ kind: 'nankaiCommentary', data: commentary })
         } else {
@@ -3330,6 +3427,7 @@ export function useEarthquakes(
         const kohatsu = ev.data
         const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
         const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), false, otherUnit)
+        settleCancelBand(decision === 'dispatch')
         if (decision === 'dispatch') {
           onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
         } else {
@@ -3337,7 +3435,9 @@ export function useEarthquakes(
         }
       } else if (ev.kind === 'quakeNotice') {
         const notice = ev.data
-        if (applyQuakeNotice(notice)) {
+        const applied = applyQuakeNotice(notice)
+        settleCancelBand(applied)
+        if (applied) {
           onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
         } else {
           recordSkippedTelegram({ kind: 'quakeNotice', data: notice }, 'notApplied')
@@ -3345,6 +3445,7 @@ export function useEarthquakes(
       } else if (ev.kind === 'earthquakeCount') {
         const count = ev.data
         const decision = decideDispatch('earthquakeCount', count, applyEarthquakeCount(count), false, false)
+        settleCancelBand(decision === 'dispatch')
         if (decision === 'dispatch') {
           onLiveEventRef.current?.({ kind: 'earthquakeCount', data: count })
         } else {
@@ -4513,14 +4614,14 @@ export function useEarthquakes(
   const simulateEarthquakeCount = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE_COUNT), [runTestTelegramScript])
 
   /**
-   * 地震回数に関する情報の取消テスト（→ `EARTHQUAKE_COUNT_RETRACTION`）。**取消の理由が届く先は
-   * 読み上げだけ** —— 帯ごと消えるのでカードに残せない。ボタンが無いと、その文が一度も声にならない。
+   * 地震回数に関する情報の取消テスト（→ `EARTHQUAKE_COUNT_RETRACTION`）。帯が 10 秒だけ取消の表示に
+   * 変わり、理由がその 2 行目と読み上げに出る。ボタンが無いと、その表示も声も一度も確かめられない。
    */
   const simulateEarthquakeCountRetraction = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE_COUNT_RETRACTION), [runTestTelegramScript])
 
   /**
-   * 長周期地震動の取消テスト（→ `LPGM_RETRACTION`）。**取消の理由が届く先は読み上げだけ**
-   * —— 取消で長周期の一覧・バッジごと消える。読み上げへ渡すかの判定（`lpgmNotifiable`・`decideDispatch`）を
+   * 長周期地震動の取消テスト（→ `LPGM_RETRACTION`）。取消で長周期の一覧・バッジは消え、
+   * 理由は読み上げと地震カードの報の一覧（→ `lpgmRetraction`）に残る。読み上げへ渡すかの判定（`lpgmNotifiable`・`decideDispatch`）を
    * ライブと同じ形で通す。
    */
   const simulateLpgmRetraction = useCallback(() => runTestTelegramScript(s => s.LPGM_RETRACTION), [runTestTelegramScript])
@@ -4550,6 +4651,7 @@ export function useEarthquakes(
     // 消えた帯の識別情報と比べられる）。取消テストの待ちも落とす ―― リプレイへ切り替えた後で
     // テスト用の取消がキューへ紛れ込むのを防ぐ。
     shownNankaiEventIdRef.current = null
+    shownNankaiIdRef.current = null
     bandListsRef.current = EMPTY_BAND_LISTS
     // 伝えた取消の記憶も前の時間軸のもの（→ `conveyedCancelsRef`）
     conveyedCancelsRef.current.clear()
@@ -4580,6 +4682,8 @@ export function useEarthquakes(
       kohatsuList: EMPTY_BAND_LISTS.kohatsu,
       quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
       earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
+      internationalTsunamiBandList: EMPTY_BAND_LISTS.internationalTsunami,
+      specialInfoCancels: [],
       estimatedIntensities: [],
       internationalTsunamis: [],
       tsunamiFactSteps: [],
@@ -4721,6 +4825,7 @@ export function useEarthquakes(
       if (payload.kind === 'purge-cancelled-quake') continue
       if (payload.kind === 'purge-cancelled-eew') continue
       if (payload.kind === 'purge-cancelled-tsunami') continue
+      if (payload.kind === 'purge-special-info-cancel') continue
       // 電文ログだけの行も電文として流れないので、投機の対象にしない
       if (payload.kind === 'logOnly') continue
       out.push(payload)

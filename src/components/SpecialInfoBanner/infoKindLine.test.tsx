@@ -11,7 +11,7 @@ import type { JMAKohatsu, JMANankai, JMANankaiCommentary } from '../../types/ear
 afterEach(cleanup)
 beforeEach(() => localStorage.clear())
 
-const EMPTY: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+const EMPTY: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [], internationalTsunami: [], cancels: [] }
 
 function Banners({ items }: { items: Partial<SpecialInfoItems> }) {
   const banners = useSpecialInfoBanners({ ...EMPTY, ...items })

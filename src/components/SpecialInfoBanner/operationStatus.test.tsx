@@ -68,18 +68,18 @@ const earthquakeCount = (operationStatus?: TelegramOperationStatus): JMAEarthqua
 describe('特別情報の帯の運用種別', () => {
   // 正: 5 つの帯すべてに印が出る。**帯ごとに書くと片方だけ落ちる**ので、まとめて見る。
   it('訓練報はどの帯にも印が出る', () => {
-    render(<Banners items={{ nankai: nankai('訓練'), nankaiCommentary: [commentary('訓練')], kohatsu: [kohatsu('訓練')], quakeNotice: [quakeNotice('訓練')], earthquakeCount: [earthquakeCount('訓練')] }} />)
+    render(<Banners items={{ nankai: nankai('訓練'), nankaiCommentary: [commentary('訓練')], kohatsu: [kohatsu('訓練')], quakeNotice: [quakeNotice('訓練')], earthquakeCount: [earthquakeCount('訓練')], internationalTsunami: [], cancels: [] }} />)
     expect(screen.getAllByText('訓練報')).toHaveLength(5)
   })
 
   it('試験報も同じ', () => {
-    render(<Banners items={{ nankai: nankai('試験'), nankaiCommentary: [commentary('試験')], kohatsu: [kohatsu('試験')], quakeNotice: [quakeNotice('試験')], earthquakeCount: [earthquakeCount('試験')] }} />)
+    render(<Banners items={{ nankai: nankai('試験'), nankaiCommentary: [commentary('試験')], kohatsu: [kohatsu('試験')], quakeNotice: [quakeNotice('試験')], earthquakeCount: [earthquakeCount('試験')], internationalTsunami: [], cancels: [] }} />)
     expect(screen.getAllByText('試験報')).toHaveLength(5)
   })
 
   // 対照: 通常の報では印を出さない。**平常時に余計な印が出ないこと**を押さえる。
   it('通常の報では印を出さない', () => {
-    render(<Banners items={{ nankai: nankai(), nankaiCommentary: [commentary()], kohatsu: [kohatsu()], quakeNotice: [quakeNotice()], earthquakeCount: [earthquakeCount()] }} />)
+    render(<Banners items={{ nankai: nankai(), nankaiCommentary: [commentary()], kohatsu: [kohatsu()], quakeNotice: [quakeNotice()], earthquakeCount: [earthquakeCount()], internationalTsunami: [], cancels: [] }} />)
     expect(screen.queryByText('訓練報')).toBeNull()
     expect(screen.queryByText('試験報')).toBeNull()
     // 帯そのものは出ている（印だけが出ない）
@@ -95,7 +95,7 @@ describe('特別情報の帯の運用種別', () => {
 // 後発地震注意情報の帯を開いた中の発表時刻の行。**電文に期限の要素は無い**ので、アプリが帯を畳む
 // 7 日（`expireAt`）を「まで有効」と言い切らない（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
 describe('後発地震注意情報の帯の発表時刻の行', () => {
-  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [], internationalTsunami: [], cancels: [] }
 
   // 正: 開くと発表時刻が出る。
   it('開くと発表時刻を出す', () => {
@@ -124,13 +124,13 @@ describe('特別情報の帯の下端の余白', () => {
 
   // 正: 画面の下端に接しているときは包みに余白の指定が載る
   it('下端に接していれば余白を付ける', () => {
-    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [quakeNotice()], earthquakeCount: [] }} />)
+    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [quakeNotice()], earthquakeCount: [], internationalTsunami: [], cancels: [] }} />)
     expect(scroller(container).className).toContain(SAFE)
   })
 
   // 対照: 地図の下に波形が出ていて下端に届かないときは付けない
   it('下端に接していなければ余白を付けない', () => {
-    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [quakeNotice()], earthquakeCount: [] }} atScreenBottom={false} />)
+    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [quakeNotice()], earthquakeCount: [], internationalTsunami: [], cancels: [] }} atScreenBottom={false} />)
     expect(scroller(container).className).not.toContain('safe-area-inset-bottom')
   })
 
@@ -164,7 +164,7 @@ describe('特別情報の帯の下端の余白', () => {
   // 安全弁: 帯の 1 枚 1 枚は余白を持たない（最後の 1 枚へは包みから効かせる）。帯の側に戻すと、
   // 波形が出ていても余白が付き、帯と帯の間にも隙間ができうる
   it('帯の 1 枚 1 枚は余白を持たない', () => {
-    const { container } = render(<Banners items={{ nankai: nankai(), nankaiCommentary: [commentary()], kohatsu: [kohatsu()], quakeNotice: [quakeNotice()], earthquakeCount: [earthquakeCount()] }} />)
+    const { container } = render(<Banners items={{ nankai: nankai(), nankaiCommentary: [commentary()], kohatsu: [kohatsu()], quakeNotice: [quakeNotice()], earthquakeCount: [earthquakeCount()], internationalTsunami: [], cancels: [] }} />)
     for (const child of Array.from(scroller(container).children)) {
       expect((child as HTMLElement).className).not.toContain('safe-area-inset-bottom')
     }
@@ -172,7 +172,7 @@ describe('特別情報の帯の下端の余白', () => {
 })
 
 describe('閉じた帯と「いま出す帯」', () => {
-  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [], internationalTsunami: [], cancels: [] }
 
   // 正: 帯が 1 枚あれば描き、閉じたら消える
   it('閉じると、その帯は描かれない', () => {

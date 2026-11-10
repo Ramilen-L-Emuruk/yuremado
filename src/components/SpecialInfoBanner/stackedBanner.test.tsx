@@ -16,7 +16,7 @@ function Banners({ items }: { items: SpecialInfoItems }) {
   return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom bodyTopInset={0} bodyTopEdgeRef={{ current: null }} />
 }
 
-const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [], internationalTsunami: [], cancels: [] }
 
 const notice = (id: string, headline: string, minute: number): JMAQuakeNotice => ({
   id, time: `2026-01-01T12:${String(minute).padStart(2, '0')}:00+09:00`, eventId: `2026010112${String(minute).padStart(2, '0')}00`,

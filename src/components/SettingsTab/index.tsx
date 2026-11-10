@@ -2718,7 +2718,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.nankaiRetraction && (
-          <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える（発生可能性については何も述べない）">
+          <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが「取消」の表示に替わって 10 秒で消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える（発生可能性については何も述べない）">
             <TestButton color="blue" onClick={onTest.nankaiRetraction}>取消テスト</TestButton>
           </Row>
         )}
@@ -2728,7 +2728,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.nankaiCommentaryRetraction && (
-          <Row label="南海トラフ地震関連解説情報（取消）" description="臨時解説を発表し、同じ号の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
+          <Row label="南海トラフ地震関連解説情報（取消）" description="臨時解説を発表し、同じ号の取消を流す。バナーが「取消」の表示に替わって 10 秒で消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryRetraction}>解説情報 取消テスト</TestButton>
           </Row>
         )}
@@ -2748,7 +2748,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.kohatsuRetraction && (
-          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
+          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが「取消」の表示に替わって 10 秒で消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
             <TestButton color="blue" onClick={onTest.kohatsuRetraction}>取消テスト</TestButton>
           </Row>
         )}
@@ -2787,7 +2787,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.earthquakeCountRetraction && (
-          <Row label="地震回数に関する情報（取消）" description="発表 → その取消。取消では帯ごと消えるため、理由の文が届く先は読み上げだけ（実電文どおり回数の表は持たない）">
+          <Row label="地震回数に関する情報（取消）" description="発表 → その取消。バナーが「取消」の表示（理由の文つき）に替わって 10 秒で消え、読み上げも理由を伝える（実電文どおり回数の表は持たない）">
             <TestButton color="teal" onClick={onTest.earthquakeCountRetraction}>地震回数 取消テスト</TestButton>
           </Row>
         )}

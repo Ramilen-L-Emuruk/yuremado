@@ -39,7 +39,7 @@ import { createDetectionSpreadLog, type DetectionSpreadLog } from '../utils/eewS
 // **アプリの分割には影響しない。** 分割を作っているのは `utils/testDataLoader.ts` の
 // `import()` で、テストファイルは本番ビルドの依存グラフに入らない
 // （`utils/testData.test.ts` も同じく静的に取り込んでいる）。
-import '../utils/testTelegramScripts'
+import { TSUNAMI_DISMISS_MS } from '../utils/testTelegramScripts'
 
 // log だけを差し替え、それ以外（createLogThrottle 等）は実物を使う。全置換にすると
 // logger に export が増えるたびに、無関係な import グラフの都合でこのテストが落ちる。
@@ -3984,6 +3984,35 @@ describe('テストボタンの待ちの後始末', () => {
 
     act(() => { vi.advanceTimersByTime(240_000) })
     expect(h.current.tsunamis).toEqual([])
+  })
+
+  // 帯の取消の表示（2026-11-09 ユーザー選択「帯を取消に切り替え＋通知に理由 (Recommended)」・形は 2026-11-10「A 帯の中に 3 行 (Recommended)」）。
+  //   正: 帯に出していた報への取消で取消の表示が立ち、10 秒で外れる／安全弁: リセットで一緒に落ちる
+  //   （帯に出していない報への取消で立たないのは、帯へ当てる判定 `kohatsuListDecision` などのテストが固定している）
+  it('正: 帯に出していた後発地震注意情報の取消で取消の表示が立ち、10 秒で外れる', async () => {
+    const h = setup()
+    await h.flush()
+    await act(async () => { await h.current.simulateKohatsuRetraction() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(h.current.kohatsuList).toHaveLength(1)
+    expect(h.current.specialInfoCancels).toEqual([])
+    act(() => { vi.advanceTimersByTime(TSUNAMI_DISMISS_MS) })
+    expect(h.current.kohatsuList).toEqual([])
+    expect(h.current.specialInfoCancels).toEqual([expect.objectContaining({ kind: 'kohatsu', name: '北海道・三陸沖後発地震注意情報' })])
+    act(() => { vi.advanceTimersByTime(10_000 + QUEUE_TICK_MS) })
+    expect(h.current.specialInfoCancels).toEqual([])
+  })
+
+  it('安全弁: 取消の表示はリセットで一緒に落ち、外す予約が後から何も起こさない', async () => {
+    const h = setup()
+    await h.flush()
+    await act(async () => { await h.current.simulateKohatsuRetraction() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS + TSUNAMI_DISMISS_MS) })
+    expect(h.current.specialInfoCancels).toHaveLength(1)
+    act(() => { h.current.resetState() })
+    expect(h.current.specialInfoCancels).toEqual([])
+    act(() => { vi.advanceTimersByTime(20_000) })
+    expect(h.current.specialInfoCancels).toEqual([])
   })
 
   // 対照: 地震回数の取消テストも同じ。

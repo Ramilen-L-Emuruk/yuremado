@@ -3161,8 +3161,8 @@ export function parseNankaiFromXml(xml: string): JMANankai | null {
   // 「調べた結果、可能性は通常の範囲内だった」という気象庁の判断で、意味が正反対になる。
   // 取り消された事実は `retracted` で持ち、帯を引っ込める点だけ `cancelled` を共有する。
   //
-  // 取消の理由は `Body/Text` に入ると資料が定めているので拾う。**いまは画面に出ない**（帯は取消で
-  // 引っ込むため）。将来ログや画面へ出す余地を残すために持たせている。
+  // 取消の理由は `Body/Text` に入ると資料が定めているので拾う。帯の取消の表示の 2 行目・通知の本文・読み上げに出る
+  // （→ `utils/specialInfoCancelBand.ts`）。
   if (infoType === '取消') {
     const cancelBodyEl = xmlQ(doc, 'Body')
     return {
