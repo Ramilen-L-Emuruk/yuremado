@@ -1,4 +1,28 @@
 import type { Messages } from '../messages'
+import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+
+const TSUNAMI_WORDS: TsunamiTermWords = {
+  grade: { MajorWarning: 'Alerta de Mega Tsunami', Warning: 'Alerta de Tsunami', Watch: 'Advertencia de Tsunami', Forecast: 'Pronóstico del tsunami (ligeras alteraciones en la superficie del mar)' },
+  noTsunami: 'Sin tsunami',
+  issued: (g) => `${g}: emitida`,
+  lifted: (g) => `${g}: desactivación`,
+  huge: 'Gigante',
+  high: 'Alto',
+  over10m: 'Excede a 10m',
+  orMore: (h) => `${h} o más`,
+  under: (h) => `Menos de ${h}`,
+  initialRise: 'subida inicial',
+  initialDrop: 'bajada inicial',
+  drill: 'Simulacro',
+  test: 'Prueba',
+}
+
+const TSUNAMI_EVACUATION = {
+  MajorWarning: 'Por favor refúgiense en un lugar más alto o bien entren en edificios destinados a refugio.',
+  Warning: 'Por favor refúgiense en un lugar más alto o bien entren en edificios destinados a refugio.',
+  Watch: 'Salgan inmediatamente del mar quienes estén en él y aléjense de la playa.',
+  Forecast: 'Se prevén ligeras alteraciones en la superficie del mar, pero no hay riesgo de daños.',
+}
 
 /** スペイン語の辞書。気象庁の多言語辞書にある語はそれに合わせ、無い語は作った（語ごとの出どころは `docs/spec/i18n-spec.md` §4）。 */
 export const es: Messages = {
@@ -79,5 +103,57 @@ export const es: Messages = {
     privacyPolicy: 'Política de privacidad',
     deny: 'No permitir',
     allow: 'Permitir',
+  },
+  tsunami: {
+    grade: { MajorWarning: 'Alerta de Mega Tsunami', Warning: 'Alerta de Tsunami', Watch: 'Advertencia de Tsunami', Forecast: 'Pronóstico del tsunami (ligeras alteraciones en la superficie del mar)', Unknown: 'Desconocido' },
+    kindName: (name) => translateKindName(name, TSUNAMI_WORDS),
+    inEffect: (g) => `${g} en vigor`,
+    inEffectWord: 'en vigor',
+    updated: (t) => `Actualizado ${t}`,
+    observedAsOf: (t) => `Observado a las ${t}`,
+    expires: (t) => `Vence ${t}`,
+    estimatedArrival: (t) => `Llegada prevista ${t}`,
+    estimatedArrivalAfter: (t) => `Llegada prevista ${t}`,
+    highTide: (t) => `Marea alta ${t}`,
+    maxWave: (t) => `Ola máxima ${t}`,
+    firstWave: (t, initial) => (initial ? `${t} ${translateInitialWave(initial, TSUNAMI_WORDS)}` : t),
+    gradeChangedFrom: (l, raised) => (raised ? `Subida desde ${l}` : `Cambio desde ${l}`),
+    liftedHeader: 'Desactivación',
+    gradeLifted: (g) => (g ? `${g}: desactivación` : 'Desactivación'),
+    notesFromJma: 'Notas de la JMA',
+    earthquakeLink: '▶ Información de terremotos',
+    offshoreObservations: 'Observaciones en mar abierto',
+    coastalEstimates: 'Estimaciones costeras (anunciadas por la JMA)',
+    depth: (d) => `Profundidad ${d}`,
+    editingOffice: (o) => `Editado por ${o}`,
+    issuingOffice: (o) => `Emitido por ${o}`,
+    noneTitle: 'Sin información de tsunami',
+    noneBody: 'Actualmente no hay alertas ni advertencias de tsunami en vigor.',
+    operationStatus: (status) => translateOperationStatus(status, TSUNAMI_WORDS),
+    forecastChip: 'Pronóstico',
+    badge: {
+      measured: 'Medido',
+      arrivalConfirmed: 'Llegada confirmada',
+      missing: 'Sin datos',
+      rising: 'En aumento',
+      aboveCriteriaOffshore: 'Supera el criterio de alerta',
+      aboveCriteria: 'Supera el criterio de Alerta de Mega Tsunami',
+      warningLevelObserved: 'Observado nivel de Alerta de Tsunami',
+    },
+    forecastHeightImportant: 'Altura prevista dada en cifras o elevada',
+    arrivalCondition: { imminent: 'Llegada inminente', arriving: 'Llegando', firstArrived: 'Primera ola llegada' },
+    observing: 'Información pendiente',
+    estimating: 'Información pendiente',
+    weak: 'Débil',
+    arrivalUnknown: 'Hora de llegada desconocida',
+    height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
+    cancel: {
+      lifted: { title: 'Información del tsunami: desactivación', badge: 'Desactivación', desc: 'Esta información de tsunami ha sido desactivada.' },
+      retracted: { title: 'Información del tsunami: anulación', badge: 'Anulación', desc: 'Esta información de tsunami se emitió por error y ha sido anulada.' },
+      expired: { title: 'Pronóstico del tsunami: vencido', badge: 'Vencido', desc: 'Este pronóstico de tsunami ha vencido.' },
+    },
+    // 日本語以外は、気象庁の付加文の有無に関わらず等級ごとの文を出す（2026-11-10 ユーザー選択「等級ごとの訳文を出す (Recommended)」）
+    evacuation: (grade, telegramLine) => grade === 'Unknown' ? (telegramLine ?? '') : TSUNAMI_EVACUATION[grade],
+    evacuationByGrade: TSUNAMI_EVACUATION,
   },
 }

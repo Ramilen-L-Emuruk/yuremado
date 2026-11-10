@@ -1,4 +1,28 @@
 import type { Messages } from '../messages'
+import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+
+const TSUNAMI_WORDS: TsunamiTermWords = {
+  grade: { MajorWarning: '大海啸警报', Warning: '海啸警报', Watch: '海啸注意警报', Forecast: '海啸预报（略有海平面变化）' },
+  noTsunami: '无海啸',
+  issued: (g) => `${g}：发布`,
+  lifted: (g) => `${g}解除`,
+  huge: '巨大',
+  high: '高',
+  over10m: '超过10米',
+  orMore: (h) => `${h}以上`,
+  under: (h) => `不足${h}`,
+  initialRise: '初波上升',
+  initialDrop: '初波下降',
+  drill: '演练',
+  test: '测试',
+}
+
+const TSUNAMI_EVACUATION = {
+  MajorWarning: '请立即撤离到高地或疏散到大楼内避难。',
+  Warning: '请立即撤离到高地或大楼内避难。',
+  Watch: '请立刻上岸并远离海岸。',
+  Forecast: '预计海平面略有变化，但无需担心受灾。',
+}
 
 /** 中国語（簡体字）の辞書。気象庁の多言語辞書にある語はそれに合わせ、無い語は作った（語ごとの出どころは `docs/spec/i18n-spec.md` §4）。 */
 export const zhHans: Messages = {
@@ -79,5 +103,57 @@ export const zhHans: Messages = {
     privacyPolicy: '隐私政策',
     deny: '不允许',
     allow: '允许',
+  },
+  tsunami: {
+    grade: { MajorWarning: '大海啸警报', Warning: '海啸警报', Watch: '海啸注意警报', Forecast: '海啸预报（略有海平面变化）', Unknown: '不明' },
+    kindName: (name) => translateKindName(name, TSUNAMI_WORDS),
+    inEffect: (g) => `${g} 发布中`,
+    inEffectWord: '发布中',
+    updated: (t) => `更新 ${t}`,
+    observedAsOf: (t) => `截至 ${t} 的观测`,
+    expires: (t) => `失效 ${t}`,
+    estimatedArrival: (t) => `预计到达 ${t}`,
+    estimatedArrivalAfter: (t) => `预计到达 ${t}`,
+    highTide: (t) => `涨潮 ${t}`,
+    maxWave: (t) => `最大波 ${t}`,
+    firstWave: (t, initial) => (initial ? `${t} ${translateInitialWave(initial, TSUNAMI_WORDS)}` : t),
+    gradeChangedFrom: (l, raised) => (raised ? `由${l}升级` : `由${l}变更`),
+    liftedHeader: '解除',
+    gradeLifted: (g) => (g ? `${g}解除` : '解除'),
+    notesFromJma: '日本气象厅补充说明',
+    earthquakeLink: '▶ 地震信息',
+    offshoreObservations: '近海观测',
+    coastalEstimates: '沿岸推测（日本气象厅发布）',
+    depth: (d) => `深度 ${d}`,
+    editingOffice: (o) => `编辑机构 ${o}`,
+    issuingOffice: (o) => `发布机构 ${o}`,
+    noneTitle: '暂无海啸信息',
+    noneBody: '目前未发布海啸警报或海啸注意警报。',
+    operationStatus: (status) => translateOperationStatus(status, TSUNAMI_WORDS),
+    forecastChip: '预测',
+    badge: {
+      measured: '实测',
+      arrivalConfirmed: '确认到达',
+      missing: '缺测',
+      rising: '上升中',
+      aboveCriteriaOffshore: '超过警报基准',
+      aboveCriteria: '超过大海啸警报基准',
+      warningLevelObserved: '观测到相当于海啸警报的海啸',
+    },
+    forecastHeightImportant: '预计高度以数值发布或上调',
+    arrivalCondition: { imminent: '即将到达', arriving: '到达中', firstArrived: '首波已到达' },
+    observing: '发布待定',
+    estimating: '发布待定',
+    weak: '微弱',
+    arrivalUnknown: '到达时间不明',
+    height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
+    cancel: {
+      lifted: { title: '海啸信息 解除', badge: '解除', desc: '该海啸信息已解除。' },
+      retracted: { title: '海啸信息 撤销', badge: '撤销', desc: '该海啸信息因误发而被撤销。' },
+      expired: { title: '海啸预报 失效', badge: '失效', desc: '该海啸预报已失效。' },
+    },
+    // 日本語以外は、気象庁の付加文の有無に関わらず等級ごとの文を出す（2026-11-10 ユーザー選択「等級ごとの訳文を出す (Recommended)」）
+    evacuation: (grade, telegramLine) => grade === 'Unknown' ? (telegramLine ?? '') : TSUNAMI_EVACUATION[grade],
+    evacuationByGrade: TSUNAMI_EVACUATION,
   },
 }

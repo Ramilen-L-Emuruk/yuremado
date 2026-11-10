@@ -1,4 +1,28 @@
 import type { Messages } from '../messages'
+import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+
+const TSUNAMI_WORDS: TsunamiTermWords = {
+  grade: { MajorWarning: '대형 지진해일 경보', Warning: '지진해일 경보', Watch: '지진해일 주의보', Forecast: '지진해일 예보(약간의 해수면 변동)' },
+  noTsunami: '지진해일 없음',
+  issued: (g) => `${g}: 발표`,
+  lifted: (g) => `${g} 해제`,
+  huge: '거대',
+  high: '높음',
+  over10m: '10m 초과',
+  orMore: (h) => `${h} 이상`,
+  under: (h) => `${h} 미만`,
+  initialRise: '초동 상승',
+  initialDrop: '초동 하강',
+  drill: '훈련',
+  test: '시험',
+}
+
+const TSUNAMI_EVACUATION = {
+  MajorWarning: '즉시 높은 지대나 피난 빌딩 등 안전한 곳으로 대피하십시오.',
+  Warning: '즉시 높은 지대나 피난 빌딩 등 안전한 곳으로 대피하십시오.',
+  Watch: '바닷속에 있는 사람은 즉시 바다에서 나와 해안에서 벗어나 주십시오.',
+  Forecast: '약간의 해수면 변동이 예상되지만 피해 걱정은 없습니다.',
+}
 
 /** 韓国語の辞書。気象庁の多言語辞書にある語はそれに合わせ、無い語は作った（語ごとの出どころは `docs/spec/i18n-spec.md` §4）。 */
 export const ko: Messages = {
@@ -79,5 +103,57 @@ export const ko: Messages = {
     privacyPolicy: '개인정보 처리방침',
     deny: '허용 안 함',
     allow: '허용',
+  },
+  tsunami: {
+    grade: { MajorWarning: '대형 지진해일 경보', Warning: '지진해일 경보', Watch: '지진해일 주의보', Forecast: '지진해일 예보(약간의 해수면 변동)', Unknown: '불명' },
+    kindName: (name) => translateKindName(name, TSUNAMI_WORDS),
+    inEffect: (g) => `${g} 발표 중`,
+    inEffectWord: '발표 중',
+    updated: (t) => `갱신 ${t}`,
+    observedAsOf: (t) => `${t} 기준 관측`,
+    expires: (t) => `만료 ${t}`,
+    estimatedArrival: (t) => `도달 예상 ${t}`,
+    estimatedArrivalAfter: (t) => `도달 예상 ${t}`,
+    highTide: (t) => `만조 ${t}`,
+    maxWave: (t) => `최대파 ${t}`,
+    firstWave: (t, initial) => (initial ? `${t} ${translateInitialWave(initial, TSUNAMI_WORDS)}` : t),
+    gradeChangedFrom: (l, raised) => (raised ? `${l}에서 상향` : `${l}에서 변경`),
+    liftedHeader: '해제',
+    gradeLifted: (g) => (g ? `${g} 해제` : '해제'),
+    notesFromJma: '기상청 보충 정보',
+    earthquakeLink: '▶ 지진 정보',
+    offshoreObservations: '앞바다 관측',
+    coastalEstimates: '연안 추정(기상청 발표)',
+    depth: (d) => `깊이 ${d}`,
+    editingOffice: (o) => `편집 관서 ${o}`,
+    issuingOffice: (o) => `발표 관서 ${o}`,
+    noneTitle: '지진해일 정보 없음',
+    noneBody: '현재 지진해일 경보·주의보는 발표되지 않았습니다.',
+    operationStatus: (status) => translateOperationStatus(status, TSUNAMI_WORDS),
+    forecastChip: '예측',
+    badge: {
+      measured: '실측',
+      arrivalConfirmed: '도달 확인',
+      missing: '결측',
+      rising: '상승 중',
+      aboveCriteriaOffshore: '경보 기준 초과',
+      aboveCriteria: '대형 지진해일 경보 기준 초과',
+      warningLevelObserved: '지진해일 경보 수준 관측',
+    },
+    forecastHeightImportant: '예상 높이 수치 발표·상향',
+    arrivalCondition: { imminent: '곧 도달', arriving: '도달 중', firstArrived: '제1파 도달' },
+    observing: '정보 보류 중',
+    estimating: '정보 보류 중',
+    weak: '미약',
+    arrivalUnknown: '도달 시각 불명',
+    height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
+    cancel: {
+      lifted: { title: '지진해일 정보 해제', badge: '해제', desc: '이 지진해일 정보는 해제되었습니다.' },
+      retracted: { title: '지진해일 정보 취소', badge: '취소', desc: '이 지진해일 정보는 잘못 발표되어 취소되었습니다.' },
+      expired: { title: '지진해일 예보 만료', badge: '만료', desc: '이 지진해일 예보는 만료되었습니다.' },
+    },
+    // 日本語以外は、気象庁の付加文の有無に関わらず等級ごとの文を出す（2026-11-10 ユーザー選択「等級ごとの訳文を出す (Recommended)」）
+    evacuation: (grade, telegramLine) => grade === 'Unknown' ? (telegramLine ?? '') : TSUNAMI_EVACUATION[grade],
+    evacuationByGrade: TSUNAMI_EVACUATION,
   },
 }
