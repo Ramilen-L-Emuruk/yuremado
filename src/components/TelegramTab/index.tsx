@@ -8,10 +8,11 @@ import { Marquee } from '../Marquee'
 import { Reveal } from '../EarthquakeTab/quakeMotion'
 import { QuakeListDayLabel } from '../EarthquakeTab/QuakeListRow'
 import {
-  KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, matchesTelegramFilter, operationBadgeOf, originBadgeOf,
-  readKindFilter, readOriginFilter, telegramTitleOf,
+  KIND_OPTIONS, ORIGIN_OPTIONS, localizedTelegramTitle, matchesTelegramFilter, operationBadgeOf,
+  originBadgeOf, originFilterLabel, readKindFilter, readOriginFilter,
   type KindFilter, type OriginFilter,
 } from './labels'
+import { useMessages } from '../../i18n/I18nProvider'
 
 // 行には発信元の印を出さない。発信元が DMDATA の 1 つだけで、全行が同じ印になっていた
 // （2026-11-04 ユーザー選択「外す (Recommended)」。発信元が増えたら戻す）。
@@ -163,6 +164,8 @@ function skipWhileHidden(prev: Props, next: Props): boolean {
 
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: Props) {
+  const m = useMessages()
+  const tm = m.telegramLog
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all')
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
@@ -236,8 +239,8 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
     }))
     const json = JSON.stringify(payload, null, 2)
     const ts = formatFileStamp(Date.now())
-    triggerDownload(json, `${ts}_telegrams_${entries.length}件.json`, 'json')
-  }, [telegramLog, selectedIds])
+    triggerDownload(json, `${ts}_telegrams_${tm.downloadCount(entries.length)}.json`, 'json')
+  }, [telegramLog, selectedIds, tm])
 
   const handleDownloadZip = useCallback(() => {
     const entries = telegramLog.filter(e => selectedIds.has(e.id))
@@ -260,10 +263,10 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${ts}_telegrams_${entries.length}件.zip`
+    a.download = `${ts}_telegrams_${tm.downloadCount(entries.length)}.zip`
     a.click()
     URL.revokeObjectURL(url)
-  }, [telegramLog, selectedIds])
+  }, [telegramLog, selectedIds, tm])
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedId(prev => prev === id ? null : id)
@@ -293,14 +296,14 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
      <div className="quake-list-scope flex flex-col h-full min-h-0" style={{ fontSize: 'var(--qk-fs)' }}>
       <div className="flex items-center justify-between border-b border-border shrink-0" style={{ padding: '10px var(--qk-pad)' }}>
         <span className="font-bold text-white" style={{ fontSize: 'var(--qk-f)' }}>
-          電文ログ
+          {m.nav.telegrams}
           <span className="ml-2 font-normal text-secondary tabular-nums" style={{ fontSize: 'var(--qk-fs)' }}>({filtered.length} / {telegramLog.length})</span>
         </span>
         <button
           onClick={onClear}
           className="text-secondary hover:text-white transition-colors motion-reduce:transition-none px-2 py-1 rounded-md hover:bg-white/5"
         >
-          クリア
+          {tm.clear}
         </button>
       </div>
 
@@ -310,27 +313,27 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
           onChange={e => setKindFilter(readKindFilter(e.target.value))}
           className="flex-1 min-w-0 bg-card border border-border rounded-sm px-2 py-1 text-secondary focus:text-white focus:outline-hidden"
         >
-          <option value="all">全種別</option>
+          <option value="all">{tm.allKinds}</option>
           {KIND_OPTIONS.map(kind => (
-            <option key={kind} value={kind}>{KIND_LABEL[kind]}</option>
+            <option key={kind} value={kind}>{tm.kind[kind]}</option>
           ))}
-          <option value="filtered">スキップ</option>
-          <option value="error">エラー</option>
+          <option value="filtered">{tm.skipped}</option>
+          <option value="error">{tm.errors}</option>
         </select>
         <select
           value={originFilter}
           onChange={e => setOriginFilter(readOriginFilter(e.target.value))}
           className="flex-1 min-w-0 bg-card border border-border rounded-sm px-2 py-1 text-secondary focus:text-white focus:outline-hidden"
         >
-          {ORIGIN_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
+          {ORIGIN_OPTIONS.map(value => (
+            <option key={value} value={value}>{originFilterLabel(value, tm)}</option>
           ))}
         </select>
       </div>
 
       {selectedIds.size > 0 && (
         <div className="flex items-center justify-between border-b border-border shrink-0 bg-white/5" style={{ padding: '8px var(--qk-pad)' }}>
-          <span className="text-white">{selectedIds.size}件選択中</span>
+          <span className="text-white">{tm.selectedCount(selectedIds.size)}</span>
           <div className="flex gap-1">
             <button
               onClick={handleDownloadSelected}
@@ -348,7 +351,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
               onClick={clearSelection}
               className="text-secondary hover:text-white transition-colors motion-reduce:transition-none px-2 py-1 rounded-md hover:bg-white/5"
             >
-              選択解除
+              {tm.deselect}
             </button>
           </div>
         </div>
@@ -360,7 +363,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
       <div className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none">
         {filtered.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-secondary" style={{ fontSize: 'var(--qk-f)' }}>
-            {telegramLog.length === 0 ? '電文を待機中…' : 'フィルタ条件に一致なし'}
+            {telegramLog.length === 0 ? tm.waiting : tm.noMatch}
           </div>
         ) : (
           <>
@@ -372,7 +375,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                   onChange={toggleSelectAll}
                   className="accent-white w-3.5 h-3.5"
                 />
-                <span className="text-secondary">全選択</span>
+                <span className="text-secondary">{tm.selectAll}</span>
               </label>
             </div>
             <ul>
@@ -380,7 +383,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                 const badge = STATUS_BADGE[entry.status]
                 const isExpanded = expandedId === entry.id
                 const isSelected = selectedIds.has(entry.id)
-                const title = telegramTitleOf(entry)
+                const title = localizedTelegramTitle(entry, tm)
                 const originBadge = originBadgeOf(entry.origin)
                 const operationBadge = operationBadgeOf(entry)
 
@@ -418,15 +421,15 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                             <span className={`font-mono shrink-0 w-3 ${badge.className}`}>{badge.label}</span>
                             {/* 日時として読めなければ語を出す。空欄にすると列が詰まって
                                 隣の値が時刻の位置に見える。 */}
-                            <span className="text-secondary font-mono tabular-nums shrink-0">{formatTime(entry.receivedAt) ?? '時刻不明'}</span>
+                            <span className="text-secondary font-mono tabular-nums shrink-0">{formatTime(entry.receivedAt) ?? tm.timeUnknown}</span>
                             {/* 経路の印。ライブには出さない（既定の経路なので、付けると全行が賑やかになる）。 */}
                             {originBadge && (
-                              <span className="font-bold bg-amber-400/20 text-amber-200 rounded-[3px] px-1 shrink-0">{originBadge}</span>
+                              <span className="font-bold bg-amber-400/20 text-amber-200 rounded-[3px] px-1 shrink-0">{tm.origin[originBadge]}</span>
                             )}
                             <span className="font-mono text-white shrink-0">{entry.headType}</span>
                             {/* 訓練・試験の印。種別名は消さずに後ろへ並べる（何の訓練かが分からなくなるため）。 */}
                             {operationBadge && (
-                              <span className={`font-bold rounded-[3px] px-1 shrink-0 ${operationBadge.className}`}>{operationBadge.label}</span>
+                              <span className={`font-bold rounded-[3px] px-1 shrink-0 ${operationBadge.className}`}>{tm.operation[operationBadge.key]}</span>
                             )}
                             {/* 名前が欄に収まらないときは、開いた行だけ端まで流して頭へ戻す（2026-11-04 流し方の問いへの答え
                                 「この場合ループより先頭に戻るほうがいいかも」、続く選択「開いた行だけ (Recommended)」）。畳んだ行は「…」で切る */}
@@ -447,13 +450,13 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                                   onClick={e => { e.stopPropagation(); handleDownload(entry) }}
                                   className="text-secondary hover:text-white transition-colors motion-reduce:transition-none px-2 py-0.5 rounded-md hover:bg-white/5"
                                 >
-                                  ダウンロード
+                                  {tm.download}
                                 </button>
                                 <button
                                   onClick={e => { e.stopPropagation(); handleCopy(entry) }}
                                   className="text-secondary hover:text-white transition-colors motion-reduce:transition-none px-2 py-0.5 rounded-md hover:bg-white/5"
                                 >
-                                  {copied === entry.id ? 'コピー済み' : 'コピー'}
+                                  {copied === entry.id ? tm.copied : tm.copy}
                                 </button>
                               </div>
                               <pre className="font-mono text-secondary bg-black/30 rounded-sm p-2 overflow-x-auto max-h-[min(24rem,45dvh)] whitespace-pre-wrap break-all">

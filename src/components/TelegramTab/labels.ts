@@ -1,6 +1,8 @@
 import type { TelegramLogEntry, TelegramLogKind, TelegramOrigin } from '../../types/earthquake'
 import { log } from '../../utils/logger'
 import { TELEGRAM_KIND_OF_HEAD_TYPE } from '../../services/dmdataTelegramPayload'
+import { ja } from '../../i18n/messages/ja'
+import type { Messages } from '../../i18n/messages'
 
 /**
  * 電文種別コードから引く種別名。名前は気象庁の情報名に揃える。
@@ -23,29 +25,7 @@ import { TELEGRAM_KIND_OF_HEAD_TYPE } from '../../services/dmdataTelegramPayload
  * 緊急地震速報の行は種別で引くので、特別警報の条件を満たした報も特別警報とは出ない
  * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
  */
-export const HEAD_TYPE_LABEL: Readonly<Record<string, string>> = {
-  VXSE42: 'EEW配信テスト',
-  VXSE43: 'EEW警報',
-  VXSE44: 'EEW予報（旧形式）',
-  VXSE45: 'EEW地震動予報',
-  VXSE51: '震度速報',
-  VXSE52: '震源情報',
-  VXSE53: '震源・震度',
-  VXSE60: '地震回数に関する情報',
-  VXSE61: '顕著な地震の震源要素更新のお知らせ',
-  VXSE62: '長周期',
-  VTSE41: '津波警報・注意報',
-  VTSE51: '津波観測に関する情報',
-  VTSE52: '沖合の津波観測に関する情報',
-  VYSE50: '南海トラフ地震臨時情報',
-  VYSE51: '南海トラフ地震関連解説情報（臨時解説）',
-  VYSE52: '南海トラフ地震関連解説情報（定例解説）',
-  VYSE60: '北海道・三陸沖後発地震注意情報',
-  VZSE40: '地震・津波に関するお知らせ',
-  IXAC41: '推計震度分布図作図用データ',
-  IXAC40: '推計震度分布図作図用データ（旧形式）',
-  WEPA60: '国際津波関連情報（英文）',
-}
+export const HEAD_TYPE_LABEL: Readonly<Record<string, string>> = ja.telegramLog.headType
 
 /** 種別名。載っていないコードはコードそのものを返す（継承したキーは引かない）。 */
 export function headTypeLabel(headType: string): string {
@@ -59,22 +39,45 @@ export function headTypeLabel(headType: string): string {
 const CONTROL_BLOCK = /<(?:[\w.-]+:)?Control\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?Control>/
 const TITLE = /<(?:[\w.-]+:)?Title\b[^>]*>\s*([^<]*?)\s*<\/(?:[\w.-]+:)?Title>/
 
-/** 一度読んだ行の名前（行は作られた後に書き換えない）。2,022 行を描くたびに本文をなめ直さない。 */
-const titleCache = new WeakMap<object, string>()
+/** 一度読んだ行の題名（読めなければ null。行は作られた後に書き換えない）。2,022 行を描くたびに本文をなめ直さない。 */
+const titleCache = new WeakMap<object, string | null>()
 
-/**
- * 行に出す名前。XML の電文は本文の Control/Title をそのまま出す（2026-11-04 ユーザー選択「電文の Title を
- * そのまま (Recommended)」）。Title が読めない行（二進の推計震度分布図・復号に失敗した base64・捨てた試験報）は
- * 種別名（{@link headTypeLabel}）を出す。
- */
-export function telegramTitleOf(entry: Pick<TelegramLogEntry, 'headType' | 'rawBody'>): string {
+/** 本文の Control/Title。XML でない・読めない・空なら null。 */
+function controlTitleOf(entry: Pick<TelegramLogEntry, 'rawBody'>): string | null {
   const cached = titleCache.get(entry)
   if (cached !== undefined) return cached
   const body = entry.rawBody
   const control = typeof body === 'string' && body.trimStart().startsWith('<') ? CONTROL_BLOCK.exec(body)?.[1] : undefined
-  const title = (control === undefined ? undefined : TITLE.exec(control)?.[1]) || headTypeLabel(entry.headType)
+  const title = (control === undefined ? undefined : TITLE.exec(control)?.[1]) || null
   titleCache.set(entry, title)
   return title
+}
+
+/**
+ * 行に出す名前（日本語）。XML の電文は本文の Control/Title をそのまま出す（2026-11-04 ユーザー選択「電文の Title を
+ * そのまま (Recommended)」）。Title が読めない行（二進の推計震度分布図・復号に失敗した base64・捨てた試験報）は
+ * 種別名（{@link headTypeLabel}）を出す。画面はいま出している言語で引く {@link localizedTelegramTitle} を使う。
+ */
+export function telegramTitleOf(entry: Pick<TelegramLogEntry, 'headType' | 'rawBody'>): string {
+  return controlTitleOf(entry) || headTypeLabel(entry.headType)
+}
+
+/** 電文ログの辞書（`Messages['telegramLog']`）。 */
+export type TelegramLogMessages = Messages['telegramLog']
+
+/** 表に鍵があればその値。継承したキーは引かない。 */
+function lookup(table: Readonly<Record<string, string>>, key: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined
+}
+
+/**
+ * 行に出す名前を、いま出している言語で。電文の題名は `controlTitle` で引き、表に無い題名は電文の文字のまま。
+ * 題名の読めない行は電文種別コードで `headType` を引き、表に無いコードはコードのまま。
+ */
+export function localizedTelegramTitle(entry: Pick<TelegramLogEntry, 'headType' | 'rawBody'>, tm: TelegramLogMessages): string {
+  const title = controlTitleOf(entry)
+  if (title) return lookup(tm.controlTitle, title) ?? title
+  return lookup(tm.headType, entry.headType) ?? entry.headType
 }
 
 /**
@@ -82,19 +85,7 @@ export function telegramTitleOf(entry: Pick<TelegramLogEntry, 'headType' | 'rawB
  * （`KIND_OPTIONS`）。`Record<TelegramLogKind, string>` なので、種別を足して書き忘れると
  * 型エラーになり、選択肢にも自動で並ぶ。
  */
-export const KIND_LABEL: Readonly<Record<TelegramLogKind, string>> = {
-  eew: 'EEW',
-  quake: '地震',
-  tsunami: '津波',
-  lpgm: '長周期',
-  nankai: '南海トラフ臨時情報',
-  nankaiCommentary: '南海トラフ解説情報',
-  kohatsu: '後発地震注意情報',
-  quakeNotice: 'お知らせ',
-  earthquakeCount: '地震回数',
-  estimatedIntensity: '推計震度分布図',
-  internationalTsunami: '国際津波関連情報',
-}
+export const KIND_LABEL: Readonly<Record<TelegramLogKind, string>> = ja.telegramLog.kind
 
 /**
  * 電文種別コードが属する種別。**独自の表は持たず、受信の振り分けが引く表**
@@ -134,27 +125,30 @@ export function readKindFilter(value: string): KindFilter {
 /** 経路の絞り込み（ライブで届いたのか、こちらが流したのか）。 */
 export type OriginFilter = 'all' | TelegramOrigin
 
-/** 経路の絞り込みの選択肢と、画面に出す名前。 */
-export const ORIGIN_OPTIONS: ReadonlyArray<readonly [OriginFilter, string]> = [
-  ['all', 'すべての経路'],
-  ['live', 'ライブ'],
-  ['test', 'テスト'],
-  ['replay', '再生'],
-]
+/** 経路の絞り込みの選択肢（並び順）。名前は {@link originFilterLabel}。 */
+export const ORIGIN_OPTIONS: readonly OriginFilter[] = ['all', 'live', 'test', 'replay']
+
+/** 経路の絞り込みの名前（いま出している言語で）。 */
+export function originFilterLabel(origin: OriginFilter, tm: TelegramLogMessages): string {
+  return origin === 'all' ? tm.allOrigins : tm.origin[origin]
+}
 
 /**
  * `<select>` の値を経路の絞り込みとして読む。知らない値は「すべての経路」へ倒し、記録を残す
  * （理由は `readKindFilter` と同じ）。
  */
 export function readOriginFilter(value: string): OriginFilter {
-  if (ORIGIN_OPTIONS.some(([v]) => v === value)) return value as OriginFilter
+  if ((ORIGIN_OPTIONS as readonly string[]).includes(value)) return value as OriginFilter
   log.warn(`[TelegramTab] 経路の絞り込みに知らない値が来たのですべての経路にした: ${value}`)
   return 'all'
 }
 
-/** 行に出す経路の印。ライブは印を出さない（既定の経路なので、付けると全行が賑やかになる）。 */
-export function originBadgeOf(origin: TelegramOrigin): string | null {
-  return origin === 'test' ? 'テスト' : origin === 'replay' ? '再生' : null
+/**
+ * 行に出す経路の印（経路の鍵。名前は辞書の `origin` で引く）。ライブは印を出さない（既定の経路なので、
+ * 付けると全行が賑やかになる）。
+ */
+export function originBadgeOf(origin: TelegramOrigin): Exclude<TelegramOrigin, 'live'> | null {
+  return origin === 'live' ? null : origin
 }
 
 /**
@@ -164,13 +158,16 @@ export function originBadgeOf(origin: TelegramOrigin): string | null {
  *
  * 本文の名乗り（`operationStatus`）を先に見る。名乗りが読めず配信元が試験報の印（`isTest`）だけを
  * 立てているときは、どちらか言えないので「訓練・試験」と出す。
+ *
+ * `key` は辞書の `operation` の鍵（画面はこれで引く）。`label` は日本語の名前。
  */
 export function operationBadgeOf(
   entry: Pick<TelegramLogEntry, 'operationStatus' | 'isTest'>,
-): { label: string; className: string } | null {
-  if (entry.operationStatus === '訓練') return { label: '訓練', className: 'bg-sky-400/20 text-sky-200' }
-  if (entry.operationStatus === '試験') return { label: '試験', className: 'bg-violet-400/20 text-violet-200' }
-  if (entry.isTest) return { label: '訓練・試験', className: 'bg-white/10 text-secondary' }
+): { key: keyof TelegramLogMessages['operation']; label: string; className: string } | null {
+  const op = ja.telegramLog.operation
+  if (entry.operationStatus === '訓練') return { key: 'drill', label: op.drill, className: 'bg-sky-400/20 text-sky-200' }
+  if (entry.operationStatus === '試験') return { key: 'test', label: op.test, className: 'bg-violet-400/20 text-violet-200' }
+  if (entry.isTest) return { key: 'drillOrTest', label: op.drillOrTest, className: 'bg-white/10 text-secondary' }
   return null
 }
 

@@ -1,4 +1,4 @@
-import type { TsunamiGrade } from '../../types/earthquake'
+import type { TelegramLogKind, TsunamiGrade } from '../../types/earthquake'
 
 /** 等級ごとの避難の呼びかけ（気象庁の付加文が採れなかったときに出す。読み上げも同じ文を読む → `utils/tsunami.ts` の `fallbackEvacuationAction`）。 */
 const TSUNAMI_EVACUATION: Record<Exclude<TsunamiGrade, 'Unknown'>, string> = {
@@ -170,5 +170,96 @@ export const ja = {
     evacuation: (grade: TsunamiGrade, telegramLine: string | undefined) => telegramLine ?? (grade === 'Unknown' ? '' : TSUNAMI_EVACUATION[grade]),
     /** 等級ごとの避難の文（読み上げと共有。→ `utils/tsunami.ts` の `fallbackEvacuationAction`） */
     evacuationByGrade: TSUNAMI_EVACUATION,
+  },
+  /**
+   * 電文ログ（`components/TelegramTab`）。電文の本文（XML・平文・推計震度分布図の要約）は辞書を通さない。
+   * 行の名前は電文の `Control/Title` を `controlTitle` で引き、表に無い題名は電文の文字のまま出す。
+   */
+  telegramLog: {
+    clear: 'クリア',
+    allKinds: '全種別',
+    skipped: 'スキップ',
+    errors: 'エラー',
+    allOrigins: 'すべての経路',
+    /** 経路の名前（絞り込みの選択肢と、行の印） */
+    origin: { live: 'ライブ', test: 'テスト', replay: '再生' },
+    selectedCount: (n: number) => `${n}件選択中`,
+    deselect: '選択解除',
+    waiting: '電文を待機中…',
+    noMatch: 'フィルタ条件に一致なし',
+    selectAll: '全選択',
+    timeUnknown: '時刻不明',
+    download: 'ダウンロード',
+    copy: 'コピー',
+    copied: 'コピー済み',
+    /** 訓練・試験の印（電文の `Control/Status`。名乗りが読めず配信元の試験の印だけがあれば `drillOrTest`） */
+    operation: { drill: '訓練', test: '試験', drillOrTest: '訓練・試験' },
+    /** 選んだ電文をまとめて落とすファイル名の、件数の部分（`<時刻>_telegrams_<これ>.json`） */
+    downloadCount: (n: number) => `${n}件`,
+    /** 種別の絞り込みの名前（`TelegramLogKind`。書いた順が選択肢の並び → `labels.ts` の `KIND_OPTIONS`） */
+    kind: {
+      eew: 'EEW',
+      quake: '地震',
+      tsunami: '津波',
+      lpgm: '長周期',
+      nankai: '南海トラフ臨時情報',
+      nankaiCommentary: '南海トラフ解説情報',
+      kohatsu: '後発地震注意情報',
+      quakeNotice: 'お知らせ',
+      earthquakeCount: '地震回数',
+      estimatedIntensity: '推計震度分布図',
+      internationalTsunami: '国際津波関連情報',
+    } as Record<TelegramLogKind, string>,
+    /**
+     * 電文の `Control/Title`。電文種別ごとに 1 つに決まっている（控え 2020-11-18〜の 207,930 通で 18 種）。
+     * 日本語は電文の文字のまま。鍵は電文の題名そのもの
+     */
+    controlTitle: {
+      '津波警報・注意報・予報a': '津波警報・注意報・予報a',
+      '津波情報a': '津波情報a',
+      '沖合の津波観測に関する情報': '沖合の津波観測に関する情報',
+      '緊急地震速報配信テスト': '緊急地震速報配信テスト',
+      '緊急地震速報（警報）': '緊急地震速報（警報）',
+      '緊急地震速報（予報）': '緊急地震速報（予報）',
+      '緊急地震速報（地震動予報）': '緊急地震速報（地震動予報）',
+      '震度速報': '震度速報',
+      '震源に関する情報': '震源に関する情報',
+      '震源・震度に関する情報': '震源・震度に関する情報',
+      '地震の活動状況等に関する情報': '地震の活動状況等に関する情報',
+      '地震回数に関する情報': '地震回数に関する情報',
+      '顕著な地震の震源要素更新のお知らせ': '顕著な地震の震源要素更新のお知らせ',
+      '長周期地震動に関する観測情報': '長周期地震動に関する観測情報',
+      '南海トラフ地震臨時情報': '南海トラフ地震臨時情報',
+      '南海トラフ地震関連解説情報': '南海トラフ地震関連解説情報',
+      '北海道・三陸沖後発地震注意情報': '北海道・三陸沖後発地震注意情報',
+      '地震・津波に関するお知らせ': '地震・津波に関するお知らせ',
+    },
+    /**
+     * 電文種別コードから引く名前。`Control/Title` の読めない行（二進の推計震度分布図・復号に失敗した行・捨てた試験報）に出す。
+     * 扱うコードはすべて載せる（漏れは `components/TelegramTab/labels.test.ts` が落とす）。名前の決め方は `labels.ts` の `HEAD_TYPE_LABEL`
+     */
+    headType: {
+      VXSE42: 'EEW配信テスト',
+      VXSE43: 'EEW警報',
+      VXSE44: 'EEW予報（旧形式）',
+      VXSE45: 'EEW地震動予報',
+      VXSE51: '震度速報',
+      VXSE52: '震源情報',
+      VXSE53: '震源・震度',
+      VXSE60: '地震回数に関する情報',
+      VXSE61: '顕著な地震の震源要素更新のお知らせ',
+      VXSE62: '長周期',
+      VTSE41: '津波警報・注意報',
+      VTSE51: '津波観測に関する情報',
+      VTSE52: '沖合の津波観測に関する情報',
+      VYSE50: '南海トラフ地震臨時情報',
+      VYSE51: '南海トラフ地震関連解説情報（臨時解説）',
+      VYSE52: '南海トラフ地震関連解説情報（定例解説）',
+      VYSE60: '北海道・三陸沖後発地震注意情報',
+      VZSE40: '地震・津波に関するお知らせ',
+      IXAC41: '推計震度分布図作図用データ',
+      IXAC40: '推計震度分布図作図用データ（旧形式）',
+      WEPA60: '国際津波関連情報（英文）',
+    },
   },
 } as const

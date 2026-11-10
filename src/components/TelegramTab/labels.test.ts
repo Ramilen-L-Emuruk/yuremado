@@ -2,9 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TelegramLogEntry } from '../../types/earthquake'
 import { NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES, DISPATCHED_WITHOUT_PARSER } from '../../services/dmdataTelegramPayload'
 import {
-  HEAD_TYPE_LABEL, KIND_LABEL, KIND_OPTIONS, headTypeLabel, matchesTelegramFilter, readKindFilter,
-  telegramLogKindOf, telegramTitleOf,
+  HEAD_TYPE_LABEL, KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, headTypeLabel, localizedTelegramTitle,
+  matchesTelegramFilter, operationBadgeOf, originBadgeOf, originFilterLabel, readKindFilter, telegramLogKindOf, telegramTitleOf,
 } from './labels'
+import { ja } from '../../i18n/messages/ja'
+import { en } from '../../i18n/messages/en'
+import { readdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
 
 describe('HEAD_TYPE_LABEL', () => {
   // 鍵がコードの文字列なので、型検査では書き漏らしを捕まえられない。アプリが扱う種別の集合と
@@ -170,5 +174,88 @@ describe('telegramTitleOf の許容幅', () => {
   // 安全弁: 空の Title は名前にしない
   it('空の Title は種別名へ倒す', () => {
     expect(telegramTitleOf({ headType: 'VXSE52', rawBody: '<Report><Control><Title>  </Title></Control></Report>' })).toBe('震源情報')
+  })
+})
+
+describe('いま出している言語で引く名前（localizedTelegramTitle ほか）', () => {
+  const xml = (title: string) => `<Report><Control><Title>${title}</Title></Control></Report>`
+
+  // 正: 表にある題名・コードは、その言語の辞書で引く
+  it('英語の辞書では、決まった題名と題名の読めない行の名前を訳す', () => {
+    expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: xml('震源・震度に関する情報') }, en.telegramLog)).toBe('Earthquake and Seismic Intensity Information')
+    expect(localizedTelegramTitle({ headType: 'IXAC41', rawBody: new Uint8Array([1]) }, en.telegramLog)).toBe('Estimated seismic intensity map data')
+  })
+
+  // 対照: 日本語の辞書では今までどおり電文の題名・日本語の名前（赤字の欄は日本語の文）
+  it('日本語の辞書では電文の題名をそのまま出す', () => {
+    expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: xml('震源・震度に関する情報') }, ja.telegramLog)).toBe('震源・震度に関する情報')
+    expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: '<Report/>' }, ja.telegramLog)).toBe('震源・震度')
+  })
+
+  // 安全弁: 表に無い題名・コード・印は、電文の文字・コード・印のまま出す（継承したキーも引かない）
+  it('表に無いものはそのまま出す', () => {
+    expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: xml('知らない題名') }, en.telegramLog)).toBe('知らない題名')
+    expect(localizedTelegramTitle({ headType: 'ZZZZ99', rawBody: '<Report/>' }, en.telegramLog)).toBe('ZZZZ99')
+    expect(localizedTelegramTitle({ headType: 'toString', rawBody: '<Report/>' }, en.telegramLog)).toBe('toString')
+  })
+
+  it('日本語の辞書の題名の表は、鍵と値が同じ（日本語は電文の題名のまま）', () => {
+    for (const [title, label] of Object.entries(ja.telegramLog.controlTitle)) expect(label).toBe(title)
+  })
+
+  it('題名を読めた行の日本語の名前は、言語で引く前と同じ', () => {
+    for (const title of Object.keys(ja.telegramLog.controlTitle)) {
+      const entry = { headType: 'VXSE53', rawBody: xml(title) }
+      expect(localizedTelegramTitle(entry, ja.telegramLog)).toBe(telegramTitleOf(entry))
+    }
+  })
+})
+
+describe('経路の札と絞り込みの名前', () => {
+  // 正: テスト・再生の行は経路の鍵を返し、名前はその言語の辞書で引く
+  it('テスト・再生の行は札を出す', () => {
+    expect(originBadgeOf('test')).toBe('test')
+    expect(originBadgeOf('replay')).toBe('replay')
+    expect(en.telegramLog.origin.test).toBe('Test button')
+  })
+
+  // 対照: ライブの行は札を出さない
+  it('ライブの行は札を出さない', () => {
+    expect(originBadgeOf('live')).toBeNull()
+  })
+
+  // 安全弁: 選択肢の並びと名前は今までどおり（「すべての経路」が先頭）
+  it('絞り込みの選択肢は すべて・ライブ・テスト・再生 の順で、日本語の名前は今までと同じ', () => {
+    expect(ORIGIN_OPTIONS.map(o => originFilterLabel(o, ja.telegramLog))).toEqual(['すべての経路', 'ライブ', 'テスト', '再生'])
+    expect(ORIGIN_OPTIONS.map(o => originFilterLabel(o, en.telegramLog))).toEqual(['All origins', 'Live', 'Test button', 'Replay'])
+  })
+})
+
+describe('訓練・試験の印の鍵', () => {
+  it('鍵で引いた英語の名前は、訓練・試験・どちらか言えないを分ける', () => {
+    const label = (e: { operationStatus?: '訓練' | '試験'; isTest: boolean }) => {
+      const b = operationBadgeOf(e)
+      return b ? en.telegramLog.operation[b.key] : null
+    }
+    expect(label({ operationStatus: '訓練', isTest: true })).toBe('Drill')
+    expect(label({ operationStatus: '試験', isTest: true })).toBe('Test')
+    expect(label({ isTest: true })).toBe('Drill/Test')
+    expect(label({ isTest: false })).toBeNull()
+  })
+})
+
+describe('辞書の表と、電文・受信の側の値の突き合わせ', () => {
+  // テストボタンで流す電文の題名が表に無いと、日本語以外の画面で題名が日本語のまま出る（実配信の題名の数え方は i18n-spec §4）
+  it('テストボタンで流す電文の Control/Title は、すべて題名の表にある', async () => {
+    const root = path.resolve(__dirname, '../../../public/data/test-telegrams')
+    const files = (await readdir(root, { recursive: true })).filter(f => f.endsWith('.xml'))
+    const bodies = await Promise.all(files.map(f => readFile(path.join(root, f), 'utf8')))
+    const titles = new Set<string>()
+    for (const body of bodies) {
+      const title = telegramTitleOf({ headType: '-', rawBody: body })
+      if (title !== '-') titles.add(title)
+    }
+    expect(titles.size).toBeGreaterThan(0)
+    expect([...titles].filter(t => !Object.prototype.hasOwnProperty.call(ja.telegramLog.controlTitle, t))).toEqual([])
   })
 })
