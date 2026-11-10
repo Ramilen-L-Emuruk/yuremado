@@ -1,5 +1,6 @@
-import type { JMAEarthquakeCount, JMAKohatsu, JMALpgm, JMANankai, JMANankaiCommentary } from '../types/earthquake'
+import type { JMAEarthquakeCount, JMAKohatsu, JMALpgm, JMANankai, JMANankaiCommentary, JMAQuakeNotice } from '../types/earthquake'
 import { isObservedLpgmClass } from './lpgm'
+import { newerSameUnitShown } from './specialInfoBandList'
 
 /**
  * 帯に出すお知らせ系の電文（南海トラフ地震臨時情報・後発地震注意情報・南海トラフ地震関連解説情報・地震回数に関する情報）を
@@ -133,6 +134,50 @@ export function earthquakeCountListDecision(
   nowMs: number,
 ): BandDecision {
   return earthquakeCountBandDecision(pickShown(shownEventIds, count.eventId), count, nowMs)
+}
+
+/** お知らせの帯に積んでいる 1 通のうち、判定に要るもの */
+export type QuakeNoticeShown = Pick<JMAQuakeNotice, 'id' | 'eventId' | 'operationStatus' | 'reportDateTime'>
+
+/**
+ * お知らせの判定の結果。取消を当てるときは、帯から外す報の `id` を返す（**同じ情報単位の全件**）。
+ * 当てないときの理由は `BandDecision` の語に、`stale`（同じ件のより新しい報が出ている）と `noEventId`（`EventID` が空の取消）を足したもの
+ */
+export type QuakeNoticeDecision =
+  | { apply: true; removeIds: readonly string[] }
+  | { apply: false; reason: 'notShown' | 'otherUnit' | 'expired' | 'badExpire' | 'stale' | 'noEventId' }
+
+/**
+ * 地震・津波に関するお知らせ（VZSE40）。**1 通ずつが別件**（`id` は `EventID` と `Control/DateTime` の組）なので、
+ * 帯に積んでいる一覧をそのまま渡す。
+ *
+ * - **取消は `EventID` と運用種別が同じものを、積まれている全件外す。** 取消は元のお知らせの `EventID` を引き継ぎ（気象庁公式の
+ *   サンプル `42_03_01_220402_VZSE40.xml`）、`id` には電文の作成時刻が入るので発表と取消で一致しない。気象庁の解説資料（共通別紙ア・ウ）は
+ *   情報名称・運用種別・識別情報の組を「独立した情報単位」とし、取消はその全体に効くと定めている（2026-11-04 ユーザー選択
+ *   「気象庁どおりすべて外す (Recommended)」）
+ * - **`EventID` が空の取消は照合しない。** 空どうしは「同じお知らせ」の証拠にならない（パーサーは空を記録して通す）
+ * - **発表は、期限切れと、同じ `id` のより新しい報が出ているときは当てない**（履歴の取り込みとライブが重なると古い報が後から届く）
+ *
+ * アプリ（`useEarthquakes` の `applyQuakeNotice`）と中継のプッシュ通知が同じ答えを出すためにここへ置く。
+ */
+export function quakeNoticeListDecision(
+  shown: readonly QuakeNoticeShown[],
+  notice: Pick<JMAQuakeNotice, 'id' | 'eventId' | 'operationStatus' | 'cancelled' | 'reportDateTime' | 'expireAt'>,
+  nowMs: number,
+): QuakeNoticeDecision {
+  if (notice.cancelled) {
+    if (shown.length === 0) return { apply: false, reason: 'notShown' }
+    if (notice.eventId === '') return { apply: false, reason: 'noEventId' }
+    const removeIds = shown
+      .filter(n => n.eventId === notice.eventId && n.operationStatus === notice.operationStatus)
+      .map(n => n.id)
+    return removeIds.length === 0 ? { apply: false, reason: 'otherUnit' } : { apply: true, removeIds }
+  }
+  const e = expired(notice.expireAt, nowMs)
+  if (e === null) return { apply: false, reason: 'badExpire' }
+  if (e) return { apply: false, reason: 'expired' }
+  if (newerSameUnitShown(shown, notice, s => s.id === notice.id)) return { apply: false, reason: 'stale' }
+  return { apply: true, removeIds: [] }
 }
 
 /** 伝えた取消の記憶の上限（取消は年に数通しか無いが、長く開いたままの端末で増え続けないように） */

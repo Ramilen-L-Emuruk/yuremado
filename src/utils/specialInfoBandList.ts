@@ -14,7 +14,7 @@ export interface BandListItem {
   expireAt: string
 }
 
-function reportMs(item: BandListItem): number {
+function reportMs(item: Pick<BandListItem, 'reportDateTime'>): number {
   const ms = new Date(item.reportDateTime).getTime()
   // 読めない発表時刻は末尾へ（並びのためだけに捨てない）
   return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY
@@ -28,11 +28,23 @@ function reportMs(item: BandListItem): number {
  * 同じ件の古い報が後から届くことがある。置き換えると、地震回数の累積が古い値へ戻り、音と読み上げも鳴り直す
  */
 export function putBandItem<T extends BandListItem>(list: readonly T[], item: T, sameUnit: (shown: T) => boolean): readonly T[] | null {
-  if (list.some(shown => sameUnit(shown) && reportMs(shown) > reportMs(item))) return null
+  if (newerSameUnitShown(list, item, sameUnit)) return null
   const rest = list.filter(shown => !sameUnit(shown))
   const next = [item, ...rest]
   // 安定な並べ替えなので、同じ発表時刻どうしは「入れたばかりのものが前」のまま残る
   return next.sort((a, b) => reportMs(b) - reportMs(a))
+}
+
+/**
+ * 同じ件（`sameUnit` が真）のより新しい報が一覧にあるか。`putBandItem` が入れずに `null` を返す条件で、中継のプッシュ通知も
+ * 同じ判定をする（→ `specialInfoBands.ts` の `quakeNoticeListDecision`）。期限は見ないので、`reportDateTime` だけあればよい
+ */
+export function newerSameUnitShown<T extends Pick<BandListItem, 'reportDateTime'>>(
+  list: readonly T[],
+  item: Pick<BandListItem, 'reportDateTime'>,
+  sameUnit: (shown: T) => boolean,
+): boolean {
+  return list.some(shown => sameUnit(shown) && reportMs(shown) > reportMs(item))
 }
 
 /** 一覧の中でいちばん早い期限（ミリ秒）。読めない期限は数えない（一覧へは入らない —— 当てる前の判定が弾く） */

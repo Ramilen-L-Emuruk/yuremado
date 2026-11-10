@@ -49,6 +49,21 @@ export function quakePrefectures(quake: Pick<JMAQuake, 'points'>): string[] | nu
 }
 
 /**
+ * 震度を持たない国内の地震の報を、地域で絞っているので出さないか。震度の無い報は県を読めない（`quakePrefectures` が `null` を返し、
+ * `notificationRegionAllowed` では絞らない扱いになる）が、地域を選んでいれば、どの県でも震度を観測していないので出さない。
+ * 後から選んだ県で震度を観測した報が来れば、そのとき通知する（2026-11-09 ユーザー選択「地域を選んでいれば出さない (Recommended)」）。
+ * 遠地地震は震度に関係なく出す。
+ *
+ * 中継のプッシュ通知も同じ判定をする。中継はこのファイルを写すので、設定の型（`AppSettings`）には依らず、選んだ県の並びだけを受け取る。
+ */
+export function noIntensityQuakeHiddenByRegion(
+  settings: { readonly notifyPrefectures: readonly string[] },
+  quake: { readonly earthquake: { readonly maxScale: number }; readonly issue: { readonly type: string } },
+): boolean {
+  return settings.notifyPrefectures.length > 0 && quake.earthquake.maxScale < 0 && quake.issue.type !== '遠地地震'
+}
+
+/**
  * 推計震度分布図: 元の地震の、震度を観測した都道府県（2026-11-03 ユーザー選択「推計震度は元の地震で絞る」）。
  * 元の地震は、地震カードのうち同じ地震と判定できるもの（{@link isSameEstimatedIntensityQuake}。一覧を地震ごとに 1 通へ保つ物差しと同じ）。
  * **当てはまるカードが 1 枚に決まらなければ絞らない**（同じ分の別の地震の県で落とさないため）

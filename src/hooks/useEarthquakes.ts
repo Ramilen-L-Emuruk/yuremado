@@ -60,7 +60,7 @@ import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dm
 // テストデータは押されてから読む（静的に取り込まない理由・失敗したときの扱い・先読みの
 // 段取りは `utils/testDataLoader.ts` にまとめてある）。
 import {
-  cancelOverOtherUnit, cancelOverOtherUnitInList, decideDispatch as decideBandDispatch, earthquakeCountListDecision, kohatsuListDecision,
+  cancelOverOtherUnit, cancelOverOtherUnitInList, decideDispatch as decideBandDispatch, earthquakeCountListDecision, kohatsuListDecision, quakeNoticeListDecision,
   lpgmNotifiable, nankaiBandDecision, nankaiCommentaryListDecision, noteConveyedCancel as noteBandConveyedCancel,
 } from '../utils/specialInfoBands'
 import { dropExpiredUpTo, earliestExpiryMs, putBandItem, type BandListItem } from '../utils/specialInfoBandList'
@@ -1476,50 +1476,47 @@ export function useEarthquakes(
   const applyQuakeNotice = useCallback((notice: JMAQuakeNotice): boolean => {
     pendingCancelBandRef.current = null
     const list = bandListsRef.current.quakeNotice
+    // 判定は中継のプッシュ通知と共用する（→ `quakeNoticeListDecision`。取消の照合のしかたと、その根拠もあちら）。
+    // **実配信の取消は未観測**（全期間の控え 2020-11-18〜2026-10-31 のお知らせ 608 通に 0 通。→ docs/spec/data-sources-spec.md §2
+    // 「扱う電文種別」）なので、届いたら形を確かめること。
+    const decision = quakeNoticeListDecision(list, notice, getTimeRef.current().getTime())
+    if (!decision.apply) {
+      switch (decision.reason) {
+        case 'notShown':
+          log.info(`[quakeNotice] 表示中のお知らせが無いため取消を当てません received=${notice.eventId}`)
+          break
+        case 'noEventId':
+          log.info(`[quakeNotice] EventID が空の取消は照合しないため帯を残します received=${notice.id}`)
+          break
+        case 'otherUnit':
+          log.info(`[quakeNotice] 帯に積んでいないお知らせへの取消のため帯を残します received=${notice.eventId} shown=${list.map(n => n.eventId).join(',')}`)
+          break
+        case 'badExpire':
+          // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報と同じ）。
+          log.warn('[data] 地震・津波に関するお知らせの期限を計算できません', notice.expireAt)
+          break
+        case 'stale':
+          log.info(`[quakeNotice] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${notice.id}`)
+          break
+        case 'expired':
+          break
+      }
+      return false
+    }
     if (notice.cancelled) {
-      // **照合は `EventID` で行う。`id` ではない。** 取消は元のお知らせの `EventID` を引き継ぐ ——
-      // 気象庁公式のサンプル（`jmaxml_20260723_Samples.zip` の `42_03_01_220402_VZSE40.xml`）は発表時刻が 2022-04-02 06:58 なのに
-      // `EventID` は `20220402050100`（＝05:01）で、自分の発表時刻ではなく**取り消す対象の発表時刻**を
-      // 指している（発表側のサンプルでは `EventID` ＝自分の発表時刻）。`id` には電文の作成時刻が
-      // 入るので（→ `quakeNoticeId`）、発表と取消で一致しない。
-      //
-      // **`EventID` と運用種別が同じものは、積まれている全件を外す。** 気象庁の解説資料（共通別紙ア・ウ）は、
-      // お知らせの「独立した情報単位」を情報名称・運用種別・識別情報（`EventID` ＝発表の日時分）の組とし、
-      // 取消は「『独立した情報単位』全体について…取り消す」と定めている。同じ分に出た 2 通は同じ単位なので、
-      // 取消は両方に効く（2026-11-04 ユーザー選択「気象庁どおりすべて外す (Recommended)」）。
-      // **実配信の取消は未観測**（全期間の控え 2020-11-18〜2026-10-31 のお知らせ 608 通に 0 通。→ docs/spec/data-sources-spec.md §2
-      // 「扱う電文種別」）なので、届いたら形を確かめること。
-      //
-      // **`EventID` が空の取消は照合しない。** 空どうしは「同じお知らせ」の証拠にならない
-      // （パーサーは空を記録して通す）。
-      if (list.length === 0) {
-        log.info(`[quakeNotice] 表示中のお知らせが無いため取消を当てません received=${notice.eventId}`)
-        return false
-      }
-      const sameUnit = (n: JMAQuakeNotice) => n.eventId === notice.eventId && n.operationStatus === notice.operationStatus
-      const targets = notice.eventId === '' ? [] : list.filter(sameUnit)
-      if (targets.length === 0) {
-        log.info(`[quakeNotice] 帯に積んでいないお知らせへの取消のため帯を残します received=${notice.eventId} shown=${list.map(n => n.eventId).join(',')}`)
-        return false
-      }
-      log.info(`[quakeNotice] 取消で一覧から外します eventId=${notice.eventId} shown=${targets.map(n => n.id).join(',')} cancel=${notice.id}`)
+      log.info(`[quakeNotice] 取消で一覧から外します eventId=${notice.eventId} shown=${decision.removeIds.join(',')} cancel=${notice.id}`)
       // 取消しの理由（パーサーは `body` に読んでいる）は取消の表示の 2 行目に出す（→ `utils/specialInfoCancelBand.ts`）
-      holdCancelBand({ kind: 'quakeNotice', data: notice }, targets.map(n => n.id))
-      commitBandList('quakeNotice', list.filter(n => !sameUnit(n)))
+      holdCancelBand({ kind: 'quakeNotice', data: notice }, decision.removeIds)
+      // 一覧の `id` は重ならない（同じ `id` は `putBandItem` が置き換える）ので、`id` で外せば判定が選んだものだけが外れる
+      commitBandList('quakeNotice', list.filter(n => !decision.removeIds.includes(n.id)))
       // **真を返す** —— 一覧を変えた（画面が変わった）ので、受け手へ流して取消を読ませる。
       return true
     }
-
-    const remainMs = new Date(notice.expireAt).getTime() - getTimeRef.current().getTime()
-    // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報と同じ）。
-    if (!Number.isFinite(remainMs)) {
-      log.warn('[data] 地震・津波に関するお知らせの期限を計算できません', notice.expireAt)
-      return false
-    }
-    if (remainMs <= 0) return false
     const next = putBandItem(list, notice, shown => shown.id === notice.id)
+    // 同じ件のより新しい報は上の判定（`stale`）が弾いているので、ふだんここで null は返らない。
+    // 2 つの判定がずれたときに黙って帯が出なくならないよう、記録してから外す
     if (next === null) {
-      log.info(`[quakeNotice] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${notice.id}`)
+      log.warn(`[quakeNotice] 共用の判定は当てると答えたのに、一覧へ入れられませんでした received=${notice.id}`)
       return false
     }
     commitBandList('quakeNotice', next)
