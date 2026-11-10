@@ -34,7 +34,7 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 const DETECT_TEXT = '石川県能登で揺れを検知。'
 /** 地震情報の間（2.8 秒以下）より長く取る —— 地震情報の間が先に明け、検知はまだ間を置いている形を作る */

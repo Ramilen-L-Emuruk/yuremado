@@ -31,6 +31,39 @@ export function upsertInternationalTsunami(
   return [...list, item].sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
 }
 
+/**
+ * 受けた報をアプリへ入れるか。**通信試験は設定「試験報を受信（検証用）」が入のときだけ入れる**（2026-11-09 ユーザー選択
+ * 「試験報の設定で止める (Recommended)」）。WEPA60 は XML でない電文で、配信元は試験の印（`head.test`）を付けないので、
+ * DMDATA の試験報の破棄（`services/dmdata.ts`）を通らない。ここで止めないと、中身が試験の報が全員に通知・音・読み上げで出る。
+ * 入れなかった報も電文ログには残る（ログは受信の時点で積む）
+ */
+export function admitInternationalTsunami(x: JMAInternationalTsunami, receiveTest: boolean): boolean {
+  return !x.isCommunicationsTest || receiveTest
+}
+
+/** 特別な情報の帯に出しておく日数（他の帯と同じく発表から 7 日。気象庁が定めた期限ではない） */
+const BAND_DAYS = 7
+
+/** 特別な情報の帯に出す国際津波関連情報の 1 通（帯の一覧の形 → `utils/specialInfoBandList.ts`） */
+export interface InternationalTsunamiBandItem {
+  readonly id: string
+  readonly reportDateTime: string
+  readonly expireAt: string
+  readonly report: JMAInternationalTsunami
+}
+
+/**
+ * 地震カードに付かない報を、特別な情報の帯に出す 1 通にする（2026-11-09 ユーザー選択「帯に出す (Recommended)」。2026-11-10 に
+ * 地震タブとの比べを示したうえで同じ答え）。対象は**通信試験**と、**発生時刻を読めない報**（カードの時刻の行が組めない。
+ * 全期間の控えに 0 通）。それ以外（地震カードか英文だけのカードに付く報）は null。発表時刻を読めない報も期限を数えられないので null
+ */
+export function internationalTsunamiBandItem(x: JMAInternationalTsunami): InternationalTsunamiBandItem | null {
+  if (!x.isCommunicationsTest && x.originTime !== undefined) return null
+  const ms = Date.parse(x.time)
+  if (!Number.isFinite(ms)) return null
+  return { id: x.id, reportDateTime: x.time, expireAt: new Date(ms + BAND_DAYS * 86_400_000).toISOString(), report: x }
+}
+
 
 /** 英文の結び付けの結果（→ {@link internationalTsunamiIndex}）。 */
 export interface InternationalTsunamiIndex {

@@ -9,7 +9,11 @@
 // - 震源が判った報で、最大震度の階級が前に通知したときより上がっていれば、頭に「最大震度更新」を付ける
 //   （2026-10-22 選択「頭に「最大震度更新」 (Recommended)」）
 // - 遠地地震は設定の震度に関係なく「遠地地震 {震源名} {規模}」（2026-10-22 選択「全部出す (Recommended)」。震源名は詳細震央地名）
-// 最低震度に届かない報・据え置いた報（カードが採らない）・取消では出さない。同じ報が 2 度届いても 1 度だけ。
+// - 震度を観測しなかった国内の地震（最大震度を持たない報）も、遠地地震と同じく設定の震度に関係なく出す（2026-11-09 ユーザー選択
+//   「閾値に関係なく出す」）。本文は「{震源名} {規模}（震度1以上の観測なし）」（2026-11-09 ユーザー選択「地名 M のあとに添える」）
+// 最低震度に届かない報・据え置いた報（カードが採らない）では出さない。同じ報が 2 度届いても 1 度だけ。
+// 取消は、その地震を通知していたときだけ、同じ tag で「〈通知した文〉は取り消されました」に置き換える
+// （2026-11-09 ユーザー選択「同じ札で置き換え、何を取り消したか言う (Recommended)」。→ {@link decideQuakeCancelNotification}）
 // 通知の tag を地震ごと（`quakeEventKey`）にするので、2 回目以降は OS 上で前の通知を置き換える。
 // 置き換えでも知らせ直す（`renotify`）のは呼び出し側（App の `showQuakeNotification`）。
 import type { AreaPrefIndex } from './quakePoints'
@@ -45,6 +49,11 @@ export interface QuakeNotifiedState {
    * 新しい順に {@link QUAKE_NOTIFIED_REPORTS_MAX} 件まで。
    */
   readonly reportKeys: readonly string[]
+  /**
+   * 情報名（`issue.type`。震度速報・震源・震度に関する情報 等）ごとに、最後に通知した本文。取消の通知が「何を取り消したか」を
+   * 言うのに使う（→ {@link decideQuakeCancelNotification}）。この欄を持たない古い記憶（中継の保存分）は空として扱う
+   */
+  readonly bodies?: Readonly<Record<string, string>>
 }
 
 /**
@@ -92,6 +101,11 @@ export function rememberQuakeNotified(
  * 古いほうへ覚えるだけで新しい記憶を汚さない）。出せなければ reject する（記録は呼び出し側）。
  *
  * `reportKeys` はこの通知を起こした報の鍵（`notifiedReportKey`。{@link collectQuakesToNotify} が返す）。
+ *
+ * `show` は通知が実際に出たかを返す（`false` は許可が無い・「アプリを開いている間は通知しない」で出さなかった）。
+ * 出なかった報も、同じ報を 2 度出さない・最大震度が上がったかを比べるためには覚えるが、**取消で言う文（`bodies`）は
+ * 覚えない** —— 覚えると、出ていない通知を取消で「取り消されました」と新しく出してしまう（2026-11-09 ユーザー選択
+ * 「通知していない報なら出さない (Recommended)」）。
  */
 export function scheduleQuakeNotification(args: {
   chains: Map<string, Promise<void>>
@@ -100,7 +114,7 @@ export function scheduleQuakeNotification(args: {
   reportKeys: readonly string[]
   notifyMinScale: number
   areaPrefIndex: AreaPrefIndex
-  show: (notification: QuakeNotification) => Promise<void>
+  show: (notification: QuakeNotification) => Promise<boolean>
 }): Promise<void> {
   const { chains, memory, quake, reportKeys, notifyMinScale, areaPrefIndex, show } = args
   const key = quakeEventKey(quake)
@@ -108,10 +122,40 @@ export function scheduleQuakeNotification(args: {
   const run = before.then(async () => {
     const decided = decideQuakeNotification(quake, reportKeys, memory.get(key) ?? null, notifyMinScale, areaPrefIndex)
     if (!decided) return
-    await show(decided.notification)
-    rememberQuakeNotified(memory, decided.next)
+    const previous = memory.get(key) ?? null
+    const shown = await show(decided.notification)
+    rememberQuakeNotified(memory, shown ? decided.next : { ...decided.next, bodies: previous?.bodies ?? {} })
   })
   // 列の末尾は失敗しても次を止めない形で持つ。済んだら、後ろに誰も並んでいなければ列ごと消す
+  const tail = run.catch(() => undefined)
+  chains.set(key, tail)
+  void tail.then(() => { if (chains.get(key) === tail) chains.delete(key) })
+  return run
+}
+
+/**
+ * 地震情報の取消の通知を、同じ地震の前の通知が済んでから判定して出す（並べ方は {@link scheduleQuakeNotification} と同じ列）。
+ * 出せたら記憶を進める（全体の取消なら忘れ、一部の取消なら取り消した情報名の文だけを消す）。
+ */
+export function scheduleQuakeCancelNotification(args: {
+  chains: Map<string, Promise<void>>
+  memory: Map<string, QuakeNotifiedState>
+  target: JMAQuake
+  cancel: JMAQuake
+  whole: boolean
+  notifyMinScale: number
+  show: (notification: QuakeNotification) => Promise<boolean>
+}): Promise<void> {
+  const { chains, memory, target, cancel, whole, notifyMinScale, show } = args
+  const key = quakeEventKey(target)
+  const before = chains.get(key) ?? Promise.resolve()
+  const run = before.then(async () => {
+    const decided = decideQuakeCancelNotification(target, cancel, whole, memory.get(key) ?? null, notifyMinScale)
+    if (!decided) return
+    await show(decided.notification)
+    if (decided.next) rememberQuakeNotified(memory, decided.next)
+    else memory.delete(key)
+  })
   const tail = run.catch(() => undefined)
   chains.set(key, tail)
   void tail.then(() => { if (chains.get(key) === tail) chains.delete(key) })
@@ -183,6 +227,22 @@ export function maxScaleRaisedNotificationBody(quake: JMAQuake): string {
 }
 
 /**
+ * 最大震度を持たない国内の地震の本文。震源名が無ければ省く。
+ *
+ * - **震源・震度情報（VXSE53）に震度が無い**なら、電文が「震度1以上を観測しなかった」と言っている。
+ *   例「鳥島近海 M6.5（震度1以上の観測なし）」（2026-11-09 ユーザー選択「地名 M のあとに添える」）
+ * - **震源情報（VXSE52）・震源要素更新のお知らせ（VXSE61）**はもともと震度を運ばない。震度が無いのは「観測しなかった」ではなく
+ *   「この報が言っていない」だけ（控えの全期間で、VXSE52 が 1 通目に届き後から震度つきの報が来た地震が 32 件）。震度に触れず
+ *   「鳥島近海 M6.5」とだけ言う（2026-11-09 ユーザー選択「扱いは残し本文を地名と規模だけに (Recommended)」）
+ */
+export function noIntensityQuakeNotificationBody(quake: JMAQuake): string {
+  const { name, magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
+  const mag = formatMagnitudeWithCondition(magnitude, magnitudeCondition, magnitudeType)
+  const base = name ? `${name} ${mag}` : mag
+  return quake.issue.type === '震源・震度情報' ? `${base}（震度1以上の観測なし）` : base
+}
+
+/**
  * 遠地地震の本文。例「遠地地震 メキシコ、チアパス州沿岸 M7.4」。震源名は詳細震央地名
  * （パーサーが `Area/DetailedName` を優先して入れる）。名前が無ければ省く。
  */
@@ -197,7 +257,7 @@ export function foreignQuakeNotificationBody(quake: JMAQuake): string {
  * （2026-10-26 ユーザー選択「カードが採った続報すべて (Recommended)」）。
  *
  * - 渡された閾値が負なら出さない（通知しないとき `effectiveNotifyMinScale` が -1 を返す）
- * - 遠地地震（国内の震度を持たない）は閾値に関係なく出す
+ * - 遠地地震（国内の震度を持たない）と、震度を観測しなかった国内の地震（最大震度を持たない報）は閾値に関係なく出す
  * - それ以外は最大震度が閾値（`notifyMinScale`）以上のときだけ出す
  * - 同じ地震で、`reportKeys` がすべて通知済みの報なら出さない（同じ報が 2 度届いたとき）
  * - 本文は、震源がまだ判らなければ震度速報の文、判っていれば震源の文。震源が判った報どうしで最大震度が
@@ -223,13 +283,18 @@ export function decideQuakeNotification(
   }
   const maxScale = quake.earthquake.maxScale
   const foreign = quake.issue.type === '遠地地震'
+  // 震度を観測しなかった国内の地震（震源は判っていて、最大震度を持たない報）。控えの全期間で 6 地震（鳥島近海・台湾付近）
+  const noIntensity = !foreign && maxScale < 0 && !isHypocenterPending(quake)
   // 最大震度が「5弱以上（未入電）」なら、実際は 5強以上だった可能性があるので、5強以上を選んでいても通知する
   // （2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」。地震タブの震度の絞り `passesQuakeListFilter` と同じ扱い）
-  if (!foreign && maxScale < notifyMinScale && !isMaxScaleUnreceived(maxScale, quake.points)) return null
+  if (!foreign && !noIntensity && maxScale < notifyMinScale && !isMaxScaleUnreceived(maxScale, quake.points)) return null
   const withHypocenter = foreign || !isHypocenterPending(quake)
   const body = foreign ? foreignQuakeNotificationBody(quake)
+    : noIntensity ? noIntensityQuakeNotificationBody(quake)
     : !withHypocenter ? scalePromptNotificationBody(quake, areaPrefIndex)
-    : same?.withHypocenter && maxScale > same.maxScale ? maxScaleRaisedNotificationBody(quake)
+    // 「最大震度更新」は、前の通知が震度を言っていたときだけ（震度に触れない通知の後に初めて震度が付いた報は、ふつうの震源の文。
+    // 2026-11-09 ユーザー選択「「最大震度更新」を付けない (Recommended)」）
+    : same?.withHypocenter && same.maxScale >= 0 && maxScale > same.maxScale ? maxScaleRaisedNotificationBody(quake)
     : hypocenterNotificationBody(quake)
   // 新しい順に並べる（`reportKeys` は届いた順なので、新しい報が先頭へ来るよう裏返す）
   const notified = [...reportKeys.filter(k => !same?.reportKeys.includes(k)).reverse(), ...(same?.reportKeys ?? [])]
@@ -238,8 +303,63 @@ export function decideQuakeNotification(
   }
   return {
     notification: { title: '地震情報', body, tag: key, open: { tab: 'earthquake', quake: key } },
-    next: { key, withHypocenter, maxScale, reportKeys: notified.slice(0, QUAKE_NOTIFIED_REPORTS_MAX) },
+    next: {
+      key, withHypocenter, maxScale, reportKeys: notified.slice(0, QUAKE_NOTIFIED_REPORTS_MAX),
+      // 最後に通知した情報名が末尾に来るよう、同じ情報名を一度外してから足す（取消の通知の既定の文は末尾を使う）
+      bodies: {
+        ...Object.fromEntries(Object.entries(same?.bodies ?? {}).filter(([type]) => type !== quake.issue.type)),
+        [quake.issue.type]: body,
+      },
+    },
   }
+}
+
+/**
+ * 地震情報の取消の通知を決める。**その地震を通知していたときだけ出す**（他の種類の取消と同じ。2026-10-24 ユーザー選択
+ * 「発表を通知したものだけ (Recommended)」）。発表と同じ tag で置き換えるので、取り消された通知は通知センターに残らない。
+ * 本文は「〈取り消された情報名で最後に通知した文〉は取り消されました」（2026-11-09 ユーザー選択「同じ札で置き換え、何を取り消したか
+ * 言う (Recommended)」）。**一部の取消は、取り消された情報名をこの端末が通知していたときだけ出す**（通知していない報の取消で、有効なままの
+ * 通知を「取り消された」と言わない。2026-11-09 ユーザー選択「通知していない報なら出さない (Recommended)」）。全体の取消は、その情報名で
+ * 通知していなければ、その地震で最後に通知した文を使う（地震ごと取り消されるので、どの通知も取り消されている）。
+ *
+ * @param target 取消が当たったカード（全体の取消なら取消済みの印の付いたカード、一部の取消なら当て直したカード）
+ * @param cancel 取消の電文（`issue.type` が取り消された情報名）
+ * @param whole カード全体の取消か。全体なら記憶を消し、一部なら取り消した情報名の文だけを消す
+ * @returns 出す通知と次に覚える状態（`null` なら忘れる）。通知していない地震・通知を切っているときは `null`
+ */
+export function decideQuakeCancelNotification(
+  target: JMAQuake,
+  cancel: JMAQuake,
+  whole: boolean,
+  previous: QuakeNotifiedState | null,
+  notifyMinScale: number,
+): { notification: QuakeNotification; next: QuakeNotifiedState | null } | null {
+  if (notifyMinScale < 0) return null
+  const key = quakeEventKey(target)
+  if (!previous || previous.key !== key) return null
+  const bodies = previous.bodies ?? {}
+  const all = Object.values(bodies)
+  const cancelledBody = bodies[cancel.issue.type] ?? (whole ? all[all.length - 1] : undefined)
+  if (cancelledBody === undefined) return null
+  const rest = Object.fromEntries(Object.entries(bodies).filter(([type]) => type !== cancel.issue.type))
+  return {
+    notification: { title: '地震情報 取消', body: `${cancelledBody} は取り消されました`, tag: key, open: { tab: 'earthquake', quake: key } },
+    next: whole ? null : { ...previous, bodies: rest },
+  }
+}
+
+/**
+ * ライブで届いた取消を、取消の通知の待ち行列へ積むか。**どのカードにも当たらなかった取消・同じ取消の 2 通目は積まない**
+ * （当たらない取消を積むと、後から同じ地震の別のカードを引いて、有効なままの通知を「取り消された」と言ってしまう）。
+ * `whole` は全体の取消か（一部の取消は取り消した情報名 `retracted` を持つ）。
+ *
+ * @param applied 受信側が決めた取消の当たり方（`LiveEventMeta.quakeCancel`）。決められなかったときは undefined
+ */
+export function quakeCancelToNotify(
+  applied: { readonly target: unknown; readonly retracted: unknown; readonly duplicate: boolean } | undefined,
+): { whole: boolean } | null {
+  if (!applied?.target || applied.duplicate) return null
+  return { whole: applied.retracted === undefined }
 }
 
 /** 通知を考える地震カードと、そのカードが採った報の鍵（`notifiedReportKey`）。 */

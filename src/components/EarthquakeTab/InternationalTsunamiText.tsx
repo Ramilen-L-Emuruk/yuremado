@@ -12,15 +12,23 @@ interface Props {
   readonly report: JMAInternationalTsunami
   /** 英文が付いた地震カードの気象庁の震央地名（英文だけのカード・取り消されたカードでは渡さない） */
   readonly quakeName?: string
+  /**
+   * 原文から始めるか。地震カードは日本語訳から（2026-11-08 ユーザー発言「デフォ翻訳でいいんじゃない」）。特別な情報の帯の通信試験は
+   * 訳の対象外なので原文から（2026-11-09 ユーザー選択「帯に出す (Recommended)」の説明「開くと英文の原文（日本語訳の対象外なら原文のまま）」）
+   */
+  readonly startWithOriginal: boolean
 }
 
-export function InternationalTsunamiText({ report, quakeName }: Props) {
-  const [showOriginal, setShowOriginal] = useState(false)
+export function InternationalTsunamiText({ report, quakeName, startWithOriginal }: Props) {
+  const [showOriginal, setShowOriginal] = useState(startWithOriginal)
+  // 訳に使う表は、訳を初めて見るときに取る。原文から始めた欄（帯の通信試験）では「日本語訳」を押すまで取らない
+  const [wantsTranslation, setWantsTranslation] = useState(!startWithOriginal)
   // 取得済みなら最初の描画から訳を出す（開き直すたびに原文→訳と描き替えない）
   const [regionNames, setRegionNames] = useState<Wepa60RegionNames | null>(getCachedWepa60RegionNames)
   const [stations, setStations] = useState<TsunamiObsCoords | null>(null)
 
   useEffect(() => {
+    if (!wantsTranslation) return
     let alive = true
     if (getCachedWepa60RegionNames() === null) loadWepa60RegionNames().then(d => { if (alive) setRegionNames(d) }).catch((err) => {
       // 表が無くても訳は出す（震央の地名だけ英語のまま未訳になる）
@@ -32,16 +40,16 @@ export function InternationalTsunamiText({ report, quakeName }: Props) {
       log.warn('[data] tsunami-obs-coords 取得失敗（観測の表の日本の地点は英語のまま）', err)
     })
     return () => { alive = false }
-  }, [])
+  }, [wantsTranslation])
 
   const translated = useMemo(() => {
-    if (regionNames === null) return null
+    if (!wantsTranslation || regionNames === null) return null
     return translateWepa60(report.text, report.time, {
       regionNames,
       ...(quakeName && { quakeName }),
       tsunamiStationNameAt: (lat, lon) => (stations ? nearestTsunamiStation(stations, lat, lon) : undefined),
     })
-  }, [report.text, report.time, quakeName, regionNames, stations])
+  }, [report.text, report.time, quakeName, regionNames, stations, wantsTranslation])
 
   const tab = (label: string, active: boolean, onClick: () => void) => (
     <button
@@ -55,7 +63,7 @@ export function InternationalTsunamiText({ report, quakeName }: Props) {
   return (
     <div className="pb-2">
       <div className="mb-1 flex gap-1">
-        {tab('日本語訳', !showOriginal, () => setShowOriginal(false))}
+        {tab('日本語訳', !showOriginal, () => { setShowOriginal(false); setWantsTranslation(true) })}
         {tab('原文', showOriginal, () => setShowOriginal(true))}
       </div>
       {showOriginal || translated === null ? (

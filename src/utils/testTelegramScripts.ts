@@ -202,6 +202,39 @@ export const HEADLINE_ONLY_CITY: TestTelegramScript = {
   }],
 }
 
+/** 震度なしテストで付け替える事象の識別子（英文だけテストの日向灘のカードと混ざらないよう、元の報とずらす） */
+export const NO_INTENSITY_EVENT_ID = '20240808164304'
+
+/**
+ * 震度なしテスト（震度1以上を観測しなかった国内の地震。最低震度の設定に関係なく通知する形を確かめる。
+ * 2026-11-09 ユーザー選択「この文面で行を足す (Recommended)」）。
+ *
+ * 実配信では全期間（2020-11-18〜2026-10-31）で 6 件（最後は 2024-09-24 鳥島近海）。どれも震源・震度に関する情報に
+ * **震度の欄（`Body/Intensity`）も見出しの構造化（`Head/Headline/Information`）も無く**、付加文は津波の 0211 だけを持つ。
+ * その電文は DMDATA 由来でここへ置けないので、**同じ形**を収録済みの日向灘の実電文から作る —— 震度の欄・見出しの構造化・
+ * 観測点についての付加文（`VarComment`）を外す。事象の識別子はずらす（英文だけテストの日向灘と同じ地震として重ならないため）。
+ */
+export const NO_INTENSITY_QUAKE: TestTelegramScript = {
+  anchor: 0,
+  steps: [{
+    file: nii('20240808075502_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0,
+    rewrite: xml => editXml(xml, doc => {
+      setSectionText(doc, 'Head', 'EventID', NO_INTENSITY_EVENT_ID)
+      const headline = childOf(only(doc, 'Head'), 'Headline')
+      const information = headline ? descendants(headline, 'Information') : []
+      if (information.length === 0) throw new Error('テスト用の電文に見出しの構造化（Head/Headline/Information）がありません')
+      for (const el of information) el.remove()
+      const body = only(doc, 'Body')
+      const intensity = childOf(body, 'Intensity')
+      if (!intensity) throw new Error('テスト用の電文に震度の欄（Body/Intensity）がありません')
+      intensity.remove()
+      const varComments = descendants(body, 'VarComment')
+      if (varComments.length === 0) throw new Error('テスト用の電文に観測点についての付加文（Body/Comments/VarComment）がありません')
+      for (const el of varComments) el.remove()
+    }),
+  }],
+}
+
 /**
  * 国際津波関連情報テスト（2021-01-21 21:23 インドネシア付近 M7.0 の遠地地震と、同じ地震の WEPA60）。
  *
@@ -235,7 +268,9 @@ export const FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI: TestTelegramScript = {
  *   2. 同じ地震の WEPA60（自作の英文 `synthetic/wepa60-hyuganada.txt`。実電文の行の並びに倣い、発生時刻 07:42Z・震央・規模を合わせた）
  *   3. 地震情報の無い地震の WEPA60（自作の英文 `synthetic/wepa60-mindanao.txt`。ミンダナオの M6.9。発生は日向灘の 22 分前）
  *   4. 通信試験の WEPA60（自作の英文 `synthetic/wepa60-commtest.txt`。2020-12-15 の実電文の行の並びと文に倣った）。どのカードにも
- *      付かず、読み上げ・通知・音だけが出る（2026-11-06 ユーザー選択「英文だけテストの最後に足す (Recommended)」）
+ *      付かず、国際津波関連情報の帯と読み上げ・通知・音が出る（2026-11-06 ユーザー選択「英文だけテストの最後に足す (Recommended)」）。
+ *      **設定「試験報を受信（検証用）」が入のときだけ。** 切（既定）なら受信の入口で止まり、電文ログにだけ残る
+ *      （2026-11-09 ユーザー選択「試験報の設定で止める (Recommended)」。→ `admitInternationalTsunami`）
  *
  * **3 の発生時刻を日向灘より前にしてある。** 台本は 1 つの差分で全体を押した時刻へずらすので（`anchor`）、後にすると押した時刻より
  * 未来の地震になる。
@@ -2056,7 +2091,7 @@ function isoZ(ms: number): string {
 /** 台本の一覧（テストで全件を流して読めることを確かめる）。 */
 export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScript>> = {
   EARTHQUAKE, TRAINING_QUAKE, UNRECEIVED_QUAKE, MAX_SCALE_OR_ABOVE_QUAKE, AREA_UNRECEIVED_QUAKE,
-  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
+  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY, HEADLINE_ONLY_CITY, NO_INTENSITY_QUAKE, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
   QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI, MAGNITUDE_FROM_TSUNAMI,
   TSUNAMI_MAJOR_WARNING, TSUNAMI_QUIET_REPORTS, TSUNAMI_WARNING, TSUNAMI_WATCH, TSUNAMI_FORECAST, TSUNAMI_EXPIRY, TSUNAMI_GRADE_CHANGE,
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,

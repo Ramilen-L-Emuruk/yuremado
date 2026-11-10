@@ -7,6 +7,7 @@
 
 import type { EEWAlert } from '../types/earthquake'
 import { OPEN_REALTIME, type NotificationOpen } from './notificationOpen'
+import { hasMagnitude } from './formatters'
 import {
   type EewAcceptance, type EndedEew, type EndedEewMatch, type EewNotifiedForecast,
   ACTIVE_EEW_WINDOW_MS, acceptEewReport, calcEEWCancelTime, computeDisplayEEWLevel, computeSingleEEWLevel,
@@ -238,12 +239,34 @@ export interface EewNotice {
  */
 export function eewAnnounceNotice(key: string, event: EEWAlert, forecast: EewNotifiedForecast): EewNotice {
   const level = computeDisplayEEWLevel(event)
+  const kind = level === 2 ? '緊急地震速報 特別警報' : level === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
   return {
-    title: level === 2 ? '緊急地震速報 特別警報' : level === 1 ? '緊急地震速報 警報' : eewKindLabel(0),
-    body: eewNotificationBody(event.earthquake.hypocenter.name, forecast),
+    // 最終報は見出しに添え、本文に規模を足す（2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
+    title: event.isFinal ? `${kind}（最終報）` : kind,
+    body: eewNotificationBody(event.earthquake.hypocenter.name, forecast, eewNoticeMagnitude(event)),
     tag: `eew-${key}`,
     open: OPEN_REALTIME,
   }
+}
+
+/**
+ * 通知の本文に添える規模（例「M6.3」）。仮定震源要素の報（規模を推定していない）と、規模の読めない報では添えない
+ * （画面の速報カードが規模を出さない報と同じ。→ `RealtimeTab` の `isAssumed`・`hasMagnitude`）
+ */
+function eewNoticeMagnitude(event: EEWAlert): string {
+  const { magnitude } = event.earthquake.hypocenter
+  if (event.earthquake.condition === '仮定震源要素' || !hasMagnitude(magnitude)) return ''
+  return `M${magnitude.toFixed(1)}`
+}
+
+/**
+ * 発表・続報で通知を出さなかった報のうち、**本文か見出しが前に出した通知から変わった報**の通知（鳴らさずに同じ札で
+ * 差し替える。2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）。前に通知していない
+ * 地震・字面の変わらない報は null
+ */
+export function eewQuietReplaceNotice(notice: EewNotice, lastShown: Pick<EewNotice, 'title' | 'body'> | undefined): EewNotice | null {
+  if (!lastShown) return null
+  return lastShown.title === notice.title && lastShown.body === notice.body ? null : notice
 }
 
 /** 誤報取消の通知。名前は取消の報・覚えた震央地名・消えた地震の最後の報の順に引いたもの（無ければ名前抜きの文） */

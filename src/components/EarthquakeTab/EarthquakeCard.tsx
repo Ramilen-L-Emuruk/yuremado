@@ -1817,6 +1817,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   <Reveal open={open}>{() => (
                     <InternationalTsunamiText
                       report={x}
+                      startWithOriginal={false}
                       {...(!quake.fromInternationalTsunami && !quake.cancelledAt && { quakeName: quake.earthquake.hypocenter.name.trim() })}
                     />
                   )}</Reveal>

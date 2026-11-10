@@ -764,6 +764,8 @@ export interface ReonsetSignal {
   atMs: number
   /** 寄せる先。引けなければ null（寄せずに音とタブ移動だけ出す） */
   focus: { lat: number; lng: number } | null
+  /** 立ち上がった観測点のうち最も強い点の値（通知の本文の震度に使う）。点を地図に引けなければ null */
+  index: number | null
 }
 
 /** 揺れ検知の読み上げが区域の境界データを待つ上限（ms）。過ぎたら地名を言わずに読む（→ `speakPendingDetection`）。 */
@@ -1288,7 +1290,9 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
 
   // 同じ場所の 2 つ目の地震（設計書§40）: 確定が続く中で、静けさを挟んでまとまった立ち上がりが
   // 来たら検知音を鳴らし、realtime タブへ移して、その点へ寄せる。判定は `utils/kyoshinReonset.ts`。
-  // **ブラウザ通知は出さない**（2026-10-24 ユーザー選択は「検知音を鳴らす」。通知の条件は別に決める）。
+  // **ブラウザ通知は別の札で出す**（2026-11-09 ユーザー選択「別の札で出す (Recommended)」。音は 2026-10-24 ユーザー選択
+  // 「検知音を鳴らす」）。題「同じ場所で再び揺れを検知」・本文は立ち上がった点のうち最も強い点の震度。2 つ目どうしは前の通知を置き換え、
+  // 1 つ目（揺れを検知中）と別地点の通知は残す。
   // 別地点として鳴らしたデータ時刻から `REONSET_AFTER_REGION_MS` 以内なら、そちらに任せて鳴らさない
   // （同じ揺れを 2 回知らせない）。**別地点が後から鳴る向きは防いでいない**（別地点の効果は触らない）。
   //
@@ -1305,6 +1309,10 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     setActiveTab('realtime')
     if (signal.focus) requestShakeFocus(signal.focus)
     if (settings.soundEnabled) playAlertSound('kyoshin')
+    if (notificationAllowed(settings, 'detection')) {
+      const label = (signal.index !== null ? kyoshinDetectionScaleLabel(signal.index) : null) ?? '?'
+      showBrowserNotification('同じ場所で再び揺れを検知', `最大リアルタイム震度 ${label}`, 'kyoshin-detection-reonset', false, OPEN_REALTIME)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 合図の印だけを駆動キーにし他は最新を ref で読む
   }, [reonset?.key])
 

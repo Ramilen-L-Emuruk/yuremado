@@ -5,20 +5,20 @@
 // 遠地地震は震度に関係なく出す（2026-10-22 選択「全部出す (Recommended)」）。tag は地震ごとで、置き換える。
 import { describe, it, expect, vi } from 'vitest'
 import type { EarthquakePoint, IntensityScale, JMAQuake } from '../types/earthquake'
-import { collectQuakesToNotify, decideQuakeNotification, maxScaleAreaLabel, notifiedReportKey, QUAKE_NOTIFIED_REPORTS_MAX, rememberQuakeNotified, scalePromptNotificationBody, scheduleQuakeNotification, type QuakeNotification, type QuakeNotifiedState } from './quakeNotification'
+import { collectQuakesToNotify, decideQuakeCancelNotification, quakeCancelToNotify, decideQuakeNotification, maxScaleAreaLabel, notifiedReportKey, QUAKE_NOTIFIED_REPORTS_MAX, rememberQuakeNotified, scalePromptNotificationBody, scheduleQuakeNotification, type QuakeNotification, type QuakeNotifiedState } from './quakeNotification'
 
 /** DMDATA 経路の区域の点（`pref` は空。→ quake-spec.md §4）。 */
 const area = (addr: string, scale: IntensityScale, unreceived = false): EarthquakePoint =>
   ({ pref: '', addr, isArea: true, scale, ...(unreceived && { unreceived: true }) })
 
-function makeQuake(o: { hypoName?: string; maxScale?: IntensityScale; points?: EarthquakePoint[]; mag?: number; magnitudeCondition?: string; telegramKey?: string } = {}): JMAQuake {
+function makeQuake(o: { hypoName?: string; maxScale?: IntensityScale; points?: EarthquakePoint[]; mag?: number; magnitudeCondition?: string; telegramKey?: string; issueType?: JMAQuake['issue']['type'] } = {}): JMAQuake {
   return {
     kind: 'quake',
     id: 'dmdata-quake-20260101162200-1',
     eventKey: '20260101162200',
     ...(o.telegramKey && { telegramKey: o.telegramKey }),
     time: '2026-01-01T07:22:30Z',
-    issue: { source: 'dmdata', time: '2026-01-01T07:22:30Z', type: o.hypoName ? '震源・震度に関する情報' : '震度速報', correct: 'なし' },
+    issue: { source: 'dmdata', time: '2026-01-01T07:22:30Z', type: o.issueType ?? (o.hypoName ? '震源・震度に関する情報' : '震度速報'), correct: 'なし' },
     earthquake: {
       time: '2026-01-01T07:22:00Z',
       hypocenter: {
@@ -71,7 +71,7 @@ describe('decideQuakeNotification', () => {
   it('震度速報なら速報の文で出す', () => {
     const r = decide(prompt, 'r1', null)!
     expect(r.notification).toEqual({ title: '地震情報', body: '震度速報 石川県能登 最大震度5弱', tag: '20260101162200', open: { tab: 'earthquake', quake: '20260101162200' } })
-    expect(r.next).toEqual({ key: '20260101162200', withHypocenter: false, maxScale: 45, reportKeys: ['r1'] })
+    expect(r.next).toEqual({ key: '20260101162200', withHypocenter: false, maxScale: 45, reportKeys: ['r1'], bodies: { 震度速報: '震度速報 石川県能登 最大震度5弱' } })
   })
 
   // 正: 同じ地震で震源が判ったら震源の文。tag が同じなので OS 上で置き換わる。
@@ -301,18 +301,19 @@ describe('collectQuakesToNotify', () => {
 // 判定し、出せたときだけ覚える（`scheduleQuakeNotification`）
 describe('scheduleQuakeNotification', () => {
   /** 呼ばれた順に記録し、`results` の順に成功・失敗を返す `show`。 */
-  function makeShow(results: ('ok' | 'fail')[]) {
+  function makeShow(results: ('ok' | 'fail' | 'quiet')[]) {
     const shown: QuakeNotification[] = []
     const show = vi.fn((n: QuakeNotification) => {
       shown.push(n)
-      return results.shift() === 'fail' ? Promise.reject(new TypeError('Illegal constructor')) : Promise.resolve()
+      const r = results.shift()
+      return r === 'fail' ? Promise.reject(new TypeError('Illegal constructor')) : Promise.resolve(r !== 'quiet')
     })
     return { shown, show }
   }
   const prompt = makeQuake()
   const withHypo = makeQuake({ hypoName: '石川県能登地方' })
 
-  function schedule(chains: Map<string, Promise<void>>, memory: Map<string, QuakeNotifiedState>, quake: JMAQuake, reportKey: string, show: (n: QuakeNotification) => Promise<void>) {
+  function schedule(chains: Map<string, Promise<void>>, memory: Map<string, QuakeNotifiedState>, quake: JMAQuake, reportKey: string, show: (n: QuakeNotification) => Promise<boolean>) {
     return scheduleQuakeNotification({ chains, memory, quake, reportKeys: [reportKey], notifyMinScale: 30, areaPrefIndex: null, show })
   }
 
@@ -358,7 +359,7 @@ describe('scheduleQuakeNotification', () => {
     const order: string[] = []
     const show = vi.fn((n: QuakeNotification) => {
       order.push(n.title)
-      return order.length === 1 ? new Promise<void>(resolve => { release = resolve }) : Promise.resolve()
+      return order.length === 1 ? new Promise<boolean>(resolve => { release = () => resolve(true) }) : Promise.resolve(true)
     })
     const a = schedule(chains, memory, prompt, 'r1', show)
     const b = schedule(chains, memory, withHypo, 'r2', show)
@@ -375,12 +376,124 @@ describe('scheduleQuakeNotification', () => {
     const chains = new Map<string, Promise<void>>()
     const memory = new Map<string, QuakeNotifiedState>()
     let release!: () => void
-    const show = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const show = vi.fn(() => new Promise<boolean>(resolve => { release = () => resolve(true) }))
     const a = schedule(chains, memory, prompt, 'r1', show)
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(memory.size).toBe(0)
     release()
     await a
     expect(memory.size).toBe(1)
+  })
+
+  // 2026-11-09 ユーザー選択「通知していない報なら出さない (Recommended)」: 出なかった報（「アプリを開いている間は
+  // 通知しない」など）は、同じ報を 2 度出さないためには覚えるが、取消で言う文は覚えない
+  it('正: 出なかった報は 2 度目を出さないが、取消で言う文は覚えない', async () => {
+    const chains = new Map<string, Promise<void>>()
+    const memory = new Map<string, QuakeNotifiedState>()
+    const { shown, show } = makeShow(['quiet', 'ok'])
+    await schedule(chains, memory, prompt, 'r1', show)
+    await schedule(chains, memory, prompt, 'r1', show)
+    expect(shown).toHaveLength(1)
+    expect(memory.get('20260101162200')?.bodies).toEqual({})
+  })
+  it('対照: 出た報の文は覚え、後の出なかった報は前の文を残す', async () => {
+    const chains = new Map<string, Promise<void>>()
+    const memory = new Map<string, QuakeNotifiedState>()
+    const { show } = makeShow(['ok', 'quiet'])
+    await schedule(chains, memory, prompt, 'r1', show)
+    await schedule(chains, memory, withHypo, 'r2', show)
+    expect(memory.get('20260101162200')?.bodies).toEqual({ 震度速報: '震度速報 石川県能登 最大震度5弱' })
+  })
+})
+
+// どのカードにも当たらない取消・同じ取消の 2 通目は、取消の通知の待ち行列へ積まない
+describe('quakeCancelToNotify', () => {
+  it('正: カードに当たった取消を積み、取り消した情報名が無ければ全体の取消', () => {
+    expect(quakeCancelToNotify({ target: {}, retracted: undefined, duplicate: false })).toEqual({ whole: true })
+    expect(quakeCancelToNotify({ target: {}, retracted: '震度速報', duplicate: false })).toEqual({ whole: false })
+  })
+  it('対照: どのカードにも当たらない取消・同じ取消の 2 通目・当たり方が決まらない取消は積まない', () => {
+    expect(quakeCancelToNotify({ target: undefined, retracted: undefined, duplicate: false })).toBeNull()
+    expect(quakeCancelToNotify({ target: {}, retracted: undefined, duplicate: true })).toBeNull()
+    expect(quakeCancelToNotify(undefined)).toBeNull()
+  })
+})
+
+// 震度を観測しなかった国内の地震（2026-11-09 ユーザー選択「閾値に関係なく出す」・本文は「地名 M のあとに添える」と
+// 「扱いは残し本文を地名と規模だけに (Recommended)」）。
+//   正  : 最大震度を持たない震源の報は、最低震度に関係なく出す（震源・震度情報なら「観測なし」と添える）／
+//   対照: 震源情報（もともと震度を運ばない）は「観測なし」と言わない・震源の判らない震度なしの報は出さない／
+//   安全弁: 震度を持つ報は今どおり最低震度で絞る
+describe('decideQuakeNotification の震度なしの地震', () => {
+  const noIntensity = (issueType: JMAQuake['issue']['type'] = '震源・震度情報'): JMAQuake =>
+    makeQuake({ hypoName: '鳥島近海', maxScale: -1 as IntensityScale, points: [], mag: 6.5, issueType })
+  it('正: 震源・震度情報に震度が無ければ、最低震度が震度4でも「観測なし」と添えて出す', () => {
+    const r = decideQuakeNotification(noIntensity(), ['r1'], null, 40, null)!
+    expect(r.notification.body).toBe('鳥島近海 M6.5（震度1以上の観測なし）')
+  })
+  it('対照: 震源情報・震源要素更新のお知らせは最低震度に関係なく出すが、震度には触れない', () => {
+    expect(decideQuakeNotification(noIntensity('震源情報'), ['r1'], null, 40, null)!.notification.body).toBe('鳥島近海 M6.5')
+    expect(decideQuakeNotification(noIntensity('顕著な地震の震源要素更新のお知らせ'), ['r1'], null, 40, null)!.notification.body).toBe('鳥島近海 M6.5')
+  })
+  it('対照: 震源も震度も無い報（取消の名残など）は出さない', () => {
+    const q = makeQuake({ maxScale: -1 as IntensityScale, points: [] })
+    expect(decideQuakeNotification(q, ['r1'], null, 10, null)).toBeNull()
+  })
+  it('安全弁: 震度を持つ報は今どおり最低震度で絞る・通知を切っていれば出さない', () => {
+    expect(decideQuakeNotification(makeQuake({ hypoName: '石川県能登地方', maxScale: 30 }), ['r1'], null, 40, null)).toBeNull()
+    expect(decideQuakeNotification(noIntensity(), ['r1'], null, -1, null)).toBeNull()
+  })
+})
+
+// 地震情報の取消の通知（2026-11-09 ユーザー選択「同じ札で置き換え、何を取り消したか言う (Recommended)」）。
+//   正  : 通知した地震の取消は、同じ tag で「〈通知した文〉は取り消されました」／
+//   対照: 通知していない地震・通知を切っているときは出さない／安全弁: 一部の取消は取り消した情報名の文だけを忘れる
+describe('decideQuakeCancelNotification', () => {
+  const prompt = makeQuake()
+  const cancelOf = (type: string): JMAQuake => ({ ...makeQuake(), cancelled: true, issue: { ...makeQuake().issue, type } }) as JMAQuake
+  const notified = () => decideQuakeNotification(prompt, ['r1'], null, 30, null)!.next
+  it('正: 全体の取消は同じ tag で置き換え、記憶を消す', () => {
+    const r = decideQuakeCancelNotification(prompt, cancelOf('震度速報'), true, notified(), 30)!
+    expect(r.notification).toEqual({
+      title: '地震情報 取消', body: '震度速報 石川県能登 最大震度5弱 は取り消されました', tag: '20260101162200',
+      open: { tab: 'earthquake', quake: '20260101162200' },
+    })
+    expect(r.next).toBeNull()
+  })
+  it('対照: 通知していない地震・通知を切っているときは出さない', () => {
+    expect(decideQuakeCancelNotification(prompt, cancelOf('震度速報'), true, null, 30)).toBeNull()
+    expect(decideQuakeCancelNotification(prompt, cancelOf('震度速報'), true, notified(), -1)).toBeNull()
+  })
+  it('安全弁: 一部の取消は、取り消した情報名の文で言い、その文だけを忘れる', () => {
+    const first = notified()
+    const withHypo = makeQuake({ hypoName: '石川県能登地方' })
+    const second = decideQuakeNotification(withHypo, ['r2'], first, 30, null)!.next
+    const r = decideQuakeCancelNotification(withHypo, cancelOf('震度速報'), false, second, 30)!
+    expect(r.notification.body).toBe('震度速報 石川県能登 最大震度5弱 は取り消されました')
+    expect(r.next?.bodies).toEqual({ 震源・震度に関する情報: '石川県能登地方 最大震度5弱 M5.2' })
+  })
+  // 2026-11-09 ユーザー選択「通知していない報なら出さない (Recommended)」
+  it('対照: 一部の取消で、取り消された情報名をこの端末が通知していなければ出さない', () => {
+    expect(decideQuakeCancelNotification(prompt, cancelOf('震源・震度に関する情報'), false, notified(), 30)).toBeNull()
+  })
+  it('安全弁: 全体の取消は、その情報名で通知していなくても最後に通知した文で言う', () => {
+    const r = decideQuakeCancelNotification(prompt, cancelOf('震源・震度に関する情報'), true, notified(), 30)!
+    expect(r.notification.body).toBe('震度速報 石川県能登 最大震度5弱 は取り消されました')
+    expect(r.next).toBeNull()
+  })
+})
+
+// 2026-11-09 ユーザー選択「「最大震度更新」を付けない (Recommended)」:
+// 震度なしで通知した地震に、後から震度が付いても「最大震度更新」とは言わない（上がったのではなく初めて付いた）。
+describe('decideQuakeNotification の震度なしの後の震度つきの報', () => {
+  it('正: 震度なしで通知した後の震度つきの報は「最大震度更新」を付けない', () => {
+    const first = decideQuakeNotification(makeQuake({ hypoName: '石川県能登地方', maxScale: -1 as IntensityScale, points: [], issueType: '震源情報' }), ['r1'], null, 30, null)!
+    const r = decideQuakeNotification(makeQuake({ hypoName: '石川県能登地方' }), ['r2'], first.next, 30, null)!
+    expect(r.notification.body).toBe('石川県能登地方 最大震度5弱 M5.2')
+  })
+  it('対照: 震度つきで通知した後に上がれば「最大震度更新」を付ける', () => {
+    const first = decideQuakeNotification(makeQuake({ hypoName: '石川県能登地方', maxScale: 30 }), ['r1'], null, 30, null)!
+    const r = decideQuakeNotification(makeQuake({ hypoName: '石川県能登地方' }), ['r2'], first.next, 30, null)!
+    expect(r.notification.body).toBe('最大震度更新 石川県能登地方 最大震度5弱 M5.2')
   })
 })

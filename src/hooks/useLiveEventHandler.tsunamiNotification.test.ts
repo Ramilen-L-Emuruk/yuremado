@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useLiveEventHandler } from './useLiveEventHandler'
 import { DEFAULTS, type AppSettings } from './useSettings'
-import { showBrowserNotification } from '../utils/notifications'
+import { notificationWouldShow, showBrowserNotification } from '../utils/notifications'
 import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiGrade } from '../types/earthquake'
 
 vi.mock('../utils/voicevox', () => ({
@@ -18,7 +18,7 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 const notify = vi.mocked(showBrowserNotification)
 
@@ -134,12 +134,49 @@ describe('津波のブラウザ通知（受け手）', () => {
   })
 
   // 安全弁: 津波情報だけの取消（警報等は続いている）は通知しない。終わったと読める通知で警報の通知を置き換えないため
-  it('安全弁: 津波情報だけの取消は通知しない', () => {
+  // 津波情報だけの取消（2026-11-09 ユーザー選択「音は全部・通知は通知した報だけ (Recommended)」で、通知しない形を覆した）
+  it('正: 観測情報を通知した津波情報の取消は、観測情報の通知を「津波情報の取消」で置き換える', () => {
     const { handle } = setup()
     handle(report([area('石川県能登', '360', 'Watch')]))
     handle(report([], { headType: 'VTSE51', observations: [{ name: '輪島港', height: { value: 0.5, description: '0.5m' } }] } as Partial<JMATsunami>))
     notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE51', cancelText: '先ほどの、津波観測に関する情報を取り消します。' } as Partial<JMATsunami>))
+    expect(notify).toHaveBeenCalledWith('津波情報の取消', '先ほどの、津波観測に関する情報を取り消します。', 'tsunami-obs', false, { tab: 'tsunami' })
+  })
+
+  it('対照: 観測情報を通知していない津波情報の取消は通知しない', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Watch')]))
+    handle(report([], { headType: 'VTSE51' } as Partial<JMATsunami>))
+    notify.mockClear()
     handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE51' } as Partial<JMATsunami>))
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  // 安全弁: 取消は種類だけで当てるので、終わった津波の観測の通知の記憶を次の津波へ持ち越さない
+  it('安全弁: 前の津波で観測を通知していても、解除の後の別の津波の取消は通知しない', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Watch')]))
+    handle(report([], { headType: 'VTSE51', observations: [{ name: '輪島港', height: { value: 0.5, description: '0.5m' } }] } as Partial<JMATsunami>))
+    handle(report([], { cancelled: true, cancelReason: 'lifted' } as Partial<JMATsunami>))
+    handle(report([area('青森県日本海沿岸', '200', 'Watch')], { eventId: '20250101000000' }))
+    // 次の津波の観測の報は、通知が出なかった（覚えない）
+    vi.mocked(notificationWouldShow).mockReturnValueOnce(false)
+    handle(report([], { eventId: '20250101000000', headType: 'VTSE51', observations: [{ name: '深浦', height: { value: 0.3, description: '0.3m' } }] } as Partial<JMATsunami>))
+    notify.mockClear()
+    handle(report([], { eventId: '20250101000000', cancelled: true, cancelReason: 'retracted', headType: 'VTSE51', cancelText: '先ほどの、津波観測に関する情報を取り消します。' } as Partial<JMATsunami>))
+    expect(notify).not.toHaveBeenCalledWith('津波情報の取消', expect.anything(), 'tsunami-obs', expect.anything(), expect.anything())
+  })
+
+  // 安全弁: 観測情報の通知が出せなかった（通知の許可が無い・開いている間は通知しない）なら、その報を通知したことにしない。
+  // 覚えると、取消のときに出ていない通知を「取消」で新しく出してしまう
+  it('安全弁: 観測情報の通知が出なかった報の取消は通知しない', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Watch')]))
+    vi.mocked(notificationWouldShow).mockReturnValueOnce(false)
+    handle(report([], { headType: 'VTSE51', observations: [{ name: '輪島港', height: { value: 0.5, description: '0.5m' } }] } as Partial<JMATsunami>))
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE51', cancelText: '先ほどの、津波観測に関する情報を取り消します。' } as Partial<JMATsunami>))
     expect(notify).not.toHaveBeenCalled()
   })
 

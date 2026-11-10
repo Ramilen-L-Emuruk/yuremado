@@ -13,6 +13,7 @@ import { renderHook } from '@testing-library/react'
 import { useKyoshinAlerts, type KyoshinAlertsDeps } from './useKyoshinAlerts'
 import { playAlertSound, playKyoshinUpdateSound } from '../utils/alertSound'
 import { DEFAULTS } from './useSettings'
+import { showBrowserNotification } from '../utils/notifications'
 import type { AlertTitleApi } from './useAlertTitle'
 import type { EEWAlert } from '../types/earthquake'
 import type { TabId } from '../components/IconNav'
@@ -24,7 +25,7 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn(), playKyoshinUpdateSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 // useKyoshinAlerts.test.ts と同じ座標（能登＝震源側／福岡＝遠方）。
 //
@@ -165,7 +166,7 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
     const at = (i: number) => new Date(t0 + i * 1000).toISOString()
     const SECOND = { lat: 37.3, lng: 137.0 }
     /** 合図。`atMs` はフレームのデータ時刻（`at(i)` と同じ物差し）。印はイベント ID と時刻から作る */
-    const signalAt = (i: number, focus: typeof SECOND | null = SECOND) => ({ key: `evt-1@${t0 + i * 1000}`, atMs: t0 + i * 1000, focus })
+    const signalAt = (i: number, focus: typeof SECOND | null = SECOND, index: number | null = 5.2) => ({ key: `evt-1@${t0 + i * 1000}`, atMs: t0 + i * 1000, focus, index })
     const SIGNAL = signalAt(1)
 
     it('[正] 合図があれば検知音を鳴らし、その点へ寄せる', () => {
@@ -217,6 +218,22 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
       rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(2), reonset: null }))
       rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(70), reonset: signalAt(70) }))
       expect(vi.mocked(playAlertSound).mock.calls.filter(([t]) => t === 'kyoshin')).toHaveLength(2)
+    })
+
+    // 同じ場所の 2 つ目のブラウザ通知（2026-11-09 ユーザー選択「別の札で出す (Recommended)」）
+    it('[正] 合図があれば「同じ場所で再び揺れを検知」を別の札で通知し、点が引けなければ震度を「?」にする', () => {
+      const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
+        initialProps: makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(0), settings: { ...makeDeps().settings, notifyEnabled: true, notifyDetection: true } }),
+      })
+      vi.mocked(showBrowserNotification).mockClear()
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(1), reonset: signalAt(1), settings: { ...makeDeps().settings, notifyEnabled: true, notifyDetection: true } }))
+      const calls = vi.mocked(showBrowserNotification).mock.calls.filter(c => c[2] === 'kyoshin-detection-reonset')
+      expect(calls).toHaveLength(1)
+      expect(calls[0][0]).toBe('同じ場所で再び揺れを検知')
+      expect(calls[0][1]).toMatch(/^最大リアルタイム震度 /)
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(70), reonset: signalAt(70, SECOND, null), settings: { ...makeDeps().settings, notifyEnabled: true, notifyDetection: true } }))
+      const after = vi.mocked(showBrowserNotification).mock.calls.filter(c => c[2] === 'kyoshin-detection-reonset')
+      expect(after[1][1]).toBe('最大リアルタイム震度 ?')
     })
 
     it('[対照] 合図が無ければ鳴らさない', () => {

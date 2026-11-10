@@ -2,7 +2,25 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { sep } from 'node:path'
 import { DEFAULTS } from '../hooks/useSettings'
-import { effectiveNotifyMinScale, notificationAllowed, type NotificationKind } from './notificationGate'
+import { effectiveNotifyMinScale, noIntensityQuakeHiddenByRegion, notificationAllowed, type NotificationKind } from './notificationGate'
+
+// 2026-11-09 ユーザー選択「地域を選んでいれば出さない (Recommended)」
+//   正: 地域を選んでいれば震度なしの国内の報は出さない／対照: 地域を選んでいなければ出す・震度のある報は県で判定する側へ回す／
+//   安全弁: 遠地地震は震度に関係なく出す
+describe('noIntensityQuakeHiddenByRegion', () => {
+  const q = (maxScale: number, type = '震源・震度に関する情報') => ({ earthquake: { maxScale }, issue: { type } })
+  it('正: 地域を選んでいれば震度なしの国内の報は出さない', () => {
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(-1))).toBe(true)
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(-1, '震源情報'))).toBe(true)
+  })
+  it('対照: 地域を選んでいない・震度のある報は、ここでは止めない', () => {
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: [] }, q(-1))).toBe(false)
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(10))).toBe(false)
+  })
+  it('安全弁: 遠地地震は地域を選んでいても止めない', () => {
+    expect(noIntensityQuakeHiddenByRegion({ notifyPrefectures: ['13'] }, q(-1, '遠地地震'))).toBe(false)
+  })
+})
 
 const KINDS: NotificationKind[] = ['quake', 'detection', 'eew', 'tsunami', 'nankai', 'nankaiRoutine', 'quakeNotice']
 const all = {

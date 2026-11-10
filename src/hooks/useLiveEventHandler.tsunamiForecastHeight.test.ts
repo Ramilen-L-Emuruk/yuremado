@@ -32,7 +32,7 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 const spokenTexts = (): string[] => speeches.map(s => s.text)
 
