@@ -24,6 +24,8 @@ export const LOCALES = [
   { id: 'zh-Hans', tag: 'zh-Hans' },
   { id: 'zh-Hant', tag: 'zh-Hant' },
   { id: 'ko', tag: 'ko' },
+  { id: 'pt-BR', tag: 'pt-BR' },
+  { id: 'es', tag: 'es' },
 ] as const
 
 export type Locale = (typeof LOCALES)[number]['id']
@@ -39,6 +41,8 @@ const LOADERS: Record<Exclude<Locale, 'ja'>, () => Promise<Messages>> = {
   'zh-Hans': () => import('./messages/zhHans').then((m) => m.zhHans),
   'zh-Hant': () => import('./messages/zhHant').then((m) => m.zhHant),
   ko: () => import('./messages/ko').then((m) => m.ko),
+  'pt-BR': () => import('./messages/ptBR').then((m) => m.ptBR),
+  es: () => import('./messages/es').then((m) => m.es),
 }
 
 export function isLocale(value: unknown): value is Locale {
