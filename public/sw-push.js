@@ -18,15 +18,36 @@ const PUSH_ICON = new URL('icons/icon.svg', self.registration.scope).href
 const QUIET_ANSWER_TIMEOUT_MS = 500
 
 async function quietWhileOpen() {
-  if (!self.navigator || !self.navigator.userAgentData) return false
   try {
-    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-    const visible = windows.filter((c) => c.visibilityState === 'visible')
+    const visible = await visibleWindowsOnChromium()
     if (visible.length === 0) return false
     const answers = await Promise.all(visible.map(askQuiet))
     return answers.some((a) => a)
   } catch (err) {
     console.error('[push] アプリを開いている間の扱いを確かめられなかったので、通知を出す', err)
+    return false
+  }
+}
+
+// 通知を出さずに済ませても咎められない窓（Chromium 系で、そのサイトの窓が見えている）。それ以外の環境では空
+async function visibleWindowsOnChromium() {
+  if (!self.navigator || !self.navigator.userAgentData) return []
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  return windows.filter((c) => c.visibilityState === 'visible')
+}
+
+// 鳴らさずに差し替える報（`quiet`。緊急地震速報の、格上げも引き上げも無い続報）で、同じ tag の前の通知が閉じられていたら
+// 出さずに済ませてよいか。アプリの画面内の差し替え（src/utils/notifications.ts の replaceBrowserNotificationQuietly）は、閉じた通知を出し直さない。
+// **プッシュは捨てられる場面が限られる**（上の quietWhileOpen と同じ理由）ので、出さずに済ませるのは Chromium 系で窓が見えているときだけ。
+// それ以外は鳴らさずに出し直す（2026-11-10 ユーザー選択「鳴らさずに出し直す (Recommended)」）
+async function skipQuietReplace(tag) {
+  try {
+    const still = await self.registration.getNotifications({ tag })
+    if (still.length > 0) return false
+    const visible = await visibleWindowsOnChromium()
+    return visible.length > 0
+  } catch (err) {
+    console.error('[push] 前の通知が残っているかを確かめられなかったので、鳴らさずに出す', err)
     return false
   }
 }
@@ -55,12 +76,16 @@ self.addEventListener('push', (event) => {
     console.error('[push] プッシュ通知の中身を読めなかった', err)
   }
   const title = data && typeof data.title === 'string' && data.title ? data.title : '揺れ窓'
+  // 鳴らさずに差し替える報。知らせ直さず（renotify なし）、音も振動も出さない（silent）
+  const quiet = !!(data && data.quiet === true)
+  const hasTag = !!(data && typeof data.tag === 'string' && data.tag)
   const options = {
     body: data && typeof data.body === 'string' ? data.body : '',
     icon: PUSH_ICON,
-    tag: data && typeof data.tag === 'string' && data.tag ? data.tag : 'push',
+    tag: hasTag ? data.tag : 'push',
     requireInteraction: !!(data && data.requireInteraction),
-    renotify: true,
+    renotify: !quiet,
+    silent: quiet,
     // 押したときの開き先。読むのは sw-notification-click.js（画面内の通知も同じ形で data に入れる）
     data: { open: data && typeof data.open === 'string' ? data.open : '' },
   }
@@ -69,13 +94,25 @@ self.addEventListener('push', (event) => {
       console.info('[push] 設定によりアプリが画面に出ている間は通知を出さない', options.tag)
       return
     }
+    // tag が無い報は、差し替える相手を tag で引けない（既定の 'push' は別の報の通知にも当たる）ので、見ずに鳴らさずに出す
+    if (quiet && !hasTag) {
+      console.warn('[push] 鳴らさずに差し替える報に tag が無いので、前の通知を見ずに鳴らさずに出す')
+    } else if (quiet && await skipQuietReplace(options.tag)) {
+      console.info('[push] 差し替える通知がもう閉じられていて、アプリが画面に出ているので出し直さない', options.tag)
+      return
+    }
     try {
       await self.registration.showNotification(title, options)
     } catch (err) {
       // renotify を受け付けない環境がある（tag 無しで renotify を付けたときなど）。外して出し直す
-      console.error('[push] プッシュ通知を出せなかったので、知らせ直しを外して出し直す', err)
+      console.error('[push] プッシュ通知を出せなかったので、知らせ直しを外して出し直す', options.tag, quiet ? '（鳴らさずに差し替える報）' : '', err)
       const { renotify: _renotify, ...rest } = options
-      await self.registration.showNotification(title, rest)
+      try {
+        await self.registration.showNotification(title, rest)
+      } catch (retryErr) {
+        console.error('[push] 出し直しても通知を出せなかった', options.tag, retryErr)
+        throw retryErr
+      }
     }
   })())
 })
