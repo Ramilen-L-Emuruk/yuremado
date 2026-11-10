@@ -2,11 +2,17 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TelegramLogEntry } from '../../types/earthquake'
 import { NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES, DISPATCHED_WITHOUT_PARSER } from '../../services/dmdataTelegramPayload'
 import {
-  HEAD_TYPE_LABEL, KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, headTypeLabel, localizedTelegramTitle,
+  HEAD_TYPE_LABEL, KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, headTypeLabel, localizedErrorMessage, localizedTelegramTitle,
   matchesTelegramFilter, operationBadgeOf, originBadgeOf, originFilterLabel, readKindFilter, telegramLogKindOf, telegramTitleOf,
 } from './labels'
 import { ja } from '../../i18n/messages/ja'
 import { en } from '../../i18n/messages/en'
+import { es } from '../../i18n/messages/es'
+import { ko } from '../../i18n/messages/ko'
+import { ptBR } from '../../i18n/messages/ptBR'
+import { zhHans } from '../../i18n/messages/zhHans'
+import { zhHant } from '../../i18n/messages/zhHant'
+import { TELEGRAM_LOG_ERROR } from '../../utils/telegramLogErrorMark'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -184,12 +190,14 @@ describe('いま出している言語で引く名前（localizedTelegramTitle �
   it('英語の辞書では、決まった題名と題名の読めない行の名前を訳す', () => {
     expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: xml('震源・震度に関する情報') }, en.telegramLog)).toBe('Earthquake and Seismic Intensity Information')
     expect(localizedTelegramTitle({ headType: 'IXAC41', rawBody: new Uint8Array([1]) }, en.telegramLog)).toBe('Estimated seismic intensity map data')
+    expect(localizedErrorMessage('body decode failed', en.telegramLog)).toBe('Could not decode the body')
   })
 
   // 対照: 日本語の辞書では今までどおり電文の題名・日本語の名前（赤字の欄は日本語の文）
-  it('日本語の辞書では電文の題名をそのまま出す', () => {
+  it('日本語の辞書では電文の題名をそのまま出し、赤字の欄は日本語の文にする', () => {
     expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: xml('震源・震度に関する情報') }, ja.telegramLog)).toBe('震源・震度に関する情報')
     expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: '<Report/>' }, ja.telegramLog)).toBe('震源・震度')
+    expect(localizedErrorMessage('bufr decode failed', ja.telegramLog)).toBe('推計震度分布図を読めませんでした')
   })
 
   // 安全弁: 表に無い題名・コード・印は、電文の文字・コード・印のまま出す（継承したキーも引かない）
@@ -197,6 +205,7 @@ describe('いま出している言語で引く名前（localizedTelegramTitle �
     expect(localizedTelegramTitle({ headType: 'VXSE53', rawBody: xml('知らない題名') }, en.telegramLog)).toBe('知らない題名')
     expect(localizedTelegramTitle({ headType: 'ZZZZ99', rawBody: '<Report/>' }, en.telegramLog)).toBe('ZZZZ99')
     expect(localizedTelegramTitle({ headType: 'toString', rawBody: '<Report/>' }, en.telegramLog)).toBe('toString')
+    expect(localizedErrorMessage('something else', en.telegramLog)).toBe('something else')
   })
 
   it('日本語の辞書の題名の表は、鍵と値が同じ（日本語は電文の題名のまま）', () => {
@@ -245,6 +254,12 @@ describe('訓練・試験の印の鍵', () => {
 })
 
 describe('辞書の表と、電文・受信の側の値の突き合わせ', () => {
+  // 赤字の欄の印を受信の側に足して辞書へ書き忘れると、英語などの画面に印がそのまま出る。日本語の辞書は型で縛り、ほかの言語は鍵の集合をここで見る
+  it('どの言語の赤字の欄の表も、受信の側の印をすべて持つ', () => {
+    const marks = Object.values(TELEGRAM_LOG_ERROR).sort()
+    for (const dict of [ja, en, es, ko, ptBR, zhHans, zhHant]) expect(Object.keys(dict.telegramLog.errorMessage).sort()).toEqual(marks)
+  })
+
   // テストボタンで流す電文の題名が表に無いと、日本語以外の画面で題名が日本語のまま出る（実配信の題名の数え方は i18n-spec §4）
   it('テストボタンで流す電文の Control/Title は、すべて題名の表にある', async () => {
     const root = path.resolve(__dirname, '../../../public/data/test-telegrams')

@@ -230,5 +230,10 @@ export const es: Messages = {
       IXAC40: 'Datos del mapa de intensidad sísmica estimada (formato antiguo)',
       WEPA60: 'Información internacional del tsunami (en inglés)',
     },
+    errorMessage: {
+      'body decode failed': 'No se pudo decodificar el cuerpo',
+      'bufr decode failed': 'No se pudo leer el mapa de intensidad sísmica estimada',
+      '本文を取得できませんでした': 'No se pudo obtener el cuerpo',
+    },
   },
 }

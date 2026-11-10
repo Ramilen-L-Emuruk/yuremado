@@ -230,5 +230,10 @@ export const zhHans: Messages = {
       IXAC40: '推算烈度分布图绘图数据（旧格式）',
       WEPA60: '国际海啸相关信息（英文）',
     },
+    errorMessage: {
+      'body decode failed': '无法解码正文',
+      'bufr decode failed': '无法读取推算烈度分布图',
+      '本文を取得できませんでした': '无法获取正文',
+    },
   },
 }

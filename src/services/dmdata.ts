@@ -26,6 +26,7 @@ import { answerPushProbe, attachRelaySocket } from './notifyQuietWhileOpen'
 import { fetchJsonOutcome, outcomeJson, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText } from './telegramBody'
 import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
+import { TELEGRAM_LOG_ERROR } from '../utils/telegramLogErrorMark'
 import {
   negotiateClassifications, eewHeadTypeFor, classificationLabel, PREFERRED_CLASSIFICATIONS,
   type DmdataClassification,
@@ -962,7 +963,7 @@ export class DmdataWebSocket {
     const bytes = await decodeTelegramBytes(msg)
     if (bytes === null) {
       // 理由と間引きは `decodeTelegramBytes` が持つ（テキスト側と同じ）。
-      this.onRawMessage?.(this.makeLogEntry(headType, head, null, isTest, 'error', undefined, 'body decode failed', undefined))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, null, isTest, 'error', undefined, TELEGRAM_LOG_ERROR.bodyDecodeFailed, undefined))
       return
     }
     const author = typeof head?.author === 'string' ? head.author : ''
@@ -982,7 +983,7 @@ export class DmdataWebSocket {
     if (payload?.kind !== 'estimatedIntensity') {
       // 読めなかった理由は復号側が記録している（→ `bufrEstimatedIntensity.ts`）。
       this.onRawMessage?.(this.makeLogEntry(
-        headType, head, `（BUFR ${joined.length} バイト）`, isTest, 'error', undefined, 'bufr decode failed', joined,
+        headType, head, `（BUFR ${joined.length} バイト）`, isTest, 'error', undefined, TELEGRAM_LOG_ERROR.bufrDecodeFailed, joined,
       ))
       return
     }
@@ -1148,7 +1149,7 @@ export class DmdataWebSocket {
         const body = await decodeTelegramText(msg)
         if (body === null) {
           // 通常の経路の復号失敗と同じ形で積む（圧縮されたままの本文を「捨てた試験報」に見せない）
-          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'error', undefined, 'body decode failed', undefined))
+          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'error', undefined, TELEGRAM_LOG_ERROR.bodyDecodeFailed, undefined))
           return
         }
         this.onRawMessage?.(this.makeLogEntry(headType, head, body, true, 'filtered', undefined, undefined, undefined))
@@ -1174,7 +1175,7 @@ export class DmdataWebSocket {
       if (this.debug) dlog('対象外の電文種別（電文ログにだけ積む）', { headType, format: msg.format })
       const text = await decodeTelegramText(msg)
       if (text === null) {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, 'body decode failed', undefined))
+        this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, TELEGRAM_LOG_ERROR.bodyDecodeFailed, undefined))
         return
       }
       this.onRawMessage?.(this.makeLogEntry(headType, head, text, isTest, 'filtered', undefined, undefined, undefined))
@@ -1193,7 +1194,7 @@ export class DmdataWebSocket {
       // 理由の別と間引きは `decodeTelegramText` が持つ（**そこにしか理由は無い**）。ここで
       // 重ねて警告すると、持続的な障害のとき間引きの効かない側が電文のたびに鳴り、
       // 理由付きの記録がそこに埋もれる。ここは電文ログへ残すだけにする。
-      this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, 'body decode failed', undefined))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, TELEGRAM_LOG_ERROR.bodyDecodeFailed, undefined))
       return
     }
     // **本文を読めた電文だけ「受け取り済み」にする**（→ `hasReceivedTelegram`）。取り戻しはこの印の付いた

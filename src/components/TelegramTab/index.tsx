@@ -8,11 +8,12 @@ import { Marquee } from '../Marquee'
 import { Reveal } from '../EarthquakeTab/quakeMotion'
 import { QuakeListDayLabel } from '../EarthquakeTab/QuakeListRow'
 import {
-  KIND_OPTIONS, ORIGIN_OPTIONS, localizedTelegramTitle, matchesTelegramFilter, operationBadgeOf,
+  KIND_OPTIONS, ORIGIN_OPTIONS, localizedErrorMessage, localizedTelegramTitle, matchesTelegramFilter, operationBadgeOf,
   originBadgeOf, originFilterLabel, readKindFilter, readOriginFilter,
   type KindFilter, type OriginFilter,
 } from './labels'
 import { useMessages } from '../../i18n/I18nProvider'
+import { TELEGRAM_LOG_ERROR } from '../../utils/telegramLogErrorMark'
 
 // 行には発信元の印を出さない。発信元が DMDATA の 1 つだけで、全行が同じ印になっていた
 // （2026-11-04 ユーザー選択「外す (Recommended)」。発信元が増えたら戻す）。
@@ -65,7 +66,7 @@ const ANIMATED_BODY_MAX_CHARS = 50_000
  * 平文の電文（国際津波関連情報）や推計震度分布図の要約の文と見分けるのに使う。
  */
 function isUndecodedBody(entry: TelegramLogEntry): boolean {
-  return typeof entry.rawBody === 'string' && entry.errorMessage === 'body decode failed'
+  return typeof entry.rawBody === 'string' && entry.errorMessage === TELEGRAM_LOG_ERROR.bodyDecodeFailed
 }
 
 /**
@@ -438,7 +439,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                             </span>
                           </div>
                           {entry.errorMessage && (
-                            <div className="text-red-400 mt-0.5 pl-5 truncate">{entry.errorMessage}</div>
+                            <div className="text-red-400 mt-0.5 pl-5 truncate">{localizedErrorMessage(entry.errorMessage, tm)}</div>
                           )}
                         </button>
 

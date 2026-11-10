@@ -1,4 +1,5 @@
 import type { TelegramLogKind, TsunamiGrade } from '../../types/earthquake'
+import { TELEGRAM_LOG_ERROR, type TelegramLogErrorMark } from '../../utils/telegramLogErrorMark'
 
 /** 等級ごとの避難の呼びかけ（気象庁の付加文が採れなかったときに出す。読み上げも同じ文を読む → `utils/tsunami.ts` の `fallbackEvacuationAction`）。 */
 const TSUNAMI_EVACUATION: Record<Exclude<TsunamiGrade, 'Unknown'>, string> = {
@@ -261,5 +262,13 @@ export const ja = {
       IXAC40: '推計震度分布図作図用データ（旧形式）',
       WEPA60: '国際津波関連情報（英文）',
     },
+    /**
+     * 行の赤字の欄。受信の側が `errorMessage` に入れる印（鍵。`utils/telegramLogErrorMark.ts`）を、画面の文へ引く。表に無い印はそのまま出す
+     */
+    errorMessage: {
+      [TELEGRAM_LOG_ERROR.bodyDecodeFailed]: '本文を復号できませんでした',
+      [TELEGRAM_LOG_ERROR.bufrDecodeFailed]: '推計震度分布図を読めませんでした',
+      [TELEGRAM_LOG_ERROR.fetchFailed]: '本文を取得できませんでした',
+    } satisfies Record<TelegramLogErrorMark, string>,
   },
 } as const

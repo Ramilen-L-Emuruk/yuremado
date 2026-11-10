@@ -80,6 +80,11 @@ export function localizedTelegramTitle(entry: Pick<TelegramLogEntry, 'headType' 
   return lookup(tm.headType, entry.headType) ?? entry.headType
 }
 
+/** 行の赤字の欄。受信の側が入れた印を `errorMessage` で引き、表に無い印はそのまま出す。 */
+export function localizedErrorMessage(message: string, tm: TelegramLogMessages): string {
+  return lookup(tm.errorMessage, message) ?? message
+}
+
 /**
  * 行の前段に出す短い名前。**書いた順が、種別の絞り込みの選択肢の並びになる**
  * （`KIND_OPTIONS`）。`Record<TelegramLogKind, string>` なので、種別を足して書き忘れると

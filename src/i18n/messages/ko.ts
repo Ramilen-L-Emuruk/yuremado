@@ -230,5 +230,10 @@ export const ko: Messages = {
       IXAC40: '추계 진도 분포도 작도용 데이터(구 형식)',
       WEPA60: '국제 지진해일 관련 정보(영문)',
     },
+    errorMessage: {
+      'body decode failed': '본문을 복호화하지 못했습니다',
+      'bufr decode failed': '추계 진도 분포도를 읽지 못했습니다',
+      '本文を取得できませんでした': '본문을 가져오지 못했습니다',
+    },
   },
 }

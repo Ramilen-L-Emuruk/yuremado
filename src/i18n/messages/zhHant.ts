@@ -230,5 +230,10 @@ export const zhHant: Messages = {
       IXAC40: '推算震度分布圖繪圖資料（舊格式）',
       WEPA60: '國際海嘯相關訊息（英文）',
     },
+    errorMessage: {
+      'body decode failed': '無法解碼內文',
+      'bufr decode failed': '無法讀取推算震度分布圖',
+      '本文を取得できませんでした': '無法取得內文',
+    },
   },
 }

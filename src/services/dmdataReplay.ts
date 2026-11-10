@@ -37,6 +37,7 @@ import type { GateTag } from '../utils/requestGate'
 import { createSkipCounter, sumSkippedByDay, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
 import { fetchDmdataEewEventList, fetchLatestEewReport, type DmdataEewListEvent, type LatestEewReport } from './dmdata'
 import { makeReplayLogEntry } from './telegramLogEntry'
+import { TELEGRAM_LOG_ERROR } from '../utils/telegramLogErrorMark'
 
 /**
  * 履歴を 1 回で読む窓の幅（日）。起動時の初回ロードと「もっと見る」1 回ぶんで共通。
@@ -1210,7 +1211,7 @@ async function fetchReplayEvents(
               log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${entry.id} type=${headType}`)
               windowSkips.add(item.date)
               // ライブと同じ形の `error` の行（取りこぼしに数えることとは別に積む）
-              pushLogOnly(`（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: 'bufr decode failed', isTest: entry.head.test === true })
+              pushLogOnly(`（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: TELEGRAM_LOG_ERROR.bufrDecodeFailed, isTest: entry.head.test === true })
             }
             continue
           }
