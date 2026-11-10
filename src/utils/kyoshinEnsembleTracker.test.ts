@@ -157,6 +157,81 @@ describe('組み合わせの検知のまとめ', () => {
     })
   })
 
+  // 2026-11-10 ユーザー選択「40km か近い5点で入れる (Recommended)」（設計書§83）
+  describe('残すのは互いに相手になる 2 点（HOLD_PARTNER_KM・HOLD_PARTNER_NEAREST）', () => {
+    const keepSec = ENSEMBLE_KEEP_MS / 1000
+    // 0・1: 33 km 離れた 2 点／2: 0 から約 550 km（周りに 13〜17 の静かな点）／3・4: 67 km 離れ、間にも周りにも点の無い 2 点
+    // 5・6: 61 km 離れた 2 点で、間（7〜12）に 9 km おきの点が並ぶ
+    const P: [number, number][] = [
+      [35, 135], [35.3, 135], [38, 140], [44, 145], [44.6, 145], [33, 131], [33.55, 131],
+      [33.08, 131], [33.16, 131], [33.24, 131], [33.31, 131], [33.39, 131], [33.47, 131],
+      [38.1, 140], [38.2, 140], [37.9, 140], [38, 140.1], [38, 139.9],
+    ]
+    const MIDDLE = [7, 8, 9, 10, 11, 12]
+    /** 0 秒に `members` で確かな段になった束を、`toSec` 秒まで流し、最後の秒の検知の id を返す（`hot` の点は震度1・ほかは震度0 未満、`missing` の点は欠測） */
+    const idsAt = (members: number[], hot: number[], toSec: number, missing: number[] = []) => {
+      const t = createEnsembleTracker(P, scripted({ 0: [row('confirmed', members)] }))
+      const values = P.map((_, i) => (missing.includes(i) ? -1 : hot.includes(i) ? 7 : 3))
+      let out: string[] = []
+      for (let s = 0; s <= toSec; s++) out = t.push(frame(s, values)).map(d => d.id)
+      return out
+    }
+
+    it('正: 震度1 以上の 2 点が遠く離れ、どちらの近い 5 点にも入らなければ寿命で消す（全国へ広がった点の居座り）', () => {
+      expect(idsAt([0, 1, 2, ...MIDDLE], [0, 2], keepSec + 1)).toEqual([])
+    })
+
+    it('対照: 40 km 以内の 2 点なら寿命を過ぎても残す', () => {
+      expect(idsAt([0, 1, 2], [0, 1], keepSec + 60)).toEqual(['e1'])
+    })
+
+    it('正: 40 km を超えても、間にも周りにも点の無い 2 点は互いに近い 5 点に入るので残す（まばらな所）', () => {
+      expect(idsAt([3, 4], [3, 4], keepSec + 60)).toEqual(['e1'])
+    })
+
+    it('対照: 40 km を超え、間に値の届く静かな点が 5 つ以上並ぶ 2 点は寿命で消す', () => {
+      expect(idsAt([5, 6, ...MIDDLE], [5, 6], keepSec + 1)).toEqual([])
+    })
+
+    it('安全弁: 間の点が欠測なら近い 5 点に数えないので、同じ 2 点を残す', () => {
+      expect(idsAt([5, 6, ...MIDDLE], [5, 6], keepSec + 60, MIDDLE)).toEqual(['e1'])
+    })
+
+    /** `sites` で、0 秒に `members` が確かな段になった束を `toSec` 秒まで流す（`hot` は震度1・`missing` は欠測・ほかは震度0 未満） */
+    const idsOn = (sites: [number, number][], members: number[], hot: number[], toSec: number, missing: number[] = []) => {
+      const t = createEnsembleTracker(sites, scripted({ 0: [row('confirmed', members)] }))
+      const values = sites.map((_, i) => (missing.includes(i) ? -1 : hot.includes(i) ? 7 : 3))
+      let out: string[] = []
+      for (let s = 0; s <= toSec; s++) out = t.push(frame(s, values)).map(d => d.id)
+      return out
+    }
+
+    it('正: 密な所で、間に値の届く点が 5 つ以上あっても 40 km 以内の 2 点は残す（近さの順だけなら切る形）', () => {
+      // 0 と 1 は約 36 km。間に 4 km おきの点が 8 つ並ぶので、どちらの近い 5 点にも相手は入らない
+      const dense: [number, number][] = [[35, 139], [35.32, 139], ...Array.from({ length: 8 }, (_, k) => [35.036 + k * 0.036, 139] as [number, number])]
+      expect(idsOn(dense, [0, 1], [0, 1], keepSec + 60)).toEqual(['e1'])
+    })
+
+    it('正: 片方の近い 5 点にだけ相手が入る組も残す（まばらな点から密な所の点を見る形）', () => {
+      // 0 は孤立した点で、いちばん近いのが 1（約 56 km）。1 の周りには 1 より 0 に近くない点が 6 つ密に並ぶ
+      const lopsided: [number, number][] = [[33, 129], [33.5, 129], ...Array.from({ length: 6 }, (_, k) => [33.5 + (k + 1) * 0.02, 129.02] as [number, number])]
+      // 加わった順を 0 → 1（組の 1 点目から見た近い 5 点で決まる）と 1 → 0（2 点目から見た近い 5 点で決まる）の両方で流す
+      expect(idsOn(lopsided, [0, 1], [0, 1], keepSec + 60)).toEqual(['e1'])
+      expect(idsOn(lopsided, [1, 0], [0, 1], keepSec + 60)).toEqual(['e1'])
+    })
+
+    it('安全弁: 近い順の初めの 16 点が欠測ばかりでも、その先までたどって相手を見つける', () => {
+      // 0 と 1 は約 61 km。0 と 1 のそれぞれ外側に 20 点ずつあるが全部欠測なので、値の届く点では互いがいちばん近い点
+      const shadowed: [number, number][] = [
+        [33, 131], [33.55, 131],
+        ...Array.from({ length: 20 }, (_, k) => [33 - (k + 1) * 0.01, 131.01] as [number, number]),
+        ...Array.from({ length: 20 }, (_, k) => [33.55 + (k + 1) * 0.01, 131.01] as [number, number]),
+      ]
+      const missing = Array.from({ length: 40 }, (_, k) => k + 2)
+      expect(idsOn(shadowed, [0, 1], [0, 1], keepSec + 60, missing)).toEqual(['e1'])
+    })
+  })
+
   it('観測点の数と値の数が食い違えば投げる', () => {
     const t = createEnsembleTracker(SITES, scripted({}))
     expect(() => t.push(frame(0, [8, 8]))).toThrow('食い違って')

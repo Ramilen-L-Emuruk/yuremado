@@ -8,8 +8,8 @@
  * - 段階は戻さない。一度確かな段の行が出た束は、その後に早い段の行しか出なくても確かな段のまま
  * - 加わった観測点は、束が生きている間に報告された点をすべて合わせる（減らさない）
  * - 地図に描く点（とカメラの寄せ先）は別に持つ。加わった点のうち、震度0 未満が `DRAWN_FADE_MS` 続いた点を外す（`drawnKeys`）
- * - 検知を消すのは、どの部分からも `ENSEMBLE_KEEP_MS` 報告されず、加わった点のうち `HOLD_MIN_POINTS` 点以上が
- *   震度1 以上だった最後の秒からも `ENSEMBLE_KEEP_MS` たったとき（揺れている点が残る間は消さない）
+ * - 検知を消すのは、どの部分からも `ENSEMBLE_KEEP_MS` 報告されず、加わった点のうち震度1 以上の 2 点が互いに相手だった
+ *   （`HOLD_PARTNER_KM`）最後の秒からも `ENSEMBLE_KEEP_MS` たったとき（揺れている点が残る間は消さない）
  */
 import { computeSiteKeys, indexToValue } from './kyoshinSiteKeys'
 import { ENSEMBLE_KEEP_MS, type DetectorFrame, type EnsembleReport, type EnsembleSource } from './kyoshinEnsembleDetector'
@@ -39,11 +39,17 @@ const ZERO_INDEX = 6
 /** 震度インデックスのうち計測震度 0.5（震度1 の下端） */
 const ONE_INDEX = 7
 /**
- * 検知を消さずに残す、震度1 以上の加わった点の数の下限。1 点にしないのは、値が上がったまま居座る点 1 つで
- * 検知がいつまでも消えなくなるのを防ぐため（2026-11-05 ユーザー選択「B で入れる (Recommended)」・
- * 2026-11-06 ユーザー選択「まとめず、合図を 30 秒間引く (Recommended)」。設計書§70）
+ * 検知を消さずに残すのは、加わった点のうち震度1 以上の 2 点が互いに相手になっている間。
+ * 1 点で残さないのは、値が上がったまま居座る点 1 つで検知がいつまでも消えなくなるのを防ぐため（2026-11-05 ユーザー選択
+ * 「B で入れる (Recommended)」・2026-11-06 ユーザー選択「まとめず、合図を 30 秒間引く (Recommended)」。設計書§70）。
+ * 相手とみるのは、2 点の間が `HOLD_PARTNER_KM` 以内か、どちらかから近い順に値の届いている点を `HOLD_PARTNER_NEAREST` 個
+ * たどる間にもう片方が入るとき。どこにいても 2 点を数える形では、加わった点が減らないので（`memberKeys`）、全国へ広がった
+ * 点のうち離れた 2 点がたまたま震度1 相当のゆらぎを出すだけで検知が消えなかった（2026-11-09 13:52 茨城県沖）。
+ * 距離だけでは観測点のまばらな所（能登）で同じ揺れの 2 点を切り、近さの順だけでは密な所で近い 2 点を切る（近い 5 点だけで数えた試作は、評価台の東京付近の窓で 9 km の 2 点を切った）。
+ * 2026-11-10 ユーザー選択「40km か近い5点で入れる (Recommended)」（評価台・3 週の値は設計書§83）
  */
-export const HOLD_MIN_POINTS = 2
+export const HOLD_PARTNER_KM = 40
+export const HOLD_PARTNER_NEAREST = 5
 
 /** 束ね役のうち、ここが使う口。テストで偽物を差し込めるよう、生の束ね役ではなくこれを受け取る */
 export interface EnsembleReporter {
@@ -96,7 +102,7 @@ interface State {
   confirmedSnapshot: { size: number; maxIntensity: number | null } | null
   sources: Set<EnsembleSource>
   lastReportMs: number
-  /** 加わった点のうち `HOLD_MIN_POINTS` 点以上が震度1 以上だった最後のデータ時刻 */
+  /** 加わった点のうち震度1 以上の 2 点が互いに相手だった（`HOLD_PARTNER_KM`）最後のデータ時刻 */
   shakingMs: number
 }
 
@@ -112,9 +118,79 @@ function maxIntensityOf(members: readonly number[], values: ArrayLike<number>): 
   return max
 }
 
+const DEG = Math.PI / 180
+
+/** 2 点の大円距離（km） */
+function distanceKm(a: [number, number], b: [number, number]): number {
+  const x = Math.sin((b[0] - a[0]) * DEG / 2) ** 2 + Math.cos(a[0] * DEG) * Math.cos(b[0] * DEG) * Math.sin((b[1] - a[1]) * DEG / 2) ** 2
+  return 12742 * Math.asin(Math.sqrt(x))
+}
+
+/**
+ * 近い順の並びのうち、初めに作る点数。たどる間に値の届く点が `HOLD_PARTNER_NEAREST` 個そろわなかった（欠測が多い）ときだけ、
+ * 全点の並びを作り直す。初めから全点を並べると、離れた点が一斉に震度1 相当になった秒に数百点ぶんの並べ替えが重なり、
+ * 1 秒の処理が 70 ms を超えた（2026-11-09 13:52 の再生。設計書§83）
+ */
+const NEAREST_PREFIX = 16
+
+/**
+ * 震度1 以上の点の組が `HOLD_PARTNER_KM`・`HOLD_PARTNER_NEAREST` の意味で互いに相手かを見る。
+ * 点ごとの近い順の並びは、距離で相手と決まらなかった組に初めて入ったときに作って持つ。
+ * `sites` は検知の組み立てを作り直すまで変わらない前提（観測点の並びが変わるときは呼び出し元が作り直す）
+ */
+function createPartnerTest(sites: [number, number][]) {
+  /** 点ごとの近い順の並び（自分を除く）と、それが全点を並べたものか */
+  const order: ({ idx: Int32Array; full: boolean } | undefined)[] = []
+  const build = (i: number, limit: number): { idx: Int32Array; full: boolean } => {
+    const n = Math.min(limit, sites.length - 1)
+    const idx = new Int32Array(n)
+    const dist = new Float64Array(n).fill(Infinity)
+    let filled = 0
+    // 近い n 点を、距離の昇順に保った短い列へ差し込みながら選ぶ（同じ距離なら番号の小さい点が先。全点を並べたときと同じ順）
+    for (let k = 0; k < sites.length; k++) {
+      if (k === i) continue
+      const d = distanceKm(sites[i], sites[k])
+      if (filled === n && d >= dist[n - 1]) continue
+      let p = filled < n ? filled++ : n - 1
+      while (p > 0 && dist[p - 1] > d) { dist[p] = dist[p - 1]; idx[p] = idx[p - 1]; p-- }
+      dist[p] = d
+      idx[p] = k
+    }
+    return { idx, full: n === sites.length - 1 }
+  }
+  /** i から近い順に値の届いている点を `HOLD_PARTNER_NEAREST` 個たどる間に j が入るか */
+  const amongNearest = (i: number, j: number, values: ArrayLike<number>): boolean => {
+    let o = order[i] ?? (order[i] = build(i, NEAREST_PREFIX))
+    for (;;) {
+      let seen = 0
+      for (let x = 0; x < o.idx.length && seen < HOLD_PARTNER_NEAREST; x++) {
+        const k = o.idx[x]
+        if (values[k] < 0) continue
+        if (k === j) return true
+        seen++
+      }
+      if (seen >= HOLD_PARTNER_NEAREST || o.full) return false
+      o = order[i] = build(i, sites.length - 1)
+    }
+  }
+  return (i: number, j: number, values: ArrayLike<number>): boolean =>
+    distanceKm(sites[i], sites[j]) <= HOLD_PARTNER_KM || amongNearest(i, j, values) || amongNearest(j, i, values)
+}
+
+/** 加わった点のうち震度1 以上の点に、互いに相手になる 2 点の組があるか */
+function hasShakingPair(members: readonly number[], values: ArrayLike<number>, isPartner: (i: number, j: number, values: ArrayLike<number>) => boolean): boolean {
+  const hot: number[] = []
+  for (const i of members) if (values[i] >= ONE_INDEX) hot.push(i)
+  for (let a = 0; a < hot.length; a++) {
+    for (let b = a + 1; b < hot.length; b++) if (isPartner(hot[a], hot[b], values)) return true
+  }
+  return false
+}
+
 export function createEnsembleTracker(sites: [number, number][], reporter: EnsembleReporter) {
   const keys = computeSiteKeys(sites)
   const live = new Map<string, State>()
+  const isPartner = createPartnerTest(sites)
 
   return {
     /** 平常のゆらぎの表を束ね役へ渡す。積み上げた検知はそのまま残す */
@@ -139,9 +215,7 @@ export function createEnsembleTracker(sites: [number, number][], reporter: Ensem
         for (const src of r.sources) s.sources.add(src)
       }
       for (const [id, s] of live) {
-        let up = 0
-        for (const i of s.members) if (f.values[i] >= ONE_INDEX && ++up >= HOLD_MIN_POINTS) break
-        if (up >= HOLD_MIN_POINTS) s.shakingMs = f.ms
+        if (hasShakingPair(s.members, f.values, isPartner)) s.shakingMs = f.ms
         if (f.ms - Math.max(s.lastReportMs, s.shakingMs) > ENSEMBLE_KEEP_MS) live.delete(id)
       }
       const out: EnsembleDetection[] = []
