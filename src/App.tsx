@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
-import { IconNav, TAB_LABELS, type TabId } from './components/IconNav'
+import { IconNav, type TabId } from './components/IconNav'
+import { useMessages } from './i18n/I18nProvider'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import {
   TAB_PRIORITY, TAB_HOLD_MS, shouldAcceptAutoTab, decideFollowNow, idleRevertPriority,
@@ -209,6 +210,8 @@ const LPGM_FOCUS_WAIT_MS = 10_000
 
 export function App() {
   const { settings, updateSetting, updateSettings, replaceSettings, adoptExternalSetting } = useSettings()
+  // 各画面が落ちたときの表示に出す画面の名前（ナビのボタン名と同じ辞書の語）
+  const tabNames = useMessages().nav
   // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
   usePushSubscription(settings, updateSetting)
   // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す
@@ -3554,7 +3557,7 @@ export function App() {
             {/* **タブごとに境界を置く。** 6 タブは常時マウントで `invisible` を付け外ししている
                 だけなので、1 つのタブが投げた例外は境界が無ければ App ごと巻き込む。ここで
                 受け止めれば、落ちたタブ以外はそのまま見られる。 */}
-            <ErrorBoundary variant="region" label={TAB_LABELS.earthquake}>
+            <ErrorBoundary variant="region" label={tabNames.earthquake}>
               <EarthquakeTab
                 shown={activeTab === 'earthquake'}
                 earthquakes={filteredEarthquakes}
@@ -3609,7 +3612,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'realtime' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={TAB_LABELS.realtime}>
+            <ErrorBoundary variant="region" label={tabNames.realtime}>
               <RealtimeTab
                 eews={eewsForPanel}
                 kyoshinV2Detections={kyoshinV2.detections}
@@ -3625,7 +3628,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'tsunami' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={TAB_LABELS.tsunami}>
+            <ErrorBoundary variant="region" label={tabNames.tsunami}>
               <TsunamiTab
                 tsunamis={tsunamis}
                 earthquakes={allQuakeCards /* 原因地震は地震タブの絞りによらず引く */}
@@ -3650,7 +3653,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'catalog' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={TAB_LABELS.catalog}>
+            <ErrorBoundary variant="region" label={tabNames.catalog}>
               <CatalogTab
                 index={catalogIndex}
                 filter={catalogFilter}
@@ -3672,7 +3675,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'telegrams' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={TAB_LABELS.telegrams}>
+            <ErrorBoundary variant="region" label={tabNames.telegrams}>
               <TelegramTab telegramLog={telegramLog} onClear={clearTelegramLog} active={activeTab === 'telegrams'} />
             </ErrorBoundary>
           </div>
@@ -3683,7 +3686,7 @@ export function App() {
         {usageConsentOpen && <UsageConsentDialog onAnswer={answerUsageConsent} />}
         {quakeReplayConfirmAt !== null && <QuakeReplayConfirmDialog onAnswer={answerQuakeReplayConfirm} />}
         <SettingsDialog open={settingsOpen} onClose={closeSettings} returnFocusRef={settingsButtonRef}>
-            <ErrorBoundary variant="region" label={TAB_LABELS.settings}>
+            <ErrorBoundary variant="region" label={tabNames.settings}>
               <SettingsTab
                 settings={settings}
                 onUpdate={updateSetting}

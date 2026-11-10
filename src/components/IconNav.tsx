@@ -1,4 +1,5 @@
 import { memo, type ReactNode, type RefObject } from 'react'
+import { useMessages } from '../i18n/I18nProvider'
 
 export type TabId = 'earthquake' | 'realtime' | 'tsunami' | 'catalog' | 'telegrams'
 
@@ -67,22 +68,8 @@ const ICONS: Record<NavItemId, ReactNode> = {
   ),
 }
 
-const ITEMS: { id: NavItemId; label: string }[] = [
-  { id: 'earthquake', label: '地震情報' },
-  { id: 'realtime', label: 'リアルタイム' },
-  { id: 'tsunami', label: '津波情報' },
-  { id: 'catalog', label: '震源カタログ' },
-  { id: 'settings', label: '設定' },
-  { id: 'telegrams', label: '電文ログ' },
-]
-
-/**
- * ナビのボタンの表示名。ナビのボタン名と、**その画面が落ちたときの表示**（`ErrorBoundary` の `label`）で
- * 共有する。2 箇所に書くと、名前を変えたとき片方だけ古くなる。
- */
-export const TAB_LABELS: Record<NavItemId, string> = Object.fromEntries(
-  ITEMS.map((i) => [i.id, i.label]),
-) as Record<NavItemId, string>
+/** ナビに並ぶ順。名前は辞書の `nav` から引く（→ `i18n/messages/ja.ts`）。 */
+const ITEMS: readonly NavItemId[] = ['earthquake', 'realtime', 'tsunami', 'catalog', 'settings', 'telegrams']
 
 const TSUNAMI_BADGE_COLOR: Record<NonNullable<Props['tsunamiGrade']>, string> = {
   MajorWarning: 'bg-purple-500',
@@ -121,6 +108,7 @@ interface Props {
 // 歯車だけはタブを切り替えず、設定の窓を開け閉めする。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelCollapsed, settingsOpen, onToggleSettings, settingsButtonRef, tsunamiGrade, eewLevel }: Props) {
+  const names = useMessages().nav
   return (
     <nav
       className="flex flex-row side:flex-col items-center justify-center side:justify-start gap-1 p-1.5 bg-panel border-t side:border-t-0 side:border-l border-border shrink-0"
@@ -134,37 +122,38 @@ export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelColl
         paddingRight: 'max(0.375rem, env(safe-area-inset-right, 0px))',
       }}
     >
-      {ITEMS.map((item) => {
-        if (item.id === 'settings') {
+      {ITEMS.map((id) => {
+        const label = names[id]
+        if (id === 'settings') {
           return (
             <button
-              key={item.id}
+              key={id}
               ref={settingsButtonRef}
               onClick={onToggleSettings}
-              aria-label={item.label}
+              aria-label={label}
               aria-haspopup="dialog"
               aria-expanded={settingsOpen}
-              title={item.label}
+              title={label}
               className={`relative w-11 h-11 flex items-center justify-center rounded-md transition-colors motion-reduce:transition-none ${
                 settingsOpen ? 'bg-white/15 text-white' : 'text-secondary hover:text-white hover:bg-white/5'
               }`}
             >
-              {ICONS[item.id]}
+              {ICONS[id]}
             </button>
           )
         }
-        const tab = item.id
+        const tab = id
         const isActive = activeTab === tab
         return (
           <button
-            key={item.id}
+            key={id}
             onClick={() => onTabChange(tab)}
             // ボタン名（aria-label）は状態で変えない。折りたたみの状態は aria-expanded が伝える
             // 役割を持つため、名前まで変えると読み上げも DOM 検索も不安定になる。
-            aria-label={item.label}
+            aria-label={label}
             aria-current={isActive}
             aria-expanded={isActive ? !panelCollapsed : undefined}
-            title={isActive ? `${item.label}（もう一度押すとパネルを${panelCollapsed ? '開く' : '畳む'}）` : item.label}
+            title={isActive ? `${label}（もう一度押すとパネルを${panelCollapsed ? '開く' : '畳む'}）` : label}
             className={`relative w-11 h-11 flex items-center justify-center rounded-md transition-colors motion-reduce:transition-none ${
               isActive
                 ? panelCollapsed
@@ -174,11 +163,11 @@ export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelColl
                 : 'text-secondary hover:text-white hover:bg-white/5'
             }`}
           >
-            {ICONS[item.id]}
-            {item.id === 'tsunami' && tsunamiGrade !== null && (
+            {ICONS[id]}
+            {id === 'tsunami' && tsunamiGrade !== null && (
               <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${TSUNAMI_BADGE_COLOR[tsunamiGrade]} animate-pulse`} />
             )}
-            {item.id === 'realtime' && eewLevel !== null && (
+            {id === 'realtime' && eewLevel !== null && (
               <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${EEW_BADGE_COLOR[eewLevel]} animate-pulse`} />
             )}
           </button>
