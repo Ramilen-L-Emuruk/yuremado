@@ -1,4 +1,28 @@
 import type { Messages } from '../messages'
+import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+
+const TSUNAMI_WORDS: TsunamiTermWords = {
+  grade: { MajorWarning: 'Major Tsunami Warning', Warning: 'Tsunami Warning', Watch: 'Tsunami Advisory', Forecast: 'Tsunami Forecast (slight sea-level change)' },
+  noTsunami: 'No tsunami',
+  issued: (g) => `${g}: Issued`,
+  lifted: (g) => `${g} lifted`,
+  huge: 'Huge',
+  high: 'High',
+  over10m: 'Over 10 m',
+  orMore: (h) => `${h} or more`,
+  under: (h) => `Under ${h}`,
+  initialRise: 'initial rise',
+  initialDrop: 'initial drop',
+  drill: 'Drill',
+  test: 'Test',
+}
+
+const TSUNAMI_EVACUATION = {
+  MajorWarning: 'Evacuate immediately to a safer place such as high ground or an evacuation building.',
+  Warning: 'Evacuate immediately to a safer place such as high ground or an evacuation building.',
+  Watch: 'Get out of the water and leave coastal regions immediately.',
+  Forecast: 'A slight sea-level change is expected, but no damage is anticipated.',
+}
 
 /** 英語の辞書。気象庁の英語がある語はそれに合わせ、無い語は作った（語ごとの出どころは `docs/spec/i18n-spec.md` §4）。 */
 export const en: Messages = {
@@ -79,5 +103,57 @@ export const en: Messages = {
     privacyPolicy: 'Privacy Policy',
     deny: "Don't allow",
     allow: 'Allow',
+  },
+  tsunami: {
+    grade: { MajorWarning: 'Major Tsunami Warning', Warning: 'Tsunami Warning', Watch: 'Tsunami Advisory', Forecast: 'Tsunami Forecast (slight sea-level change)', Unknown: 'Unknown' },
+    kindName: (name) => translateKindName(name, TSUNAMI_WORDS),
+    inEffect: (g) => `${g} in effect`,
+    inEffectWord: 'in effect',
+    updated: (t) => `Updated ${t}`,
+    observedAsOf: (t) => `Observed as of ${t}`,
+    expires: (t) => `Expires ${t}`,
+    estimatedArrival: (t) => `Est. arrival ${t}`,
+    estimatedArrivalAfter: (t) => `Est. arrival ${t}`,
+    highTide: (t) => `High tide ${t}`,
+    maxWave: (t) => `Max wave ${t}`,
+    firstWave: (t, initial) => (initial ? `${t} ${translateInitialWave(initial, TSUNAMI_WORDS)}` : t),
+    gradeChangedFrom: (l, raised) => (raised ? `Upgraded from ${l}` : `Changed from ${l}`),
+    liftedHeader: 'Lifted',
+    gradeLifted: (g) => (g ? `${g} lifted` : 'Lifted'),
+    notesFromJma: 'Notes from JMA',
+    earthquakeLink: '▶ Earthquake Information',
+    offshoreObservations: 'Offshore observations',
+    coastalEstimates: 'Coastal estimates (issued by JMA)',
+    depth: (d) => `Depth ${d}`,
+    editingOffice: (o) => `Edited by ${o}`,
+    issuingOffice: (o) => `Issued by ${o}`,
+    noneTitle: 'No tsunami information',
+    noneBody: 'No tsunami warnings or advisories are currently in effect.',
+    operationStatus: (status) => translateOperationStatus(status, TSUNAMI_WORDS),
+    forecastChip: 'Forecast',
+    badge: {
+      measured: 'Measured',
+      arrivalConfirmed: 'Arrival confirmed',
+      missing: 'No data',
+      rising: 'Rising',
+      aboveCriteriaOffshore: 'Exceeds warning criteria',
+      aboveCriteria: 'Exceeds Major Tsunami Warning criteria',
+      warningLevelObserved: 'Warning-level tsunami observed',
+    },
+    forecastHeightImportant: 'Forecast height now given in figures or raised',
+    arrivalCondition: { imminent: 'Arriving soon', arriving: 'Arriving', firstArrived: 'Initial wave arrived' },
+    observing: 'Information pending',
+    estimating: 'Information pending',
+    weak: 'Weak',
+    arrivalUnknown: 'Arrival time unknown',
+    height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
+    cancel: {
+      lifted: { title: 'Tsunami Information Lifted', badge: 'Lifted', desc: 'This tsunami information has been lifted.' },
+      retracted: { title: 'Tsunami Information Retracted', badge: 'Retracted', desc: 'This tsunami information was issued in error and has been retracted.' },
+      expired: { title: 'Tsunami Forecast Expired', badge: 'Expired', desc: 'This tsunami forecast has expired.' },
+    },
+    // 日本語以外は、気象庁の付加文の有無に関わらず等級ごとの文を出す（2026-11-10 ユーザー選択「等級ごとの訳文を出す (Recommended)」）
+    evacuation: (grade, telegramLine) => grade === 'Unknown' ? (telegramLine ?? '') : TSUNAMI_EVACUATION[grade],
+    evacuationByGrade: TSUNAMI_EVACUATION,
   },
 }

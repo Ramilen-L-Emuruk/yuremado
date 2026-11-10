@@ -1,4 +1,5 @@
 import type { JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiEstimationCondition, TsunamiGrade, TsunamiObservation, TsunamiObservationCondition, TsunamiSourceEarthquake, TsunamiStation, TsunamiWarningComment } from '../types/earthquake'
+import { ja } from '../i18n/messages/ja'
 import { formatTimeMin, readDateTime } from './formatters'
 import { log } from './logger'
 import { compareReportAge, reportOrderKey } from './quakeMerge'
@@ -980,10 +981,8 @@ export function announcedCancelledAreas(tsunami: JMATsunami): TsunamiArea[] {
  * （→ `TsunamiArea.kindName`）。
  */
 export const TSUNAMI_GRADE_NAME: Record<TsunamiGrade, string> = {
-  MajorWarning: '大津波警報',
-  Warning: '津波警報',
-  Watch: '津波注意報',
-  Forecast: '津波予報（若干の海面変動）',
+  // 語は画面と同じ日本語の辞書から採る（画面と声で等級名が割れないように）。不明は名前を言わない
+  ...ja.tsunami.grade,
   Unknown: '',
 }
 
@@ -1363,25 +1362,33 @@ export function isObservationMissing(obs: TsunamiObservation): boolean {
  * 「到達確認」を欠測の観測点に付けないこと。第1波が欠測なら到達したかどうかも判っていない。
  */
 export function observationBadges(obs: TsunamiObservation): string[] {
+  return observationBadgeKeys(obs).map(k => ja.tsunami.badge[k])
+}
+
+/** 観測の札の種類（{@link observationBadges} と同じ並び）。画面はこれを言語ごとの辞書で引く。 */
+export type TsunamiBadgeKey = keyof typeof ja.tsunami.badge
+
+/** {@link observationBadges} の札を、語ではなく種類で返す（語は日本語の辞書の `tsunami.badge`）。 */
+export function observationBadgeKeys(obs: TsunamiObservation): TsunamiBadgeKey[] {
   const missing = isObservationMissing(obs)
-  const badges: string[] = []
-  if (obs.height) badges.push('実測')
-  else if (obs.arrivalTime) badges.push('到達確認')
-  else if (missing) return ['欠測']
-  else badges.push('到達確認')
-  if (missing) badges.push('欠測')
+  const badges: TsunamiBadgeKey[] = []
+  if (obs.height) badges.push('measured')
+  else if (obs.arrivalTime) badges.push('arrivalConfirmed')
+  else if (missing) return ['missing']
+  else badges.push('arrivalConfirmed')
+  if (missing) badges.push('missing')
   // 水位が上昇中なら、いま見えている波高が最大とは限らないことを伝える。
-  if (obs.condition?.rising) badges.push('上昇中')
+  if (obs.condition?.rising) badges.push('rising')
   // 「重要」は基準を超えた値に気象庁が付ける印。語をそのまま出しても何が重要なのか
   // 伝わらないので、意味の側を書く。**基準は沿岸と沖合で違う**（→ importantBadgeText）。
-  if (obs.condition?.important) badges.push(importantBadgeText(!!obs.offshore))
+  if (obs.condition?.important) badges.push(importantBadgeKey(!!obs.offshore))
   // 数値が出ていなくても、電文が「津波警報に相当する津波を観測している」と言っている場合がある。
   //
   // **「〜の基準超」と同じ形にしない。** 上の 2 つは実測値が基準を超えた事実だが、こちらは
   // 数値が出ていないまま気象庁が置いた信号で、意味の階層が違う。同じ行に並ぶので、形を揃えると
   // 「弱いほうの基準だけ超えた」と読める。読み上げ（「津波警報に相当する津波を観測しています」）と
   // 語を揃え、隣の波高欄の「観測中」と合わせて「相当する津波を観測中・数値は未確定」と読ませる。
-  if (isWarningLevelWhileObserving(obs)) badges.push('津波警報相当を観測')
+  if (isWarningLevelWhileObserving(obs)) badges.push('warningLevelObserved')
   return badges
 }
 
@@ -1422,7 +1429,12 @@ export function isWarningLevelWhileObserving(obs: TsunamiObservation): boolean {
  * {@link forecastHeightImportantBadge} が受け持つ。
  */
 export function importantBadgeText(offshore: boolean): string {
-  return offshore ? '大津波警報・津波警報の基準超' : '大津波警報の基準超'
+  return ja.tsunami.badge[importantBadgeKey(offshore)]
+}
+
+/** {@link importantBadgeText} の種類。 */
+export function importantBadgeKey(offshore: boolean): 'aboveCriteriaOffshore' | 'aboveCriteria' {
+  return offshore ? 'aboveCriteriaOffshore' : 'aboveCriteria'
 }
 
 /**
@@ -1436,7 +1448,7 @@ export function forecastHeightImportantBadge(): string {
   // 「更新」では方向が伝わらない（この印は引き下げでは付かない）。かといって「引き上げ」だけでは、
   // 「巨大」から「10m超」へ数値になっただけの報まで「高さが上がった」と言うことになる。
   // 電文の定義（初めて数値で発表／上方修正）をそのまま書く。
-  return '予想の高さを数値で発表・引き上げ'
+  return ja.tsunami.forecastHeightImportant
 }
 
 /**
@@ -1446,8 +1458,13 @@ export function forecastHeightImportantBadge(): string {
  * 代わりに数値を出せない理由が「推定中」である点が違うため。
  */
 export function estimationBadges(est: TsunamiEstimation): string[] {
-  const badges: string[] = []
-  if (est.condition?.important) badges.push(importantBadgeText(true))
+  return estimationBadgeKeys(est).map(k => ja.tsunami.badge[k])
+}
+
+/** {@link estimationBadges} の札を種類で返す。 */
+export function estimationBadgeKeys(est: TsunamiEstimation): TsunamiBadgeKey[] {
+  const badges: TsunamiBadgeKey[] = []
+  if (est.condition?.important) badges.push(importantBadgeKey(true))
   return badges
 }
 
@@ -1459,8 +1476,14 @@ export function estimationBadges(est: TsunamiEstimation): string[] {
  * 値が無いのが電文の判断なのか読み落としなのか画面から分からない。
  */
 export function estimationHeightText(est: TsunamiEstimation): string {
-  if (est.maxHeight?.description) return est.maxHeight.description
-  return est.condition?.estimating ? '推定中' : ''
+  const h = estimationHeight(est)
+  return h === null ? '' : h.kind === 'height' ? h.description : ja.tsunami.estimating
+}
+
+/** {@link estimationHeightText} を、言語ごとに組めるよう種類と値で返す。出すものが無ければ null。 */
+export function estimationHeight(est: TsunamiEstimation): { kind: 'height'; description: string } | { kind: 'estimating' } | null {
+  if (est.maxHeight?.description) return { kind: 'height', description: est.maxHeight.description }
+  return est.condition?.estimating ? { kind: 'estimating' } : null
 }
 
 /**
@@ -1472,12 +1495,17 @@ export function estimationHeightText(est: TsunamiEstimation): string {
  * 出せない理由が電文にあることが画面から読めない。
  */
 export function observationArrivalFallbackText(obs: TsunamiObservation): string {
+  return observationArrivalUnknown(obs) ? ja.tsunami.arrivalUnknown : ''
+}
+
+/** {@link observationArrivalFallbackText} を出す場面か（到達時刻を出せず、電文が第 1 波を識別できないと言っている）。 */
+export function observationArrivalUnknown(obs: TsunamiObservation): boolean {
   // **判定は整形の結果で行う。** 値があっても日時として読めなければ呼び出し側は時刻を出せず、
   // ここで空を返すと「第１波識別不能」という電文の判断が画面から消える。同じ行で
   // 「予報側の到達予想を添えるか」を決める述語（`TsunamiTab`）とも揃う ——
   // 片方だけ整形の結果で見ると、到達予想は出るのに理由の語が出ない形になる。
-  if (obs.arrivalTime && formatTimeMin(obs.arrivalTime)) return ''
-  return obs.condition?.firstWaveUnidentifiable ? '到達時刻不明' : ''
+  if (obs.arrivalTime && formatTimeMin(obs.arrivalTime)) return false
+  return !!obs.condition?.firstWaveUnidentifiable
 }
 
 /**
@@ -1493,9 +1521,14 @@ export function observationArrivalFallbackText(obs: TsunamiObservation): string 
  * ように見える。**日時として読めない時刻も同じく返さない**（「最大波 」とラベルだけが残る）。
  */
 export function observationMaxHeightTimeText(obs: TsunamiObservation): string {
-  if (!obs.maxHeightDateTime || !obs.height) return ''
-  const hm = formatTimeMin(obs.maxHeightDateTime)
-  return hm ? `最大波 ${hm}` : ''
+  const hm = observationMaxHeightTime(obs)
+  return hm ? ja.tsunami.maxWave(hm) : ''
+}
+
+/** {@link observationMaxHeightTimeText} の時刻だけ（出さない場面なら null）。 */
+export function observationMaxHeightTime(obs: TsunamiObservation): string | null {
+  if (!obs.maxHeightDateTime || !obs.height) return null
+  return formatTimeMin(obs.maxHeightDateTime) || null
 }
 
 /**
@@ -1521,15 +1554,22 @@ export function observationFirstWaveText(obs: { arrivalTime?: string; initial?: 
  * 「観測中」を欠測の観測点へ出さないこと——「これから値が出る」と読めてしまう。
  */
 export function observationHeightText(obs: TsunamiObservation): string {
-  if (obs.height) return overSuffixedHeight(obs.height)
+  const h = observationHeight(obs)
+  if (h === null) return ''
+  return h.kind === 'height' ? ja.tsunami.height(h.description, h.over) : h.kind === 'weak' ? ja.tsunami.weak : ja.tsunami.observing
+}
+
+/** {@link observationHeightText} を、言語ごとに組めるよう種類と値で返す。出すものが無ければ null。 */
+export function observationHeight(obs: TsunamiObservation): { kind: 'height'; description: string; over: boolean } | { kind: 'weak' } | { kind: 'observing' } | null {
+  if (obs.height) return { kind: 'height', description: obs.height.description, over: !!obs.height.over }
   // 「微弱」は欠測と併記されうる（同 事例 7）。そのときも気象庁が波高について述べた語はこちら。
-  if (obs.condition?.weak) return '微弱'
-  if (isObservationMissing(obs)) return ''
+  if (obs.condition?.weak) return { kind: 'weak' }
+  if (isObservationMissing(obs)) return null
   // `condition.observing`（電文が「観測中」と明示した場合）に専用の分岐は要らない。
   // 数値も微弱も欠測も無い状態は、電文が「観測中」と書いた場合と、`MaxHeight` 要素そのものが
   // 無い場合（これまでの最大波を観測していない）の 2 通りだが、**利用者にとっては同じ**
   // ――どちらもこれから値が出る。フラグは電文を読み違えていないかを確かめる側（テスト）で使う。
-  return '観測中'
+  return { kind: 'observing' }
 }
 
 /**
@@ -1669,14 +1709,8 @@ export function evacuationActionLine(comments?: TsunamiWarningComment[]): string
  * > 「離れる」ではない。
  */
 export function fallbackEvacuationAction(grade: TsunamiGrade): string {
-  switch (grade) {
-    case 'MajorWarning':
-    case 'Warning':  return 'ただちに高台や避難ビルなど安全な場所へ避難してください。'
-    case 'Watch':    return '海の中にいる人はただちに海から上がって、海岸から離れてください。'
-    case 'Forecast': return '若干の海面変動が予想されますが、被害の心配はありません。'
-    // **`default` で受けないこと。** 等級が増えたとき、網羅の検査が効かずに空文字へ落ちる。
-    case 'Unknown':  return ''
-  }
+  // **`Unknown` は空文字。** 等級が増えたとき辞書の型（`evacuationByGrade`）が網羅を求めるので、文の漏れは型で落ちる。
+  return grade === 'Unknown' ? '' : ja.tsunami.evacuationByGrade[grade]
 }
 
 function sortWarningComments(comments: TsunamiWarningComment[]): TsunamiWarningComment[] {
@@ -2005,10 +2039,7 @@ export function firstWaveSpokenKey(
  * 「以上」が出てカードと読み上げには出ない、という食い違いになる。
  */
 export function overSuffixedHeight(height: { description: string; over?: boolean }): string {
-  if (!height.over) return height.description
-  if (height.description.includes('以上')) return height.description
-  if (!/[\d０-９]/.test(height.description)) return height.description
-  return `${height.description}以上`
+  return ja.tsunami.height(height.description, !!height.over)
 }
 
 // 区域に紐づく観測点のうち、最も深刻な実測値（height）を返す。実測値を持つ観測点が無ければ null。
@@ -2316,11 +2347,24 @@ export function rememberTsunamiValues(event: JMATsunami, memory: TsunamiValueMem
  * `FIRST_HEIGHT_CONDITIONS`（`tsunami.ts`）が既に両方を持っており、片方だけ想定しないと
  * 同じ電文の同じ欄で扱いが割れる。
  */
-export const ARRIVAL_CONDITION_BADGE: Record<string, string> = {
-  'ただちに津波来襲と予測': 'まもなく到達',
-  '津波到達中と推測': '到達中',
-  '第１波の到達を確認': '第1波到達',
-  '第1波の到達を確認': '第1波到達',
+const ARRIVAL_CONDITION_KEY: Record<string, ArrivalConditionKey> = {
+  'ただちに津波来襲と予測': 'imminent',
+  '津波到達中と推測': 'arriving',
+  '第１波の到達を確認': 'firstArrived',
+  '第1波の到達を確認': 'firstArrived',
+}
+
+/** 到達状況の語の種類。画面はこれを言語ごとの辞書で引く（表に無い語は種類を持たず、電文の語のまま出す）。 */
+export type ArrivalConditionKey = keyof typeof ja.tsunami.arrivalCondition
+
+/** {@link ARRIVAL_CONDITION_KEY} の日本語の札（読み上げ・通知・地図の吹き出しが使う）。語の表は種類の表 1 つだけに持つ。 */
+export const ARRIVAL_CONDITION_BADGE: Record<string, string> = Object.fromEntries(
+  Object.entries(ARRIVAL_CONDITION_KEY).map(([word, key]) => [word, ja.tsunami.arrivalCondition[key]]),
+)
+
+/** 到達状況の語の種類（表に無い語なら undefined）。 */
+export function arrivalConditionKey(condition: string | undefined): ArrivalConditionKey | undefined {
+  return condition !== undefined && Object.prototype.hasOwnProperty.call(ARRIVAL_CONDITION_KEY, condition) ? ARRIVAL_CONDITION_KEY[condition] : undefined
 }
 
 /**
