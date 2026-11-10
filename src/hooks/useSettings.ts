@@ -124,6 +124,8 @@ export interface AppSettings extends QuakeListSettings {
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
   notifyDetection: boolean         // 強震モニタの揺れ検知時にブラウザ通知を送る
   notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
+  notifyNankaiRoutine: boolean     // 南海トラフ地震関連解説情報の定例解説のブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
+  notifyQuakeNotice: boolean       // 地震・津波に関するお知らせのブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
   /**
    * アプリを閉じている間も中継からプッシュ通知を受け取る（docs/relay-server-design.md §6.7）。既定はオフ
    * （2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）。入れた端末だけが中継へ送り先と通知の設定の写しを登録する
@@ -397,6 +399,8 @@ export const DEFAULTS: AppSettings = {
   // 揺れ検知の通知は既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」。検知ベンチの静かな窓 22 本・11.3 時間のうち 2 本で確定まで進んだ）。
   notifyDetection: false,
   notifyNankai: true,
+  notifyNankaiRoutine: false,
+  notifyQuakeNotice: false,
   pushNotifyEnabled: false,
   notifyQuietWhileOpen: false,
   notifyPrefectures: [],
@@ -710,6 +714,8 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyTsunami: ensureBool(partial.notifyTsunami, DEFAULTS.notifyTsunami),
     notifyDetection: ensureBool(partial.notifyDetection, DEFAULTS.notifyDetection),
     notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
+    notifyNankaiRoutine: ensureBool(partial.notifyNankaiRoutine, DEFAULTS.notifyNankaiRoutine),
+    notifyQuakeNotice: ensureBool(partial.notifyQuakeNotice, DEFAULTS.notifyQuakeNotice),
     pushNotifyEnabled: ensureBool(partial.pushNotifyEnabled, DEFAULTS.pushNotifyEnabled),
     notifyQuietWhileOpen: ensureBool(partial.notifyQuietWhileOpen, DEFAULTS.notifyQuietWhileOpen),
     notifyPrefectures: ensurePrefectureCodes(partial.notifyPrefectures),
