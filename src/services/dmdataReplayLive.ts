@@ -33,6 +33,7 @@ import { eewHeadTypeFor, hasQuakeTelegrams, type DmdataClassification } from './
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
 import { makeReplayLogEntry } from './telegramLogEntry'
+import { TELEGRAM_LOG_ERROR } from '../utils/telegramLogErrorMark'
 
 /** 一覧 API の 1 ページあたりの取得件数（API の上限）。 */
 const LIST_LIMIT = 100
@@ -1045,7 +1046,7 @@ export async function fetchLiveReplayEntriesWith(
         if (binPayload === null) {
           log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${item.id} type=${headType}`)
           skipCounter.add(skipDayOf(item.receivedTime))
-          pushLogOnly(item, `（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: 'bufr decode failed', isTest: item.head.test === true })
+          pushLogOnly(item, `（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: TELEGRAM_LOG_ERROR.bufrDecodeFailed, isTest: item.head.test === true })
           return
         }
         // **試験報は取りこぼしに数えない**（正常な配信。非 XML 電文は `item.head.test` で
@@ -1140,7 +1141,7 @@ export async function fetchLiveReplayEntriesWith(
 }
 
 /** 電文ログにだけ積む電文の本体を取れなかった行の理由（行の赤字にそのまま出る）。アーカイブ経路も同じ文を使う */
-export const REPLAY_LOG_ONLY_FETCH_FAILED = '本文を取得できませんでした'
+export const REPLAY_LOG_ONLY_FETCH_FAILED = TELEGRAM_LOG_ERROR.fetchFailed
 
 /**
  * 電文ログにだけ積む電文（→ `isReplayLogOnly`）の本体を取って行にする。
