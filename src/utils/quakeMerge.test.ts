@@ -855,6 +855,30 @@ describe('mergeQuakeInto — 通常電文どうし', () => {
       expect(withoutReports(mergeQuakeInto(afterEpicenter, staleReplay))).toEqual(withoutReports(afterEpicenter))
     })
 
+    // VXSE61 より新しい完全版の震度は採る（2026-11-09 ユーザー選択「新しい震度は採る (Recommended)」）。控えの実配信には無い並び
+    it('正: VXSE61 とマージ済みのカードへ、より新しい震源・震度情報が届けば震度を採り、震源と種別は VXSE61 のまま', () => {
+      const e: JMAQuake = {
+        ...makeQuake({ type: '震源・震度情報', maxScale: 50, time: '2026-07-28T07:35:00Z' }),
+        issue: { source: 'dmdata', time: '2026-07-28T07:35:00Z', type: '顕著な地震の震源要素更新のお知らせ', correct: 'なし' },
+      }
+      const newer = makeQuake({ type: '震源・震度情報', maxScale: 55, time: '2026-07-28T07:50:00Z' })
+      expect(quakeHoldBack(e, newer)).toBeNull()
+      const merged = mergeQuakeInto(e, newer)!
+      expect(merged.earthquake.maxScale).toBe(55)
+      expect(merged.issue.type).toBe('顕著な地震の震源要素更新のお知らせ')
+      expect(merged.earthquake.hypocenter).toEqual(e.earthquake.hypocenter)
+      expect(merged.time).toBe('2026-07-28T07:50:00Z')
+    })
+
+    it('対照: VXSE61 より古い震源・震度情報は今どおり据え置く', () => {
+      const e: JMAQuake = {
+        ...makeQuake({ type: '震源・震度情報', maxScale: 50, time: '2026-07-28T07:35:00Z' }),
+        issue: { source: 'dmdata', time: '2026-07-28T07:35:00Z', type: '顕著な地震の震源要素更新のお知らせ', correct: 'なし' },
+      }
+      const older = makeQuake({ type: '震源・震度情報', maxScale: 55, time: '2026-07-28T07:31:00Z' })
+      expect(quakeHoldBack(e, older)?.reason).toBe('amendment')
+    })
+
     it('安全弁: VXSE61 とマージ済みの完成カードは、発表時刻が新しくても変わらず据え置く', () => {
       // 既存テスト「顕著地震とマージ済みの完成カード」と同じ保護が、時刻ベースへの変更後も
       // 引き続き有効であることの確認（境界を動かす変更が別の保護を緩めていないか）。

@@ -4274,6 +4274,8 @@ export function useEarthquakes(
   const simulateInternationalTsunamiDomesticAndOnly = useCallback(() => runTestTelegramScript(s => s.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY), [runTestTelegramScript])
   /** 見出しにだけある市町村のテスト（→ `testTelegramScripts.ts` の `HEADLINE_ONLY_CITY`）。 */
   const simulateHeadlineOnlyCity = useCallback(() => runTestTelegramScript(s => s.HEADLINE_ONLY_CITY), [runTestTelegramScript])
+  /** 震度1以上を観測しなかった国内の地震のテスト（→ `testTelegramScripts.ts` の `NO_INTENSITY_QUAKE`）。 */
+  const simulateNoIntensityQuake = useCallback(() => runTestTelegramScript(s => s.NO_INTENSITY_QUAKE), [runTestTelegramScript])
 
   /**
    * 押すたびに台本の次の 1 通を流す（緊急地震速報のテスト。→ `TestTelegramScript.stepByPress`）。
@@ -4739,6 +4741,7 @@ export function useEarthquakes(
     simulateForeignQuakeHuge,
     simulateForeignQuakeInternationalTsunami,
     simulateHeadlineOnlyCity,
+    simulateNoIntensityQuake,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,

@@ -59,6 +59,7 @@ export interface TestFunctions {
   /** 国際津波関連情報が国内の地震に付く形と、英文だけのカードになる形。 */
   internationalTsunamiDomesticAndOnly: () => void
   headlineOnlyCity: () => void
+  noIntensityQuake: () => void
   eew: () => void
   eewWarning: () => void
   eewForecast: () => void
@@ -2624,6 +2625,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">
           <TestButton color="purple" onClick={onTest.headlineOnlyCity}>見出しの市町村テスト</TestButton>
+        </Row>
+        <Row label="震度を観測しなかった地震" description="2024-08-08 日向灘の震源・震度に関する情報（実データ）から震度の欄を外した形 – earthquakeInfo 音 / 最低震度の設定に関係なく「日向灘 Mj7.1（震度1以上の観測なし）」の通知が出る">
+          <TestButton color="purple" onClick={onTest.noIntensityQuake}>震度なしテスト</TestButton>
         </Row>
         <Row label="訂正報" description="地震情報 → 規模を訂正した報（M7.4 → M7.6）。同じカードが更新され「震源を訂正」の印が付き、気象庁の「震源要素を訂正します。」の一文も並ぶ">
           <TestButton color="yellow" onClick={onTest.quakeAmendment}>訂正報テスト</TestButton>

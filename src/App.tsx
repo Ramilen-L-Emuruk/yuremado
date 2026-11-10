@@ -93,11 +93,11 @@ import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
 import { useDebouncedValue } from './hooks/useDebouncedValue'
-import { collectQuakesToNotify, scheduleQuakeNotification, type QuakeNotification, type QuakeNotifiedState } from './utils/quakeNotification'
+import { collectQuakesToNotify, quakeCancelToNotify, scheduleQuakeCancelNotification, scheduleQuakeNotification, type QuakeNotification, type QuakeNotifiedState } from './utils/quakeNotification'
 import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass } from './utils/eew'
 import { createDetectionSpreadLog } from './utils/eewSpreadHold'
-import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
+import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId, sameQuakeEntry } from './utils/quakeMerge'
 import type { LpgmSectionFocus } from './utils/quakeCardScroll'
 import { canOpenLpgmNotes } from './utils/lpgm'
 import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/estimatedIntensity'
@@ -146,14 +146,14 @@ import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerd
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
 import { quakeReplayStartMs } from './utils/quakeReplayStart'
-import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showTestBrowserNotification } from './utils/notifications'
+import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, notificationWouldShow, showTestBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { isHistoryCardShown, jstDayOf, periodDayRange, quakeCardDays } from './utils/historyDays'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS, ROOT_FRAME_TOP_INSET } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
-import { effectiveNotifyMinScale, notificationRegionAllowed } from './utils/notificationGate'
+import { effectiveNotifyMinScale, noIntensityQuakeHiddenByRegion, notificationRegionAllowed } from './utils/notificationGate'
 import { quakePrefectures } from './utils/notificationRegions'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
@@ -195,8 +195,11 @@ const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden o
  * （2026-10-26 ユーザー選択「カードが採った続報すべて (Recommended)」）。受け付けないブラウザの扱いは
  * {@link deliverBrowserNotification}。
  */
-function showQuakeNotification(n: QuakeNotification): Promise<void> {
-  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true, data: notificationData(n.open) })
+async function showQuakeNotification(n: QuakeNotification): Promise<boolean> {
+  // 出たか（許可があり、「アプリを開いている間は通知しない」で止まらないか）は出す前に読む（→ `scheduleQuakeNotification`）
+  const shown = notificationWouldShow()
+  await deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true, data: notificationData(n.open) })
+  return shown
 }
 
 /** 長周期の節を見せる求めが、紐づく地震カードを待つ上限（→ App の引き当ての effect）。 */
@@ -998,6 +1001,10 @@ export function App() {
   // `onLiveEvent` を通らないので積まれず、過去の地震で通知が出ない（2026-10-21 選択「履歴では出さない (Recommended)」）。
   // 据え置いた報（`quakeHeldBack`）と取消は積まない —— 音・読み上げと同じく、カードが採らない報では動かさない。
   const pendingQuakeNotifyRef = useRef<JMAQuake[]>([])
+  // ライブで届き、**カードに当たった**地震情報の取消（通知していた地震なら、取消の通知で置き換える。→ `scheduleQuakeCancelNotification`）。
+  // 当たらなかった取消（種別違い・同じ取消の再到着）は積まない —— 積むと次の続報のときに取り出され、取り消されていない通知を
+  // 「取り消されました」で置き換える。全体か一部かは、取消を当てた側が決めた結果（`LiveEventMeta.quakeCancel`）から取る
+  const pendingQuakeCancelNotifyRef = useRef<{ cancel: JMAQuake; whole: boolean }[]>([])
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
   const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, focusedDistrict, eewNoForecastSettledKeys, speakKyoshinDetection } = useLiveEventHandler({
     settings, title, earthquakesRef, tsunamisRef, nankaiActiveRef,
@@ -1133,6 +1140,14 @@ export function App() {
   }, [updateSetting])
   const handleLiveEventWithNotify = useCallback((event: LiveEvent, meta?: LiveEventMeta) => {
     if (event.kind === 'quake' && !event.cancelled && !meta?.quakeHeldBack) pendingQuakeNotifyRef.current.push(event)
+    if (event.kind === 'quake' && event.cancelled) {
+      const queued = quakeCancelToNotify(meta?.quakeCancel)
+      if (queued) {
+        pendingQuakeCancelNotifyRef.current.push({ cancel: event, whole: queued.whole })
+      } else {
+        log.debug(`[notify] 地震情報の取消がカードに当たらない（または再到着）ので、取消の通知を考えない（${event.id}・${event.issue.type}）`)
+      }
+    }
     handleLiveEvent(event, meta)
   }, [handleLiveEvent])
   // 揺れ検知の束の広がり。下の検知結果から毎秒流し込み、EEW の自動解除を広がっている間は待たせる（eew-spec §7）
@@ -1142,7 +1157,7 @@ export function App() {
     historyLoss, loadMoreFailed, reconnectGapLoss, historyDays,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes, loadHistoryPeriod, holdHistoryPeriod,
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity, simulateNoIntensityQuake,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
@@ -1241,6 +1256,7 @@ export function App() {
     foreignQuakeInternationalTsunami: simulateForeignQuakeInternationalTsunami,
     internationalTsunamiDomesticAndOnly: simulateInternationalTsunamiDomesticAndOnly,
     headlineOnlyCity:  simulateHeadlineOnlyCity,
+    noIntensityQuake:  simulateNoIntensityQuake,
     eew:               simulateEEW,
     eewWarning:        simulateEEWWarning,
     eewForecast:       simulateEEWForecast,
@@ -1302,7 +1318,7 @@ export function App() {
       showTestBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity, simulateNoIntensityQuake,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
@@ -1795,8 +1811,10 @@ export function App() {
   const notifyPrefecturesRef = useRef(settings.notifyPrefectures)
   notifyPrefecturesRef.current = settings.notifyPrefectures
   useEffect(() => {
+    const cancels = pendingQuakeCancelNotifyRef.current
+    pendingQuakeCancelNotifyRef.current = []
     const pending = pendingQuakeNotifyRef.current
-    if (pending.length === 0) return
+    if (pending.length === 0 && cancels.length === 0) return
     pendingQuakeNotifyRef.current = []
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
       // 許可の無い間に届いた報は、後で許可しても通知しない（その時点の報ではないので）
@@ -1804,6 +1822,26 @@ export function App() {
       return
     }
     const index = getAreaPrefIndexCache()
+    // 取消: 取消が当たったカード（全体の取消なら取消済みの印付き、一部なら当て直したカード）を引き、その地震を通知していれば
+    // 同じ tag の取消の通知で置き換える（2026-11-09 ユーザー選択「同じ札で置き換え、何を取り消したか言う (Recommended)」）
+    for (const { cancel, whole } of cancels) {
+      const target = earthquakes.find(c => sameQuakeEntry(c, cancel, index))
+      if (!target) {
+        log.info(`[notify] 地震情報の取消が当たったカードを状態から引けず、取消の通知を考えない（${cancel.id}・${cancel.issue.type}）`)
+        continue
+      }
+      scheduleQuakeCancelNotification({
+        chains: quakeNotifyChainsRef.current,
+        memory: notifiedQuakesRef.current,
+        target,
+        cancel,
+        whole,
+        notifyMinScale: notifyMinScaleRef.current,
+        show: showQuakeNotification,
+      }).catch((err: unknown) => {
+        log.error(`[notify] 地震情報の取消の通知を出せず（${target.eventKey ?? target.id}）`, err)
+      })
+    }
     const { cards, unmatched } = collectQuakesToNotify(pending, earthquakes, index)
     // 引けなかった報は、状態が採らなかった（取消より前の報など）か、取り消されたカードに当たった報。
     // 通知が出ない理由を後から追えるよう記録する
@@ -1814,6 +1852,10 @@ export function App() {
       // 選んだ地域で震度を観測していない地震は通知しない。覚えもしない（続報で選んだ県が加われば、そのとき初めて通知する）
       if (!notificationRegionAllowed({ notifyPrefectures: notifyPrefecturesRef.current }, quakePrefectures(card))) {
         log.debug(`[notify] 選んだ地域で震度を観測していない地震なので通知しない（${card.eventKey ?? card.id}）`)
+        continue
+      }
+      if (noIntensityQuakeHiddenByRegion({ notifyPrefectures: notifyPrefecturesRef.current }, card)) {
+        log.debug(`[notify] 地域を選んでいて、震度を持たない地震の報なので通知しない（${card.eventKey ?? card.id}）`)
         continue
       }
       // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
@@ -2486,6 +2528,7 @@ export function App() {
     notifiedQuakesRef.current = new Map()
     quakeNotifyChainsRef.current = new Map()
     pendingQuakeNotifyRef.current = []
+    pendingQuakeCancelNotifyRef.current = []
     resetActionChecklistRef.current()
     // 別地点発報のエピソード状態。旧い時間軸の「発報済み」が残ると、新しい軸で鳴るべき
     // 別地点発報が黙って抑え込まれる（時刻の巻き戻りでは自動で切り替わるが、前へ飛ばした
