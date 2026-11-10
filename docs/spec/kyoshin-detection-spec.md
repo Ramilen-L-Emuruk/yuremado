@@ -845,8 +845,8 @@ S の大きい候補から順に事象へ割り当てる。
 ### 判定の根拠を見せる（`utils/kyoshinEnsembleEvidence.ts`）
 
 段のチップが「どの段か」を示すのに対し、こちらは「**何がその検知を支えたか**」を示す。
-文言の組み立ては `kyoshinEnsembleEvidence.ts` が単一情報源（`ensembleSummary` / `ensembleRows` /
-`ENSEMBLE_EVIDENCE_FOOTNOTE`）。文面はすべて 2026-10-29 ユーザー選択（「今と同じ形」「4 行」「働きで呼ぶ」「補足は消し脚注は言い換え」）。
+組み立ては `kyoshinEnsembleEvidence.ts` が単一情報源（`ensembleSummary` / `ensembleRows`）。語は辞書の `realtime.evidence`
+（脚注は `footnote`）から引く（→ [`i18n-spec.md`](i18n-spec.md) §4「リアルタイムタブの語」）。文面はすべて 2026-10-29 ユーザー選択（「今と同じ形」「4 行」「働きで呼ぶ」「補足は消し脚注は言い換え」）。
 
 **要求値は出さない。割合や点数のような数値の確信度も作らない。** 組み合わせの検知器は「あと何点で確定」のような要求値を
 持たないので、出せるのは「何が支えたか・何点が加わったか・最大震度・確定までの秒」という事実だけ。要求値らしいものを

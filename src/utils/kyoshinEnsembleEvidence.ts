@@ -11,17 +11,13 @@
 import type { EnsembleSource } from './kyoshinEnsembleDetector'
 import type { EnsembleDetection } from './kyoshinEnsembleTracker'
 import { detectionScaleLabelFromValue } from './kyoshinIntensity'
+import type { Messages } from '../i18n/messages'
 
-/** 「判定した仕組み」の行に出す呼び名。並べる順もこの順 */
-export const ENSEMBLE_SOURCE_LABELS: Record<EnsembleSource, string> = {
-  stat: '平常時のゆらぎ',
-  cluster: '揺れの広がり',
-  fast: '強い揺れの急な上昇',
-  sparse: '観測点の少ない地域',
-}
+/** 検知の根拠の語（辞書の `realtime.evidence`） */
+export type EvidenceWords = Messages['realtime']['evidence']
 
-/** 内訳の表の下に添える脚注。カードの「N観測点で反応」（いま震度0以上の点）と、表の点数（束に一度でも加わった点）は数え方が違う */
-export const ENSEMBLE_EVIDENCE_FOOTNOTE = '※「加わった観測点」は、上の観測点数と数え方が異なります'
+/** 「判定した仕組み」の行に並べる順。呼び名は辞書の `realtime.evidence.sources` */
+export const ENSEMBLE_SOURCE_ORDER: readonly EnsembleSource[] = ['stat', 'cluster', 'fast', 'sparse']
 
 /** 内訳の表の 1 行 */
 export interface EvidenceRow {
@@ -37,11 +33,11 @@ function scaleLabel(value: number | null): string {
   return detectionScaleLabelFromValue(value) ?? '—'
 }
 
-/** 支えた部分の呼び名を `ENSEMBLE_SOURCE_LABELS` の順に並べる */
-function sourceLabels(d: EnsembleDetection): string[] {
-  return (Object.keys(ENSEMBLE_SOURCE_LABELS) as EnsembleSource[])
+/** 支えた部分の呼び名を `ENSEMBLE_SOURCE_ORDER` の順に並べる */
+function sourceLabels(d: EnsembleDetection, w: EvidenceWords): string[] {
+  return ENSEMBLE_SOURCE_ORDER
     .filter(s => d.sources.includes(s))
-    .map(s => ENSEMBLE_SOURCE_LABELS[s])
+    .map(s => w.sources[s])
 }
 
 /**
@@ -50,26 +46,26 @@ function sourceLabels(d: EnsembleDetection): string[] {
  * 点数はユーザー選択「点数を外す (Recommended)」で外した —— 本文の「N観測点で反応」と同じ数が並ぶか、数え方の違いで
  * 食い違って見えるため）。支えた部分が無ければ null（呼び出し側は行ごと出さない）。
  */
-export function ensembleSummary(d: EnsembleDetection): string | null {
+export function ensembleSummary(d: EnsembleDetection, w: EvidenceWords): string | null {
   if (d.confidence === 'confirmed') {
     if (d.confirmedSnapshot === null) return null
-    return `${d.confirmedSnapshot.size}点・震度${scaleLabel(d.confirmedSnapshot.maxIntensity)}で確定`
+    return w.confirmedAt(d.confirmedSnapshot.size, scaleLabel(d.confirmedSnapshot.maxIntensity))
   }
-  const labels = sourceLabels(d)
+  const labels = sourceLabels(d, w)
   if (labels.length === 0) return null
-  return `${labels.join('・')}で反応`
+  return w.reactedBy(labels.join(w.sourceSeparator))
 }
 
 /** 「判定の内訳」の表。値はいまのもの（確定までの秒だけは確定した時点で決まる） */
-export function ensembleRows(d: EnsembleDetection): EvidenceRow[] {
-  const sources = sourceLabels(d)
+export function ensembleRows(d: EnsembleDetection, w: EvidenceWords): EvidenceRow[] {
+  const sources = sourceLabels(d, w)
   const untilConfirmed = d.firstConfirmedAtMs === null
     ? '—'
-    : `検知から${Math.max(0, Math.round((d.firstConfirmedAtMs - d.originTimeMs) / 1000))}秒`
+    : w.untilConfirmed(Math.max(0, Math.round((d.firstConfirmedAtMs - d.originTimeMs) / 1000)))
   return [
-    { label: '判定した仕組み', value: sources.length > 0 ? sources.join('・') : '—' },
-    { label: '加わった観測点', value: `${d.memberKeys.length}点` },
-    { label: '最大震度', value: d.maxIntensity === null ? '—' : `震度${scaleLabel(d.maxIntensity)}` },
-    { label: '確定まで', value: untilConfirmed },
+    { label: w.rowSources, value: sources.length > 0 ? sources.join(w.sourceSeparator) : '—' },
+    { label: w.rowMembers, value: w.members(d.memberKeys.length) },
+    { label: w.rowMaxIntensity, value: d.maxIntensity === null ? '—' : w.maxIntensity(scaleLabel(d.maxIntensity)) },
+    { label: w.rowUntilConfirmed, value: untilConfirmed },
   ]
 }

@@ -1,4 +1,6 @@
-import type { TelegramLogKind, TsunamiGrade } from '../../types/earthquake'
+import type { TelegramLogKind, TelegramOperationStatus, TsunamiGrade } from '../../types/earthquake'
+import { EPICENTER_RANK_LABEL, MAGNITUDE_RANK_LABEL } from '../../utils/eewAccuracyRanks'
+import type { EnsembleSource } from '../../utils/kyoshinEnsembleDetector'
 import { TELEGRAM_LOG_ERROR, type TelegramLogErrorMark } from '../../utils/telegramLogErrorMark'
 import type { CatalogColorBy } from '../../utils/hypocenterCatalogView'
 
@@ -344,5 +346,135 @@ export const ja = {
     pointSize: '点の基準サイズ',
     pointSizeHint: '点の直径です。強調表示がオンのときは、この大きさに倍率が掛かります',
     source: '出典',
+  },
+  /**
+   * リアルタイムタブ（緊急地震速報のカード・主要動のカウントダウン・揺れ検知のカード・注記）。
+   * 震度の札の語（「5弱」「程度以上」「0未満」「長周期3」）と、時刻・M・深さの値の書き方は共有の書式（段 9）で移す。
+   */
+  realtime: {
+    /** 区分の見出し（予報級＝VXSE45・警報級＝VXSE43。区分は `computeDisplayEEWLevel`） */
+    eewKind: { forecast: '地震動予報', warning: '緊急地震速報（警報）', special: '緊急地震速報（特別警報）' },
+    /** 運用種別の札（電文の `Control/Status`） */
+    operation: { 訓練: '訓練報', 試験: '試験報' } as Record<TelegramOperationStatus, string>,
+    /** 報番号の札の後ろに添える語 */
+    finalSuffix: ' 最終報',
+    cancelTitle: '取消',
+    cancelText: 'この緊急地震速報は取り消されました',
+    /** 予想震度が付かない報の理由（`eewNoForecastReason`） */
+    noForecastReason: { deep: '深発地震のため', singleStation: '単独点処理のため' },
+    maxForecastIntensity: '予想最大震度',
+    /** 予想震度の付かない報の枠の中の 2 行 */
+    noForecast: ['予想震度', 'なし'],
+    unknownHypocenter: '震源調査中',
+    provisional: '（震源未確定）',
+    /** 電文の `LandOrSea` */
+    landOrSea: { 内陸: '（内陸）', 海域: '（海域）' } as Record<'内陸' | '海域', string>,
+    depth: '深さ',
+    arrivalTimeHint: '観測点が地震を検知した時刻',
+    /** 警報の対象に加わった地方・府県予報区の名前の区切り */
+    nameSeparator: '・',
+    prefSeparator: ' / ',
+    targets: '対象:',
+    warningPrefs: '警報:',
+    forecastPrefs: '予報:',
+    arrivalHeading: '主要動の到達（予測）',
+    arrivalHint: [
+      '気象庁が区域ごとに出す予測です。強い揺れが予想される区域だけが載ります。',
+      '左の数字＝その区域の予想最大震度。',
+      '秒数＝主要動が届くまでの残り時間。気象庁の到達予測時刻から計算しています。',
+      '到達済み＝気象庁が「既に主要動到達と推測」と伝えてきた区域。実際に揺れを観測したという意味ではありません。',
+      '未到達＝主要動がまだ届いていないと推測される区域。到達時刻を出せない区域（下記）も含みます。',
+      '時刻不明＝周辺の観測点で実際に観測された揺れから震度を予測している区域（気象庁のPLUM法）。震源からの伝わり方を計算しないため、到達時刻は出ません。',
+    ].join('\n'),
+    arrivalCounts: (arrived: number, notYet: number) => `到達済み ${arrived} ／ 未到達 ${notYet}`,
+    /** PLUM 法の区域を初めて予測した時刻（`time` は整えた時刻） */
+    plumStart: (time: string) => `${time} に予測開始`,
+    arrived: '到達済み',
+    timeUnknown: '時刻不明',
+    etaUnknown: '不明',
+    etaSec: (sec: number) => `${sec}秒`,
+    soon: 'まもなく',
+    accuracyHeading: '精度情報',
+    accuracyHint: [
+      '気象庁が震源とマグニチュードをどう決めたかを、電文に書かれている語のまま出しています。',
+      'IPF法＝観測点に届いたP波から震源を絞り込む手法（かっこ内は使った観測点の数）。',
+      'P相・全相＝マグニチュードの計算にP波だけを使ったか、後続の波も使ったか。',
+      'EPOS・防災科研システム＝震源を決めた計算機システムの名前。',
+      '〔観測網外〕〔観測網内〕＝地震が陸上の観測網の外（主に海域）で起きたか、内（陸域）で起きたか。',
+    ].join('\n'),
+    accuracyRow: { hypocenter: '震源', epicenter: '震央', epicenterIpf: '震央（IPF法）', depth: '深さ', magnitude: 'Ｍ' },
+    /** 震央位置・深さの精度ランク（電文解説資料 Ⅱ.21 1-4-2-1）。日本語は資料の語そのもの */
+    epicenterRank: EPICENTER_RANK_LABEL,
+    /** マグニチュードの精度ランク（同 1-4-2-3） */
+    magnitudeRank: MAGNITUDE_RANK_LABEL,
+    /** マグニチュードの計算に使った観測点の数。5 は「5点以上」（同 1-4-2-4） */
+    magnitudePoints: (n: number) => (n >= 5 ? '5点以上' : `${n}点`),
+    accuracyJoin: '・',
+    hypocenterSettled: '震源とＭはこれ以降変わりません',
+    /** 最大予測値の変化（電文の `Appendix`。`direction` の向きと、理由 `MaxIntChangeReason` の語） */
+    forecastChange: (direction: 'up' | 'down' | 'changed', reason: string | undefined) => {
+      const d = direction === 'changed' ? '変わりました' : direction === 'up' ? '大きくなりました' : '小さくなりました'
+      return reason ? `予想が${d}（${reason}）` : `予想が${d}`
+    },
+    forecastChangeReason: {
+      1: 'マグニチュードが変わったため',
+      2: '震央の位置が変わったため',
+      3: 'マグニチュードと震央の位置が変わったため',
+      4: '震源の深さが変わったため',
+      9: 'PLUM法による予測で変わったため',
+    } as Readonly<Record<number, string>>,
+    /** 主要動のカウントダウン */
+    countdown: {
+      heading: '主要動',
+      noForecastHeading: '主要動の到達予測なし',
+      homePoint: '登録地点',
+      distance: (km: string) => `震源から ${km} km`,
+      noteTelegram: '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります',
+      noteOwn: '※推定値。実際の到達時間は異なる場合があります',
+      noForecastRow: '登録地点の地域には、気象庁の到達予測時刻が出ていません',
+      arrivedNow: '主要動が到達しています',
+      /** 大きな数字（残り秒数）の後ろに添える語 */
+      secondsUntil: (_sec: number) => '秒後に到達予想',
+      estimating: '到達時間を推定中…',
+    },
+    /** 揺れ検知のカード */
+    detection: {
+      tier: { confirmed: '検知', likely: '可能性' },
+      heading: '揺れ検知',
+      headingWide: (regions: number) => `揺れ検知（広域・${regions}地域）`,
+      maxRealtime: '最大リアルタイム震度',
+      /** 震度ごとの棒の右端の点数 */
+      pointCount: (n: number) => `${n}点`,
+      strongest: (name: string) => `最も強く揺れている地域：${name}`,
+      regionsSuffix: (regions: number) => ` ・ ${regions}地域`,
+      reacting: (stations: number) => `${stations}観測点で反応`,
+      /** `scale` は「震度0未満」（震度の語は段 9 で移す） */
+      reactingBelowZero: (stations: number, scale: string) => `${stations}観測点で${scale}の反応`,
+      settled: '観測点の反応は収まりました',
+      detailOpen: '判定の内訳',
+      detailClose: '判定の内訳を閉じる',
+      /** 内訳の地域ごとの見出し（`name` は最も強く揺れている区域。引けなければ null） */
+      region: (index: number, name: string | null, tier: string) => `地域 ${index}${name ? `・${name}` : ''}（${tier}）`,
+      intensityNote: '※気象庁が発表する震度とは計算方法が異なり、単純には比較できません。',
+    },
+    /** 検知の根拠（`utils/kyoshinEnsembleEvidence.ts`） */
+    evidence: {
+      sources: { stat: '平常時のゆらぎ', cluster: '揺れの広がり', fast: '強い揺れの急な上昇', sparse: '観測点の少ない地域' } as Record<EnsembleSource, string>,
+      sourceSeparator: '・',
+      footnote: '※「加わった観測点」は、上の観測点数と数え方が異なります',
+      /** 確かな段の要約（`scale` は震度の語「5弱」） */
+      confirmedAt: (stations: number, scale: string) => `${stations}点・震度${scale}で確定`,
+      reactedBy: (sources: string) => `${sources}で反応`,
+      rowSources: '判定した仕組み',
+      rowMembers: '加わった観測点',
+      rowMaxIntensity: '最大震度',
+      rowUntilConfirmed: '確定まで',
+      members: (n: number) => `${n}点`,
+      maxIntensity: (scale: string) => `震度${scale}`,
+      untilConfirmed: (sec: number) => `検知から${sec}秒`,
+    },
+    monitorTitle: 'リアルタイム震度モニタ',
+    monitorHint: '各観測点のリアルタイム震度を地図に表示します。1秒ごとに更新されます。気象庁の震度は1分間の揺れから計算するため、ここではそれを実時間で近似した値を出しています。緊急地震速報の発報時は予報円も表示します。青が P 波、赤が S 波です。',
+    footerNote: '※ 表示される震度は、気象庁が発表する震度とは計算方法が異なり、単純には比較できません。観測の状況によっては実際の揺れとは異なる場合があります。',
   },
 } as const
