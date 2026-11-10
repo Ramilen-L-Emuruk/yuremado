@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useMapGL } from './mapGLContext'
 import { addOrderedLayer } from './gl/layerOrder'
 import { makeEstimatedIntensityLayer, type EstimatedIntensityLayer } from './gl/estimatedIntensityLayer'
-import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure } from '../../utils/renderHealth'
+import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure, type MapLayerName } from '../../utils/renderHealth'
 import { log } from '../../utils/logger'
 import type { JMAEstimatedIntensity } from '../../types/earthquake'
 
@@ -20,7 +20,7 @@ import type { JMAEstimatedIntensity } from '../../types/earthquake'
 // **仕様書は docs/spec/map-rendering-spec.md §19（描き方）と quake-spec.md §9（出す条件）。**
 
 const LYR = 'quake-estimated-intensity'
-const LABEL = '推計震度分布図'
+const LABEL: MapLayerName = 'estimatedIntensity'
 
 interface Props {
   data: JMAEstimatedIntensity | null

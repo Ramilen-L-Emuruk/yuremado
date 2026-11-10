@@ -10,7 +10,7 @@ import { ringVertex } from './gl/psWaveRing'
 import { S_WAVE_FILL_RGB, S_WAVE_STROKE_RGB, P_WAVE_STROKE_RGB, S_WAVE_FILL_ALPHA } from './gl/psWaveStyle'
 import { addOrderedLayer } from './gl/layerOrder'
 import { log } from '../../utils/logger'
-import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 import { guardRender } from './gl/guardRender'
 
 // 緊急地震速報の予報円（S波=塗りつぶし＋後端フェード / P波=破線外周）を描画する MapLibre 版。
@@ -31,7 +31,7 @@ const TRAILING_EDGE_FADE_RATIO = 0.2
 const TRAILING_EDGE_FADE_MIN_KM = 15
 const LYR = 'pswave'
 /** 描画の不調を知らせるときの表示名（`utils/renderHealth.ts`）。 */
-const LABEL = '緊急地震速報の予報円'
+const LABEL: MapLayerName = 'psWave'
 
 // 単位円グリッドの分割数。
 // 角度方向は円の滑らかさ、半径方向は測地変換の非線形性（頂点間は線形補間される）を吸収する。

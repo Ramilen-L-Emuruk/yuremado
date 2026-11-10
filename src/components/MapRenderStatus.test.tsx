@@ -25,36 +25,36 @@ describe('描けていないものを知らせる帯', () => {
   // **主節は言い切りで止める**（→ §5.5）。丁寧な述語にすると、隣に並ぶ `MapDataStatus` と
   // 文体が食い違う。
   it('正: 描けないものは「〜を描けず」', () => {
-    reportRenderFailure('catalog', '長期震源カタログ', 'draw')
+    reportRenderFailure('catalog', 'catalog', 'draw')
     render(<MapRenderStatus />)
 
-    expect(screen.getByText('長期震源カタログを描けず')).toBeTruthy()
+    expect(screen.getByText('震源カタログを描けず')).toBeTruthy()
   })
 
   it('正: 掴めないものは「〜はクリックに応じず」', () => {
-    reportRenderFailure('stations', '震度観測点', 'interact')
+    reportRenderFailure('stations', 'quakeHypocenters', 'interact')
     render(<MapRenderStatus />)
 
-    expect(screen.getByText('震度観測点はクリックに応じず')).toBeTruthy()
+    expect(screen.getByText('地震の震源はクリックに応じず')).toBeTruthy()
   })
 
   // **この帯だけ括弧を使わない。** 2 つの主節が同じ手掛かりを共有するので、行動の案内は
   // 下の 1 行に置く（→ §5.5）。片方にだけ添えると、もう片方は打つ手が無いように読める。
   it('安全弁: 両方あっても手掛かりの行は 1 本だけ', () => {
-    reportRenderFailure('catalog', '長期震源カタログ', 'draw')
-    reportRenderFailure('stations', '震度観測点', 'interact')
+    reportRenderFailure('catalog', 'catalog', 'draw')
+    reportRenderFailure('stations', 'quakeHypocenters', 'interact')
     render(<MapRenderStatus />)
 
-    expect(screen.getByText('長期震源カタログを描けず')).toBeTruthy()
-    expect(screen.getByText('震度観測点はクリックに応じず')).toBeTruthy()
+    expect(screen.getByText('震源カタログを描けず')).toBeTruthy()
+    expect(screen.getByText('地震の震源はクリックに応じず')).toBeTruthy()
     expect(screen.getAllByText('再読み込みで直ることがあります')).toHaveLength(1)
   })
 
   // 名前を並べる上限。超えた分は件数へ丸める（全部並べると地図を覆う）。
   it('安全弁: 名前が多ければ「ほか N 件」へ丸める', () => {
-    for (const name of ['あ', 'い', 'う', 'え']) reportRenderFailure(name, name, 'draw')
+    for (const name of ['catalog', 'psWave', 'dayNight', 'subThreshold'] as const) reportRenderFailure(name, name, 'draw')
     render(<MapRenderStatus />)
 
-    expect(screen.getByText('あ・い・う ほか 1 件を描けず')).toBeTruthy()
+    expect(screen.getByText('震源カタログ・緊急地震速報の予報円・昼夜の境目 ほか 1 件を描けず')).toBeTruthy()
   })
 })

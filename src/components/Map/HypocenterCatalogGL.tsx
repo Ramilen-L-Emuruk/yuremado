@@ -6,10 +6,12 @@ import { createDepthPointLayer, type DepthPointLayer } from './gl/depthPointLaye
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { formatCoordinate, formatMagnitude, hasMagnitude } from '../../utils/formatters'
 import { log } from '../../utils/logger'
-import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 import type { CatalogPointCloud } from '../../utils/hypocenterCatalogView'
 import { hypocenterIntensityLabel, type TelegramPointLabels } from '../../utils/hypocenterCatalog'
 import { escapeHtml } from './gl/popupHtml'
+import { useMessagesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
 
 // 長期震源カタログの点群。**深さを持つ点**として地下へ描く（gl/depthPointLayer.ts）。
 //
@@ -22,7 +24,7 @@ import { escapeHtml } from './gl/popupHtml'
 
 const LYR = 'hypocenter-catalog'
 /** 不調を知らせるときに画面へ出す名前（`utils/renderHealth.ts`）。 */
-const LABEL = '震源カタログ'
+const LABEL: MapLayerName = 'catalog'
 
 interface Props {
   cloud: CatalogPointCloud
@@ -79,9 +81,9 @@ function formatCatalogDepth(depthKm: number): string {
  * **`formatMagnitude` の「不明」をそのまま使わない。** 吹き出しは M と深さを 1 行に並べるので、
  * 「不明 / 深さ 10.0km」では何が不明なのか読めない。
  */
-function formatCatalogMagnitude(magnitude: number): string {
+function formatCatalogMagnitude(magnitude: number, m: Messages): string {
   // 長期震源カタログは電文の種別（`@type`）を持たないので、従来どおり `M` で出す。
-  return hasMagnitude(magnitude) ? formatMagnitude(magnitude, undefined) : 'M 不明'
+  return hasMagnitude(magnitude) ? formatMagnitude(magnitude, undefined) : m.map.popup.magnitudeUnknown
 }
 
 /**
@@ -89,11 +91,11 @@ function formatCatalogMagnitude(magnitude: number): string {
  * （時刻は分まで・規模の説明・「700km以上」・「以上」の付いた最大震度・震源決定機関）。
  * 「地震情報の電文」の行は 2026-11-06 ユーザー選択「「地震情報の電文」 (Recommended)」。
  */
-function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null, coord: string): string {
+function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null, coord: string, m: Messages): string {
   return (
     `<div class="text-sm" style="min-width:170px">` +
     `<div class="font-bold" style="margin-bottom:4px">${escapeHtml(label.time)}</div>` +
-    `<div class="text-xs" style="color:#94a3b8">地震情報の電文</div>` +
+    `<div class="text-xs" style="color:#94a3b8">${m.map.popup.telegram}</div>` +
     (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
     (label.intensity != null ? `<div class="text-xs">${escapeHtml(label.intensity)}</div>` : '') +
     `<div class="text-xs" style="color:#94a3b8">${escapeHtml(label.magnitude)} / ${escapeHtml(label.depth)}</div>` +
@@ -103,12 +105,12 @@ function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null,
   )
 }
 
-function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
+function buildPopupHtml(cloud: CatalogPointCloud, i: number, m: Messages): string {
   const lat = cloud.columns.lat[i]
   const lng = cloud.columns.lng[i]
   const coord = formatCoordinate(lat, lng, 3)
   const telegram = cloud.telegramLabels.get(i)
-  if (telegram) return buildTelegramPopupHtml(telegram, cloud.names[i], coord)
+  if (telegram) return buildTelegramPopupHtml(telegram, cloud.names[i], coord, m)
   // 行の並びは 2026-10-25 ユーザー承認「C の案でよい (Recommended)」・「D の案でよい (Recommended)」。
   // 震央地名と最大震度は、記録が無い地震では行ごと出さない。
   const name = cloud.names[i]
@@ -116,20 +118,20 @@ function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
   const intensity = code != null ? hypocenterIntensityLabel(code) : null
   // **深さ不明は列に 0 を入れてある**（地表に置くため）。0.0km と書かないこと。
   // 「深さ不明」の文言は 2026-10-25 ユーザー選択「今の実装でよい (Recommended)」。
-  const depth = cloud.depthUnknown[i] === 1 ? '深さ不明' : `深さ ${formatCatalogDepth(cloud.columns.depthKm[i])}`
+  const depth = cloud.depthUnknown[i] === 1 ? m.map.popup.depthUnknown : m.map.popup.depth(formatCatalogDepth(cloud.columns.depthKm[i]))
   return (
     `<div class="text-sm" style="min-width:170px">` +
     `<div class="font-bold" style="margin-bottom:4px">${formatCatalogTime(cloud.timeMs[i], cloud.preliminary[i] === 1)}</div>` +
     // 日別の震源リスト（速報値）の年の地震。取得元は「暫定値であり、変更になる場合があります」と書く
     // （2026-11-04 ユーザー選択「吹き出しに出す (Recommended)」。語はタブの期間の注記と同じ）
-    (cloud.preliminary[i] === 1 ? `<div class="text-xs" style="color:#94a3b8">速報値</div>` : '') +
+    (cloud.preliminary[i] === 1 ? `<div class="text-xs" style="color:#94a3b8">${m.map.popup.preliminary}</div>` : '') +
     (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
     (intensity != null ? `<div class="text-xs">${escapeHtml(intensity)}</div>` : '') +
     `<div class="text-xs" style="color:#94a3b8">` +
-    `${formatCatalogMagnitude(cloud.magnitude[i])} / ${depth}</div>` +
+    `${formatCatalogMagnitude(cloud.magnitude[i], m)} / ${depth}</div>` +
     `<div class="text-xs" style="color:#64748b;margin-top:4px">${coord}</div>` +
     (cloud.external[i] === 1
-      ? `<div class="text-xs" style="color:#64748b;margin-top:4px">気象庁以外の機関の震源</div>`
+      ? `<div class="text-xs" style="color:#64748b;margin-top:4px">${m.map.popup.externalHypocenter}</div>`
       : '') +
     `</div>`
   )
@@ -144,6 +146,7 @@ export function HypocenterCatalogGL({ cloud, exaggeration, visible }: Props) {
   cloudRef.current = cloud
   // 判定で引き当てた添字。`buildClickHtml` は引数を取らないため、pick から受け渡す。
   const hitRef = useRef<number | null>(null)
+  const mRef = useMessagesRef()
 
   useEffect(() => {
     if (!map) return
@@ -198,7 +201,7 @@ export function HypocenterCatalogGL({ cloud, exaggeration, visible }: Props) {
           const i = hitRef.current
           const c = cloudRef.current
           if (i == null || i >= c.columns.count) return ''
-          return buildPopupHtml(c, i)
+          return buildPopupHtml(c, i, mRef.current)
         },
       })
     } catch (err) {

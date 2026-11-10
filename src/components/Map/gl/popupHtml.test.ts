@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { escapeHtml, twoLinePopupHtml, badgeHtml, popupCodeLineHtml, popupCodeHtml } from './popupHtml'
+import { JA_MESSAGES } from '../../../i18n/messages'
 import { contrastRatio } from '../../../utils/contrast'
 import { INTENSITY_COLORS } from '../../../utils/intensity'
 
@@ -72,35 +73,35 @@ describe('badgeHtml', () => {
 
 describe('popupCodeLineHtml（津波の吹き出しの末尾に添えるコード）', () => {
   it('コードを「コード 32002」の形で小さく添える', () => {
-    const html = popupCodeLineHtml('32002')
+    const html = popupCodeLineHtml('32002', JA_MESSAGES)
     expect(html).toContain('コード 32002')
     expect(html).toContain('font-size:10px')
   })
 
   it('コードを持たない地点では何も足さない', () => {
-    expect(popupCodeLineHtml(undefined)).toBe('')
-    expect(popupCodeLineHtml('')).toBe('')
+    expect(popupCodeLineHtml(undefined, JA_MESSAGES)).toBe('')
+    expect(popupCodeLineHtml('', JA_MESSAGES)).toBe('')
   })
 
   it('コードの文字は逃がす', () => {
-    expect(popupCodeLineHtml('<b>')).toContain('&lt;b&gt;')
+    expect(popupCodeLineHtml('<b>', JA_MESSAGES)).toContain('&lt;b&gt;')
   })
 })
 
 // 吹き出しの末尾のコード（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」）
 describe('popupCodeHtml', () => {
   it('正: 「コード 番号」の小さな行を返す', () => {
-    const html = popupCodeHtml('1720400')
+    const html = popupCodeHtml('1720400', JA_MESSAGES)
     expect(html).toContain('コード 1720400')
     expect(html).toContain('font-size:10px')
   })
 
   it('対照: コードが無ければ空文字（空の行を作らない）', () => {
-    expect(popupCodeHtml(undefined)).toBe('')
-    expect(popupCodeHtml('')).toBe('')
+    expect(popupCodeHtml(undefined, JA_MESSAGES)).toBe('')
+    expect(popupCodeHtml('', JA_MESSAGES)).toBe('')
   })
 
   it('安全弁: コードの文字は逃がす', () => {
-    expect(popupCodeHtml('<b>')).toContain('&lt;b&gt;')
+    expect(popupCodeHtml('<b>', JA_MESSAGES)).toContain('&lt;b&gt;')
   })
 })

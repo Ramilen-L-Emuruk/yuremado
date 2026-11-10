@@ -1,7 +1,7 @@
 import { Marquee } from './Marquee'
 import { useSyncExternalStore } from 'react'
 import { useMessages } from '../i18n/I18nProvider'
-import { subscribeRenderHealth, getRenderHealth } from '../utils/renderHealth'
+import { subscribeRenderHealth, getRenderHealth, type MapLayerName } from '../utils/renderHealth'
 
 /**
  * 名前を並べるときに出す上限。超えたぶんは件数でまとめる。
@@ -22,7 +22,8 @@ export function MapRenderStatus() {
   const health = useSyncExternalStore(subscribeRenderHealth, getRenderHealth, getRenderHealth)
   const messages = useMessages()
   const t = messages.mapCorner
-  const nameList = (names: readonly string[]): string => t.nameList(names.slice(0, MAX_NAMES), Math.max(0, names.length - MAX_NAMES))
+  const nameList = (names: readonly MapLayerName[]): string =>
+    t.nameList(names.slice(0, MAX_NAMES).map((n) => messages.map.layerName[n]), Math.max(0, names.length - MAX_NAMES))
   if (health.broken.length === 0 && health.uninteractive.length === 0) return null
 
   return (

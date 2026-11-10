@@ -9,8 +9,10 @@ import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer } from './gl/depthPointLayer'
 import { escapeHtml } from './gl/popupHtml'
+import { useMessagesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
 import { log } from '../../utils/logger'
-import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 
 // 津波タブの地図に、**その津波の原因地震の震源**を×印で出す（2026-10-22 ユーザー選択「原因地震の震源を出す
 // (Recommended)」）。地震カードで選んだ地震ではなく、津波電文が名乗る原因地震（`sourceEarthquakes`）。
@@ -24,7 +26,7 @@ const LYR = 'tsunami-source-epicenters'
 /** 震央の経度を寄せる中心（地震情報・EEW の震源と同じ値。`useQuakeLayerData`・`useEewLayerData` の同名の定数）。 */
 const JAPAN_CENTER_LNG = 137.7
 /** 不調を知らせるときに画面へ出す名前（`utils/renderHealth.ts`）。 */
-const LABEL = '津波の原因地震の震源'
+const LABEL: MapLayerName = 'tsunamiSource'
 
 /** ×印の色・大きさ。地震情報の震源（HypocenterDepthGL）・EEW の震源と揃える。 */
 const CROSS_COLOR: readonly [number, number, number] = [255 / 255, 34 / 255, 34 / 255]
@@ -65,9 +67,9 @@ export function buildSourcePoints(
  * 整形はカードの行と同じ `formatMagnitude`）。規模が数値で無ければ気象庁の説明（「Ｍ８を超える巨大地震」）を出し、
  * どちらも無ければ・深さが判らなければ・時刻が読めなければ、その項目を落とす（カードの行と同じ）。
  */
-export function sourcePopupHtml(s: TsunamiSourceEarthquake): string {
+export function sourcePopupHtml(s: TsunamiSourceEarthquake, m: Messages): string {
   const mag = s.magnitude !== undefined ? formatMagnitude(s.magnitude, s.magnitudeType) : s.magnitudeCondition ? formatMagnitudeCondition(s.magnitudeCondition) : ''
-  const depth = s.depth !== undefined && hasDepth(s.depth) ? `深さ ${formatDepth(s.depth, s.depthAtLeast === true)}` : ''
+  const depth = s.depth !== undefined && hasDepth(s.depth) ? m.map.popup.depth(formatDepth(s.depth, s.depthAtLeast === true)) : ''
   const quakeTime = sourceEarthquakeTime(s)
   const hm = quakeTime ? formatTimeMin(quakeTime) : null
   const detail = [mag, depth].filter(Boolean).join('　')
@@ -89,6 +91,7 @@ export function TsunamiSourceEpicentersGL({ sources, iconScale }: Props) {
   const layerRef = useRef<DepthPointLayer | null>(null)
   const ownersRef = useRef<number[]>([])
   const placedRef = useRef<ReturnType<typeof placeableSources>>([])
+  const mRef = useMessagesRef()
 
   useEffect(() => {
     if (!map) return
@@ -133,7 +136,7 @@ export function TsunamiSourceEpicentersGL({ sources, iconScale }: Props) {
         },
         buildClickHtml: (feature) => {
           const s = placedRef.current[Number(feature.properties?.index)]
-          return s ? sourcePopupHtml(s) : ''
+          return s ? sourcePopupHtml(s, mRef.current) : ''
         },
       })
     } catch (err) {

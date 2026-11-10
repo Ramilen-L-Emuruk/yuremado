@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest'
 import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { clickHtml, hoverHtml, isSameHeatData } from './QuakeHeatmapGL'
 import type { HeatPoint } from '../../utils/quakeHeatmap'
+import { JA_MESSAGES } from '../../i18n/messages'
 
 const point = (name: string): HeatPoint =>
   ({ lat: 35, lng: 139, weight: 0.5, name, time: '2026-10-10T00:00:00+09:00', depth: 10, magnitude: 3 }) as HeatPoint
@@ -54,25 +55,25 @@ describe('吹き出しの規模の札', () => {
 
   it('巨大地震は「M8を超える巨大地震 震源名」と出す（ホバー・クリックとも）', () => {
     const f = feature({ name: '石川県能登地方', magnitude: -1, magnitudeCondition: 'Ｍ８を超える巨大地震', depth: 10, time: '' })
-    const hover = hoverHtml(f).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    const hover = hoverHtml(f, JA_MESSAGES).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
     expect(hover).toBe('M8を超える巨大地震 石川県能登地方')
-    expect(clickHtml(f)).toContain('M8を超える巨大地震')
+    expect(clickHtml(f, JA_MESSAGES)).toContain('M8を超える巨大地震')
   })
 
   // 対照: M 不明・説明の欄が落ちた地物は「不明」。
   it('M 不明は「不明」のまま', () => {
-    expect(hoverHtml(feature({ name: 'A', magnitude: -1, magnitudeCondition: 'Ｍ不明' }))).toContain('>不明<')
-    expect(hoverHtml(feature({ name: 'A', magnitude: -1 }))).toContain('>不明<')
+    expect(hoverHtml(feature({ name: 'A', magnitude: -1, magnitudeCondition: 'Ｍ不明' }), JA_MESSAGES)).toContain('>不明<')
+    expect(hoverHtml(feature({ name: 'A', magnitude: -1 }), JA_MESSAGES)).toContain('>不明<')
   })
 
   it('数値の規模は従来どおり', () => {
-    expect(hoverHtml(feature({ name: 'A', magnitude: 3.2, magnitudeCondition: null }))).toContain('>M3.2<')
+    expect(hoverHtml(feature({ name: 'A', magnitude: 3.2, magnitudeCondition: null }), JA_MESSAGES)).toContain('>M3.2<')
   })
 
   // 深さが「700km以上」という下限だけの値なら、クリックの吹き出しでもそう出す（印は点が運ぶ）。
   it('深さの下限の印があれば「700km以上」、無ければ従来どおり', () => {
-    expect(clickHtml(feature({ name: 'A', magnitude: 6, depth: 700, depthAtLeast: true }))).toContain('深さ 700km以上')
-    expect(clickHtml(feature({ name: 'A', magnitude: 6, depth: 700, depthAtLeast: false }))).toContain('深さ 700km<')
+    expect(clickHtml(feature({ name: 'A', magnitude: 6, depth: 700, depthAtLeast: true }), JA_MESSAGES)).toContain('深さ 700km以上')
+    expect(clickHtml(feature({ name: 'A', magnitude: 6, depth: 700, depthAtLeast: false }), JA_MESSAGES)).toContain('深さ 700km<')
   })
 })
 
@@ -83,8 +84,8 @@ describe('格子にまとめた点の吹き出し', () => {
 
   it('[正] 2 件以上なら「この付近 N 件」と最大の規模・最新の時刻を出す', () => {
     const f = feature({ name: '', magnitude: 6.1, count: 1234, depth: -1, time: '2026-10-17T03:34:00.000Z' })
-    expect(text(hoverHtml(f))).toBe('M6.1 この付近 1,234 件')
-    const click = text(clickHtml(f))
+    expect(text(hoverHtml(f, JA_MESSAGES))).toBe('M6.1 この付近 1,234 件')
+    const click = text(clickHtml(f, JA_MESSAGES))
     expect(click).toContain('この付近の地震 1,234 件')
     expect(click).toContain('最大 M6.1')
     expect(click).toMatch(/最新 \S+/)
@@ -92,7 +93,7 @@ describe('格子にまとめた点の吹き出し', () => {
   })
 
   it('[対照] 1 件の点（count 1・欄なし）は従来の 1 つの地震の吹き出し', () => {
-    expect(text(hoverHtml(feature({ name: 'A', magnitude: 3.2, count: 1 })))).toBe('M3.2 A')
-    expect(text(hoverHtml(feature({ name: 'A', magnitude: 3.2 })))).toBe('M3.2 A')
+    expect(text(hoverHtml(feature({ name: 'A', magnitude: 3.2, count: 1 }), JA_MESSAGES))).toBe('M3.2 A')
+    expect(text(hoverHtml(feature({ name: 'A', magnitude: 3.2 }), JA_MESSAGES))).toBe('M3.2 A')
   })
 })

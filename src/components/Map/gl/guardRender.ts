@@ -1,6 +1,6 @@
 import type { CustomLayerInterface } from 'maplibre-gl'
 import { log } from '../../../utils/logger'
-import { reportRenderFailure, clearRenderFailure } from '../../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, type MapLayerName } from '../../../utils/renderHealth'
 
 // カスタムレイヤーの `render()` を包み、投げた例外をそのレイヤーの中に閉じ込める。
 //
@@ -85,10 +85,10 @@ function restoreGlState(gl: GL, restoreFbo: WebGLFramebuffer | null): void {
  * `render()` を包んで、例外を記録と画面表示へ振り替える。
  *
  * @param id レイヤー ID。`renderHealth` の記録の鍵になる
- * @param label 利用者に見せる名前。**呼ぶ側が持つ**（`renderHealth` の規約に合わせる）
+ * @param label 利用者に見せる名前の鍵。**呼ぶ側が持つ**（`renderHealth` の規約に合わせる）
  * @param render 元の描画処理
  */
-export function guardRender(id: string, label: string, render: RenderFn): RenderFn {
+export function guardRender(id: string, label: MapLayerName, render: RenderFn): RenderFn {
   /**
    * 内容ごとの最終記録時刻。
    *

@@ -7,6 +7,8 @@ import {
 } from './gl/tsunamiObsBar'
 import { overSuffixedHeight, observationFirstWaveText, observationMaxHeightTimeText } from '../../utils/tsunami'
 import { popupCodeLineHtml } from './gl/popupHtml'
+import { useMessages } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
 import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
 // 津波観測棒（波高バー）を描画する MapLibre 版（Leaflet の tsunami-obs-bars 相当）。
@@ -22,7 +24,7 @@ import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiM
  * (Recommended)」。形は 2026-10-24 ユーザー選択「この形で揃える (Recommended)」＝「最大波 23:26」「第1波 05:12 押し波」）。
  * 語はカードの行と同じ関数から採る（`observationMaxHeightTimeText`・`observationFirstWaveText`）。
  */
-export function obsBarTooltipHtml(bar: TsunamiObsBar): string {
+export function obsBarTooltipHtml(bar: TsunamiObsBar, m: Messages): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const desc = overSuffixedHeight(bar.height)
   const maxTime = observationMaxHeightTimeText(bar)
@@ -32,7 +34,7 @@ export function obsBarTooltipHtml(bar: TsunamiObsBar): string {
     `<div class="text-xs" style="color:${bar.color}">${esc(desc)}</div>` +
     (maxTime ? `<div class="text-xs" style="color:#e5e7eb">${esc(maxTime)}</div>` : '') +
     (firstWave ? `<div class="text-xs" style="color:#e5e7eb">${esc(firstWave)}</div>` : '') +
-    popupCodeLineHtml(bar.code) +
+    popupCodeLineHtml(bar.code, m) +
     `</div>`
   )
 }
@@ -94,6 +96,8 @@ interface BarEntry {
 export function TsunamiObsBarsGL({ bars, iconScale }: Props) {
   const map = useMapGL()
   const entriesRef = useRef<Map<string, BarEntry>>(new Map())
+  // 吹き出しの中身は棒を差分で更新するときに組むので、言語が変わったら同じ差分更新で組み直す（棒は作り直さない）
+  const messages = useMessages()
 
   useEffect(() => {
     if (!map) return
@@ -105,7 +109,7 @@ export function TsunamiObsBarsGL({ bars, iconScale }: Props) {
       if (existing) {
         updateBarEl(existing.el, bar, iconScale)
         existing.bar = bar
-        existing.popup.setHTML(obsBarTooltipHtml(bar)).setOffset(popupOffset(bar, iconScale))
+        existing.popup.setHTML(obsBarTooltipHtml(bar, messages)).setOffset(popupOffset(bar, iconScale))
         continue
       }
       const el = buildBarEl(bar, iconScale)
@@ -116,7 +120,7 @@ export function TsunamiObsBarsGL({ bars, iconScale }: Props) {
         closeButton: false,
         closeOnClick: false,
         offset: popupOffset(bar, iconScale),
-      }).setHTML(obsBarTooltipHtml(bar))
+      }).setHTML(obsBarTooltipHtml(bar, messages))
       const entry: BarEntry = { marker, popup, el, bar, opener: null as unknown as TsunamiMarkerPopup }
       entry.opener = attachTsunamiMarkerPopup(map, el, popup, bar.name, 'bar', () => [entry.bar.lng, entry.bar.lat])
       entries.set(bar.name, entry)
@@ -128,7 +132,7 @@ export function TsunamiObsBarsGL({ bars, iconScale }: Props) {
       entry.marker.remove()
       entries.delete(name)
     }
-  }, [map, bars, iconScale])
+  }, [map, bars, iconScale, messages])
 
   // アンマウント時に全観測棒を後始末する。
   useEffect(() => {

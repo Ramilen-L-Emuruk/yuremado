@@ -10,7 +10,9 @@ import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer, type DepthPointShape } from './gl/depthPointLayer'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
 import { log } from '../../utils/logger'
-import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
+import { useMessagesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 
 // EEW（緊急地震速報）の震源（×印・点滅）。全モードで表示し、リアルタイム震度モード以外は
 // 半透明にする。複数 EEW 時は全震源を表示する。
@@ -29,7 +31,7 @@ import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from 
 
 const LYR = 'eew-epicenters'
 /** 不調を知らせるときに画面へ出す名前（`utils/renderHealth.ts`）。 */
-const LABEL = '緊急地震速報の震源'
+const LABEL: MapLayerName = 'eewEpicenters'
 
 /** ×印の色・大きさ。地震情報の震源（HypocenterDepthGL）と揃える。 */
 const CROSS_COLOR: readonly [number, number, number] = [255 / 255, 34 / 255, 34 / 255]
@@ -146,14 +148,15 @@ interface Props {
   fullOpacity: boolean
 }
 
-export function buildPopupHtml(ep: EewEpicenter): string {
+export function buildPopupHtml(ep: EewEpicenter, m: Messages): string {
+  const t = m.map.popup
   const isWarning = ep.severity === 'Warning'
   const kindColor = isWarning ? '#f87171' : '#fbbf24'
   // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。表示も実態に合わせる
   // 特別警報の条件を満たしても「警報」と出す（2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）
-  const kind = isWarning ? '警報' : '地震動予報'
+  const kind = isWarning ? t.eewKind.warning : t.eewKind.forecast
   // 報番号は電文由来。最終報なら第N報より「最終報」の方が状態が伝わる。
-  const serialText = ep.isFinal ? '最終報' : ep.serial ? `第${escapeHtml(ep.serial)}報` : ''
+  const serialText = ep.isFinal ? t.eewFinal : ep.serial ? t.eewSerial(escapeHtml(ep.serial)) : ''
   // 仮定震源要素の報は震源が確定していない。数値を鵜呑みにしないよう明示する
   // （×印の形を輪つきにする判定と同じ isAssumed を使い、判定を二重に持たない）。
   const provisional = ep.isAssumed
@@ -164,7 +167,7 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     `<div style="min-width:170px">` +
     `<div style="display:flex;align-items:baseline;gap:8px">` +
     // 震央地名が空の報はカードと同じ「震源調査中」を出す（見出しが空のまま番号だけ並ばないように）
-    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name || '震源調査中')}</span>` +
+    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name || t.unknownHypocenter)}</span>` +
     (serialText ? `<span style="font-size:11px;color:#94a3b8">${serialText}</span>` : '') +
     `</div>` +
     // EEW-6: 仮定震源要素（震源未確定）は M・深さが未確定なので数値を隠す。
@@ -172,17 +175,21 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     // 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
     `<div style="margin-top:2px;font-size:11px;color:#94a3b8">` +
     (provisional
-      ? '震源調査中'
+      ? t.unknownHypocenter
       // 規模の説明（「Ｍ８を超える巨大地震」など）は地震情報の吹き出しと同じ部品で出す（2026-10-22 ユーザー承認
       // 「吹き出しと共有カードも揃える (Recommended)」）。前置きの記号は電文の種別どおり（同日「1-A 電文のまま」）。
-      : `${escapeHtml(formatMagnitudeWithCondition(ep.magnitude, ep.magnitudeCondition, ep.magnitudeType))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
+      : t.magnitudeDepth(
+          escapeHtml(formatMagnitudeWithCondition(ep.magnitude, ep.magnitudeCondition, ep.magnitudeType)),
+          escapeHtml(formatDepth(ep.depth, ep.depthAtLeast)),
+        )) +
     `</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     // 上限が定まらない報は「4以上」と出す。値だけにすると下限を断定した表示になる
     // （語を出す箇所の一覧は docs/spec/eew-spec.md §4）。
+    // 訳によっては文が長くなるので、折り返すのは文だけにする（札と「警報」「予報」は縮めない）。
     `${badgeHtml(scaleLabel, scaleColor)}` +
-    `<span style="color:#cbd5e1;white-space:nowrap">予想最大震度 ${escapeHtml(scaleLabel)}</span>` +
-    `<span style="color:${kindColor};font-weight:700;white-space:nowrap">${kind}</span></div>` +
+    `<span style="color:#cbd5e1;min-width:0">${t.maxForecastIntensity(escapeHtml(scaleLabel))}</span>` +
+    `<span style="color:${kindColor};font-weight:700;white-space:nowrap;flex-shrink:0">${kind}</span></div>` +
     // 地名まで含めて仮の値であることを言い切る。カードの「（震源未確定）」だけでは
     // 「この地名がおおよその震源」と読めてしまうが、実際は最初に揺れを検知した観測点の所在地で
     // 震源とは無関係（→ docs/spec/eew-spec.md §5）。ポップアップは行数に余裕があるので書ききる。
@@ -190,10 +197,10 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     // （2026-10-15 ユーザー承認）。どちらも地名が観測点の所在地である点は同じ。
     (provisional
       ? ep.strongShakingOnly
-        ? `<div style="margin-top:4px;font-size:11px;color:#fbbf24">非常に強い揺れを検知（震源未確定）<br>` +
-          `<span style="color:#94a3b8">地名は揺れを検知した観測点の位置です</span></div>`
-        : `<div style="margin-top:4px;font-size:11px;color:#fbbf24">仮定震源要素（震源未確定）<br>` +
-          `<span style="color:#94a3b8">地名は最初に揺れを検知した観測点の位置です</span></div>`
+        ? `<div style="margin-top:4px;font-size:11px;color:#fbbf24">${t.strongShaking}<br>` +
+          `<span style="color:#94a3b8">${t.strongShakingNote}</span></div>`
+        : `<div style="margin-top:4px;font-size:11px;color:#fbbf24">${t.assumedHypocenter}<br>` +
+          `<span style="color:#94a3b8">${t.assumedHypocenterNote}</span></div>`
       : '') +
     `</div>`
   )
@@ -209,6 +216,7 @@ export function EewEpicentersGL({ epicenters, iconScale, fullOpacity }: Props) {
   // 「最後に引き当てたもの」を覚えて使うと、`refreshMs` のような後から呼び直す経路が入ったとき、
   // 別の震源の内容を出す穴になる（いまは呼び直しが無いので到達しないだけ）。
   const byIdRef = useRef<Map<string, EewEpicenter>>(new Map())
+  const mRef = useMessagesRef()
 
   useEffect(() => {
     if (!map) return
@@ -266,7 +274,9 @@ export function EewEpicentersGL({ epicenters, iconScale, fullOpacity }: Props) {
           const ep = byIdRef.current.get(String(feature.properties?.id))
           // 引けないのは、吹き出しを開いたまま EEW が失効したときだけ。空を返すと閉じるボタン
           // だけの箱が残るので、消えたことを言う。
-          return ep ? buildPopupHtml(ep) : '<div style="font-size:12px;color:#94a3b8">この緊急地震速報は終了しました</div>'
+          return ep
+            ? buildPopupHtml(ep, mRef.current)
+            : `<div style="font-size:12px;color:#94a3b8">${mRef.current.map.popup.eewEnded}</div>`
         },
       })
     } catch (err) {

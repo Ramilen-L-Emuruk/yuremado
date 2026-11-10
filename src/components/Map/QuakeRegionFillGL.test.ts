@@ -1,6 +1,7 @@
 // 区域塗りの吹き出しに足す、市町村ごとの震度の行（regionCityRowsHtml）のテスト。
 import { describe, it, expect } from 'vitest'
 import { regionCityRowsHtml, POPUP_CITY_LIMIT } from './QuakeRegionFillGL'
+import { JA_MESSAGES } from '../../i18n/messages'
 import type { JMAQuakeCity, IntensityScale } from '../../types/earthquake'
 
 const city = (name: string, scale: IntensityScale, extra: Partial<JMAQuakeCity> = {}): JMAQuakeCity =>
@@ -15,28 +16,28 @@ describe('regionCityRowsHtml（区域の吹き出しの市町村の行）', () =
   it('震度の高い順に並べ、同じ震度は電文の順を保つ', () => {
     const html = regionCityRowsHtml([
       city('穴水町', 55), city('輪島市', 70), city('志賀町', 55), city('珠洲市', 60),
-    ])
+    ], JA_MESSAGES)
     expect(namesIn(html)).toEqual(['輪島市', '珠洲市', '穴水町', '志賀町'])
   })
 
   // 正: 上限を超えた分は「ほか N 市町村」にまとめる（数の前後に空白）。
   it(`${POPUP_CITY_LIMIT} を超えた分は「ほか N 市町村」にまとめる`, () => {
     const many = Array.from({ length: POPUP_CITY_LIMIT + 3 }, (_, i) => city(`町${i}`, 30))
-    const html = regionCityRowsHtml(many)
+    const html = regionCityRowsHtml(many, JA_MESSAGES)
     expect(namesIn(html)).toHaveLength(POPUP_CITY_LIMIT)
     expect(html).toContain('ほか 3 市町村')
   })
 
   // 対照: 上限ちょうどなら「ほか」の行を出さない。
   it(`ちょうど ${POPUP_CITY_LIMIT} なら「ほか」の行を出さない`, () => {
-    const html = regionCityRowsHtml(Array.from({ length: POPUP_CITY_LIMIT }, (_, i) => city(`町${i}`, 30)))
+    const html = regionCityRowsHtml(Array.from({ length: POPUP_CITY_LIMIT }, (_, i) => city(`町${i}`, 30)), JA_MESSAGES)
     expect(namesIn(html)).toHaveLength(POPUP_CITY_LIMIT)
     expect(html).not.toContain('ほか')
   })
 
   // 対照: 市町村の震度を載せない報（震度速報）は何も足さない。
   it('市町村が無ければ空文字を返す', () => {
-    expect(regionCityRowsHtml([])).toBe('')
+    expect(regionCityRowsHtml([], JA_MESSAGES)).toBe('')
   })
 
   // 安全弁: 値が入っていない市町村は断定せず「5弱以上」、観測できたうえで未入電がある市町村は「未入電あり」を添える。
@@ -45,7 +46,7 @@ describe('regionCityRowsHtml（区域の吹き出しの市町村の行）', () =
     const html = regionCityRowsHtml([
       city('能登町', 45, { unreceived: true }),
       city('七尾市', 45, { hasUnreceived: true }),
-    ])
+    ], JA_MESSAGES)
     expect(namesIn(html)).toEqual(['七尾市', '能登町'])
     expect(html).toContain('5弱以上')
     expect(html.match(/未入電あり/g)).toHaveLength(1)
@@ -53,6 +54,6 @@ describe('regionCityRowsHtml（区域の吹き出しの市町村の行）', () =
 
   // 安全弁: 名前は HTML として解釈させない。
   it('市町村名をエスケープする', () => {
-    expect(regionCityRowsHtml([city('<b>x</b>', 30)])).toContain('&lt;b&gt;x&lt;/b&gt;')
+    expect(regionCityRowsHtml([city('<b>x</b>', 30)], JA_MESSAGES)).toContain('&lt;b&gt;x&lt;/b&gt;')
   })
 })

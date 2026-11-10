@@ -8,6 +8,7 @@ import {
   type MapLegendSources,
 } from './legendBlocks'
 import { INTENSITY_COLORS } from '../../utils/intensity'
+import { JA_MESSAGES } from '../../i18n/messages'
 import { TSUNAMI_OBS_HEIGHT_STEPS, tsunamiObsBarColor } from '../Map/gl/tsunamiObsBarStyle'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { TSUNAMI_STYLE } from '../../utils/tsunamiStyle'
@@ -19,12 +20,12 @@ function sources(patch: Partial<MapLegendSources>): MapLegendSources {
 
 describe('buildLegendBlocks', () => {
   it('何も描いていなければ 1 ブロックも作らない', () => {
-    expect(buildLegendBlocks(EMPTY_LEGEND_SOURCES)).toEqual([])
+    expect(buildLegendBlocks(EMPTY_LEGEND_SOURCES, JA_MESSAGES)).toEqual([])
   })
 
   describe('震度のスケール', () => {
     it('発表値の震度だけを描いているときは震度0 を並べない', () => {
-      const [block] = buildLegendBlocks(sources({ quakeIntensity: true }))
+      const [block] = buildLegendBlocks(sources({ quakeIntensity: true }), JA_MESSAGES)
       expect(block.title).toBe('震度')
       expect(block.swatch.kind).toBe('scale')
       if (block.swatch.kind !== 'scale') throw new Error('scale ではない')
@@ -32,27 +33,27 @@ describe('buildLegendBlocks', () => {
     })
 
     it('リアルタイム震度では震度0 を先頭に足す', () => {
-      const [block] = buildLegendBlocks(sources({ realtimeIntensity: true }))
+      const [block] = buildLegendBlocks(sources({ realtimeIntensity: true }), JA_MESSAGES)
       if (block.swatch.kind !== 'scale') throw new Error('scale ではない')
       expect(block.swatch.cells[0]).toEqual({ label: '0', color: SHINDO0_COLOR })
     })
 
     it('色は気象庁配色の定数から採る（凡例へ書き写さない）', () => {
-      const [block] = buildLegendBlocks(sources({ quakeIntensity: true }))
+      const [block] = buildLegendBlocks(sources({ quakeIntensity: true }), JA_MESSAGES)
       if (block.swatch.kind !== 'scale') throw new Error('scale ではない')
       const seven = block.swatch.cells.find((c) => c.label === '7')
       expect(seven?.color).toBe(INTENSITY_COLORS[70])
     })
 
     it('同じ配色を使う描画物が複数あってもブロックは 1 つで、見出しに用途を並べる', () => {
-      const blocks = buildLegendBlocks(sources({ realtimeIntensity: true, eewIntensity: true }))
+      const blocks = buildLegendBlocks(sources({ realtimeIntensity: true, eewIntensity: true }), JA_MESSAGES)
       const intensity = blocks.filter((b) => b.key === 'intensity')
       expect(intensity).toHaveLength(1)
       expect(intensity[0].title).toBe('リアルタイム震度・緊急地震速報の予想')
     })
 
     it('緊急地震速報の予想だけでも震度のスケールを出す', () => {
-      const [block] = buildLegendBlocks(sources({ eewIntensity: true }))
+      const [block] = buildLegendBlocks(sources({ eewIntensity: true }), JA_MESSAGES)
       expect(block.key).toBe('intensity')
       expect(block.title).toBe('緊急地震速報の予想')
     })
@@ -61,18 +62,18 @@ describe('buildLegendBlocks', () => {
   describe('いま描いているものだけを並べる', () => {
     it('津波の海岸線は地図モードに関わらず、線が出ていれば並ぶ', () => {
       // 震源カタログを見ている最中でも、津波が発表されていれば海岸線は描かれる。
-      const blocks = buildLegendBlocks(sources({ catalogColorBy: 'depth', tsunamiGrade: true }))
+      const blocks = buildLegendBlocks(sources({ catalogColorBy: 'depth', tsunamiGrade: true }), JA_MESSAGES)
       expect(blocks.map((b) => b.key)).toEqual(['tsunamiGrade', 'catalog'])
     })
 
     it('活断層とプレート境界は描いているものだけを出す', () => {
-      const [block] = buildLegendBlocks(sources({ activeFaults: true }))
+      const [block] = buildLegendBlocks(sources({ activeFaults: true }), JA_MESSAGES)
       if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
       expect(block.swatch.chips.map((c) => c.label)).toEqual(['活断層'])
     })
 
     it('プレート境界は 4 系統を別の色として出す', () => {
-      const [block] = buildLegendBlocks(sources({ plateBoundaries: true }))
+      const [block] = buildLegendBlocks(sources({ plateBoundaries: true }), JA_MESSAGES)
       if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
       expect(block.swatch.chips.map((c) => c.label)).toEqual([
         'プレート境界（沈み込み帯）',
@@ -84,7 +85,7 @@ describe('buildLegendBlocks', () => {
     })
 
     it('潮位観測点は到達確認と欠測をそれぞれ出ているぶんだけ並べる', () => {
-      const [block] = buildLegendBlocks(sources({ tsunamiMissing: true }))
+      const [block] = buildLegendBlocks(sources({ tsunamiMissing: true }), JA_MESSAGES)
       if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
       expect(block.swatch.chips.map((c) => c.label)).toEqual(['欠測'])
     })
@@ -92,7 +93,7 @@ describe('buildLegendBlocks', () => {
 
   describe('震源カタログ', () => {
     it('深さの目盛りは色と同じ平方根の位置に置く', () => {
-      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'depth' }))
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'depth' }), JA_MESSAGES)
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       const tick30 = block.swatch.ticks.find((t) => t.label === '30')
       // 等間隔（30/750 = 0.04）ではなく平方根の位置（0.2）に乗る。
@@ -103,21 +104,21 @@ describe('buildLegendBlocks', () => {
     it('発生年の両端が同じ年なら目盛りを 1 つだけ出す', () => {
       const lo = jstYearStartMs(2024) + 1000
       const hi = jstYearStartMs(2024) + 86_400_000
-      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'time', catalogYearRange: { lo, hi } }))
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'time', catalogYearRange: { lo, hi } }), JA_MESSAGES)
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.ticks).toEqual([{ at: 0, label: '2024' }])
     })
 
     it('発生年の両端が判らなければ色帯だけを出す', () => {
-      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'time', catalogYearRange: null }))
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'time', catalogYearRange: null }), JA_MESSAGES)
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.ticks).toEqual([])
       expect(block.swatch.stops.length).toBeGreaterThan(0)
     })
 
     it('色分けを切り替えると中身が入れ替わる', () => {
-      const [depth] = buildLegendBlocks(sources({ catalogColorBy: 'depth' }))
-      const [magnitude] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude' }))
+      const [depth] = buildLegendBlocks(sources({ catalogColorBy: 'depth' }), JA_MESSAGES)
+      const [magnitude] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude' }), JA_MESSAGES)
       expect(depth.title).toBe('震源の深さ')
       expect(magnitude.title).toBe('マグニチュード')
       expect(depth.swatch).not.toEqual(magnitude.swatch)
@@ -125,14 +126,14 @@ describe('buildLegendBlocks', () => {
 
     // 正: マグニチュードの色帯の下に、点を塗る灰色と同じ色で「M 不明」を添える。
     it('M 不明の点を描いているときは色帯に「M 不明」を添える', () => {
-      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: true }))
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: true }), JA_MESSAGES)
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips).toEqual([{ label: 'M 不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' }])
     })
 
     // 対照: M 不明の点が無ければ添えない。
     it('M 不明の点が無ければ添えない', () => {
-      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: false }))
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: false }), JA_MESSAGES)
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips).toBeUndefined()
     })
@@ -140,7 +141,7 @@ describe('buildLegendBlocks', () => {
     // 対照: 深さや発生年で色を付けているときは、M 不明の点も深さ・年の色で塗るので添えない。
     it.each(['depth', 'time'] as const)('%s の色分けでは添えない', (colorBy) => {
       const [block] = buildLegendBlocks(
-        sources({ catalogColorBy: colorBy, catalogUnknownMagnitude: true, catalogYearRange: { lo: 0, hi: 1 } }),
+        sources({ catalogColorBy: colorBy, catalogUnknownMagnitude: true, catalogYearRange: { lo: 0, hi: 1 } }), JA_MESSAGES,
       )
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips).toBeUndefined()
@@ -148,7 +149,7 @@ describe('buildLegendBlocks', () => {
 
     // 正: 深さの色帯の下に、点を塗る灰色と同じ色で「深さ不明」を添える。
     it('深さ不明の点を描いているときは深さの色帯に「深さ不明」を添える', () => {
-      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'depth', catalogUnknownDepth: true }))
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'depth', catalogUnknownDepth: true }), JA_MESSAGES)
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips).toEqual([{ label: '深さ不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' }])
     })
@@ -156,7 +157,7 @@ describe('buildLegendBlocks', () => {
     // 対照: 灰色で塗るのは深さの色分けのときだけ。M・発生年の色分けでは深さ不明の点も色帯の色で塗る。
     it.each(['magnitude', 'time'] as const)('%s の色分けでは「深さ不明」を添えない', (colorBy) => {
       const [block] = buildLegendBlocks(
-        sources({ catalogColorBy: colorBy, catalogUnknownDepth: true, catalogYearRange: { lo: 0, hi: 1 } }),
+        sources({ catalogColorBy: colorBy, catalogUnknownDepth: true, catalogYearRange: { lo: 0, hi: 1 } }), JA_MESSAGES,
       )
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips).toBeUndefined()
@@ -165,7 +166,7 @@ describe('buildLegendBlocks', () => {
     // 正: 気象庁以外の機関の震源は、どの色分けでも輪の見本を添える（輪は色分けに関わらず描く）。
     it.each(['depth', 'magnitude', 'time'] as const)('%s の色分けでも気象庁以外の機関の震源に輪の見本を添える', (colorBy) => {
       const [block] = buildLegendBlocks(
-        sources({ catalogColorBy: colorBy, catalogExternal: true, catalogYearRange: { lo: 0, hi: 1 } }),
+        sources({ catalogColorBy: colorBy, catalogExternal: true, catalogYearRange: { lo: 0, hi: 1 } }), JA_MESSAGES,
       )
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips?.map((c) => [c.label, c.shape])).toEqual([['気象庁以外の機関の震源', 'ring']])
@@ -174,7 +175,7 @@ describe('buildLegendBlocks', () => {
     // 安全弁: 不明の見本と輪の見本は両方並ぶ（片方が他方を押し出さない）。
     it('M 不明と気象庁以外の機関の震源を両方描いていれば両方添える', () => {
       const [block] = buildLegendBlocks(
-        sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: true, catalogExternal: true }),
+        sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: true, catalogExternal: true }), JA_MESSAGES,
       )
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips?.map((c) => c.label)).toEqual(['M 不明', '気象庁以外の機関の震源'])
@@ -183,7 +184,7 @@ describe('buildLegendBlocks', () => {
 
   describe('観測した津波の高さ', () => {
     it('観測棒を描いているときだけ出し、段と色は描画側と同じ表から採る', () => {
-      const [block] = buildLegendBlocks(sources({ tsunamiObsHeight: true }))
+      const [block] = buildLegendBlocks(sources({ tsunamiObsHeight: true }), JA_MESSAGES)
       expect(block.key).toBe('tsunamiObsHeight')
       if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
       expect(block.swatch.chips).toEqual(
@@ -195,7 +196,7 @@ describe('buildLegendBlocks', () => {
     })
 
     it('等級とは別のブロックにする（同じ色が別の意味で並ぶため）', () => {
-      const blocks = buildLegendBlocks(sources({ tsunamiGrade: true, tsunamiObsHeight: true }))
+      const blocks = buildLegendBlocks(sources({ tsunamiGrade: true, tsunamiObsHeight: true }), JA_MESSAGES)
       expect(blocks.map((b) => b.key)).toEqual(['tsunamiGrade', 'tsunamiObsHeight'])
       // 1m 以上の観測波高は津波警報の海岸線と同じ色。形で見分ける。
       const grade = blocks[0].swatch
@@ -208,7 +209,7 @@ describe('buildLegendBlocks', () => {
   })
 
   it('津波の等級は電文の配色をそのまま使う', () => {
-    const [block] = buildLegendBlocks(sources({ tsunamiGrade: true }))
+    const [block] = buildLegendBlocks(sources({ tsunamiGrade: true }), JA_MESSAGES)
     if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
     expect(block.swatch.chips[0]).toEqual({
       label: TSUNAMI_STYLE.MajorWarning.label,
@@ -260,14 +261,14 @@ describe('描いているものを凡例に出し忘れていないか', () => {
   it.each(Object.entries(SOLO_SOURCES).filter(([, patch]) => patch !== null))(
     '%s を単独で立てるとブロックが 1 つ以上できる',
     (_key, patch) => {
-      expect(buildLegendBlocks(sources(patch as Partial<MapLegendSources>)).length).toBeGreaterThan(0)
+      expect(buildLegendBlocks(sources(patch as Partial<MapLegendSources>), JA_MESSAGES).length).toBeGreaterThan(0)
     },
   )
 
   it('色帯は必ず折れ点を持つ（空だと共有カードの帯が無言で透明になる）', () => {
     const all = buildLegendBlocks(
-      sources({ catalogColorBy: 'depth', heatmap: true }),
-    ).concat(buildLegendBlocks(sources({ catalogColorBy: 'magnitude' })), buildLegendBlocks(sources({ catalogColorBy: 'time' })))
+      sources({ catalogColorBy: 'depth', heatmap: true }), JA_MESSAGES,
+    ).concat(buildLegendBlocks(sources({ catalogColorBy: 'magnitude' }), JA_MESSAGES), buildLegendBlocks(sources({ catalogColorBy: 'time' }), JA_MESSAGES))
     const ramps = all.filter((b) => b.swatch.kind === 'ramp')
     expect(ramps.length).toBeGreaterThan(0)
     for (const block of ramps) {
@@ -285,7 +286,7 @@ describe('いま見ている画面の主役を先に出す', () => {
       activeFaults: true,
       catalogColorBy: 'depth',
       primary: ['catalog'],
-    }))
+    }), JA_MESSAGES)
     expect(blocks[0].key).toBe('catalog')
   })
 
@@ -295,7 +296,7 @@ describe('いま見ている画面の主役を先に出す', () => {
       tsunamiGrade: true,
       catalogColorBy: 'depth',
       primary: ['catalog'],
-    }))
+    }), JA_MESSAGES)
     expect(blocks.map((b) => b.key)).toEqual(['catalog', 'intensity', 'tsunamiGrade'])
   })
 
@@ -304,7 +305,7 @@ describe('いま見ている画面の主役を先に出す', () => {
       quakeIntensity: true,
       psWave: true,
       primary: ['psWave', 'intensity'],
-    }))
+    }), JA_MESSAGES)
     expect(blocks.map((b) => b.key)).toEqual(['psWave', 'intensity'])
   })
 
@@ -316,13 +317,13 @@ describe('いま見ている画面の主役を先に出す', () => {
       activeFaults: true,
       catalogColorBy: 'depth',
       primary: ['catalog'],
-    }))
+    }), JA_MESSAGES)
     // 既定の並びは「いま起きていること → 背景」。主役を抜いた残りはその順のまま。
     expect(blocks.slice(1).map((b) => b.key)).toEqual(['intensity', 'tsunamiGrade', 'heatmap', 'lines'])
   })
 
   it('主役を渡さなければ既定の並びのまま', () => {
-    const blocks = buildLegendBlocks(sources({ quakeIntensity: true, tsunamiGrade: true, activeFaults: true }))
+    const blocks = buildLegendBlocks(sources({ quakeIntensity: true, tsunamiGrade: true, activeFaults: true }), JA_MESSAGES)
     expect(blocks.map((b) => b.key)).toEqual(['intensity', 'tsunamiGrade', 'lines'])
   })
 })
@@ -335,12 +336,12 @@ describe('representativeBlock', () => {
       tsunamiGrade: true,
       catalogColorBy: 'depth',
       primary: ['catalog'],
-    }))
+    }), JA_MESSAGES)
     expect(representativeBlock(blocks)?.key).toBe('catalog')
   })
 
   it('主役の指定が無ければ既定の並びの先頭を採る', () => {
-    const blocks = buildLegendBlocks(sources({ quakeIntensity: true, activeFaults: true, heatmap: true }))
+    const blocks = buildLegendBlocks(sources({ quakeIntensity: true, activeFaults: true, heatmap: true }), JA_MESSAGES)
     expect(representativeBlock(blocks)?.key).toBe('intensity')
   })
 
@@ -350,10 +351,10 @@ describe('representativeBlock', () => {
 })
 
 describe('ヒートマップの期間の欄', () => {
-  const period = { period: '1y' as const, startLabel: '2026/01/01', replay: false, note: null }
+  const period = { period: '1y' as const, startLabel: '2026/01/01', replay: false, note: null, text: '期間 2026/01/01 〜 いま' }
 
   it('[正] 見出しは期間を含めず、密度の欄にだけ期間を載せる', () => {
-    const blocks = withHeatmapPeriod(buildLegendBlocks(sources({ quakeIntensity: true, heatmap: true })), period)
+    const blocks = withHeatmapPeriod(buildLegendBlocks(sources({ quakeIntensity: true, heatmap: true }), JA_MESSAGES), period)
     const heat = blocks.find((b) => b.key === 'heatmap')
     expect(heat?.title).toBe('地震活動の密度')
     expect(heat?.heatmapPeriod).toEqual(period)
@@ -361,19 +362,19 @@ describe('ヒートマップの期間の欄', () => {
   })
 
   it('[対照] 密度を描いていなければ何も足さず、同じ配列を返す', () => {
-    const blocks = buildLegendBlocks(sources({ quakeIntensity: true }))
+    const blocks = buildLegendBlocks(sources({ quakeIntensity: true }), JA_MESSAGES)
     expect(withHeatmapPeriod(blocks, period)).toBe(blocks)
   })
 
   it('[安全弁] 期間が無ければ密度の欄にも載せない', () => {
-    const blocks = buildLegendBlocks(sources({ heatmap: true }))
+    const blocks = buildLegendBlocks(sources({ heatmap: true }), JA_MESSAGES)
     expect(withHeatmapPeriod(blocks, null)[0].heatmapPeriod).toBeUndefined()
   })
 
   it('完全性の注記はカタログタブと同じ文で、掛からなければ出さない', () => {
-    expect(heatmapCompletenessNote({ fromYear: 1960, minMagnitude: 3 })).toBe(
+    expect(heatmapCompletenessNote({ fromYear: 1960, minMagnitude: 3 }, JA_MESSAGES)).toBe(
       '1960 年まで遡ると、記録が揃うのは M 3.0 以上です。それより小さい地震は少なく見えます。',
     )
-    expect(heatmapCompletenessNote(null)).toBeNull()
+    expect(heatmapCompletenessNote(null, JA_MESSAGES)).toBeNull()
   })
 })
