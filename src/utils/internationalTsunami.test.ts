@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { JMAInternationalTsunami, JMAQuake } from '../types/earthquake'
 import {
-  NO_INTERNATIONAL_TSUNAMIS, ORIGIN_MATCH_TOLERANCE_MS, internationalTsunamiIndex, internationalTsunamiQuakeName,
+  NO_INTERNATIONAL_TSUNAMIS, admitInternationalTsunami, ORIGIN_MATCH_TOLERANCE_MS, internationalTsunamiIndex, internationalTsunamiQuakeName,
   internationalTsunamiOpenKey, internationalTsunamiTarget, upsertInternationalTsunami,
   withInternationalTsunamiCards,
 } from './internationalTsunami'
@@ -129,6 +129,22 @@ describe('upsertInternationalTsunami', () => {
     const list = upsertInternationalTsunami([later], first)
     expect(list?.map(x => x.id)).toEqual([first.id, 'b'])
     expect(upsertInternationalTsunami(list!, first)).toBeNull()
+  })
+})
+
+// 受信の入口で入れるか。
+//   正  : 通信試験は試験報の設定が切なら入れない／対照: 設定が入なら入れる／安全弁: 地震の報は設定に関わらず入れる
+describe('admitInternationalTsunami', () => {
+  const test = bulletin({ title: 'NWPTA COMMUNICATIONS TEST', isCommunicationsTest: true, originTime: undefined })
+  it('正: 通信試験は試験報を受け取らない設定では入れない', () => {
+    expect(admitInternationalTsunami(test, false)).toBe(false)
+  })
+  it('対照: 試験報を受け取る設定なら通信試験も入れる', () => {
+    expect(admitInternationalTsunami(test, true)).toBe(true)
+  })
+  it('安全弁: 地震の報は設定に関わらず入れる', () => {
+    expect(admitInternationalTsunami(bulletin(), false)).toBe(true)
+    expect(admitInternationalTsunami(bulletin(), true)).toBe(true)
   })
 })
 

@@ -43,7 +43,7 @@ import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEvent
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
 import { recordTsunamiFactStep, type TsunamiFactStep } from '../utils/quakeReportHistory'
-import { internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import { admitInternationalTsunami, internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
 import { fetchFailureReason } from '../utils/fetchFailure'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
@@ -2626,11 +2626,16 @@ export function useEarthquakes(
         } else if (payload.kind === 'internationalTsunami') {
           // 一覧へ新しく足せた報だけ `onLiveEvent` へ流す（読み上げ・通知・音はその先）。同じ報の 2 度目は流さない
           const intl = payload.data
-          const applied = applyInternationalTsunami(intl)
-          if (applied && !silent) {
-            onLiveEventRef.current?.({ kind: 'internationalTsunami', data: intl })
+          // 通信試験は設定「試験報を受信」が切なら入れない（→ `admitInternationalTsunami`。電文ログには上で積んである）
+          if (!admitInternationalTsunami(intl, dmdataTestDeliveryRef.current)) {
+            recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, 'testReport')
           } else {
-            recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, applied ? 'silentReplayInit' : 'notApplied')
+            const applied = applyInternationalTsunami(intl)
+            if (applied && !silent) {
+              onLiveEventRef.current?.({ kind: 'internationalTsunami', data: intl })
+            } else {
+              recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, applied ? 'silentReplayInit' : 'notApplied')
+            }
           }
         } else if (payload.kind === 'logOnly') {
           // 電文ログへは上で積んだ。画面へは何も流さない（取り込まない電文・読めなかった電文の行）
@@ -3168,7 +3173,14 @@ export function useEarthquakes(
               }
               // 国際津波関連情報は地震カードに添えるもの。カードと同じく履歴から黙って足す（履歴は読み上げない）
               case 'internationalTsunami':
-                tryApplyExtra('国際津波関連情報', p.data, applyInternationalTsunami)
+                tryApplyExtra('国際津波関連情報', p.data, data => {
+            // 通信試験は、試験報を受け取る設定のときだけ採る（止めたことを記録に残す）
+            if (!admitInternationalTsunami(data, dmdataTestDeliveryRef.current)) {
+              log.debug(`[intl-tsunami] 試験報を受け取らない設定なので、履歴の通信試験を採らない（${data.id}）`)
+              return false
+            }
+            return applyInternationalTsunami(data)
+          })
                 break
               case 'event':
                 // `HISTORY_EXTRA_TYPES` に入らないので届かない。**種別を足したときに
@@ -3349,7 +3361,9 @@ export function useEarthquakes(
       } else if (ev.kind === 'internationalTsunami') {
         // 一覧へ新しく足せた報だけ `onLiveEvent` へ流す。ライブと取り戻しで同じ報を 2 度受けても、読み上げ・通知は 1 回
         const intl = ev.data
-        if (applyInternationalTsunami(intl)) {
+        if (!admitInternationalTsunami(intl, dmdataTestDeliveryRef.current)) {
+          recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, 'testReport')
+        } else if (applyInternationalTsunami(intl)) {
           onLiveEventRef.current?.({ kind: 'internationalTsunami', data: intl })
         } else {
           recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, 'notApplied')
@@ -3760,7 +3774,14 @@ export function useEarthquakes(
         }
         // 国際津波関連情報も「もっと見る」が増やすカードに添えるもの（推計震度分布図と同じく反映する）
         case 'internationalTsunami':
-          tryApplyExtra('国際津波関連情報', p.data, applyInternationalTsunami)
+          tryApplyExtra('国際津波関連情報', p.data, data => {
+            // 通信試験は、試験報を受け取る設定のときだけ採る（止めたことを記録に残す）
+            if (!admitInternationalTsunami(data, dmdataTestDeliveryRef.current)) {
+              log.debug(`[intl-tsunami] 試験報を受け取らない設定なので、履歴の通信試験を採らない（${data.id}）`)
+              return false
+            }
+            return applyInternationalTsunami(data)
+          })
           break
         case 'event':
           // `HISTORY_EXTRA_TYPES` に入らないので届かない（起動時側の同一分岐と同じ注記。

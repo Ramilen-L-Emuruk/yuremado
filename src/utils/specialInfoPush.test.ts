@@ -95,11 +95,14 @@ describe('planSpecialInfoNotification', () => {
     // 結べた地震カードの震源名があれば、それで言う
     expect(planSpecialInfoNotification({ kind: 'internationalTsunami', data: x, quakeName: 'フィリピン諸島' }, noName)!.notification.body)
       .toMatch(/^25日8時43分頃、フィリピン諸島で発生した/)
-    // 通信試験も出すが、開き先は持たない
+    // 通信試験は開き先を持たない
     const test = { ...x, isCommunicationsTest: true, title: 'NWPTA COMMUNICATIONS TEST', originTime: undefined }
     const testPlan = planSpecialInfoNotification({ kind: 'internationalTsunami', data: test }, noName)!
     expect(testPlan.notification.body).toBe('通信試験です。')
     expect(testPlan.notification.open).toBeNull()
+    // 通信試験は試験報を受け取る受け手にだけ出す印が付く。地震の報には付かない
+    expect(testPlan.test).toBe(true)
+    expect(plan.test).toBeUndefined()
   })
   it('推計震度の時刻は端末の時間帯によらず日本時間で書く', () => {
     const ei = { id: 'i', arrivalTime: '2026-01-01T15:04:00Z' } as unknown as JMAEstimatedIntensity

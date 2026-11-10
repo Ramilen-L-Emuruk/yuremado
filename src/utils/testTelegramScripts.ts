@@ -235,7 +235,9 @@ export const FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI: TestTelegramScript = {
  *   2. 同じ地震の WEPA60（自作の英文 `synthetic/wepa60-hyuganada.txt`。実電文の行の並びに倣い、発生時刻 07:42Z・震央・規模を合わせた）
  *   3. 地震情報の無い地震の WEPA60（自作の英文 `synthetic/wepa60-mindanao.txt`。ミンダナオの M6.9。発生は日向灘の 22 分前）
  *   4. 通信試験の WEPA60（自作の英文 `synthetic/wepa60-commtest.txt`。2020-12-15 の実電文の行の並びと文に倣った）。どのカードにも
- *      付かず、読み上げ・通知・音だけが出る（2026-11-06 ユーザー選択「英文だけテストの最後に足す (Recommended)」）
+ *      付かず、読み上げ・通知・音だけが出る（2026-11-06 ユーザー選択「英文だけテストの最後に足す (Recommended)」）。
+ *      **設定「試験報を受信（検証用）」が入のときだけ。** 切（既定）なら受信の入口で止まり、電文ログにだけ残る
+ *      （2026-11-09 ユーザー選択「試験報の設定で止める (Recommended)」。→ `admitInternationalTsunami`）
  *
  * **3 の発生時刻を日向灘より前にしてある。** 台本は 1 つの差分で全体を押した時刻へずらすので（`anchor`）、後にすると押した時刻より
  * 未来の地震になる。

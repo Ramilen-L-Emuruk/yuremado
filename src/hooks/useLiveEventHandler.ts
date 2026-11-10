@@ -3201,7 +3201,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     }
 
     // 国際津波関連情報（WEPA60）。**音・通知・読み上げで伝える**（2026-11-06 ユーザー選択「読み上げ・通知・音をまとめて足す」）。
-    // 音は遠地地震と同じ（同日の選択「遠地地震の音・試験も伝える (Recommended)」。通信試験も同じく伝える）。通知は津波の
+    // 音は遠地地震と同じ（同日の選択「遠地地震の音・試験も伝える (Recommended)」）。**通信試験がここへ来るのは設定「試験報を
+    // 受信（検証用）」が入のときだけ**（受信の入口 `admitInternationalTsunami` が止める。2026-11-09 ユーザー選択「試験報の設定で
+    // 止める (Recommended)」。試験報の設定との関係を書かずに諮った 11-06 の選択の扱いを改めた）。通知は津波の
     // 通知の設定に従う（同日の選択「津波の通知の設定で出す (Recommended)」）。読む文は `internationalTsunamiToText`。
     // 英文の本文そのものは読まない（日本語の声では読めない。上の `telegramTextToSpeak` も外している）。
     //

@@ -1569,7 +1569,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             />
           </Row>
         )}
-        <Row label="試験報を受信（検証用）" description="試験報・訓練報も受信します。緊急地震速報の配信テストは接続の確認だけに使い、画面には出しません">
+        <Row label="試験報を受信（検証用）" description="試験報・訓練報も受信します。国際津波関連情報の通信試験は、入のときだけ音・通知・読み上げで伝えます。緊急地震速報の配信テストは接続の確認だけに使い、画面には出しません">
           <Toggle
             checked={settings.dmdataTestDelivery}
             onChange={v => onUpdate('dmdataTestDelivery', v)}
@@ -2619,7 +2619,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.foreignQuakeInternationalTsunami}>国際津波関連情報テスト</TestButton>
         </Row>
-        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る / 9 秒後に通信試験の英文が届く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
+        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る / 9 秒後に通信試験の英文が届く（「試験報を受信（検証用）」が入のときだけ音・通知・読み上げと帯が出る。切なら電文ログにだけ残る）。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.internationalTsunamiDomesticAndOnly}>英文だけテスト</TestButton>
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">

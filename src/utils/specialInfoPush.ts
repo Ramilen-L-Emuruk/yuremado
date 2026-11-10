@@ -63,6 +63,12 @@ export interface SpecialInfoPlan {
    * 定例解説は付けない —— 定例の通知は自分の入り切り（`nankaiRoutine`）だけに従う（2026-11-09 ユーザー選択「新設・既定オフ」）
    */
   commentary?: true
+  /**
+   * 試験の報（国際津波関連情報の通信試験）。設定「試験報を受信（検証用）」が入の受け手にだけ出す（2026-11-09 ユーザー選択
+   * 「試験報の設定で止める (Recommended)」）。アプリは受信の入口（`admitInternationalTsunami`）で止めるのでここまで来ない。
+   * 中継は購読の写しの `testDelivery` で絞る（欄の無い古い購読には送らない）
+   */
+  test?: true
 }
 
 /** 取消の通知で地名を言うための、発表で読んだ長周期の震央地名（地震ごと） */
@@ -120,8 +126,11 @@ export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: L
       return { notification: kohatsuNotification(event.data), kind: 'nankai', prefectures: null }
     case 'internationalTsunami':
       // 津波の通知の設定に従い、地域では絞らない（2026-11-06 ユーザー選択「津波の通知の設定で出す (Recommended)」。説明は
-      // 「通知する地域では絞らない（国外の地震で県が無いため。南海トラフと同じ扱い）」）。通信試験も出す（同日の選択
-      // 「遠地地震の音・試験も伝える (Recommended)」）
-      return { notification: internationalTsunamiNotification(event.data, event.quakeName), kind: 'tsunami', prefectures: null }
+      // 「通知する地域では絞らない（国外の地震で県が無いため。南海トラフと同じ扱い）」）。通信試験は試験報を受け取る設定の
+      // 受け手にだけ出す（`test`。2026-11-09 ユーザー選択「試験報の設定で止める (Recommended)」）
+      return {
+        notification: internationalTsunamiNotification(event.data, event.quakeName), kind: 'tsunami', prefectures: null,
+        ...(event.data.isCommunicationsTest && { test: true as const }),
+      }
   }
 }

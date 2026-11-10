@@ -31,6 +31,16 @@ export function upsertInternationalTsunami(
   return [...list, item].sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
 }
 
+/**
+ * 受けた報をアプリへ入れるか。**通信試験は設定「試験報を受信（検証用）」が入のときだけ入れる**（2026-11-09 ユーザー選択
+ * 「試験報の設定で止める (Recommended)」）。WEPA60 は XML でない電文で、配信元は試験の印（`head.test`）を付けないので、
+ * DMDATA の試験報の破棄（`services/dmdata.ts`）を通らない。ここで止めないと、中身が試験の報が全員に通知・音・読み上げで出る。
+ * 入れなかった報も電文ログには残る（ログは受信の時点で積む）
+ */
+export function admitInternationalTsunami(x: JMAInternationalTsunami, receiveTest: boolean): boolean {
+  return !x.isCommunicationsTest || receiveTest
+}
+
 
 /** 英文の結び付けの結果（→ {@link internationalTsunamiIndex}）。 */
 export interface InternationalTsunamiIndex {
