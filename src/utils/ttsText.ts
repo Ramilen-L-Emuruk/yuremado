@@ -4127,7 +4127,7 @@ export function lpgmToText(lpgm: JMALpgm, opts: TtsSpeechOptions, isNew: boolean
   if (lpgm.cancelled) {
     // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。理由（電文の
     // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
-    // 取消で長周期の表示（一覧・バッジ）ごと消え、理由が届く先は読み上げだけ（地震回数と同じ）。
+    // 取消で長周期の表示（一覧・バッジ）は消えるが、理由は地震カードの報の一覧にも残る（→ `lpgmRetraction`）。
     // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
     return '長周期地震動に関する観測情報は取り消されました。' + cancelReasonSentence(lpgm.cancelText)
   }

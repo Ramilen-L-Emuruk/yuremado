@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   nankaiNotification, kohatsuNotification, nankaiCommentaryNotification, lpgmNotification,
-  estimatedIntensityNotification, earthquakeCountNotification,
+  estimatedIntensityNotification, earthquakeCountNotification, quakeNoticeNotification,
 } from './specialInfoNotification'
 import type {
-  JMANankai, JMAKohatsu, JMANankaiCommentary, JMALpgm, JMAEstimatedIntensity, JMAEarthquakeCount,
+  JMANankai, JMAKohatsu, JMANankaiCommentary, JMALpgm, JMAEstimatedIntensity, JMAEarthquakeCount, JMAQuakeNotice,
 } from '../types/earthquake'
 
 // 文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」。ここで固定する。
@@ -25,12 +25,30 @@ describe('nankaiNotification', () => {
     expect(nankaiNotification(nankai({ kindName: '調査終了', cancelled: true })).title).toBe('南海トラフ地震臨時情報（調査終了）')
   })
   it('正: 取消は「取消」の見出しと「取り消されました」の本文で、発表と同じ札', () => {
-    expect(nankaiNotification(nankai({ cancelled: true, retracted: true, kindName: '', kindCode: '' }))).toEqual({
+    expect(nankaiNotification(nankai({ cancelled: true, retracted: true, kindName: '', kindCode: '', body: '' }))).toEqual({
       title: '南海トラフ地震臨時情報 取消', body: '南海トラフ地震臨時情報は取り消されました', tag: 'nankai', open: null,
     })
   })
   it('対照: 要約の無い報は本文なし', () => {
     expect(nankaiNotification(nankai({ summary: undefined })).body).toBe('')
+  })
+})
+
+// 2026-11-09 ユーザー選択「帯を取消に切り替え＋通知に理由 (Recommended)」（説明「ブラウザ通知・プッシュ通知の本文を理由の文に（空なら今の定型文）」）
+describe('取消の通知の本文は電文の理由', () => {
+  const reason = 'システムの障害により誤った情報を配信しました。'
+  it('正: 臨時情報・後発・関連解説・地震回数・お知らせの取消は、理由があれば本文をその文にする', () => {
+    expect(nankaiNotification(nankai({ cancelled: true, retracted: true, body: reason })).body).toBe(reason)
+    expect(kohatsuNotification({ id: 'k', time: '', eventId: 'k', headline: '', body: reason, cancelled: true, retracted: true, reportDateTime: '', expireAt: '' } as JMAKohatsu).body).toBe(reason)
+    expect(nankaiCommentaryNotification({ id: 'c', time: '', eventId: 'c', serialCode: '', serialName: '', headline: '', body: reason, cancelled: true, reportDateTime: '', expireAt: '' } as JMANankaiCommentary).body).toBe(reason)
+    expect(earthquakeCountNotification({ id: 'ec', eventId: 'ec', time: '', cancelled: true, items: [], cancelText: reason } as unknown as JMAEarthquakeCount, '').body).toBe(reason)
+    expect(quakeNoticeNotification({ id: 'q', eventId: 'q', time: '', headline: '', body: reason, cancelled: true, reportDateTime: '' } as unknown as JMAQuakeNotice).body).toBe(reason)
+  })
+  it('対照: 理由が空白だけなら今の定型文', () => {
+    expect(nankaiNotification(nankai({ cancelled: true, retracted: true, body: ' 　\n' })).body).toBe('南海トラフ地震臨時情報は取り消されました')
+  })
+  it('安全弁: 臨時情報の調査終了（取消ではない）は本文を理由に替えない', () => {
+    expect(nankaiNotification(nankai({ kindName: '調査終了', cancelled: true, body: reason })).body).toBe('要約の文。')
   })
 })
 

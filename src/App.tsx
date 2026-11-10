@@ -2701,17 +2701,17 @@ export function App() {
     // 印（`key`）はイベント ID と合図を出したデータ時刻から作る。同じ合図を作り直しても（依存の
     // `kyoshinView` だけが変わったレンダー・StrictMode の二重描画）印は同じなので、鳴らす側は 1 回だけ動く
     const stamp = { key: `${alert.eventId}@${alert.atMs}`, atMs: alert.atMs }
-    if (best) return { ...stamp, focus: { lat: best.lat, lng: best.lng } }
+    if (best) return { ...stamp, focus: { lat: best.lat, lng: best.lng }, index: best.index }
     // 立ち上がった点が地図の点に無い（まだ描いていない・観測点リストの入れ替え中など）ときは、
     // 点のキーの座標へ寄せる。それも読めなければイベントの重心へ寄せる。
     // **合図は捨てない** —— `stepReonset` は既に鳴らしたことにしていて、合図はその地震の波で説明できる間
     // 次の合図を止めるので、ここで捨てると知らせないまま黙る（`confirmedShocks` の寄せ先と同じ考え方）
     const keyPos = alert.keys.map(keyLatLng).find((p) => p !== null)
-    if (keyPos) return { ...stamp, focus: { lat: keyPos[0], lng: keyPos[1] } }
+    if (keyPos) return { ...stamp, focus: { lat: keyPos[0], lng: keyPos[1] }, index: null }
     const ep = kyoshinV2.detections.find((d) => d.id === alert.eventId)?.epicenter
-    if (ep) return { ...stamp, focus: { lat: ep[0], lng: ep[1] } }
+    if (ep) return { ...stamp, focus: { lat: ep[0], lng: ep[1] }, index: null }
     log.warn(`[kyoshin] 同じ場所の 2 つ目の揺れの寄せ先を引けなかった（${alert.eventId}）。寄せずに音だけ鳴らす`)
-    return { ...stamp, focus: null }
+    return { ...stamp, focus: null, index: null }
   }, [kyoshinV2.detections, kyoshinV2.recentOnsetKeys, kyoshinV2.dataTime, kyoshinView])
   // 震度0ドット表示専用: 検知エンジンが学習した慢性ノイズ床でフィルタする（震度1+表示には手を入れない）
   // PERF-1: kyoshin モード以外では KyoshinSubThreshold レイヤーが表示されないため、

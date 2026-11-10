@@ -131,6 +131,20 @@ export function tsunamiObservationNotification(
 }
 
 /**
+ * 津波情報・沖合の観測だけの取消（警報等は続いている。→ `isPartialTsunamiRetraction`）の通知（2026-11-09 ユーザー選択
+ * 「音は全部・通知は通知した報だけ (Recommended)」）。観測情報の通知（{@link TSUNAMI_OBS_NOTIFICATION_TAG}）を置き換えるので、
+ * 呼び出し側はその報の観測情報を通知していたときだけ出す。本文は電文の本文のまま（津波警報等の取消と同じ作り）。
+ */
+export function tsunamiPartialRetractionNotification(event: Pick<JMATsunami, 'infoName' | 'cancelText'>): TsunamiNotification {
+  return {
+    title: '津波情報の取消',
+    body: event.cancelText?.trim() || `${event.infoName || '津波情報'}は取り消されました。`,
+    requireInteraction: false,
+    open: OPEN_TSUNAMI,
+  }
+}
+
+/**
  * 津波警報等の取消（`cancelReason: 'retracted'`）と津波予報の失効（`'expired'`）の通知
  * （2026-10-21 ユーザー選択「取消も失効も通知 (Recommended)」。文面は 2026-10-24 ユーザー選択「この文面で (Recommended)」）。
  *

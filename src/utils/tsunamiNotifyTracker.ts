@@ -2,9 +2,9 @@ import type { JMATsunami, TsunamiArea, TsunamiGrade, TsunamiObservation } from '
 import {
   GRADE_PRIORITY, tsunamiLiftedAreas, tsunamiMaxGrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation,
   isTsunamiExpired, mergeTsunamiObservations, isObservationMissing, firstWaveSpokenKey, changedObservationFields,
-  sortObservationsForCardDisplay, type ObsUpdateMark, type TsunamiStateStep,
+  sortObservationsForCardDisplay, isPartialTsunamiRetraction, type ObsUpdateMark, type TsunamiStateStep,
 } from './tsunami'
-import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, type TsunamiNotification } from './tsunamiNotification'
+import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, tsunamiPartialRetractionNotification, type TsunamiNotification } from './tsunamiNotification'
 
 /**
  * 津波の報を受けたときの、通知と観測点の印の判定。**アプリの受信処理（`useLiveEventHandler`）と中継のプッシュ通知が同じものを使う**
@@ -286,6 +286,20 @@ export function tsunamiObservationNotificationFor(
   const markedNames = new Set(marks.entries.map(([name]) => name))
   const marked = sortObservationsForCardDisplay(basis.observations, basis.areas, basis.liftedAreas).filter(o => markedNames.has(o.name))
   return marked.length > 0 ? tsunamiObservationNotification(event, marked) : null
+}
+
+/**
+ * 津波情報・沖合の観測だけの取消（{@link isPartialTsunamiRetraction}）の通知（→ `tsunamiPartialRetractionNotification`）。
+ * **観測情報の通知を出した報（`notifiedObs` に {@link partialRetractionKey} がある報）への取消にだけ出す**（2026-11-09 ユーザー選択
+ * 「音は全部・通知は通知した報だけ (Recommended)」）。札は観測情報の通知と同じ `tsunami-obs` で置き換える。中継も同じ判定を写す
+ */
+export function tsunamiPartialRetractionNotificationFor(event: JMATsunami, notifiedObs: ReadonlySet<string>): TsunamiNotification | null {
+  if (!isPartialTsunamiRetraction(event)) return null
+  // 種類だけで当てる（`forgetPartialRetractionsOf` と同じ理由。原因地震が加わると EventID が「A」から「A B」へ伸び、
+  // 観測の通知を出したときの鍵と取消の鍵が一致しない。控えの全期間で、続く津波の報の間で伸びたのは 2 回）
+  const suffix = `|${event.headType}`
+  if (![...notifiedObs].some(key => key.endsWith(suffix))) return null
+  return tsunamiPartialRetractionNotification(event)
 }
 
 /**

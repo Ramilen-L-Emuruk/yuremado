@@ -26,7 +26,7 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn(), playKyoshinUpdateSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 /** 正方形の区域「能登テスト区域」（緯度 37〜38・経度 137〜138）と「福岡テスト区域」（緯度 33〜34・経度 130〜131）。 */
 const SUBREGIONS: SubRegion[] = [

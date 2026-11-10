@@ -29,7 +29,7 @@ import { splitIntoChunks, type SpeechOutcome } from '../utils/voicevox'
 import { EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS } from '../utils/eew'
 import { DEFAULTS, type AppSettings } from './useSettings'
 import { playAlertSound } from '../utils/alertSound'
-import { showBrowserNotification } from '../utils/notifications'
+import { notificationWouldShow, replaceBrowserNotificationQuietly, showBrowserNotification } from '../utils/notifications'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass, JMAQuake, JMATsunami } from '../types/earthquake'
 
 // 「鳴っている最中」を再現するための保留。`holdNextSpeech()` で次の 1 回だけ保留にする。
@@ -92,7 +92,7 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 /** 発話されたテキストだけを配列で取り出す（speakWithVoicevox の第 2 引数） */
 function spokenTexts(): string[] {
@@ -3019,12 +3019,41 @@ describe('いま声が語っているカードの配線', () => {
   describe('緊急地震速報の通知の出し直し', () => {
     const notices = () => vi.mocked(showBrowserNotification).mock.calls.filter(c => String(c[2]).startsWith('eew-') && !String(c[2]).startsWith('eew-cancel-'))
 
+    // 格上げも引き上げも無い続報は、字面が変わったときだけ鳴らさずに差し替える（2026-11-09 ユーザー選択
+    // 「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
+    it('正: 最終報で字面が変わった続報は、鳴らさずに同じ札で差し替える／対照: 字面の同じ続報は差し替えない', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      vi.mocked(replaceBrowserNotificationQuietly).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 45 }))
+      handle(makeEEW({ serial: 2, scaleTo: 45 }))
+      expect(vi.mocked(replaceBrowserNotificationQuietly)).not.toHaveBeenCalled()
+      handle({ ...makeEEW({ serial: 3, scaleTo: 45 }), isFinal: true })
+      expect(notices()).toHaveLength(1)
+      const quiet = vi.mocked(replaceBrowserNotificationQuietly).mock.calls
+      expect(quiet).toHaveLength(1)
+      expect(quiet[0][0]).toBe('緊急地震速報 警報（最終報）')
+      expect(quiet[0][2]).toBe(notices()[0][2])
+    })
+
+    // 安全弁: 出なかった通知（通知の許可が無い・開いている間は通知しない）を覚えると、後の差し替えが
+    // 「鳴らさずに」新しく出してしまう。出なかった発表の後の続報は静かに差し替えない
+    it('安全弁: 発表の通知が出なかった（出せない状態だった）なら、最終報でも静かな差し替えをしない', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      vi.mocked(replaceBrowserNotificationQuietly).mockClear()
+      vi.mocked(notificationWouldShow).mockReturnValueOnce(false)
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 45 }))
+      handle({ ...makeEEW({ serial: 2, scaleTo: 45 }), isFinal: true })
+      expect(vi.mocked(replaceBrowserNotificationQuietly)).not.toHaveBeenCalled()
+    })
+
     it('正: 予想震度が上がった続報で、同じタグの通知を新しい予想で出し直す', () => {
       vi.mocked(showBrowserNotification).mockClear()
       const handle = setup({ notifyMinScale: 0, notifyEEW: true })
       handle(makeEEW({ serial: 1, scaleTo: 45 }))
       handle(makeEEW({ serial: 2, scaleTo: 50 }))
-      expect(notices().map(c => c[1])).toEqual(['日向灘 最大震度5弱予想', '日向灘 最大震度5強予想'])
+      expect(notices().map(c => c[1])).toEqual(['日向灘 M6.5 最大震度5弱予想', '日向灘 M6.5 最大震度5強予想'])
       expect(new Set(notices().map(c => c[2])).size).toBe(1)
     })
 
@@ -3043,7 +3072,7 @@ describe('いま声が語っているカードの配線', () => {
       handle(makeEEW({ serial: 1, scaleTo: 50, lgIntTo: 1 }))
       handle(makeEEW({ serial: 2, scaleTo: 50, lgIntTo: 2 }))
       expect(notices().map(c => c[1])).toEqual([
-        '日向灘 最大震度5強予想 長周期地震動階級1予想', '日向灘 最大震度5強予想 長周期地震動階級2予想',
+        '日向灘 M6.5 最大震度5強予想 長周期地震動階級1予想', '日向灘 M6.5 最大震度5強予想 長周期地震動階級2予想',
       ])
     })
 
@@ -3055,7 +3084,7 @@ describe('いま声が語っているカードの配線', () => {
       const handle = setup({ notifyMinScale: 0, notifyEEW: true })
       act(() => { capturedResult!.restoreStartupEews([restoredEew(45)]) })
       handle(makeEEW({ eventId: 'evt-R', serial: 4, scaleTo: 50, issueTime: '2026-01-01T03:45:00Z' }))
-      expect(notices().map(c => c[1])).toEqual(['日向灘 最大震度5強予想'])
+      expect(notices().map(c => c[1])).toEqual(['日向灘 M6.5 最大震度5強予想'])
     })
 
     it('対照: 起動時に復元した速報で、ライブの報の予想が変わらなければ通知を出さない', () => {

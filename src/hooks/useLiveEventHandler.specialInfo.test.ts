@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useLiveEventHandler } from './useLiveEventHandler'
 import { DEFAULTS, type AppSettings } from './useSettings'
-import { showBrowserNotification } from '../utils/notifications'
+import { notificationWouldShow, showBrowserNotification } from '../utils/notifications'
 import { playAlertSound } from '../utils/alertSound'
 import type {
   JMAQuake, JMATsunami, JMANankai, JMAKohatsu, JMANankaiCommentary, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity,
@@ -30,9 +30,10 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
   return { ...actual, playAlertSound: vi.fn() }
 })
-vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
+vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
 const notify = vi.mocked(showBrowserNotification)
+const wouldShow = vi.mocked(notificationWouldShow)
 const sound = vi.mocked(playAlertSound)
 
 function setup(over: Partial<AppSettings> = {}, nankaiActive = false) {
@@ -59,8 +60,9 @@ function setup(over: Partial<AppSettings> = {}, nankaiActive = false) {
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), openEstimatedIntensity: vi.fn(() => true), closeDistributionOnQuakeReport: vi.fn(),
   }))
   const handle = (e: unknown) => { act(() => { result.current.handleLiveEvent(e as never) }) }
+  const reset = () => { act(() => { result.current.resetTracking() }) }
   const titles = () => titleCalls.filter(([k]) => k === 'setTitle').map(([, v]) => v)
-  return { handle, titles, titleCalls, expandPanel }
+  return { handle, titles, titleCalls, expandPanel, reset }
 }
 
 const nankai = (over: Partial<JMANankai> = {}): JMANankai => ({
@@ -89,6 +91,9 @@ beforeEach(() => {
   vi.useFakeTimers()
   notify.mockClear()
   sound.mockClear()
+  wouldShow.mockReturnValue(true)
+  // 通知した記憶は端末に保存される。テストをまたいで持ち越さない
+  localStorage.clear()
 })
 afterEach(() => { vi.useRealTimers() })
 
@@ -215,7 +220,7 @@ describe('地震・津波に関するお知らせ', () => {
     handle({ kind: 'quakeNotice', data: notice({ id: 'qn-other-cancel', eventId: 'qn-other', cancelled: true }) })
     expect(notify).not.toHaveBeenCalled()
     handle({ kind: 'quakeNotice', data: notice() })
-    handle({ kind: 'quakeNotice', data: notice({ id: 'qn-1-cancel', cancelled: true }) })
+    handle({ kind: 'quakeNotice', data: notice({ id: 'qn-1-cancel', cancelled: true, body: '' }) })
     expect(notify).toHaveBeenLastCalledWith('地震・津波に関するお知らせ 取消', '地震・津波に関するお知らせは取り消されました', 'quake-notice', false, null)
   })
 })
@@ -295,6 +300,44 @@ describe('地震回数に関する情報', () => {
     const { handle } = setup()
     handle({ kind: 'earthquakeCount', data: count({ cancelled: true }) })
     expect(sound.mock.calls).toEqual([['earthquakeCancel']])
+    expect(notify).not.toHaveBeenCalled()
+  })
+})
+
+// 2026-11-09 ユーザー選択「端末に保存＋出したときだけ覚える (Recommended)」
+describe('通知した記憶を端末に保つ', () => {
+  it('正: 読み込み直した後（新しく立てたフック）でも、発表を通知した取消の通知を出す', () => {
+    setup().handle({ kind: 'lpgm', data: lpgm() })
+    notify.mockClear()
+    setup().handle({ kind: 'lpgm', data: lpgm({ id: 'l-2', cancelled: true, hypocenter: undefined, maxClass: 0 }) })
+    expect(notify).toHaveBeenCalledWith(
+      '長周期地震動に関する観測情報 取消', '石川県能登地方の長周期地震動に関する観測情報は取り消されました', 'lpgm-20260101161000',
+      false, null,
+    )
+  })
+  it('正: 時間軸を切り替えても（resetTracking）記憶を捨てない', () => {
+    const { handle, reset } = setup()
+    handle({ kind: 'earthquakeCount', data: count() })
+    reset()
+    notify.mockClear()
+    handle({ kind: 'earthquakeCount', data: count({ id: 'ec-2', cancelled: true }) })
+    expect(notify).toHaveBeenCalledWith('地震回数に関する情報 取消', '地震回数に関する情報は取り消されました', 'earthquake-count', false, null)
+  })
+  it('対照: 通知が出ない状態（許可なし・開いている間は出さない）で受けた発表は覚えず、取消も通知しない', () => {
+    const { handle } = setup()
+    wouldShow.mockReturnValue(false)
+    handle({ kind: 'earthquakeCount', data: count() })
+    wouldShow.mockReturnValue(true)
+    notify.mockClear()
+    handle({ kind: 'earthquakeCount', data: count({ id: 'ec-2', cancelled: true }) })
+    expect(notify).not.toHaveBeenCalled()
+  })
+  it('安全弁: 取消を通知したら記憶から外す（2 通目の取消は通知しない）', () => {
+    const { handle } = setup()
+    handle({ kind: 'earthquakeCount', data: count() })
+    handle({ kind: 'earthquakeCount', data: count({ id: 'ec-2', cancelled: true }) })
+    notify.mockClear()
+    setup().handle({ kind: 'earthquakeCount', data: count({ id: 'ec-3', cancelled: true }) })
     expect(notify).not.toHaveBeenCalled()
   })
 })

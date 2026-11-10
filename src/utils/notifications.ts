@@ -12,6 +12,14 @@ export function canShowBrowserNotification(): boolean {
 }
 
 /**
+ * いま通知を呼べば利用者に出るか（許可があり、設定「アプリを開いている間は通知しない」で止まらない）。
+ * 「通知を出したものだけ覚える」記憶の判定に使う（出なかった発表を覚えると、その取消だけが通知に出る）
+ */
+export function notificationWouldShow(): boolean {
+  return canShowBrowserNotification() && !quietNow()
+}
+
+/**
  * 通知を出す。出せなければ reject する（許可があることは呼び出し側が確かめておく）。
  *
  * **Service Worker が動いていればそちらから出す**（`registration.showNotification()`）。Android の Chrome 系は
@@ -230,6 +238,37 @@ export function showBrowserNotification(
   if (!canShowBrowserNotification()) return
   deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: true, data: notificationData(open) })
     .catch((e: unknown) => log.error(`[notify] ブラウザ通知を出せませんでした（${tag}）`, e))
+}
+
+/**
+ * 同じ札の通知を**鳴らさずに**置き換える（`renotify` なし・`silent`）。緊急地震速報の、格上げも引き上げも無い続報で
+ * 本文が変わったときに使う（2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）。
+ * 同じ札の通知が残っていなければ（利用者が閉じた・出ていなかった）何もしない（鳴らさずに新しく出すと、通知が
+ * 前触れなく現れる）。端末ごとに鳴らさず差し替わるかは実機で確かめる
+ */
+export function replaceBrowserNotificationQuietly(
+  title: string,
+  body: string,
+  tag: string,
+  requireInteraction: boolean,
+  open: NotificationOpen | null,
+): void {
+  if (!canShowBrowserNotification()) return
+  void (async () => {
+    // **前の通知が画面に残っているときだけ差し替える。** 利用者が閉じた通知を、続報のたびに出し直さない。
+    // 残っているかを確かめられるのは Service Worker から出した通知だけ（ページから出した通知は引けないので、そのまま差し替える）
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      const registration = await findOwnRegistration(tag)
+      if (registration?.active) {
+        const still = await registration.getNotifications({ tag }).catch(() => null)
+        if (still && still.length === 0) {
+          log.debug(`[notify] 差し替える通知がもう閉じられているので、出し直さない（${tag}）`)
+          return
+        }
+      }
+    }
+    await deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: false, silent: true, data: notificationData(open) })
+  })().catch((e: unknown) => log.error(`[notify] ブラウザ通知を差し替えられませんでした（${tag}）`, e))
 }
 
 /**

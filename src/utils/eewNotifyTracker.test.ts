@@ -3,7 +3,7 @@ import type { EEWAlert } from '../types/earthquake'
 import { acceptEewReport, ACTIVE_EEW_WINDOW_MS, type EndedEew } from './eew'
 import {
   decideEewReportEntry, decideEewCancelEntry, endEewOnExpiry, mergeEndedEew, stepEewAnnounce,
-  eewAnnounceNotice, eewCancelNotice, eewReportCancelMs,
+  eewAnnounceNotice, eewCancelNotice, eewReportCancelMs, eewQuietReplaceNotice,
 } from './eewNotifyTracker'
 
 const T0 = Date.parse('2026-01-01T12:00:00Z')
@@ -219,7 +219,7 @@ describe('通知の文面', () => {
     const warn = report(1, { severity: 'Warning', forecastMaxScale: 45 })
     const step = stepEewAnnounce(warn, false, { level: undefined, baseline: undefined })
     expect(eewAnnounceNotice('ev1', warn, step.forecast)).toEqual({
-      title: '緊急地震速報 警報', body: '石川県能登地方 最大震度5弱予想', tag: 'eew-ev1', open: { tab: 'realtime' },
+      title: '緊急地震速報 警報', body: '石川県能登地方 M6.0 最大震度5弱予想', tag: 'eew-ev1', open: { tab: 'realtime' },
     })
     const fc = report(1)
     expect(eewAnnounceNotice('ev1', fc, stepEewAnnounce(fc, false, { level: undefined, baseline: undefined }).forecast).title).toBe('地震動予報')
@@ -232,5 +232,27 @@ describe('通知の文面', () => {
 
   it('取消は取消の tag で出す', () => {
     expect(eewCancelNotice('ev1', '石川県能登地方').tag).toBe('eew-cancel-ev1')
+  })
+})
+
+// 最終報と規模（2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）。
+//   正  : 最終報は見出しに「（最終報）」を添える／対照: 字面の同じ続報は差し替えない／安全弁: 通知していない地震は差し替えない
+describe('続報の鳴らさない差し替え', () => {
+  it('正: 最終報は見出しに「（最終報）」を添え、字面が変われば差し替える', () => {
+    const first = report(1, { severity: 'Warning', forecastMaxScale: 45 })
+    const firstNotice = eewAnnounceNotice('ev1', first, stepEewAnnounce(first, false, { level: undefined, baseline: undefined }).forecast)
+    const last = { ...report(2, { severity: 'Warning', forecastMaxScale: 45 }), isFinal: true }
+    const lastNotice = eewAnnounceNotice('ev1', last, stepEewAnnounce(last, false, { level: undefined, baseline: undefined }).forecast)
+    expect(lastNotice.title).toBe('緊急地震速報 警報（最終報）')
+    expect(eewQuietReplaceNotice(lastNotice, firstNotice)).toBe(lastNotice)
+  })
+  it('対照: 字面の同じ続報は差し替えない', () => {
+    const r = report(1, { severity: 'Warning', forecastMaxScale: 45 })
+    const n = eewAnnounceNotice('ev1', r, stepEewAnnounce(r, false, { level: undefined, baseline: undefined }).forecast)
+    expect(eewQuietReplaceNotice(n, { title: n.title, body: n.body })).toBeNull()
+  })
+  it('安全弁: 通知していない地震は差し替えない', () => {
+    const r = report(1, { severity: 'Warning', forecastMaxScale: 45 })
+    expect(eewQuietReplaceNotice(eewAnnounceNotice('ev1', r, stepEewAnnounce(r, false, { level: undefined, baseline: undefined }).forecast), undefined)).toBeNull()
   })
 })

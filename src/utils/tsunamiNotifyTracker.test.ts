@@ -4,7 +4,7 @@ import { stepTsunamiState } from './tsunami'
 import {
   tsunamiCardOrderBasis, tsunamiReportDropped, isTsunamiSameGradeReport, nextTsunamiGrade, createTsunamiObsDisplayMemory,
   clearTsunamiObsDisplayMemory, rememberTsunamiObsDisplay, tsunamiObservationMarks, tsunamiIssueNotificationFor,
-  tsunamiObservationNotificationFor, tsunamiEndNotificationFor,
+  tsunamiObservationNotificationFor, tsunamiEndNotificationFor, tsunamiPartialRetractionNotificationFor, partialRetractionKey,
 } from './tsunamiNotifyTracker'
 
 const area = (name: string, code: string, grade: TsunamiGrade): TsunamiArea =>
@@ -126,5 +126,40 @@ describe('観測点の印と観測の通知', () => {
     rememberTsunamiObsDisplay([obs('輪島港', 1.2), obs('富山')], memory)
     clearTsunamiObsDisplayMemory(memory)
     expect([memory.seenNames.size, memory.maxHeights.size, memory.reportedHeights.size]).toEqual([0, 0, 0])
+  })
+})
+
+// 津波情報だけの取消の通知（2026-11-09 ユーザー選択「音は全部・通知は通知した報だけ (Recommended)」）。
+//   正  : 観測情報を通知した報への取消は、電文の本文で出す／対照: 通知していない報への取消は出さない／
+//   安全弁: 津波警報等の取消（VTSE41）はこの判定を通らない
+describe('津波情報だけの取消の通知', () => {
+  const retraction = (over: Partial<JMATsunami> = {}) => report({
+    headType: 'VTSE51', id: 't-9', cancelled: true, cancelReason: 'retracted', infoName: '各地の満潮時刻・津波到達予想時刻に関する情報',
+    cancelText: '先ほどの、各地の満潮時刻と津波到達予想時刻に関する情報を取り消します。', areas: [], ...over,
+  })
+  it('正: 観測情報を通知した報への取消は、題「津波情報の取消」・本文は電文のまま', () => {
+    const r = retraction()
+    const n = tsunamiPartialRetractionNotificationFor(r, new Set([partialRetractionKey(r)]))!
+    expect(n.title).toBe('津波情報の取消')
+    expect(n.body).toBe('先ほどの、各地の満潮時刻と津波到達予想時刻に関する情報を取り消します。')
+    // 本文が無ければ情報名で言う
+    expect(tsunamiPartialRetractionNotificationFor(retraction({ cancelText: undefined }), new Set([partialRetractionKey(r)]))!.body)
+      .toBe('各地の満潮時刻・津波到達予想時刻に関する情報は取り消されました。')
+  })
+  it('対照: 観測情報を通知していない報への取消は出さない', () => {
+    expect(tsunamiPartialRetractionNotificationFor(retraction(), new Set())).toBeNull()
+  })
+  it('正: 原因地震が加わって EventID が伸びた後の取消でも、同じ種類の観測を通知していれば出す', () => {
+    const before = retraction({ eventId: '20240101161010' })
+    const after = retraction({ eventId: '20240101161010 20240101161800' })
+    expect(tsunamiPartialRetractionNotificationFor(after, new Set([partialRetractionKey(before)]))).not.toBeNull()
+  })
+  it('対照: 別の種類（沖合の観測）を通知していても、津波情報の取消では出さない', () => {
+    const r = retraction()
+    expect(tsunamiPartialRetractionNotificationFor(r, new Set([partialRetractionKey(retraction({ headType: 'VTSE52' }))]))).toBeNull()
+  })
+  it('安全弁: 津波警報等の取消（VTSE41）はこの判定では出さない', () => {
+    const r = retraction({ headType: 'VTSE41' })
+    expect(tsunamiPartialRetractionNotificationFor(r, new Set([partialRetractionKey(r)]))).toBeNull()
   })
 })
