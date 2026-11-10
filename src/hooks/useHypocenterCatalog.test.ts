@@ -103,7 +103,7 @@ describe('useHypocenterCatalog', () => {
     await waitFor(() => expect(result.current.years.length).toBe(3))
     expect(result.current.years.map((y) => y.year)).toEqual([2020, 2021, 2022])
     expect(result.current.missingYears).toEqual([])
-    expect(result.current.error).toBeNull()
+    expect(result.current.indexFailed).toBe(false)
     expect(result.current.loading).toBe(false)
   })
 
@@ -140,11 +140,11 @@ describe('useHypocenterCatalog', () => {
     expect(result.current.missingYears.length).toBeLessThan(result.current.requestedYears)
   })
 
-  // 正: 索引の失敗は `error` として出す。
-  it('索引の取得に失敗したら error が立つ', async () => {
+  // 正: 索引の失敗は `indexFailed` として出す。
+  it('索引の取得に失敗したら indexFailed が立つ', async () => {
     mockIndex.mockRejectedValue(new Error('boom'))
     const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
-    await waitFor(() => expect(result.current.error).not.toBeNull())
+    await waitFor(() => expect(result.current.indexFailed).toBe(true))
     expect(result.current.loading).toBe(false)
   })
 

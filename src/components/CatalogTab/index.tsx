@@ -1,8 +1,10 @@
-import { memo, useLayoutEffect, useRef } from 'react'
+import { memo, useLayoutEffect, useMemo, useRef } from 'react'
 import { RangeSlider } from '../RangeSlider'
 import { DateField } from '../DateField'
 import { Toggle } from '../Toggle'
 import { DescriptionTip } from '../DescriptionTip'
+import { useLocale, useMessages } from '../../i18n/I18nProvider'
+import { localeTag } from '../../i18n/messages'
 import type { HypocenterIndex } from '../../utils/hypocenterCatalog'
 import {
   catalogCompleteness,
@@ -59,7 +61,8 @@ interface Props {
    * 何も出さないと変更が無視されたように見える（期間以外のスライダーでは `loading` も立たない）。
    */
   pending: boolean
-  error: string | null
+  /** 索引を取得できなかったか。年ファイルの欠けは `missingYears`。 */
+  indexFailed: boolean
   /** 取得できなかった年（昇順）。空でなければ件数はそのぶん少ない。 */
   missingYears: number[]
   /**
@@ -75,12 +78,6 @@ interface Props {
    * 添え書きの 2 つ目の文も出さない）。→ `useHypocenterCatalog` の `tail`
    */
   tail: { fromMs: number; untilMs: number } | null
-}
-
-const COLOR_BY_LABEL: Record<CatalogColorBy, string> = {
-  depth: '深さ',
-  magnitude: 'マグニチュード',
-  time: '発生年',
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -172,12 +169,17 @@ export const CatalogTab = memo(function CatalogTab({
   unknownMagnitudeCount,
   loading,
   pending,
-  error,
+  indexFailed,
   missingYears,
   requestedYears,
   onRetry,
   tail,
 }: Props) {
+  const cm = useMessages().catalog
+  const tag = localeTag(useLocale())
+  // 桁の区切りは言語ごと。整形の部品は言語が変わったときだけ作る（スライダーを動かすたびに作り直さない）
+  const numberFormat = useMemo(() => new Intl.NumberFormat(tag), [tag])
+  const num = (n: number) => numberFormat.format(n)
   const years = index?.years ?? []
   // **収録の両端をスライダーの端にする。** 索引が来るまでは選んでいる値をそのまま端にして
   // おく（つまみが範囲外に置かれると、ブラウザが勝手に丸めて値が飛ぶ）。
@@ -191,6 +193,7 @@ export const CatalogTab = memo(function CatalogTab({
   const firstYear = jstYearOf(periodMin)
   const lastYear = jstYearOf(periodMax)
   const completeness = index ? catalogCompleteness(index, filter) : null
+  const dayCount = periodDayCount(filter.fromMs, filter.toMs)
 
   // 貼りついた件数の行の高さを、節の見出しが貼りつく位置として渡す。描き直さずに済むよう CSS の変数で渡す
   const scopeRef = useRef<HTMLDivElement>(null)
@@ -232,59 +235,55 @@ export const CatalogTab = memo(function CatalogTab({
           「件数」の行のまま（2026-11-04 ユーザー選択「「表示中」に戻す (Recommended)」） */}
       <div ref={headRef} data-settings-row className="sticky top-0 z-[2] flex flex-wrap items-baseline gap-x-2 border-b border-border bg-panel" style={{ padding: '8px var(--qk-pad)' }}>
         <DescriptionTip
-          label="表示中"
-          description={
-            loading ? '年ごとのデータを取得しています'
-              : pending ? '絞り込みを変えた直後です。数えなおしが終わると入れ替わります'
-                : '地図に出ている点の数です'
-          }
+          label={cm.showing}
+          description={loading ? cm.showingHint.loading : pending ? cm.showingHint.pending : cm.showingHint.idle}
         />
         <span className="text-white tabular-nums" style={{ fontSize: 'var(--qk-f)' }}>
-          {pointCount.toLocaleString()} 件
+          {cm.count(pointCount, num(pointCount))}
           {/* 2026-10-18 ユーザー選択「内訳を出す」。0 件なら括弧ごと出さない。 */}
-          {unknownMagnitudeCount > 0 && `（うち M 不明 ${unknownMagnitudeCount.toLocaleString()} 件）`}
+          {unknownMagnitudeCount > 0 && cm.unknownMagnitude(unknownMagnitudeCount, num(unknownMagnitudeCount))}
         </span>
         {(loading || pending) && (
-          <span className="text-secondary">{loading ? '読み込み中' : '更新中'}</span>
+          <span className="text-secondary">{loading ? cm.loading : cm.updating}</span>
         )}
       </div>
       {/* 件数を読み違えないための知らせは、件数の行の真下に置く（取得できなかった年があると件数は少なく出る）。
           下の節の後ろに置くと、件数を見ながら絞り込みを動かしている間は目に入らない */}
-      {(error || missingYears.length > 0) && (
+      {(indexFailed || missingYears.length > 0) && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-2" style={{ paddingInline: 'var(--qk-pad)' }}>
           <p className="text-red-400">
             {/* **まるごと取れなかったときは言い方を変える。** 「そのぶん少なく」では、
                 1 件も出ていない状態が「少し欠けている」と読める。 */}
-            {error
-              ?? (missingYears.length >= requestedYears
-                ? `${formatMissingYears(missingYears)} 年を取得できず（この期間の地震は 1 件も出ていません）`
-                : `${formatMissingYears(missingYears)} 年を取得できず（件数はそのぶん少なく出ています）`)}
+            {indexFailed
+              ? cm.indexFailed
+              : missingYears.length >= requestedYears
+                ? cm.missingAllYears(formatMissingYears(missingYears, cm))
+                : cm.missingSomeYears(formatMissingYears(missingYears, cm))}
           </p>
           <button
             onClick={onRetry}
             className="rounded-md border border-border bg-panel px-3 py-1.5 text-white whitespace-nowrap transition-colors motion-reduce:transition-none hover:bg-white/10"
           >
-            再試行
+            {cm.retry}
           </button>
         </div>
       )}
       {completeness?.belowComplete && (
         <p className="text-yellow-400 pt-2" style={{ paddingInline: 'var(--qk-pad)' }}>
-          {oldestYearOf(filter)} 年まで遡ると、記録が揃うのは M {completeness.completeMin.toFixed(1)} 以上です。
-          それより小さい地震は少なく見えます。
+          {cm.completeness(oldestYearOf(filter), completeness.completeMin.toFixed(1))}
         </p>
       )}
       <div className="pt-3">
-      <Section title="絞り込み">
+      <Section title={cm.filterSection}>
         <RangeRow
-          label="期間"
-          description="表示する期間です。スライダーは年ごとに動き、日付を選ぶと年の途中から指定できます。日付を選んだ側は、もう一方のつまみを動かしても保たれます"
-          valueText={`${formatJstDate(filter.fromMs)} 〜 ${formatJstDate(filter.toMs)}（${periodDayCount(filter.fromMs, filter.toMs).toLocaleString()}日ぶん）`}
-          note={index ? preliminaryNote(index, filter, tail?.fromMs ?? null) : null}
+          label={cm.period}
+          description={cm.periodHint}
+          valueText={cm.periodValue(formatJstDate(filter.fromMs), formatJstDate(filter.toMs), dayCount, num(dayCount))}
+          note={index ? preliminaryNote(index, filter, tail?.fromMs ?? null, cm) : null}
         >
           <RangeSlider
-            label="期間"
-            ends={['開始', '終了']}
+            label={cm.period}
+            ends={cm.periodEnds}
             min={firstYear}
             max={lastYear}
             step={1}
@@ -295,7 +294,7 @@ export const CatalogTab = memo(function CatalogTab({
           />
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <DateField
-              label="期間の開始日"
+              label={cm.startDate}
               value={toDateInputValue(filter.fromMs)}
               min={toDateInputValue(periodMin)}
               max={toDateInputValue(periodMax)}
@@ -303,9 +302,9 @@ export const CatalogTab = memo(function CatalogTab({
               onCommit={(v) => changeDate(v, 'from')}
               className={DATE_INPUT_CLASS}
             />
-            <span className="text-secondary">〜</span>
+            <span className="text-secondary">{cm.dateSeparator}</span>
             <DateField
-              label="期間の終了日"
+              label={cm.endDate}
               value={toDateInputValue(filter.toMs)}
               min={toDateInputValue(periodMin)}
               max={toDateInputValue(periodMax)}
@@ -317,16 +316,17 @@ export const CatalogTab = memo(function CatalogTab({
         </RangeRow>
 
         <RangeRow
-          label="マグニチュード"
+          label={cm.magnitude}
           note={null}
-          description="表示する規模の範囲です。端に置くとその側の制限を外します"
+          description={cm.magnitudeHint}
           valueText={rangeLabel(
-            magnitudeBoundLabel(filter.minMagnitude, 'min'),
-            magnitudeBoundLabel(filter.maxMagnitude, 'max'),
+            magnitudeBoundLabel(filter.minMagnitude, 'min', cm),
+            magnitudeBoundLabel(filter.maxMagnitude, 'max', cm),
+            cm,
           )}
         >
           <RangeSlider
-            label="マグニチュード"
+            label={cm.magnitude}
             min={MAGNITUDE_FILTER_RANGE.min}
             max={MAGNITUDE_FILTER_RANGE.max}
             step={0.1}
@@ -337,13 +337,13 @@ export const CatalogTab = memo(function CatalogTab({
         </RangeRow>
 
         <RangeRow
-          label="深さ"
+          label={cm.depth}
           note={null}
-          description="表示する震源の深さの範囲です。端に置くとその側の制限を外します"
-          valueText={rangeLabel(depthBoundLabel(filter.minDepthKm, 'min'), depthBoundLabel(filter.maxDepthKm, 'max'))}
+          description={cm.depthHint}
+          valueText={rangeLabel(depthBoundLabel(filter.minDepthKm, 'min', cm), depthBoundLabel(filter.maxDepthKm, 'max', cm), cm)}
         >
           <RangeSlider
-            label="深さ"
+            label={cm.depth}
             min={0}
             max={DEPTH_FILTER_MAX_KM}
             step={10}
@@ -354,13 +354,13 @@ export const CatalogTab = memo(function CatalogTab({
         </RangeRow>
 
         <RangeRow
-          label="緯度"
+          label={cm.latitude}
           note={null}
-          description="表示する南北の範囲です。経度・深さと合わせて、直方体で切り出せます。端に置くとその側の制限を外します"
-          valueText={rangeLabel(latBoundLabel(filter.minLat, 'min'), latBoundLabel(filter.maxLat, 'max'))}
+          description={cm.latitudeHint}
+          valueText={rangeLabel(latBoundLabel(filter.minLat, 'min', cm), latBoundLabel(filter.maxLat, 'max', cm), cm)}
         >
           <RangeSlider
-            label="緯度"
+            label={cm.latitude}
             min={LATITUDE_FILTER_RANGE.min}
             max={LATITUDE_FILTER_RANGE.max}
             step={0.5}
@@ -371,13 +371,13 @@ export const CatalogTab = memo(function CatalogTab({
         </RangeRow>
 
         <RangeRow
-          label="経度"
+          label={cm.longitude}
           note={null}
-          description="表示する東西の範囲です。端に置くとその側の制限を外します"
-          valueText={rangeLabel(lngBoundLabel(filter.minLng, 'min'), lngBoundLabel(filter.maxLng, 'max'))}
+          description={cm.longitudeHint}
+          valueText={rangeLabel(lngBoundLabel(filter.minLng, 'min', cm), lngBoundLabel(filter.maxLng, 'max', cm), cm)}
         >
           <RangeSlider
-            label="経度"
+            label={cm.longitude}
             min={LONGITUDE_FILTER_RANGE.min}
             max={LONGITUDE_FILTER_RANGE.max}
             step={0.5}
@@ -390,46 +390,46 @@ export const CatalogTab = memo(function CatalogTab({
         {/* 既定は出さず、切り替えで足す（2026-10-25 ユーザー選択「既定は J だけ・切り替えで足す (Recommended)」）。
             文言は 2026-10-25 ユーザー承認「D の案でよい (Recommended)」。 */}
         <Row
-          label="気象庁以外の機関の震源"
-          description="気象庁以外の機関が決めた震源も表示します。ほとんどが海外の地震で、日本付近の一部は気象庁の震源と重なります。"
+          label={cm.external}
+          description={cm.externalHint}
         >
           <Toggle
-            label="気象庁以外の機関の震源"
+            label={cm.external}
             checked={filter.includeExternal}
             onChange={(v) => onFilterChange({ ...filter, includeExternal: v })}
           />
         </Row>
       </Section>
 
-      <Section title="見せ方">
-        <Row label="色分け" description="点の色を何で決めるかです。深さは浅いほど暖色、マグニチュードは大きいほど暖色、発生年は新しいほど明るくなります">
+      <Section title={cm.viewSection}>
+        <Row label={cm.colorBy} description={cm.colorByHint}>
           <select
             value={view.colorBy}
             onChange={(e) => onViewChange({ ...view, colorBy: e.target.value as CatalogColorBy })}
             className={SELECT_CLASS}
           >
-            {(Object.keys(COLOR_BY_LABEL) as CatalogColorBy[]).map((k) => (
-              <option key={k} value={k}>{COLOR_BY_LABEL[k]}</option>
+            {(Object.keys(cm.colorByOption) as CatalogColorBy[]).map((k) => (
+              <option key={k} value={k}>{cm.colorByOption[k]}</option>
             ))}
           </select>
         </Row>
         {/* **倍率は実装から引く。** 数値を書き写すと、効き方を変えたときに説明文だけ古い値のまま残る。 */}
         <Row
-          label="強調表示"
-          description={`マグニチュードが大きいほど点を大きくします。下の基準サイズに対して、M3 で ${pointSizePx(1, 3, 'magnitude').toFixed(2)} 倍・M9 で ${pointSizePx(1, 9, 'magnitude').toFixed(2)} 倍です`}
+          label={cm.emphasis}
+          description={cm.emphasisHint(pointSizePx(1, 3, 'magnitude').toFixed(2), pointSizePx(1, 9, 'magnitude').toFixed(2))}
         >
           <Toggle
-            label="強調表示"
+            label={cm.emphasis}
             checked={view.sizeBy === 'magnitude'}
             onChange={(v) => onViewChange({ ...view, sizeBy: v ? 'magnitude' : 'fixed' })}
           />
         </Row>
-        <Row label="点の基準サイズ" description="点の直径です。強調表示がオンのときは、この大きさに倍率が掛かります">
+        <Row label={cm.pointSize} description={cm.pointSizeHint}>
           {/* **値は隠さない。** 隠してよいのは説明文だけ（スライダーを見ても px は読めない）。 */}
           <span className="text-secondary tabular-nums">{view.sizePx.toFixed(1)} px</span>
           <input
             type="range"
-            aria-label="点の基準サイズ"
+            aria-label={cm.pointSize}
             min={1}
             max={8}
             step={0.5}
@@ -444,7 +444,7 @@ export const CatalogTab = memo(function CatalogTab({
           （設定の窓からの横展開。2026-11-04 ユーザー選択済み） */}
       {index && (
         <div className="flex flex-col gap-x-4 text-secondary @min-[520px]:flex-row @min-[520px]:justify-between" style={{ paddingInline: 'var(--qk-pad)' }}>
-          <span className="shrink-0">出典</span>
+          <span className="shrink-0">{cm.source}</span>
           <div className="flex flex-col @min-[520px]:items-end @min-[520px]:text-right">
             {index.source.split(' / ').map((s) => <span key={s}>{s}</span>)}
             <span>（{index.license}）</span>

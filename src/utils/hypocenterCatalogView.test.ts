@@ -49,6 +49,13 @@ import {
   type CatalogViewOptions,
 } from './hypocenterCatalogView'
 import type { HypocenterIndex, HypocenterYear } from './hypocenterCatalog'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
+import { zhHans } from '../i18n/messages/zhHans'
+import { zhHant } from '../i18n/messages/zhHant'
+import { ko } from '../i18n/messages/ko'
+import { ptBR } from '../i18n/messages/ptBR'
+import { es } from '../i18n/messages/es'
 
 /** 1 年ぶんの作り物。配列の長さをそろえるのが面倒なので、ここでまとめて作る。 */
 const makeYear = (
@@ -279,18 +286,57 @@ describe('catalogCompleteness', () => {
 describe('rangeLabel', () => {
   // 正: 両側に制限があれば並べる。
   it('両側に制限があれば並べる', () => {
-    expect(rangeLabel('M 4.0 以上', 'M 7.0 以下')).toBe('M 4.0 以上 〜 M 7.0 以下')
+    expect(rangeLabel('M 4.0 以上', 'M 7.0 以下', ja.catalog)).toBe('M 4.0 以上 〜 M 7.0 以下')
   })
 
   // **正: 片側だけなら、その側だけを書く。**「M 4.0 以上 〜 制限なし」は読みにくい。
   it('片側だけなら片側だけ書く', () => {
-    expect(rangeLabel('M 4.0 以上', '制限なし')).toBe('M 4.0 以上')
-    expect(rangeLabel('制限なし', 'M 7.0 以下')).toBe('M 7.0 以下')
+    expect(rangeLabel('M 4.0 以上', '制限なし', ja.catalog)).toBe('M 4.0 以上')
+    expect(rangeLabel('制限なし', 'M 7.0 以下', ja.catalog)).toBe('M 7.0 以下')
   })
 
   // 対照: 両側とも無ければ 1 つに畳む。
   it('両側とも無ければ畳む', () => {
-    expect(rangeLabel('制限なし', '制限なし')).toBe('制限なし')
+    expect(rangeLabel('制限なし', '制限なし', ja.catalog)).toBe('制限なし')
+  })
+
+  // 正: ほかの言語でも、畳むかは渡した辞書の「制限なし」で見る（日本語の語で見ると、英語では両端とも並んでしまう）。
+  it('ほかの言語の辞書でも、制限なしの側を畳む', () => {
+    const w = en.catalog
+    expect(rangeLabel(magnitudeBoundLabel(4, 'min', w), magnitudeBoundLabel(MAGNITUDE_FILTER_RANGE.max, 'max', w), w)).toBe('M 4.0 and above')
+    expect(rangeLabel(depthBoundLabel(0, 'min', w), depthBoundLabel(DEPTH_FILTER_MAX_KM, 'max', w), w)).toBe('No limit')
+    expect(rangeLabel(latBoundLabel(35, 'min', w), latBoundLabel(40, 'max', w), w)).toBe('North of 35.0°N – South of 40.0°N')
+  })
+})
+
+describe('カタログの語（言語ごと）', () => {
+  // 安全弁: 日本語の辞書から組んだ見出しは、辞書へ移す前の文字と同じ。
+  it('日本語は移す前の文字のまま', () => {
+    expect(formatMissingYears([1990, 1991, 1995], ja.catalog)).toBe('1990〜1991, 1995')
+    expect(ja.catalog.periodValue('2020年3月14日', '2020年3月20日', 7, '7')).toBe('2020年3月14日 〜 2020年3月20日（7日ぶん）')
+    expect(ja.catalog.count(1234, '1,234')).toBe('1,234 件')
+  })
+
+  // 正: 日数の複数形は、桁を区切った文字ではなく数そのもので分ける。
+  it('英語・スペイン語の日数は 1 のときだけ単数にする', () => {
+    expect(en.catalog.periodValue('a', 'b', 1, '1')).toBe('a – b (1 day)')
+    expect(en.catalog.periodValue('a', 'b', 1234, '1,234')).toBe('a – b (1,234 days)')
+    expect(es.catalog.periodValue('a', 'b', 1, '1')).toBe('a – b (1 día)')
+  })
+
+  // 正: 件数の行は、英語・ポルトガル語・スペイン語では数だけにする（貼りつく帯を 1 行に収める。2026-11-10 ユーザー選択「数だけにする (Recommended)」）。
+  it('英語・ポルトガル語・スペイン語の件数は数だけ', () => {
+    expect(en.catalog.count(367343, '367,343') + en.catalog.unknownMagnitude(86642, '86,642')).toBe('367,343 (M unknown: 86,642)')
+    expect(ptBR.catalog.count(2, '2')).toBe('2')
+    expect(es.catalog.unknownMagnitude(1, '1')).toBe(' (M desconocida: 1)')
+  })
+
+  // 正: 期間のつまみの読み上げ名は、どの言語でも開始・終了の 2 つ。
+  it('期間のつまみの名前はどの言語でも 2 つで、空でない', () => {
+    for (const m of [ja, en, zhHans, zhHant, ko, ptBR, es]) {
+      expect(m.catalog.periodEnds).toHaveLength(2)
+      expect(m.catalog.periodEnds.every((s) => s.length > 0)).toBe(true)
+    }
   })
 })
 
@@ -315,22 +361,22 @@ describe('oldestYearOf', () => {
 describe('formatMissingYears', () => {
   // 正: 連続した年は範囲に畳む。
   it('連続した年をまとめる', () => {
-    expect(formatMissingYears([1990, 1991, 1992])).toBe('1990〜1992')
+    expect(formatMissingYears([1990, 1991, 1992], ja.catalog)).toBe('1990〜1992')
   })
 
   // 正: 飛んだところで切る。
   it('飛びは分けて書く', () => {
-    expect(formatMissingYears([1990, 1991, 1995, 2001, 2002])).toBe('1990〜1991, 1995, 2001〜2002')
+    expect(formatMissingYears([1990, 1991, 1995, 2001, 2002], ja.catalog)).toBe('1990〜1991, 1995, 2001〜2002')
   })
 
   // 対照: 1 年だけなら範囲にしない。
   it('単独の年は範囲にしない', () => {
-    expect(formatMissingYears([1995])).toBe('1995')
+    expect(formatMissingYears([1995], ja.catalog)).toBe('1995')
   })
 
   // 安全弁: 空なら空文字（呼び出し側は長さで出し分けるが、ここでも壊れないこと）。
   it('空なら空文字', () => {
-    expect(formatMissingYears([])).toBe('')
+    expect(formatMissingYears([], ja.catalog)).toBe('')
   })
 })
 
@@ -409,12 +455,12 @@ describe('緯度・経度で切り出す', () => {
 
   // 正: 向きの語は深さに揃える（以深／以浅 に対して 以北／以南・以東／以西）。
   it('見出しの向きの語', () => {
-    expect(latBoundLabel(35, 'min')).toBe('北緯 35.0° 以北')
-    expect(latBoundLabel(40, 'max')).toBe('北緯 40.0° 以南')
-    expect(lngBoundLabel(135, 'min')).toBe('東経 135.0° 以東')
-    expect(lngBoundLabel(145, 'max')).toBe('東経 145.0° 以西')
-    expect(latBoundLabel(LATITUDE_FILTER_RANGE.min, 'min')).toBe('制限なし')
-    expect(lngBoundLabel(LONGITUDE_FILTER_RANGE.max, 'max')).toBe('制限なし')
+    expect(latBoundLabel(35, 'min', ja.catalog)).toBe('北緯 35.0° 以北')
+    expect(latBoundLabel(40, 'max', ja.catalog)).toBe('北緯 40.0° 以南')
+    expect(lngBoundLabel(135, 'min', ja.catalog)).toBe('東経 135.0° 以東')
+    expect(lngBoundLabel(145, 'max', ja.catalog)).toBe('東経 145.0° 以西')
+    expect(latBoundLabel(LATITUDE_FILTER_RANGE.min, 'min', ja.catalog)).toBe('制限なし')
+    expect(lngBoundLabel(LONGITUDE_FILTER_RANGE.max, 'max', ja.catalog)).toBe('制限なし')
   })
 })
 
@@ -456,10 +502,10 @@ describe('マグニチュードの上端も「制限なし」', () => {
 
   // 正: 端は「制限なし」と書く。
   it('端の見出しは制限なし', () => {
-    expect(magnitudeBoundLabel(MAGNITUDE_FILTER_RANGE.min, 'min')).toBe('制限なし')
-    expect(magnitudeBoundLabel(MAGNITUDE_FILTER_RANGE.max, 'max')).toBe('制限なし')
-    expect(magnitudeBoundLabel(4, 'min')).toBe('M 4.0 以上')
-    expect(magnitudeBoundLabel(6, 'max')).toBe('M 6.0 以下')
+    expect(magnitudeBoundLabel(MAGNITUDE_FILTER_RANGE.min, 'min', ja.catalog)).toBe('制限なし')
+    expect(magnitudeBoundLabel(MAGNITUDE_FILTER_RANGE.max, 'max', ja.catalog)).toBe('制限なし')
+    expect(magnitudeBoundLabel(4, 'min', ja.catalog)).toBe('M 4.0 以上')
+    expect(magnitudeBoundLabel(6, 'max', ja.catalog)).toBe('M 6.0 以下')
   })
 })
 
@@ -495,14 +541,14 @@ describe('深さの端は「制限なし」', () => {
 
   // 正: 端は「制限なし」と書く（「700 km 以浅」だと、それより深いものは見られないと読める）。
   it('端の見出しは制限なし', () => {
-    expect(depthBoundLabel(DEPTH_FILTER_MAX_KM, 'max')).toBe('制限なし')
-    expect(depthBoundLabel(0, 'min')).toBe('制限なし')
+    expect(depthBoundLabel(DEPTH_FILTER_MAX_KM, 'max', ja.catalog)).toBe('制限なし')
+    expect(depthBoundLabel(0, 'min', ja.catalog)).toBe('制限なし')
   })
 
   // 対照: 端でなければ値を書く。
   it('端でなければ値を書く', () => {
-    expect(depthBoundLabel(300, 'max')).toBe('300 km 以浅')
-    expect(depthBoundLabel(100, 'min')).toBe('100 km 以深')
+    expect(depthBoundLabel(300, 'max', ja.catalog)).toBe('300 km 以浅')
+    expect(depthBoundLabel(100, 'min', ja.catalog)).toBe('100 km 以深')
   })
 
   // **安全弁: 端に置いたとき、収録の上限より深い地震が落ちない。**
@@ -1183,39 +1229,39 @@ describe('preliminaryNote', () => {
 
   // 正: 速報値の年に掛かれば、最初の速報値の年の元日から速報値だと添える。
   it('速報値の年に掛かれば「2025年1月1日以降は速報値」', () => {
-    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), null)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), null, ja.catalog)).toBe('2025年1月1日以降は速報値')
   })
 
   it('期間が速報値の年の途中から始まっても、境目の日付を出す', () => {
-    expect(preliminaryNote(index, period('2026-03-01', '2026-10-16'), null)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2026-03-01', '2026-10-16'), null, ja.catalog)).toBe('2025年1月1日以降は速報値')
   })
 
   // 対照: 確定値の年だけなら出さない。
   it('確定値の年だけなら出さない', () => {
-    expect(preliminaryNote(index, period('2023-01-01', '2024-12-31'), null)).toBeNull()
+    expect(preliminaryNote(index, period('2023-01-01', '2024-12-31'), null, ja.catalog)).toBeNull()
   })
 
   // 安全弁: 開始と終了を逆に置いても掛かりを見落とさない（年ファイルの取得と同じく両端を正規化）。
   it('開始と終了が逆でも掛かりを見る', () => {
     const p = period('2023-01-01', '2025-02-01')
-    expect(preliminaryNote(index, { fromMs: p.toMs, toMs: p.fromMs }, null)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, { fromMs: p.toMs, toMs: p.fromMs }, null, ja.catalog)).toBe('2025年1月1日以降は速報値')
   })
 
   // 正: 末尾に掛かれば 2 つ目の文を続ける（2026-11-06 ユーザー選択「2 つ目の文を続ける (Recommended)」）。
   it('末尾に掛かれば「…以降は地震情報の電文から（無感の地震は載らない）」を続ける', () => {
     const tailFrom = fromDateInputValue('2026-10-17', 'start')!
-    expect(preliminaryNote(index, period('2017-01-01', '2026-10-18'), tailFrom))
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-18'), tailFrom, ja.catalog))
       .toBe('2025年1月1日以降は速報値。2026年10月17日以降は地震情報の電文から（無感の地震は載らない）')
   })
 
   // 対照: 期間が末尾より前で終わるなら続けない。
   it('期間が末尾より前で終わるなら、2 つ目の文は出さない', () => {
     const tailFrom = fromDateInputValue('2026-10-17', 'start')!
-    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), tailFrom)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), tailFrom, ja.catalog)).toBe('2025年1月1日以降は速報値')
   })
 
   it('速報値の年が無い索引では出さない', () => {
-    expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'), null)).toBeNull()
+    expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'), null, ja.catalog)).toBeNull()
   })
 })
 

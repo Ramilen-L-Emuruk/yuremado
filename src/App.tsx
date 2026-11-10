@@ -3728,7 +3728,7 @@ export function App() {
                 /* 絞り込みを変えた直後は件数が追いついていない（デバウンスした側で作るため）。
                    参照が同じなら落ち着いている（`useDebouncedValue` は同じ値なら同じ参照を返す）。 */
                 pending={catalogFilter !== settledFilter || catalogView !== settledView}
-                error={catalog.error}
+                indexFailed={catalog.indexFailed}
                 missingYears={catalog.missingYears}
                 requestedYears={catalog.requestedYears}
                 onRetry={catalog.retry}

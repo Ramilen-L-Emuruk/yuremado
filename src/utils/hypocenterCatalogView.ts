@@ -5,6 +5,10 @@
 import type { HypocenterIndex, HypocenterYear, TelegramPointLabels } from './hypocenterCatalog'
 import { completeMinMagnitude } from './hypocenterCatalog'
 import { depthPointShapeId, type DepthPointColumns } from '../components/Map/gl/depthPointLayer'
+import type { Messages } from '../i18n/messages'
+
+/** 震源カタログの語（日本語なら `ja.catalog`）。見出しを組む関数は、いま出している言語の辞書を受け取る */
+export type CatalogWords = Messages['catalog']
 
 /**
  * 絞り込みを変えてから点群を作り直すまでの待ち（ミリ秒）。
@@ -492,6 +496,7 @@ export function preliminaryNote(
   period: CatalogPeriod,
   /** 中継の地震情報の電文から作った末尾の始まり（＝カタログの終端）。末尾を足していなければ null */
   tailFromMs: number | null,
+  w: CatalogWords,
 ): string | null {
   const notes: string[] = []
   const firstPreliminary = index.years.find((y) => index.quality[String(y)] === 'preliminary')
@@ -499,14 +504,14 @@ export function preliminaryNote(
     const lo = Math.min(jstYearOf(period.fromMs), jstYearOf(period.toMs))
     const hi = Math.max(jstYearOf(period.fromMs), jstYearOf(period.toMs))
     const touches = index.years.some((y) => y >= lo && y <= hi && index.quality[String(y)] === 'preliminary')
-    if (touches) notes.push(`${formatJstDate(jstYearStartMs(firstPreliminary))}以降は速報値`)
+    if (touches) notes.push(w.preliminaryFrom(formatJstDate(jstYearStartMs(firstPreliminary))))
   }
   // 末尾に掛かるときだけ 2 つ目の文を続ける（2026-11-06 ユーザー選択「2 つ目の文を続ける (Recommended)」）。
   // 地震情報は震度 1 以上の地震などにしか出ないので、末尾の件数が少なく出る理由もここで伝える
   if (tailFromMs !== null && Math.max(period.fromMs, period.toMs) >= tailFromMs) {
-    notes.push(`${formatJstDate(tailFromMs)}以降は地震情報の電文から（無感の地震は載らない）`)
+    notes.push(w.telegramTailFrom(formatJstDate(tailFromMs)))
   }
-  return notes.length > 0 ? notes.join('。') : null
+  return notes.length > 0 ? w.joinNotes(notes) : null
 }
 
 /**
@@ -575,11 +580,12 @@ export function catalogCompleteness(
  * **片側だけ制限があるなら、その側だけを書く。** 「M 4.0 以上 〜 制限なし」は読みにくく、
  * 「M 4.0 以上」だけで絞り込みの内容を過不足なく表せる。
  */
-export function rangeLabel(minText: string, maxText: string, unlimited = '制限なし'): string {
+export function rangeLabel(minText: string, maxText: string, w: CatalogWords): string {
+  const unlimited = w.noLimit
   if (minText === unlimited && maxText === unlimited) return unlimited
   if (minText === unlimited) return maxText
   if (maxText === unlimited) return minText
-  return `${minText} 〜 ${maxText}`
+  return w.range(minText, maxText)
 }
 
 /**
@@ -599,7 +605,7 @@ export function yearsInRange(index: HypocenterIndex, fromYear: number, toYear: n
  * **並んだ年を 1 つずつ挙げない。** 通信が不調なときは連続した年がまとめて落ちるので、
  * 素朴に並べると 100 個の数字が出て読めなくなる。
  */
-export function formatMissingYears(years: readonly number[]): string {
+export function formatMissingYears(years: readonly number[], w: CatalogWords): string {
   if (years.length === 0) return ''
   const runs: [number, number][] = []
   for (const y of years) {
@@ -607,7 +613,7 @@ export function formatMissingYears(years: readonly number[]): string {
     if (last && y === last[1] + 1) last[1] = y
     else runs.push([y, y])
   }
-  return runs.map(([a, b]) => (a === b ? String(a) : `${a}〜${b}`)).join(', ')
+  return runs.map(([a, b]) => (a === b ? String(a) : w.yearRun(a, b))).join(w.yearRunSeparator)
 }
 
 /**
@@ -647,9 +653,9 @@ export function effectiveMaxMagnitude(maxMagnitude: number): number {
 }
 
 /** マグニチュードの範囲の見出し。端は「制限なし」と書く（理由は `depthBoundLabel` と同じ）。 */
-export function magnitudeBoundLabel(value: number, bound: 'min' | 'max'): string {
-  if (bound === 'min') return value <= MAGNITUDE_FILTER_RANGE.min ? '制限なし' : `M ${value.toFixed(1)} 以上`
-  return value >= MAGNITUDE_FILTER_RANGE.max ? '制限なし' : `M ${value.toFixed(1)} 以下`
+export function magnitudeBoundLabel(value: number, bound: 'min' | 'max', w: CatalogWords): string {
+  if (bound === 'min') return value <= MAGNITUDE_FILTER_RANGE.min ? w.noLimit : w.magnitudeAtLeast(value.toFixed(1))
+  return value >= MAGNITUDE_FILTER_RANGE.max ? w.noLimit : w.magnitudeAtMost(value.toFixed(1))
 }
 
 /** 上と対（下限の端は「下限なし」）。 */
@@ -663,9 +669,9 @@ export function effectiveMinDepthKm(minDepthKm: number): number {
  * **端は「制限なし」と書く。** 「700km 以浅」と出すと、それより深い地震はこのアプリでは
  * 見られないと読めてしまう（実際は端＝制限なしで、全部入っている）。
  */
-export function depthBoundLabel(valueKm: number, bound: 'min' | 'max'): string {
-  if (bound === 'min') return valueKm <= 0 ? '制限なし' : `${valueKm} km 以深`
-  return valueKm >= DEPTH_FILTER_MAX_KM ? '制限なし' : `${valueKm} km 以浅`
+export function depthBoundLabel(valueKm: number, bound: 'min' | 'max', w: CatalogWords): string {
+  if (bound === 'min') return valueKm <= 0 ? w.noLimit : w.depthAtLeast(valueKm)
+  return valueKm >= DEPTH_FILTER_MAX_KM ? w.noLimit : w.depthAtMost(valueKm)
 }
 
 /**
@@ -698,14 +704,14 @@ export function effectiveLngRange(minLng: number, maxLng: number): [number, numb
  *
  * 向きの語は深さに揃える（深さが「以深／以浅」なので、緯度は「以北／以南」・経度は「以東／以西」）。
  */
-export function latBoundLabel(value: number, bound: 'min' | 'max'): string {
-  if (bound === 'min') return value <= LATITUDE_FILTER_RANGE.min ? '制限なし' : `北緯 ${value.toFixed(1)}° 以北`
-  return value >= LATITUDE_FILTER_RANGE.max ? '制限なし' : `北緯 ${value.toFixed(1)}° 以南`
+export function latBoundLabel(value: number, bound: 'min' | 'max', w: CatalogWords): string {
+  if (bound === 'min') return value <= LATITUDE_FILTER_RANGE.min ? w.noLimit : w.northOf(value.toFixed(1))
+  return value >= LATITUDE_FILTER_RANGE.max ? w.noLimit : w.southOf(value.toFixed(1))
 }
 
-export function lngBoundLabel(value: number, bound: 'min' | 'max'): string {
-  if (bound === 'min') return value <= LONGITUDE_FILTER_RANGE.min ? '制限なし' : `東経 ${value.toFixed(1)}° 以東`
-  return value >= LONGITUDE_FILTER_RANGE.max ? '制限なし' : `東経 ${value.toFixed(1)}° 以西`
+export function lngBoundLabel(value: number, bound: 'min' | 'max', w: CatalogWords): string {
+  if (bound === 'min') return value <= LONGITUDE_FILTER_RANGE.min ? w.noLimit : w.eastOf(value.toFixed(1))
+  return value >= LONGITUDE_FILTER_RANGE.max ? w.noLimit : w.westOf(value.toFixed(1))
 }
 
 /** 絞り込みに残るかどうか。**取り込みと件数の見積もりで同じ述語を使う**ため切り出してある。 */
