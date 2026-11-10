@@ -44,15 +44,3 @@ export function notificationRegionAllowed(settings: Pick<AppSettings, 'notifyPre
   if (prefectures === null || settings.notifyPrefectures.length === 0) return true
   return prefectures.some(p => settings.notifyPrefectures.includes(p))
 }
-
-/**
- * 震度を持たない国内の地震の報を、地域で絞っているので出さないか。震度の無い報は県を読めない（`notificationRegionAllowed` では
- * 絞らない扱いになる）が、地域を選んでいれば、どの県でも震度を観測していないので出さない。後から選んだ県で震度を観測した報が来れば、
- * そのとき通知する（2026-11-09 ユーザー選択「地域を選んでいれば出さない (Recommended)」）。遠地地震は震度に関係なく出す。
- */
-export function noIntensityQuakeHiddenByRegion(
-  settings: Pick<AppSettings, 'notifyPrefectures'>,
-  quake: { readonly earthquake: { readonly maxScale: number }; readonly issue: { readonly type: string } },
-): boolean {
-  return settings.notifyPrefectures.length > 0 && quake.earthquake.maxScale < 0 && quake.issue.type !== '遠地地震'
-}

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CONVEYED_CANCELS_MAX, cancelOverOtherUnit, decideDispatch, earthquakeCountBandDecision, expired, kohatsuBandDecision,
-  nankaiBandDecision, nankaiCommentaryBandDecision,
+  nankaiBandDecision, nankaiCommentaryBandDecision, quakeNoticeListDecision,
 } from './specialInfoBands'
 
 const NOW = Date.parse('2026-11-03T00:00:00Z')
@@ -109,5 +109,46 @@ describe('decideDispatch', () => {
     const conveyed = new Set<string>(Array.from({ length: CONVEYED_CANCELS_MAX }, (_, i) => `k${i}`))
     decideDispatch(conveyed, 'nankai', cancel, true, false, false)
     expect(conveyed.size).toBe(1)
+  })
+})
+
+// お知らせ（VZSE40）。アプリの帯と中継のプッシュ通知が同じ答えを出す（2026-11-04 ユーザー選択「気象庁どおりすべて外す (Recommended)」）
+describe('quakeNoticeListDecision', () => {
+  const shown = (id: string, eventId: string, reportDateTime = '2026-11-02T10:00:00Z', operationStatus?: '訓練') =>
+    ({ id, eventId, reportDateTime, operationStatus })
+  const notice = (over: Partial<Parameters<typeof quakeNoticeListDecision>[1]> = {}) => ({
+    id: 'n1', eventId: 'E1', cancelled: false, reportDateTime: '2026-11-02T10:00:00Z', expireAt: FUTURE, ...over,
+  })
+
+  it('正: 取消は EventID と運用種別が同じものを全件外す', () => {
+    const list = [shown('a1', 'E1'), shown('a2', 'E1'), shown('b', 'E2')]
+    expect(quakeNoticeListDecision(list, notice({ id: 'c', cancelled: true }), NOW)).toEqual({ apply: true, removeIds: ['a1', 'a2'] })
+  })
+  it('対照: 運用種別の違う取消・別の EventID への取消は当てない', () => {
+    const list = [shown('a1', 'E1')]
+    expect(quakeNoticeListDecision(list, notice({ id: 'c', cancelled: true, operationStatus: '訓練' }), NOW))
+      .toEqual({ apply: false, reason: 'otherUnit' })
+    expect(quakeNoticeListDecision(list, notice({ id: 'c', eventId: 'E9', cancelled: true }), NOW))
+      .toEqual({ apply: false, reason: 'otherUnit' })
+  })
+  it('安全弁: EventID が空の取消は、空の EventID の報が出ていても照合しない', () => {
+    expect(quakeNoticeListDecision([shown('a', '')], notice({ id: 'c', eventId: '', cancelled: true }), NOW))
+      .toEqual({ apply: false, reason: 'noEventId' })
+  })
+  it('一覧が空なら取消は notShown（期限は見ない）', () => {
+    expect(quakeNoticeListDecision([], notice({ cancelled: true, expireAt: PAST }), NOW)).toEqual({ apply: false, reason: 'notShown' })
+  })
+  it('発表は期限内なら当て、期限切れ・読めない期限は当てない', () => {
+    expect(quakeNoticeListDecision([], notice(), NOW)).toEqual({ apply: true, removeIds: [] })
+    expect(quakeNoticeListDecision([], notice({ expireAt: PAST }), NOW)).toEqual({ apply: false, reason: 'expired' })
+    expect(quakeNoticeListDecision([], notice({ expireAt: '壊れた日時' }), NOW)).toEqual({ apply: false, reason: 'badExpire' })
+  })
+  it('正: 同じ id のより新しい報が出ていれば、遅れて届いた報は当てない', () => {
+    const list = [shown('n1', 'E1', '2026-11-02T11:00:00Z')]
+    expect(quakeNoticeListDecision(list, notice(), NOW)).toEqual({ apply: false, reason: 'stale' })
+  })
+  it('対照: 同じ id でも同じか古い報なら置き換えに当て、別の id の新しい報は見ない', () => {
+    expect(quakeNoticeListDecision([shown('n1', 'E1', '2026-11-02T10:00:00Z')], notice(), NOW)).toEqual({ apply: true, removeIds: [] })
+    expect(quakeNoticeListDecision([shown('n2', 'E1', '2026-11-02T11:00:00Z')], notice(), NOW)).toEqual({ apply: true, removeIds: [] })
   })
 })
