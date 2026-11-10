@@ -66,7 +66,7 @@ export interface AppSettings extends QuakeListSettings {
   notifyMinScale: number    // 地震情報を通知する最低震度（階級値。入り切りは `notifyQuake`）
   // 地震後の行動チェックリストを出すか。最低震度とは別に持つ（切って入れ直しても最低震度を忘れないため）
   actionChecklistEnabled: boolean
-  // 地震後の行動チェックリストを出す最低震度。ホーム地点を設定していれば
+  // 地震後の行動チェックリストを出す最低震度。登録地点を設定していれば
   // その周り（半径 NEARBY_RADIUS_KM）で、していなければ全国のどこかで、この震度に達したら出す
   actionChecklistMinScale: number
   soundEnabled: boolean     // 地震・EEW・津波の受信時に音を鳴らす
@@ -140,12 +140,12 @@ export interface AppSettings extends QuakeListSettings {
    * （2026-11-03 ユーザー選択「都道府県を選べる・既定は全国 (Recommended)」「両方に掛ける (Recommended)」）
    */
   notifyPrefectures: string[]
-  homeLat: number | null           // ホーム地点 緯度（null = 未設定）
-  homeLng: number | null           // ホーム地点 経度（null = 未設定）
+  homeLat: number | null           // 登録地点 緯度（null = 未設定）
+  homeLng: number | null           // 登録地点 経度（null = 未設定）
   /**
    * 到達予想トークン（空文字 = 未設定）。
    *
-   * これが有効なときだけ、ホーム地点への主要動到達を自前の走時計算で出す。既定では気象庁が
+   * これが有効なときだけ、登録地点への主要動到達を自前の走時計算で出す。既定では気象庁が
    * 区域ごとに出した到達予測時刻を伝えるだけ —— 地点ごとの予想を自前で出すのは気象業務法
    * 第 17 条の許可を要する地震動の予報業務に当たりうるため（→ `utils/arrivalToken.ts`）。
    */
@@ -812,7 +812,7 @@ export function injectDevApiKey(settings: AppSettings, key: string | undefined):
 /**
  * dev サーバーが注入した到達予想トークンを読む。
  *
- * トークンが開くのはホーム地点への到達予想。注入の可否そのものは
+ * トークンが開くのは登録地点への到達予想。注入の可否そのものは
  * `scripts/dev-api-key-gate.ts` の `shouldInjectDevArrivalToken` が判定しており、
  * build には渡らない。
  */

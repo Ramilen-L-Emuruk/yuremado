@@ -1200,7 +1200,7 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // **自前計算の行と発表値の行が混ざった枠（`'mixed'`）は、範囲を行ごとに出し、注記を 2 つとも出す**
   // （2026-10-22 ユーザー承認「行ごとに範囲を出す (Recommended)」）。1 回だけ出すと、どちらかの行の範囲を偽って伝える
   const mixed = arrival.source === 'mixed'
-  const scopeOf = (source: 'telegram' | 'own') => source === 'telegram' && arrival.areaName ? arrival.areaName : 'ホーム地点'
+  const scopeOf = (source: 'telegram' | 'own') => source === 'telegram' && arrival.areaName ? arrival.areaName : '登録地点'
   const scopeLabel = scopeOf(arrival.source === 'own' ? 'own' : 'telegram')
   // 注記はそれが説明する行があるときだけ出す。気象庁の注記は**到達予測時刻を出した発表値の行**があるときだけ（距離だけの行は
   // 時刻を出していない。2026-10-22 ユーザー承認「時刻のある行があるときだけ (Recommended)」）
@@ -1218,7 +1218,7 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // 余白のみ圧縮する。カウントダウンの数字は緊急度が高く、一目で読めることが要るため縮めない。
   return (
     <div className="bg-card rounded-md px-2 py-1.5 border-2 @min-[520px]:px-3 @min-[520px]:py-2" style={{ borderColor }}>
-      {/* 1 行目: 見出し・範囲（ホーム地点か区域名）・震源からの距離 */}
+      {/* 1 行目: 見出し・範囲（登録地点か区域名）・震源からの距離 */}
       <div className="flex items-baseline gap-2 text-[length:var(--qk-fs)]">
         <span className="font-bold shrink-0" style={{ color: borderColor }}>
           {heading}
@@ -1258,7 +1258,7 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
 
 /** 1 つの地震の到達の見込み（届いた／残り秒数／推定中／到達予測の出ていない地震）。 */
 function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
-  if (row.noForecast) return <p className="text-[length:var(--qk-f)] text-secondary">ホーム地点の地域には、気象庁の到達予測時刻が出ていません</p>
+  if (row.noForecast) return <p className="text-[length:var(--qk-f)] text-secondary">登録地点の地域には、気象庁の到達予測時刻が出ていません</p>
   if (row.arrived) return <p className="text-red-400 font-black text-[1.25rem] leading-tight">主要動が到達しています</p>
   if (row.etaSec !== null) {
     return (
@@ -1662,7 +1662,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
           />
         ))
       }
-      {/* ホーム地点の区域の秒数は、速報のカードの下に置き、巻いて下へ外れたら枠の下端に貼りつける
+      {/* 登録地点の区域の秒数は、速報のカードの下に置き、巻いて下へ外れたら枠の下端に貼りつける
           （2026-11-05 ユーザー回答「カウントダウンは下に持ってきて、ほかのタブとは逆に、巻いたら下に貼り付けるようにしたら？
           EEWは上に大事な情報があるので上を隠したくないです」。2026-11-04 の「詰めて上へ」を置き換える）。
           上に置くと、読み上げで速報のカードの頭へ寄せたときにカウントダウンが枠の外へ押し出されていた */}

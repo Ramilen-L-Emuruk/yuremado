@@ -3,16 +3,16 @@ import { checklistBasisText, checklistHeadline } from './index'
 
 // 帯の見出しの下に添える 1 行（2026-10-25 ユーザー選択「この文面で直す (Recommended)」）。
 describe('checklistBasisText', () => {
-  it('ホーム地点の周りで判定したときは経路ごとの範囲を言う', () => {
-    expect(checklistBasisText('eew', 'near')).toBe('緊急地震速報・ホーム地点の地域の予想')
-    expect(checklistBasisText('eew', 'nearDetected')).toBe('緊急地震速報・ホーム地点から 30km 以内で検知')
-    expect(checklistBasisText('kyoshin', 'near')).toBe('リアルタイム震度・ホーム地点から 30km 以内')
-    expect(checklistBasisText('quake', 'near')).toBe('地震情報・ホーム地点から 30km 以内の観測点')
+  it('登録地点の周りで判定したときは経路ごとの範囲を言う', () => {
+    expect(checklistBasisText('eew', 'near')).toBe('緊急地震速報・登録地点の地域の予想')
+    expect(checklistBasisText('eew', 'nearDetected')).toBe('緊急地震速報・登録地点から 30km 以内で検知')
+    expect(checklistBasisText('kyoshin', 'near')).toBe('リアルタイム震度・登録地点から 30km 以内')
+    expect(checklistBasisText('quake', 'near')).toBe('地震情報・登録地点から 30km 以内の観測点')
   })
 
   // 区域の点（震度速報など）で判定したときは円の半径を名乗らない（2026-10-25 選択「観測点と区域で分ける」）
   it('地震情報を区域の点で判定したときは地域と言う', () => {
-    expect(checklistBasisText('quake', 'nearArea')).toBe('地震情報・ホーム地点の地域')
+    expect(checklistBasisText('quake', 'nearArea')).toBe('地震情報・登録地点の地域')
     expect(checklistHeadline('quake', 'nearArea')).toBe(checklistHeadline('quake', 'near'))
   })
 
@@ -24,7 +24,7 @@ describe('checklistBasisText', () => {
 })
 
 describe('checklistHeadline', () => {
-  // 正: ホーム地点の周りで判定したときは場所を主張する言い方
+  // 正: 登録地点の周りで判定したときは場所を主張する言い方
   it('近くで判定したときの緊急地震速報は「来ます」', () => {
     expect(checklistHeadline('eew', 'near')).toBe('強い揺れが来ます')
     expect(checklistHeadline('eew', 'nearDetected')).toBe('強い揺れが来ます')

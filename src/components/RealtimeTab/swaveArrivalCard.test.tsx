@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// 主要動の到達カード（`SWaveArrivalCard`）で、ホーム地点の区域に気象庁の到達予測時刻が出ていない地震を
+// 主要動の到達カード（`SWaveArrivalCard`）で、登録地点の区域に気象庁の到達予測時刻が出ていない地震を
 // 距離だけの行として見せる形を固定する（2026-10-14 ユーザー承認「距離だけのカードを出す」、
 // 行の中での見せ方は 2026-10-19 ユーザー承認「行として最後に並べる (推奨)」）。
 //
@@ -13,7 +13,7 @@ import { RealtimeTab } from './index'
 import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import type { EEWAlert } from '../../types/earthquake'
 
-const BODY = 'ホーム地点の地域には、気象庁の到達予測時刻が出ていません'
+const BODY = '登録地点の地域には、気象庁の到達予測時刻が出ていません'
 const NOTE = '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
 
 function row(over: Partial<SWaveArrivalRow> & { key: string }): SWaveArrivalRow {
@@ -94,7 +94,7 @@ describe('主要動の到達カード: 自前計算の行と発表値の行が�
       row({ key: 'near', source: 'own', hypocenterName: '能登半島沖', distanceKm: 40, etaSec: 10 }),
       row({ key: 'other', source: 'telegram', hypocenterName: '石川県能登地方', distanceKm: 20, etaSec: 23 }),
     ], 'mixed')
-    expect(screen.getByText('ホーム地点')).toBeTruthy()
+    expect(screen.getByText('登録地点')).toBeTruthy()
     expect(screen.getByText('石川県能登')).toBeTruthy()
     expect(screen.getByText(NOTE)).toBeTruthy()
     expect(screen.getByText(OWN_NOTE)).toBeTruthy()
@@ -115,7 +115,7 @@ describe('主要動の到達カード: 自前計算の行と発表値の行が�
       row({ key: 'near', source: 'own', hypocenterName: '能登半島沖', distanceKm: 40, etaSec: 10 }),
       row({ key: 'far', source: 'own', hypocenterName: '佐渡付近', distanceKm: 150, etaSec: 30 }),
     ], 'own')
-    expect(screen.getAllByText('ホーム地点')).toHaveLength(1)
+    expect(screen.getAllByText('登録地点')).toHaveLength(1)
     expect(screen.getByText(OWN_NOTE)).toBeTruthy()
     expect(screen.queryByText(NOTE)).toBeNull()
   })

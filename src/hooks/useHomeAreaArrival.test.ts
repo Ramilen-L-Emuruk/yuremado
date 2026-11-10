@@ -65,7 +65,7 @@ describe('useHomeAreaName', () => {
     expect(renderHook(() => useHomeAreaName(HOME)).result.current).toBe(INSIDE.name)
   })
 
-  it('ホーム地点が未設定なら null', () => {
+  it('登録地点が未設定なら null', () => {
     expect(renderHook(() => useHomeAreaName(null)).result.current).toBeNull()
   })
 })

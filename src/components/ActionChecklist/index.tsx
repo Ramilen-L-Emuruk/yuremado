@@ -72,7 +72,7 @@ const HEADLINE: Record<ChecklistReason, { scoped: string; global: string }> = {
 }
 
 /**
- * 帯の見出し。**判定に実際に使った範囲で言い分ける** —— ホーム地点の周りで判定したとき（`near`・`nearArea`・`nearDetected`）だけ
+ * 帯の見出し。**判定に実際に使った範囲で言い分ける** —— 登録地点の周りで判定したとき（`near`・`nearArea`・`nearDetected`）だけ
  * 場所を主張する言い方にし、全国基準へ倒れたとき・地点が無いとき（`nationwide`）は場所を主張しない言い方にする。
  */
 export function checklistHeadline(reason: ChecklistReason, scope: ChecklistScope): string {
@@ -94,13 +94,13 @@ export function checklistBasisText(reason: ChecklistReason, scope: ChecklistScop
   if (scope === 'nationwide') return `${source}・全国の最大`
   if (reason === 'eew') {
     return scope === 'nearDetected'
-      ? `${source}・ホーム地点から ${NEARBY_RADIUS_KM}km 以内で検知`
-      : `${source}・ホーム地点の地域の予想`
+      ? `${source}・登録地点から ${NEARBY_RADIUS_KM}km 以内で検知`
+      : `${source}・登録地点の地域の予想`
   }
-  if (reason === 'kyoshin') return `${source}・ホーム地点から ${NEARBY_RADIUS_KM}km 以内`
+  if (reason === 'kyoshin') return `${source}・登録地点から ${NEARBY_RADIUS_KM}km 以内`
   // 区域の点（震度速報など）で判定したときは、円ではなく区域名の一致で引いている（2026-10-25 選択「観測点と区域で分ける」）
-  if (scope === 'nearArea') return `${source}・ホーム地点の地域`
-  return `${source}・ホーム地点から ${NEARBY_RADIUS_KM}km 以内の観測点`
+  if (scope === 'nearArea') return `${source}・登録地点の地域`
+  return `${source}・登録地点から ${NEARBY_RADIUS_KM}km 以内の観測点`
 }
 
 /**

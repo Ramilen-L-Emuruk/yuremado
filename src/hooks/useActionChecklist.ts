@@ -230,7 +230,7 @@ function saveSuppress(record: SuppressRecord | null): void {
 export function useActionChecklist(params: {
   minScale: number
   /**
-   * ホーム地点の周り（`useNearbyScope`）。
+   * 登録地点の周り（`useNearbyScope`）。
    *
    * **作るのは呼び出し側。** 自作地震計の波形も同じ範囲で「近所が揺れているか」を
    * 見るので、両方が 1 つの `scope` を共有する（別々に作ると半径や索引の扱いが

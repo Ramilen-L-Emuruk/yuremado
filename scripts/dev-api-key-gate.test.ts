@@ -58,7 +58,7 @@ describe('shouldInjectDevArrivalToken', () => {
   })
 
   it('バリアントを問わない（API キーと違う点）', () => {
-    // トークンが開くのはホーム地点への到達予想で、standard 版・DMDSS 版のどちらにもある機能。
+    // トークンが開くのは登録地点への到達予想で、standard 版・DMDSS 版のどちらにもある機能。
     // 引数にバリアントを取らないこと自体がその表明なので、standard 版の起動でも true になる。
     expect(shouldInjectDevArrivalToken(serve, ['node', 'vite'])).toBe(true)
   })

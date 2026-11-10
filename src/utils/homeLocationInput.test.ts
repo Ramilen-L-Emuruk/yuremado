@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { isValidHomeLocation, parseCoordinateNumber, splitPastedLatLng } from './homeLocationInput'
 
-describe('ホーム地点の手入力', () => {
+describe('登録地点の手入力', () => {
   // 正: 半角・全角・符号つきを読む
   it('数として読む', () => {
     expect(parseCoordinateNumber('37.5')).toBe(37.5)
