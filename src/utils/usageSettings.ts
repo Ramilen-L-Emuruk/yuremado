@@ -40,7 +40,7 @@ export const USAGE_SETTING_GROUPS = {
   map: '地図',
   behavior: '動作設定',
   actionChecklist: '行動チェックリスト',
-  location: 'ホーム地点',
+  location: '登録地点',
   seismo: '自作地震計',
   wave: '波形グラフ',
   share: '共有と保存',
@@ -186,9 +186,9 @@ export const USAGE_TOP_LEVEL_SPECS = {
   actionChecklistMinScale: choice('actionChecklist', '行動チェックリストを出す最低震度', INTENSITY_SCALES, 45),
   periodicReloadHours: num('behavior', '定期自動リロード（時間・0 は切）', 0, 168, 1),
   recordingMode: bool('behavior', '録画モード', false),
-  // ホーム地点
-  homeLat: present('location', 'ホーム地点（緯度を入れたか）'),
-  homeLng: present('location', 'ホーム地点（経度を入れたか）'),
+  // 登録地点
+  homeLat: present('location', '登録地点（緯度を入れたか）'),
+  homeLng: present('location', '登録地点（経度を入れたか）'),
   arrivalToken: present('location', '到達予想キー'),
   // 自作地震計
   seismoEnabled: bool('seismo', '自作地震計と接続', false),

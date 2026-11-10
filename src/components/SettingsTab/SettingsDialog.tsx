@@ -15,7 +15,7 @@ export const SETTINGS_CATEGORIES = [
   { id: 'sound', label: '音と読み上げ' },
   { id: 'display', label: '表示' },
   { id: 'behavior', label: '動作' },
-  { id: 'location', label: 'ホーム地点と地震計' },
+  { id: 'location', label: '登録地点と地震計' },
   { id: 'share', label: '共有と保存' },
   { id: 'about', label: 'このアプリについて' },
   { id: 'dev', label: '開発・検証', separated: true },

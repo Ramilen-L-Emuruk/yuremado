@@ -1,4 +1,4 @@
-// 自宅（ホーム地点）の周りにある観測点を集める。
+// 自宅（登録地点）の周りにある観測点を集める。
 //
 // 【なぜ半径で切るか】「最寄りの 1 点」で自宅の揺れを代表させると、その点が停止した瞬間に判定が
 // 死ぬ。かといって「近い順に K 点」で拾うと、観測点が疎な離島では数百 km 先の本土の点まで数に
@@ -45,7 +45,7 @@ import { stationEntries, type StationCoordsData } from './stationCoords'
  */
 export const NEARBY_RADIUS_KM = 30
 
-/** ホーム地点。`useSettings` の `homeLat` / `homeLon` から作る。 */
+/** 登録地点。`useSettings` の `homeLat` / `homeLon` から作る。 */
 export interface HomePoint {
   lat: number
   lng: number

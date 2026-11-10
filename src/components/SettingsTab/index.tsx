@@ -1146,7 +1146,7 @@ function IntensityPlayButton({ kyoshinIndex }: { kyoshinIndex: number }) {
 
 /**
  * S 波到達カウントダウン音（残り 5〜1 秒）を 1 段階だけ試聴する小ボタン。
- * 実運用ではホーム位置を設定したうえで S 波到達が残り 5 秒を切らないと鳴らないため、
+ * 実運用では登録地点を設定したうえで S 波到達が残り 5 秒を切らないと鳴らないため、
  * 段階ごとの差（ゲート周波数の上昇・残り 1 秒の重ね音）はここでしか聞き分けられない。
  */
 function CountdownPlayButton({ second }: { second: number }) {
@@ -2195,7 +2195,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
       </Section>
 
-      <Section category="location" title="ホーム地点">
+      <Section category="location" title="登録地点">
         <HomeLocationSection
           homeLat={settings.homeLat}
           homeLng={settings.homeLng}

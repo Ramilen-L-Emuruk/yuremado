@@ -3105,7 +3105,7 @@ export function App() {
     if (start && quakeReplayConfirmAt !== null) startQuakeReplayAt(quakeReplayConfirmAt)
     setQuakeReplayConfirmAt(null)
   }, [quakeReplayConfirmAt, startQuakeReplayAt])
-  // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
+  // 波形を出すかを見る範囲は、登録地点ではなく自作地震計の周り（座標が無ければ登録地点。→ hooks/useSeismoScope.ts）。
   // 地図の下端の波形（下の `useSeismoWaveVisibility`）と地震カードの波形（すぐ下）の両方が使う。
   const seismoScope = useSeismoScope({
     stations: seismoView.stations,

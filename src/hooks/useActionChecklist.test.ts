@@ -88,7 +88,7 @@ function setup(initial: JMAQuake | undefined, eews: readonly EEWAlert[] = NO_EEW
     ({ q, qs, e, k, stalled, min }: Props) =>
       useActionChecklist({
         minScale: min ?? MIN,
-        // ホーム地点を持たない端末（全国基準）。`scope` は呼び出し側が作る
+        // 登録地点を持たない端末（全国基準）。`scope` は呼び出し側が作る
         // （`useNearbyScope`）ので、ここでは絞らない形を直に渡す。
         scope: NO_SCOPE,
         detectedPoints: k ?? NO_POINTS,
