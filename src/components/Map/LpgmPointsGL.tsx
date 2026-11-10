@@ -3,7 +3,7 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE } from '../../utils/lpgm'
+import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, lpgmPeriodLabel, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE } from '../../utils/lpgm'
 import { getIntensityLabel } from '../../utils/intensity'
 import type { LpgmMarker } from '../../hooks/useQuakeLayerData'
 import { addOrderedLayer } from './gl/layerOrder'
@@ -95,7 +95,8 @@ export function lpgmPeriodsHtml(json: string): string {
   }
   if (!Array.isArray(bands) || bands.length === 0) return ''
   // 行の中身はカードの観測点の行と共有する（→ `lpgmPeriodRows`）。
-  const rows = lpgmPeriodRows(bands).map(r => {
+  // 地図の吹き出しの語はまだ辞書の言語を見ていないので、周期の名前も日本語で組む（地図の文言を移す段で言語に合わせる。docs/spec/i18n-spec.md §5 の段 7）
+  const rows = lpgmPeriodRows(bands, lpgmPeriodLabel).map(r => {
     const chip = r.lgInt !== null
       ? badgeHtml(String(r.lgInt), getLpgmClassColor(r.lgInt))
       : `<span style="display:inline-block;width:16px;text-align:center;color:#64748b">−</span>`

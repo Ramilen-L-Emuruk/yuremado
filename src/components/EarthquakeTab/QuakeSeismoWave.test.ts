@@ -10,6 +10,7 @@ import { P_WAVE_COLOR, S_WAVE_COLOR } from '../Map/gl/psWaveStyle'
 import { SEISMO_WAVE_UNIT } from '../SeismoWaveChart/waveUnit'
 import type { TimedColumns } from '../../utils/seismoWaveColumns'
 import { rememberQuietLevel, resetSeismoQuietMemoForTest } from '../../utils/seismoQuietMemo'
+import { ja } from '../../i18n/messages/ja'
 
 const FROM_MS = 1_000_000
 
@@ -77,12 +78,12 @@ describe('buildArrivalMarks', () => {
 
 describe('axisZeroLabel', () => {
   it('秒まで取れていれば「発生」', () => {
-    expect(axisZeroLabel({ kind: 'origin', ms: Date.parse('2026-10-03T13:26:02+09:00'), source: 'eew' })).toBe('発生')
+    expect(axisZeroLabel({ kind: 'origin', ms: Date.parse('2026-10-03T13:26:02+09:00'), source: 'eew' }, ja.quake.seismo)).toBe('発生')
   })
 
   // 対照: 分までしか無ければ発生を名乗らず、数え始めた時刻を書く。
   it('分までしか無ければ、その分の頭の時刻', () => {
-    expect(axisZeroLabel({ kind: 'minute', ms: Date.parse('2026-10-03T13:26:00+09:00') })).toBe('13:26:00')
+    expect(axisZeroLabel({ kind: 'minute', ms: Date.parse('2026-10-03T13:26:00+09:00') }, ja.quake.seismo)).toBe('13:26:00')
   })
 })
 
@@ -181,7 +182,7 @@ describe('formatQuakeIntensityParts', () => {
 
   // 正: 短い名前と値だけ。階級は添えない（2026-10-05 のユーザー判断）。正式な名前はホバー用に持つ。
   it('2 つの値を短い名前で並べ、正式な名前を title に持つ', () => {
-    const parts = formatQuakeIntensityParts(base, span)
+    const parts = formatQuakeIntensityParts(base, span, ja.quake.seismo)
     // **従来の答えを覆した**（2026-10-08）: 計測 1.87 は四捨五入の「1.9」ではなく、
     // 気象庁の手順（第 3 位を四捨五入・第 2 位を切り捨て）で「1.8」。
     expect(text(parts)).toBe('最大 2.3 計測 1.8')
@@ -190,26 +191,26 @@ describe('formatQuakeIntensityParts', () => {
 
   // 正: 「普段」があれば計測の横に並べる（2026-10-11 ユーザー承認）。
   it('普段の計測震度があれば計測の横に並べる', () => {
-    const parts = formatQuakeIntensityParts({ ...base, usualMeasured: -1.27 }, span)
+    const parts = formatQuakeIntensityParts({ ...base, usualMeasured: -1.27 }, span, ja.quake.seismo)
     expect(text(parts)).toBe('最大 2.3 計測 1.8 普段 -1.2')
     expect(parts?.[2].title).toBe('直前 1 時間の、同じ長さの区間の計測震度の中央値です')
   })
 
   it('計測震度が出なければ最大だけ', () => {
-    expect(text(formatQuakeIntensityParts({ ...base, measured: null, measuredUnavailable: 'gap' }, span))).toBe('最大 2.3')
+    expect(text(formatQuakeIntensityParts({ ...base, measured: null, measuredUnavailable: 'gap' }, span, ja.quake.seismo))).toBe('最大 2.3')
   })
 
   it('静穏時のわずかな負の値をマイナスゼロにしない', () => {
-    expect(text(formatQuakeIntensityParts({ ...base, maxRealtime: -0.04, measured: null }, span))).toBe('最大 0.0')
+    expect(text(formatQuakeIntensityParts({ ...base, maxRealtime: -0.04, measured: null }, span, ja.quake.seismo))).toBe('最大 0.0')
   })
 
   it('どちらも出なければ行ごと出さない', () => {
-    expect(formatQuakeIntensityParts({ ...base, maxRealtime: null, measured: null }, span)).toBeNull()
+    expect(formatQuakeIntensityParts({ ...base, maxRealtime: null, measured: null }, span, ja.quake.seismo)).toBeNull()
   })
 
   // 安全弁: 描いた区間と違う区間の値は出さない（末尾が切り戻された直後）。
   it('区間が描いた絵と違えば出さない', () => {
-    expect(formatQuakeIntensityParts(base, { fromMs: 1000, toMs: 80_000 })).toBeNull()
-    expect(formatQuakeIntensityParts(null, span)).toBeNull()
+    expect(formatQuakeIntensityParts(base, { fromMs: 1000, toMs: 80_000 }, ja.quake.seismo)).toBeNull()
+    expect(formatQuakeIntensityParts(null, span, ja.quake.seismo)).toBeNull()
   })
 })

@@ -10,9 +10,11 @@ import { serverNow } from '../../utils/clock'
 import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 import { areaPrefIndexOf, getStationCoordsCache, onStationCoordsLoaded, regionOrderIndexOf, regionOrderRank, type StationCoordsData } from '../../utils/stationCoords'
 import { clampPeriodRange } from '../../utils/historyDays'
+import { useMessages } from '../../i18n/I18nProvider'
+import { quakeReportNameText } from './quakeNames'
 import {
   clearQuakeListFilter, QUAKE_DEPTH_RANGE, QUAKE_LIST_TYPES, QUAKE_MAGNITUDE_RANGE, QUAKE_PERIOD_HOURS, QUAKE_SCALE_STEPS,
-  isQuakeListFiltered, quakeFilterChipLabels, quakeRegionBlocks, quakeRegionGroups, type QuakeRegionOption,
+  isQuakeListFiltered, quakeFilterChipLabels, quakePeriodHoursLabel, type QuakeFilterKind, quakeRegionBlocks, quakeRegionGroups, type QuakeRegionOption,
   type QuakeListFilter, type QuakeRange, type QuakeRegionBasis, type QuakeListType, type QuakeRegionView,
 } from '../../utils/quakeListView'
 
@@ -22,14 +24,9 @@ import {
  * （2026-11-08 ユーザー発言「地震タブの上を使ってるのはありえない。もったいなすぎる。フィルタボタンとかで出すべき。」
  * 「震央地名の横じゃなくて普通に左端(震度の横)においてみて。」・選択「漏斗の印＋数 (Recommended)」）。
  */
-export type FilterKind = 'scale' | 'magnitude' | 'depth' | 'region' | 'types' | 'period'
+export type FilterKind = QuakeFilterKind
 
 const KINDS: readonly FilterKind[] = ['scale', 'magnitude', 'depth', 'region', 'types', 'period']
-
-/** 節の見出し（2026-11-07 選択「見出しを札と同じ語にする」）。 */
-const TITLES: Record<FilterKind, string> = {
-  scale: '震度', magnitude: '規模', depth: '深さ', region: '地域', types: '種類', period: '期間',
-}
 
 const BUTTON_CLASS = 'rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white whitespace-nowrap transition-colors motion-reduce:transition-none hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-panel'
 /** 震源カタログタブの日付の欄と同じ見た目（`CatalogTab` の `DATE_INPUT_CLASS`）。 */
@@ -59,6 +56,7 @@ function activeKinds(filter: QuakeListFilter): Record<FilterKind, boolean> {
  * 数を横に並べないのは、震度の欄（狭い幅で 50px）に「震度▼」と並べると隣の欄へはみ出すから（2026-11-08 選択「数を漏斗の右上に小さく重ねる (Recommended)」）
  */
 export function QuakeListFilterButton({ filter, open, onOpen }: { filter: QuakeListFilter; open: boolean; onOpen: () => void }) {
+  const q = useMessages().quake
   const count = Object.values(activeKinds(filter)).filter(Boolean).length
   return (
     <button
@@ -66,7 +64,7 @@ export function QuakeListFilterButton({ filter, open, onOpen }: { filter: QuakeL
       data-filter-button
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={count > 0 ? `絞り込み（${count}）` : '絞り込み'}
+      aria-label={count > 0 ? q.filter.titleCount(count) : q.filter.title}
       onClick={onOpen}
       // 押せる範囲は見た目より広くする（負の余白で打ち消すので、並びの中で占める幅は漏斗の 12px だけ）。スマホで指が届く大きさにする
       className={`relative -mx-1.5 -my-1.5 flex shrink-0 items-center rounded-sm px-1.5 py-1.5 hover:text-white ${count > 0 ? 'text-blue-400' : ''}`}
@@ -106,20 +104,21 @@ interface DialogProps {
  * 同じ位置にあるので、画面が替わっても作り直されない。body へ描くので見た目の位置は変わらない）。
  */
 export function QuakeListFilterDialog({ filter, onChange, quakes, open, onClose, shownCount, totalCount, loadNote }: DialogProps) {
+  const q = useMessages().quake
   if (!open) return null
-  const labels = quakeFilterChipLabels(filter)
+  const labels = quakeFilterChipLabels(filter, q)
   const active = activeKinds(filter)
   const body: Record<FilterKind, ReactNode> = {
     scale: <ScaleRange value={filter.scale} text={labels.scale} onChange={scale => onChange({ ...filter, scale })} />,
     magnitude: (
       <NumberRange
-        range={QUAKE_MAGNITUDE_RANGE} value={filter.magnitude} label="規模" text={labels.magnitude}
+        range={QUAKE_MAGNITUDE_RANGE} value={filter.magnitude} label={q.filter.section.magnitude} text={labels.magnitude}
         onChange={magnitude => onChange({ ...filter, magnitude })}
       />
     ),
     depth: (
       <NumberRange
-        range={QUAKE_DEPTH_RANGE} value={filter.depth} label="深さ" text={labels.depth}
+        range={QUAKE_DEPTH_RANGE} value={filter.depth} label={q.filter.section.depth} text={labels.depth}
         onChange={depth => onChange({ ...filter, depth })}
       />
     ),
@@ -134,19 +133,19 @@ export function QuakeListFilterDialog({ filter, onChange, quakes, open, onClose,
   }
   return (
     <FilterDialog
-      title="絞り込み"
+      title={q.filter.title}
       // 今の条件で一覧に出る数（2026-11-08 ユーザー発言「選んでる条件で表示される地震の数は…あらかじめ表示しておくべき」・選択「窓の見出しの横「50件中 12件」 (Recommended)」）
-      count={(isQuakeListFiltered(filter) ? `${totalCount}件中 ${shownCount}件` : `${totalCount}件`) + (loadNote?.countSuffix ?? '')}
+      count={(isQuakeListFiltered(filter) ? q.filter.countOf(totalCount, shownCount) : q.filter.count(totalCount)) + (loadNote?.countSuffix ?? '')}
       // 自動で読み足している間は読み上げない（7 日ずつ増えるたびに読むと続けて鳴る）。読み終わった件数は読む
       countLive={!(loadNote?.loading ?? false)}
       onClose={onClose} onClearAll={isQuakeListFiltered(filter) ? () => onChange(clearQuakeListFilter(filter)) : null}>
       {KINDS.map(kind => (
         <section key={kind} className="border-b border-border py-3 first:pt-0 last:border-b-0">
           <div className="mb-2 flex items-center gap-2">
-            <h3 className="text-white">{TITLES[kind]}</h3>
+            <h3 className="text-white">{q.filter.section[kind]}</h3>
             {active[kind] && (
               <button type="button" className="ml-auto px-1 underline-offset-2 hover:text-white hover:underline" onClick={() => onChange(clearKind(filter, kind))}>
-                選択を解除
+                {q.filter.clearSelection}
               </button>
             )}
           </div>
@@ -175,6 +174,7 @@ function clearKind(f: QuakeListFilter, kind: FilterKind): QuakeListFilter {
  * 選んだものはその場で一覧へ効かせる（2026-11-07 選択「地域で絞る／地名で探す／海域／選択を解除 (Recommended)」の説明「決定のボタンは置かない」）。
  */
 function FilterDialog({ title, count, countLive, onClose, onClearAll, children }: { title: string; count: string; countLive: boolean; onClose: () => void; onClearAll: (() => void) | null; children: ReactNode }) {
+  const q = useMessages().quake
   const closeRef = useRef<HTMLButtonElement | null>(null)
   // **開いたときに 1 回だけ**フォーカスを移し、閉じたときに戻す。`onClose` は描くたびに新しい関数になるので、
   // 依存に置くと値を変えるたびにフォーカスがボタンと［閉じる］を往復し、スライダーの矢印キーが 2 回目から届かない
@@ -226,8 +226,8 @@ function FilterDialog({ title, count, countLive, onClose, onClearAll, children }
         </div>
         <div className="min-h-0 overflow-y-auto text-xs text-secondary">{children}</div>
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className={BUTTON_CLASS} disabled={onClearAll === null} onClick={onClearAll ?? undefined}>すべて解除</button>
-          <button ref={closeRef} type="button" className={BUTTON_CLASS} onClick={onClose}>閉じる</button>
+          <button type="button" className={BUTTON_CLASS} disabled={onClearAll === null} onClick={onClearAll ?? undefined}>{q.filter.clearAll}</button>
+          <button ref={closeRef} type="button" className={BUTTON_CLASS} onClick={onClose}>{q.filter.close}</button>
         </div>
       </div>
     </div>,
@@ -237,6 +237,7 @@ function FilterDialog({ title, count, countLive, onClose, onClearAll, children }
 
 /** 震度の範囲。カタログと同じ二つまみのスライダーで、階級ごとに止まる。端に置くとその側の制限を外す。 */
 function ScaleRange({ value, text, onChange }: { value: QuakeRange; text: string; onChange: (r: QuakeRange) => void }) {
+  const q = useMessages().quake
   const last = QUAKE_SCALE_STEPS.length - 1
   const indexOf = (v: number | null, fallback: number) => {
     if (v === null) return fallback
@@ -250,9 +251,9 @@ function ScaleRange({ value, text, onChange }: { value: QuakeRange; text: string
   const unset = value.min === null && value.max === null
   return (
     <div>
-      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{unset ? '制限なし' : text}</p>
+      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{unset ? q.filter.noLimit : text}</p>
       <RangeSlider
-        label="震度" min={0} max={last} step={1} from={from} to={to}
+        label={q.filter.section.scale} min={0} max={last} step={1} from={from} to={to}
         onChange={(a, b) => onChange({ min: a <= 0 ? null : QUAKE_SCALE_STEPS[a], max: b >= last ? null : QUAKE_SCALE_STEPS[b] })}
       />
     </div>
@@ -267,10 +268,11 @@ function NumberRange({ range, value, label, text, onChange }: {
   text: string
   onChange: (r: QuakeRange) => void
 }) {
+  const q = useMessages().quake
   const round = (v: number) => Math.round(v / range.step) * range.step
   return (
     <div>
-      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{value.min === null && value.max === null ? '制限なし' : text}</p>
+      <p className="mb-1 min-h-[1.25em] text-right tabular-nums">{value.min === null && value.max === null ? q.filter.noLimit : text}</p>
       <RangeSlider
         label={label} min={range.min} max={range.max} step={range.step}
         from={value.min ?? range.min} to={value.max ?? range.max}
@@ -284,13 +286,14 @@ function NumberRange({ range, value, label, text, onChange }: {
 }
 
 function TypePicker({ value, onChange }: { value: readonly QuakeListType[]; onChange: (t: QuakeListType[]) => void }) {
+  const q = useMessages().quake
   const toggle = (t: QuakeListType) => onChange(value.includes(t) ? value.filter(x => x !== t) : [...value, t])
   return (
     <div className="flex flex-col gap-1.5">
       {QUAKE_LIST_TYPES.map(t => (
         <label key={t} className="flex cursor-pointer items-center gap-1.5">
           <input type="checkbox" checked={value.includes(t)} onChange={() => toggle(t)} />
-          {t}
+          {quakeReportNameText(t, q)}
         </label>
       ))}
     </div>
@@ -298,6 +301,7 @@ function TypePicker({ value, onChange }: { value: readonly QuakeListType[]; onCh
 }
 
 function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; nowMs: number; onChange: (f: QuakeListFilter) => void }) {
+  const q = useMessages().quake
   const today = jstYmd(nowMs)
   const p = filter.period
   // 「日付を指定」を押した時点で範囲を入れるので、選んでいるかは値から導く（解除したら戻る）
@@ -324,19 +328,19 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
           <button key={o.hours} type="button" aria-pressed={p?.kind === 'hours' && p.hours === o.hours} className={chip(p?.kind === 'hours' && p.hours === o.hours)}
             // 選んでいる期間をもう一度押すと外す（2026-11-08 選択「もう一度押すと外れる」）
             onClick={() => onChange({ ...filter, period: p?.kind === 'hours' && p.hours === o.hours ? null : { kind: 'hours', hours: o.hours } })}>
-            {o.label}
+            {quakePeriodHoursLabel(o.hours, q)}
           </button>
         ))}
-        <button type="button" aria-pressed={custom} className={chip(custom)} onClick={() => (custom ? onChange({ ...filter, period: null }) : setRange(from, to))}>日付を指定</button>
+        <button type="button" aria-pressed={custom} className={chip(custom)} onClick={() => (custom ? onChange({ ...filter, period: null }) : setRange(from, to))}>{q.filter.chooseDates}</button>
       </div>
       {custom && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <DateField label="期間の開始日" value={from} min={PERIOD_MIN_DAY} max={today} onCommit={setFrom} className={DATE_INPUT_CLASS} />
+          <DateField label={q.filter.startDate} value={from} min={PERIOD_MIN_DAY} max={today} onCommit={setFrom} className={DATE_INPUT_CLASS} />
           <span>〜</span>
-          <DateField label="期間の終了日" value={to} min={PERIOD_MIN_DAY} max={today} onCommit={setTo} className={DATE_INPUT_CLASS} />
+          <DateField label={q.filter.endDate} value={to} min={PERIOD_MIN_DAY} max={today} onCommit={setTo} className={DATE_INPUT_CLASS} />
         </div>
       )}
-      {custom && clampedByLength && <p className="mt-1.5 text-xs text-secondary">期間は90日までです。</p>}
+      {custom && clampedByLength && <p className="mt-1.5 text-xs text-secondary">{q.filter.periodLimit}</p>}
     </div>
   )
 }
@@ -350,6 +354,9 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
  * （震央地名は「石川県能登地方」「石川県西方沖」のように細分区域の名前と合わない）。
  */
 function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; quakes: readonly JMAQuake[]; onChange: (f: QuakeListFilter) => void }) {
+  const w = useMessages().quake
+  // 県でない組（海域・遠方）の名前を画面の語にする。県と地方の名前は地名なので電文の文字のまま
+  const groupLabel = (label: string) => w.filter.groupName[label] ?? label
   // 一覧と地図のどちらを出すかは設定に覚える（2026-11-08 選択「最後に選んだ方を覚える」）
   const mode = filter.region.view
   const setMode = (view: QuakeRegionView) => { if (view !== mode) onChange({ ...filter, region: { ...filter.region, view } }) }
@@ -399,7 +406,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
     .map(b => ({
       ...b,
       groups: b.groups
-        .map(g => ({ ...g, options: q === '' || b.label.includes(q) ? g.options : g.options.filter(o => o.name.includes(q) || g.label.includes(q)) }))
+        .map(g => ({ ...g, options: q === '' || b.label.includes(q) || groupLabel(b.label).includes(q) ? g.options : g.options.filter(o => o.name.includes(q) || g.label.includes(q) || groupLabel(g.label).includes(q)) }))
         .filter(g => g.options.length > 0),
     }))
     .filter(b => b.groups.length > 0)
@@ -430,20 +437,20 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex overflow-hidden rounded-md border border-border">
-          <button type="button" aria-pressed={basis === 'epicenter'} className={seg(basis === 'epicenter')} onClick={() => setBasis('epicenter')}>震央地名</button>
-          <button type="button" aria-pressed={basis === 'observed'} className={seg(basis === 'observed')} onClick={() => setBasis('observed')}>震度を観測した地域</button>
+          <button type="button" aria-pressed={basis === 'epicenter'} className={seg(basis === 'epicenter')} onClick={() => setBasis('epicenter')}>{w.filter.basis.epicenter}</button>
+          <button type="button" aria-pressed={basis === 'observed'} className={seg(basis === 'observed')} onClick={() => setBasis('observed')}>{w.filter.basis.observed}</button>
         </div>
         {basis === 'observed' && (
           <div className="ml-auto inline-flex overflow-hidden rounded-md border border-border">
-            <button type="button" aria-pressed={mode === 'list'} className={seg(mode === 'list')} onClick={() => setMode('list')}>一覧</button>
-            <button type="button" aria-pressed={mode === 'map'} className={seg(mode === 'map')} onClick={() => setMode('map')}>地図</button>
+            <button type="button" aria-pressed={mode === 'list'} className={seg(mode === 'list')} onClick={() => setMode('list')}>{w.filter.mode.list}</button>
+            <button type="button" aria-pressed={mode === 'map'} className={seg(mode === 'map')} onClick={() => setMode('map')}>{w.filter.mode.map}</button>
           </div>
         )}
       </div>
       {mapOn && <RegionMap selected={names} present={present} onToggle={toggle} />}
       {listOn && (<>
       <input
-        type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="地名で探す" aria-label="地名で探す"
+        type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder={w.filter.search} aria-label={w.filter.search}
         className="rounded-sm border border-border bg-panel px-2 py-1.5 text-white focus:border-blue-500 focus:outline-hidden"
       />
       <div className="flex flex-col gap-2">
@@ -454,7 +461,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
           const flat = b.groups.length === 1 && b.groups[0]!.label === b.label
           return (
             <div key={b.label}>
-              {header(`b:${b.label}`, b.label, pickedB, openB, 'text-white')}
+              {header(`b:${b.label}`, groupLabel(b.label), pickedB, openB, 'text-white')}
               {openB && (flat ? optionGrid(b.groups[0]!.options) : (
                 <div className="flex flex-col gap-1 pl-4">
                   {b.groups.map(g => {
@@ -462,7 +469,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
                     const isOpen = q !== '' || (groupOpen.get(`p:${g.label}`) ?? picked > 0)
                     return (
                       <div key={g.label}>
-                        {header(`p:${g.label}`, g.label, picked, isOpen, 'text-white')}
+                        {header(`p:${g.label}`, groupLabel(g.label), picked, isOpen, 'text-white')}
                         {isOpen && optionGrid(g.options)}
                       </div>
                     )
@@ -516,6 +523,7 @@ function zoomView(v: MapView, factor: number, cx: number, cy: number): MapView {
 let regionPathCache: { data: unknown; paths: { name: string; d: string }[] } | null = null
 
 function RegionMap({ selected, present, onToggle }: { selected: readonly string[]; present: ReadonlySet<string>; onToggle: (name: string) => void }) {
+  const q = useMessages().quake
   const { data, failed } = useSubRegions()
   const paths = useMemo(() => {
     if (!data) return null
@@ -636,8 +644,8 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
   const zoomBy = (factor: number) => setView(v => zoomView(v, factor, v.x + v.w / 2, v.y + (v.w * MAP_H / MAP_W) / 2))
   const whole = view.w >= MAP_W
   // 読み込み中・失敗は地図の代わりに 1 行出す（2026-11-08 ユーザー選択「両方出す (Recommended)」）。選ぶのは下の一覧でもできる
-  if (failed) return <p className="text-xs text-secondary">地図を読み込めませんでした。下の一覧から選べます。</p>
-  if (!paths) return <p className="text-xs text-secondary">地図を読み込んでいます…</p>
+  if (failed) return <p className="text-xs text-secondary">{q.filter.mapFailed}</p>
+  if (!paths) return <p className="text-xs text-secondary">{q.filter.mapLoading}</p>
   // 限界で disabled にすると、押した直後にフォーカスが落ちる。押せない印（aria-disabled）にして、押しても何もしない
   const mapBtn = 'flex h-6 min-w-6 items-center justify-center rounded-sm border border-border bg-panel/90 px-1 text-white hover:bg-white/10 aria-disabled:opacity-40 aria-disabled:hover:bg-panel/90'
   const atMax = view.w <= MAP_MIN_W
@@ -647,7 +655,7 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
         ref={svgRef}
         viewBox={`${view.x} ${view.y} ${view.w} ${view.w * MAP_H / MAP_W}`}
         className="w-full touch-none select-none rounded-sm border border-border bg-black/30"
-        role="group" aria-label="地図"
+        role="group" aria-label={q.filter.mapLabel}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}
         // 動かしたあとの click は区域の選択にしない（捕まえていると click は地図そのものに出るが、念のため手前で止める）
         onClickCapture={e => { if (moved.current) { e.stopPropagation(); moved.current = false } }}
@@ -655,9 +663,9 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
         {regionPaths}
       </svg>
       <div className="absolute top-1.5 right-1.5 flex flex-col gap-1">
-        <button type="button" aria-label="拡大" className={mapBtn} aria-disabled={atMax} onClick={() => { if (!atMax) zoomBy(1 / 1.5) }}>＋</button>
-        <button type="button" aria-label="縮小" className={mapBtn} aria-disabled={whole} onClick={() => { if (!whole) zoomBy(1.5) }}>−</button>
-        <button type="button" aria-label="全体を表示" className={mapBtn} aria-disabled={whole} onClick={() => { if (!whole) setView({ x: 0, y: 0, w: MAP_W }) }}>全体</button>
+        <button type="button" aria-label={q.filter.zoomIn} className={mapBtn} aria-disabled={atMax} onClick={() => { if (!atMax) zoomBy(1 / 1.5) }}>＋</button>
+        <button type="button" aria-label={q.filter.zoomOut} className={mapBtn} aria-disabled={whole} onClick={() => { if (!whole) zoomBy(1.5) }}>−</button>
+        <button type="button" aria-label={q.filter.fitLabel} className={mapBtn} aria-disabled={whole} onClick={() => { if (!whole) setView({ x: 0, y: 0, w: MAP_W }) }}>{q.filter.fit}</button>
       </div>
     </div>
   )

@@ -1,6 +1,7 @@
 // 国際津波関連情報（英文）の本文。初めから日本語訳を出し、「原文」と切り替える
 // （2026-11-08 ユーザー発言「切り替えだけどせっかくなんだからデフォ翻訳でいいんじゃない」、同日の選択「この形で決める (Recommended)」）。
 // 訳せなかった行は英語のまま「（未訳）」を付けて残す。訳は `utils/wepa60Translate.ts`。
+import { useLocale, useMessages } from '../../i18n/I18nProvider'
 import { useEffect, useMemo, useState } from 'react'
 import type { JMAInternationalTsunami } from '../../types/earthquake'
 import { translateWepa60 } from '../../utils/wepa60Translate'
@@ -20,9 +21,15 @@ interface Props {
 }
 
 export function InternationalTsunamiText({ report, quakeName, startWithOriginal }: Props) {
+  const q = useMessages().quake
+  // 日本語訳は日本語の画面にだけ出す。ほかの言語では切り替えを出さず原文だけを出す（2026-11-10 ユーザー選択「原文だけ出す (Recommended)」）
+  const japanese = useLocale() === 'ja'
   const [showOriginal, setShowOriginal] = useState(startWithOriginal)
-  // 訳に使う表は、訳を初めて見るときに取る。原文から始めた欄（帯の通信試験）では「日本語訳」を押すまで取らない
-  const [wantsTranslation, setWantsTranslation] = useState(!startWithOriginal)
+  // 訳に使う表は、訳を初めて見るときに取る。原文から始めた欄（帯の通信試験）では「日本語訳」を押すまで取らない。
+  // 言語は欄を開いたまま変わりうるので、言語は状態に焼き込まず、日本語の画面のときだけ取る形で導く
+  // （焼き込むと、ほかの言語で開いてから日本語へ戻したとき「日本語訳」の札が選ばれたまま原文が出続ける）
+  const [translationRequested, setTranslationRequested] = useState(!startWithOriginal)
+  const wantsTranslation = japanese && translationRequested
   // 取得済みなら最初の描画から訳を出す（開き直すたびに原文→訳と描き替えない）
   const [regionNames, setRegionNames] = useState<Wepa60RegionNames | null>(getCachedWepa60RegionNames)
   const [stations, setStations] = useState<TsunamiObsCoords | null>(null)
@@ -62,16 +69,18 @@ export function InternationalTsunamiText({ report, quakeName, startWithOriginal 
 
   return (
     <div className="pb-2">
-      <div className="mb-1 flex gap-1">
-        {tab('日本語訳', !showOriginal, () => { setShowOriginal(false); setWantsTranslation(true) })}
-        {tab('原文', showOriginal, () => setShowOriginal(true))}
-      </div>
-      {showOriginal || translated === null ? (
+      {japanese && (
+        <div className="mb-1 flex gap-1">
+          {tab(q.intlTranslation, !showOriginal, () => { setShowOriginal(false); setTranslationRequested(true) })}
+          {tab(q.intlOriginal, showOriginal, () => setShowOriginal(true))}
+        </div>
+      )}
+      {!japanese || showOriginal || translated === null ? (
         <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono leading-relaxed">{report.text}</pre>
       ) : (
         <div className="whitespace-pre-wrap break-words leading-relaxed">
           {translated.map((line, i) => line.untranslated
-            ? <div key={i} className="font-mono"><span className="mr-1 font-sans text-secondary">（未訳）</span>{line.text}</div>
+            ? <div key={i} className="font-mono"><span className="mr-1 font-sans text-secondary">{q.intlUntranslated}</span>{line.text}</div>
             : <div key={i}>{line.text === '' ? ' ' : line.text}</div>)}
         </div>
       )}

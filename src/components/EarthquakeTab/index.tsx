@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { JMAQuake, JMALpgm, JMAEstimatedIntensity, JMAInternationalTsunami } from '../../types/earthquake'
 import { EarthquakeCard } from './EarthquakeCard'
+import { useMessages } from '../../i18n/I18nProvider'
 import { LoadMoreButton } from './LoadMoreButton'
 import { QuakeListHeader, QuakeListDayLabel } from './QuakeListRow'
 import { QuakeListFilterButton, QuakeListFilterDialog } from './QuakeListFilterBar'
@@ -187,6 +188,7 @@ interface Props {
  * **待ちを琥珀で出さないこと。** あれは損失の色で、並べると「取りこぼした」と読まれる。
  */
 function HistoryNotice({ tone, children, onClose }: { tone: NoticeTone; children: React.ReactNode; onClose?: () => void }) {
+  const words = useMessages().quake
   const color = tone === 'info'
     ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
     : tone === 'replay'
@@ -196,7 +198,7 @@ function HistoryNotice({ tone, children, onClose }: { tone: NoticeTone; children
     <div className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-xs roomy:text-sm roomy:px-3 roomy:py-2 ${color}`}>
       <div className="flex-1">{children}</div>
       {onClose && (
-        <button type="button" onClick={onClose} aria-label="閉じる" className="shrink-0 leading-none opacity-70 hover:opacity-100">×</button>
+        <button type="button" onClick={onClose} aria-label={words.list.close} className="shrink-0 leading-none opacity-70 hover:opacity-100">×</button>
       )}
     </div>
   )
@@ -209,6 +211,7 @@ interface Notice { text: string; tone: NoticeTone; onClose?: () => void }
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyDays, onLoadPeriod, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+  const words = useMessages().quake
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
@@ -286,8 +289,8 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   const loadNote = filter.period === null || newestMissing === null
     ? null
     : autoLoading
-      ? { note: `${quakeListPeriodStartLabel(filter.period, nowMs)}まで読み込んでいます…`, countSuffix: '（読み込み中）', loading: true }
-      : { note: `${quakeListDayLabel(newestMissing)}以前は未読込みです。`, countSuffix: `（${quakeListDayLabel(addDays(newestMissing, 1))}以降を読込済み）`, loading: false }
+      ? { note: words.list.loadingBackTo(quakeListPeriodStartLabel(filter.period, nowMs)), countSuffix: words.list.loadingSuffix, loading: true }
+      : { note: words.list.notLoadedBefore(quakeListDayLabel(newestMissing)), countSuffix: words.list.loadedFrom(quakeListDayLabel(addDays(newestMissing, 1))), loading: false }
   // 「もっと見る」が読むもの。期間を選んでいる間は期間の続き（足りない日が無ければ出さない）、外しているときは今日から続く分を遡る
   // （2026-11-08 選択「期間の続きを読む (Recommended)」）
   const loadMoreAction: (() => Promise<boolean>) | null = periodRange !== null
@@ -349,7 +352,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   // 中身が空の例外（`new Error('')`）でも失敗は失敗なので、`null` かどうかで見る。空なら括弧を付けない。
   const failed = error !== null
   if (failed && earthquakes.length > 0) {
-    notices.unshift({ text: error.trim() === '' ? 'データの取得に失敗' : `データの取得に失敗（${error}）`, tone: 'loss' })
+    notices.unshift({ text: error.trim() === '' ? words.list.loadFailed : words.list.loadFailedWith(error), tone: 'loss' })
   }
   // 再生の知らせは先頭に置く（再生中は、ここに出る欠けが画面の中身そのものを左右する）
   if (replayError !== null) notices.unshift({ text: replayError, tone: 'replay' })
@@ -371,7 +374,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
        <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-secondary text-sm">データを取得中…</p>
+          <p className="text-secondary text-sm">{words.list.loading}</p>
         </div>
        </div>
       </div>
@@ -391,7 +394,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
         )}
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="text-center">
-            <p className="text-red-400 text-sm mb-2">データの取得に失敗</p>
+            <p className="text-red-400 text-sm mb-2">{words.list.loadFailed}</p>
             <p className="text-secondary text-xs">{error}</p>
           </div>
         </div>
@@ -416,10 +419,10 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
         )}
         {/* 絞っていて空のときだけ文面を変える（2026-11-07 選択「絞っているときだけ変える (Recommended)」） */}
         <div className="flex-1 flex flex-col items-center justify-center gap-2">
-          <p className="text-secondary text-sm">{filtered ? '条件に合う地震はありません' : '地震情報はありません'}</p>
+          <p className="text-secondary text-sm">{filtered ? words.list.noMatch : words.list.none}</p>
           {filtered && (
             <button type="button" onClick={() => onFilterChange(clearQuakeListFilter(filter))} className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white hover:bg-white/10">
-              すべて解除
+              {words.list.clearAll}
             </button>
           )}
         </div>
@@ -447,7 +450,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   const dayKeyCount = new Map<string, number>()
   let lastDayKey: string | null = null
   for (const q of sorted) {
-    const day = quakeListSection(q, sort.key)
+    const day = quakeListSection(q, sort.key, words.section)
     if (day && day.key !== lastDayKey) {
       lastDayKey = day.key
       const n = dayKeyCount.get(day.key) ?? 0
@@ -534,7 +537,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
         // 再生中は続きを読む口が
         // 無いとき（ローカル履歴アーカイブは収録範囲の外を持たない・在庫の端・開始時の履歴の取得に失敗した）。
         // どれも「これ以上は遡れない」ことは共通なので、文言は 1 つで足りる。
-        <p className="text-center text-xs text-secondary py-2">これ以上は遡れません</p>
+        <p className="text-center text-xs text-secondary py-2">{words.list.noMore}</p>
       )}
      </div>
     </div>

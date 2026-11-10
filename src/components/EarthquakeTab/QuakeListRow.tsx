@@ -1,3 +1,4 @@
+import { useMessages } from '../../i18n/I18nProvider'
 import { useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { getIntensityColor, getIntensityBgColor, getDepthColor, getMagnitudeColor } from '../../utils/intensity'
 import { getLpgmClassColor, getLpgmClassLabel } from '../../utils/lpgm'
@@ -51,13 +52,13 @@ export interface QuakeListRowProps {
 const LIST_COLUMNS = 'var(--qk-tile-w) var(--qk-col-t) 1fr minmax(var(--qk-col-m), max-content) var(--qk-col-d)'
 
 /** 見出しの列と、押したときの並べ替えの欄（2026-11-07 ユーザー原文「すべて昇順降順は選べるようにしたい。」）。 */
-const HEADER_COLUMNS: readonly { key: QuakeSortKey; label: string; right: boolean; asc: string; desc: string }[] = [
-  { key: 'scale', label: '震度', right: false, asc: '小さい順', desc: '大きい順' },
-  { key: 'time', label: '時刻', right: false, asc: '古い順', desc: '新しい順' },
-  // 震央地名コードの順。コードは北の地方から振られている（遠地は最後）
-  { key: 'region', label: '震央地名', right: false, asc: '北から順', desc: '南から順' },
-  { key: 'magnitude', label: '規模', right: true, asc: '小さい順', desc: '大きい順' },
-  { key: 'depth', label: '深さ', right: true, asc: '浅い順', desc: '深い順' },
+const HEADER_COLUMNS: readonly { key: QuakeSortKey; right: boolean }[] = [
+  { key: 'scale', right: false },
+  { key: 'time', right: false },
+  // 震央地名コードの順。コードは北の地方から振られている（遠地は最後）。欄の名前と向きの語は辞書の `quake.sort`
+  { key: 'region', right: false },
+  { key: 'magnitude', right: true },
+  { key: 'depth', right: true },
 ]
 
 /**
@@ -68,6 +69,7 @@ const HEADER_COLUMNS: readonly { key: QuakeSortKey; label: string; right: boolea
  * （2026-11-08 ユーザー発言「震央地名の横じゃなくて普通に左端(震度の横)においてみて。」）。
  */
 export function QuakeListHeader({ sort, onSort, filterButton }: { sort: QuakeListSort; onSort: (key: QuakeSortKey) => void; filterButton: ReactNode }) {
+  const w = useMessages().quake.sort
   return (
     // 巻いても上に残す（日付の区切りがこの下に、開いたカードの帯・枠はさらにその下に貼りつく。高さは index.css の --qk-head-h）
     <div
@@ -76,17 +78,21 @@ export function QuakeListHeader({ sort, onSort, filterButton }: { sort: QuakeLis
     >
       {HEADER_COLUMNS.map(c => {
         const on = sort.key === c.key
+        // 欄に入らない言語は短い語を出し、全文は指を当てたときと読み上げで渡す
+        // （2026-11-11 ユーザー選択「Int.＋指を当てると全文 (Recommended)」）
+        const shortened = w.heading[c.key] !== w.label[c.key]
         const head = (
           <button
             key={c.key}
             type="button"
             aria-pressed={on}
             // 並べている欄だけ向きを読み上げに伝える（▲▼ は読ませない。2026-11-07 選択「向きを伝える (Recommended)」）
-            aria-label={on ? `${c.label} ${sort.dir === 'asc' ? c.asc : c.desc}` : undefined}
+            aria-label={on ? `${w.label[c.key]} ${sort.dir === 'asc' ? w.asc[c.key] : w.desc[c.key]}` : shortened ? w.label[c.key] : undefined}
+            title={shortened ? w.label[c.key] : undefined}
             onClick={() => onSort(c.key)}
             className={`flex items-center gap-0.5 whitespace-nowrap hover:text-white ${c.right ? 'justify-end' : ''} ${on ? 'text-white' : ''}`}
           >
-            {c.label}
+            {w.heading[c.key]}
             {on && <span aria-hidden="true" className="text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
           </button>
         )
@@ -146,6 +152,9 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
   // 入らないときだけ段を下げる。**描いてから測る**（文字の幅は字体と UI 倍率で変わるので、文字数では決められない）。
   const [dropChips, setDropChips] = useState(false)
   const [dropValues, setDropValues] = useState(false)
+  // 札を下げても見出しの段に入らない（見出しそのものが長い）ときだけ、見出しを折り返す
+  // （2026-11-11 ユーザー選択「2 行に折り返す (Recommended)」。訳した報の名前が津波の札の下に潜っていた）
+  const [wrapHeading, setWrapHeading] = useState(false)
   /** 最後に測った中身と幅。どちらかが変わったら段を一度戻して測り直す。 */
   const measuredFor = useRef<string | null>(null)
   const [widthTick, bumpWidth] = useReducer((n: number) => n + 1, 0)
@@ -163,13 +172,23 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
     if (key !== measuredFor.current) {
       measuredFor.current = key
       // 中身か幅が変わった: 一度戻し、戻した形で次の描き直しのときに測る（描く前なので画面には出ない）
-      if (dropChips || dropValues) {
+      if (dropChips || dropValues || wrapHeading) {
         setDropChips(false)
         setDropValues(false)
+        setWrapHeading(false)
         return
       }
     }
-    if (!dropChips && top.scrollWidth > top.clientWidth + 1) setDropChips(true)
+    // 段の幅に収まっていても、見出しが自分の欄から溢れて右の札（津波）の下へ潜ることがあるので、見出しの溢れも見る
+    const hd = headingRef.current
+    const topOver = top.scrollWidth > top.clientWidth + 1 || (hd !== null && hd.scrollWidth > hd.clientWidth + 1)
+    // 下げる札が無いのに札を下げると空の段ができるので、そのときは初めから見出しを折り返す
+    // 札は文字の無い印（アイコン）のこともあるので、文字ではなく中身があるかで見る
+    const hasChips = (chipsRef.current?.childNodes.length ?? 0) > 0
+    if (!dropChips && !wrapHeading && topOver) {
+      if (hasChips) setDropChips(true)
+      else setWrapHeading(true)
+    } else if (dropChips && !wrapHeading && topOver) setWrapHeading(true)
     if (!dropValues && (row.scrollWidth > row.clientWidth + 1 || nm.scrollWidth > nm.clientWidth + 1)) setDropValues(true)
   })
   useLayoutEffect(() => {
@@ -223,7 +242,7 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
         )}
       </div>
       <div ref={topRef} className="col-start-2 col-end-6 row-start-1 flex min-h-[18px] items-center gap-1.5" style={{ fontSize: 'var(--qk-fs)' }}>
-        <span ref={headingRef} className="min-w-0 flex-1 whitespace-nowrap">{heading}{date !== null && <span data-col="date" className="ml-1.5 tabular-nums text-secondary">{date}</span>}</span>
+        <span ref={headingRef} className={`min-w-0 flex-1 ${wrapHeading ? '' : 'whitespace-nowrap'}`}>{heading}{date !== null && <span data-col="date" className="ml-1.5 tabular-nums text-secondary">{date}</span>}</span>
         {!dropChips && <span ref={chipsRef} className="contents">{chips}</span>}
         {tsunami && <span className="whitespace-nowrap font-bold" style={{ color: tsunami.color }} title={tsunami.title}>{tsunami.text}</span>}
       </div>

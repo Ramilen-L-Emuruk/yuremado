@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { loadMoreDrainsAt } from '../../services/dmdataRequestGates'
 import { relayThrottleRemainingMs } from '../../services/relayEndpoint'
-import { formatLoadMoreThrottleLabel } from '../../utils/telegramLoss'
+import { formatLoadMoreThrottleLeft } from '../../utils/telegramLoss'
+import { useMessages } from '../../i18n/I18nProvider'
 
 /**
  * 残り時間を読み直す間隔。**表示が秒単位なので 1 秒より細かくしない。**
@@ -38,10 +39,11 @@ interface Props {
  * 待ちが解けたあとの読み込み・反映はまだ続くので、そこは従来どおり「取得中…」に戻る。
  */
 export function LoadMoreButton({ onLoadMore, isLoadingMore, watchThrottle }: Props) {
+  const w = useMessages().quake.list
   const remainingMs = useThrottleRemaining(watchThrottle && isLoadingMore)
   const label = !isLoadingMore
-    ? 'もっと見る'
-    : remainingMs !== null ? formatLoadMoreThrottleLabel(remainingMs) : '取得中…'
+    ? w.loadMore
+    : remainingMs !== null ? w.throttled(formatLoadMoreThrottleLeft(remainingMs)) : w.fetching
   return (
     <button
       onClick={onLoadMore}

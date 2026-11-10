@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { isValidLpgmClass, isObservedLpgmClass, getLpgmClassLabel, getLpgmClassColor, getLpgmClassRadius, lpgmCategoryNote, lpgmCategoryNoteWithRegions, lpgmHeadlineRegions, lpgmPeriodLabel, buildLpgmRows, canOpenLpgmNotes, type LpgmRowDeps } from './lpgm'
 import type { JMALpgm, LpgmPoint, LpgmRegion } from '../types/earthquake'
 import { LPGM_ICON_BASE_RADIUS } from '../components/Map/gl/lpgmIcons'
+import { ja } from '../i18n/messages/ja'
 
 describe('isValidLpgmClass', () => {
   it('階級 1〜4 を受け入れる', () => {
@@ -97,22 +98,22 @@ describe('getLpgmClassRadius', () => {
 describe('長周期の観測情報の種類', () => {
   // 正: 2・4 のときだけ意味を出す
   it('2 と 4 では意味を出す', () => {
-    expect(lpgmCategoryNote(2)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
-    expect(lpgmCategoryNote(4)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
+    expect(lpgmCategoryNote(2, ja.quake)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
+    expect(lpgmCategoryNote(4, ja.quake)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
   })
 
   // 対照: 1・3 は階級を観測した地域がどこも震度5弱以上。震度の表示だけで状況が伝わるので何も足さない
   // 意図的に覆した（2026-10-22 ユーザー選択「1・3 にも一文を出す (Recommended)」、文面は 2026-10-24 選択「この文面でよい (Recommended)」）
   it('1 と 3 では、数える地域の階級の下限を書いて震度5弱以上と伝える', () => {
-    expect(lpgmCategoryNote(1)).toBe('長周期地震動階級1以上を観測した地域は、いずれも震度5弱以上です')
-    expect(lpgmCategoryNote(3)).toBe('長周期地震動階級3以上を観測した地域は、いずれも震度5弱以上です')
+    expect(lpgmCategoryNote(1, ja.quake)).toBe('長周期地震動階級1以上を観測した地域は、いずれも震度5弱以上です')
+    expect(lpgmCategoryNote(3, ja.quake)).toBe('長周期地震動階級3以上を観測した地域は、いずれも震度5弱以上です')
   })
 
   // 安全弁: 種類を持たない電文・値域の外では何も出さない（分類番号を画面に漏らさない）
   it('無い値・値域の外では何も出さない', () => {
-    expect(lpgmCategoryNote(undefined)).toBe('')
-    expect(lpgmCategoryNote(0)).toBe('')
-    expect(lpgmCategoryNote(9)).toBe('')
+    expect(lpgmCategoryNote(undefined, ja.quake)).toBe('')
+    expect(lpgmCategoryNote(0, ja.quake)).toBe('')
+    expect(lpgmCategoryNote(9, ja.quake)).toBe('')
   })
 })
 
@@ -138,19 +139,19 @@ describe('見出し文の地域名', () => {
   })
 
   it('正: 種類 2・4 の一文に括弧で添える', () => {
-    expect(lpgmCategoryNoteWithRegions(4, NOTO_LPGM_HEADLINE)).toBe('震度が小さくても高層階が大きく揺れた地域があります（長野県中部）')
+    expect(lpgmCategoryNoteWithRegions(4, NOTO_LPGM_HEADLINE, ja.quake)).toBe('震度が小さくても高層階が大きく揺れた地域があります（長野県中部）')
   })
 
   it('対照: 地域を並べない見出し文・種類 1・3 には添えない', () => {
     const plain = '０１日１６時５６分ころの地震により、長周期地震動階級２を観測した地域があります。'
     expect(lpgmHeadlineRegions(plain)).toEqual([])
-    expect(lpgmCategoryNoteWithRegions(2, plain)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
-    expect(lpgmCategoryNoteWithRegions(3, NOTO_LPGM_HEADLINE)).toBe(lpgmCategoryNote(3))
+    expect(lpgmCategoryNoteWithRegions(2, plain, ja.quake)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
+    expect(lpgmCategoryNoteWithRegions(3, NOTO_LPGM_HEADLINE, ja.quake)).toBe(lpgmCategoryNote(3, ja.quake))
   })
 
   it('安全弁: 見出し文が無い・種類が無いときは何も足さない', () => {
     expect(lpgmHeadlineRegions(undefined)).toEqual([])
-    expect(lpgmCategoryNoteWithRegions(undefined, NOTO_LPGM_HEADLINE)).toBe('')
+    expect(lpgmCategoryNoteWithRegions(undefined, NOTO_LPGM_HEADLINE, ja.quake)).toBe('')
   })
 })
 

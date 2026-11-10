@@ -127,3 +127,50 @@ describe('閉じた行の震央地名', () => {
     expect(magnitude?.style.gridColumn).toBe('3 / 5')
   })
 })
+
+// 見出し（報の名前）が長いときの折り返し。訳した名前が右の津波の札の下へ潜らないよう、
+// 札を下げても入らないときと、下げる札が無いときだけ見出しを 2 行にする
+describe('行の見出しの折り返し', () => {
+  /** 見出しの要素だけ中身の幅を変える（ほかの要素は枠に入る）。 */
+  let headingWidth = 200
+  beforeEach(() => {
+    headingWidth = 200
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('flex-1') ? headingWidth : 50
+    })
+  })
+  const headingOf = (c: HTMLElement) => c.querySelector('span.flex-1') as HTMLElement
+  const wrapped = (c: HTMLElement) => !headingOf(c).classList.contains('whitespace-nowrap')
+
+  // 正: 段全体は枠に入っても、見出しが自分の欄から溢れたら（札の下へ潜る形）札を下げ、それでも入らなければ折り返す
+  it('見出しだけが溢れても、札を下げてから見出しを折り返す', () => {
+    const { container } = render(<QuakeListRow {...baseProps} />)
+    expect(chipsDropped(container)).toBe(true)
+    expect(wrapped(container)).toBe(true)
+  })
+
+  // 正: 下げる札が無いときは空の段を作らず、見出しを折り返す
+  it('札が無ければ空の段を作らずに折り返す', () => {
+    const { container } = render(<QuakeListRow {...baseProps} chips={null} />)
+    expect(container.querySelector('.row-start-2.justify-end')).toBeNull()
+    expect(wrapped(container)).toBe(true)
+  })
+
+  // 対照: 見出しが欄に入るなら 1 行のまま（日本語の短い名前）
+  it('見出しが入るなら折り返さない', () => {
+    headingWidth = 80
+    const { container } = render(<QuakeListRow {...baseProps} />)
+    expect(wrapped(container)).toBe(false)
+    expect(chipsDropped(container)).toBe(false)
+  })
+
+  // 安全弁: 幅が広がって入るようになったら、折り返しも札の段も戻す
+  it('幅が変わって入るようになったら折り返しを戻す', () => {
+    const { container } = render(<QuakeListRow {...baseProps} />)
+    expect(wrapped(container)).toBe(true)
+    headingWidth = 80
+    act(() => observed?.([{ contentRect: { width: 360 } }]))
+    expect(wrapped(container)).toBe(false)
+    expect(chipsDropped(container)).toBe(false)
+  })
+})

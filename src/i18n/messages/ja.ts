@@ -1,8 +1,12 @@
-import type { TelegramLogKind, TelegramOperationStatus, TsunamiGrade } from '../../types/earthquake'
+import type { IssueType, TelegramLogKind, TelegramOperationStatus, TsunamiGrade } from '../../types/earthquake'
 import { EPICENTER_RANK_LABEL, MAGNITUDE_RANK_LABEL } from '../../utils/eewAccuracyRanks'
 import type { EnsembleSource } from '../../utils/kyoshinEnsembleDetector'
 import { TELEGRAM_LOG_ERROR, type TelegramLogErrorMark } from '../../utils/telegramLogErrorMark'
 import type { CatalogColorBy } from '../../utils/hypocenterCatalogView'
+import type { QuakeHoldBackReason } from '../../utils/quakeMerge'
+import type { JmaCommentKind } from '../../utils/jmaCommentGroups'
+import type { UnreceivedUnit } from '../../utils/quakePoints'
+import type { QuakeFilterKind, QuakeSortKey } from '../../utils/quakeListView'
 
 /** 等級ごとの避難の呼びかけ（気象庁の付加文が採れなかったときに出す。読み上げも同じ文を読む → `utils/tsunami.ts` の `fallbackEvacuationAction`）。 */
 const TSUNAMI_EVACUATION: Record<Exclude<TsunamiGrade, 'Unknown'>, string> = {
@@ -476,5 +480,223 @@ export const ja = {
     monitorTitle: 'リアルタイム震度モニタ',
     monitorHint: '各観測点のリアルタイム震度を地図に表示します。1秒ごとに更新されます。気象庁の震度は1分間の揺れから計算するため、ここではそれを実時間で近似した値を出しています。緊急地震速報の発報時は予報円も表示します。青が P 波、赤が S 波です。',
     footerNote: '※ 表示される震度は、気象庁が発表する震度とは計算方法が異なり、単純には比較できません。観測の状況によっては実際の揺れとは異なる場合があります。',
+  },
+  /**
+   * 地震タブ（`components/EarthquakeTab`・地震カードから開く波形の詳細の窓 `components/SeismoWaveDetail`）と、
+   * 地震タブの語を組む utils（`quakeListView.ts`・`lpgm.ts` の観測情報の種類と周期・`estimatedIntensity.ts` の目印の食い違い）。
+   * 震度の札の語（「5弱」「以上」「長周期3」）・時刻と規模と深さの書式・日付は段 9 の語で、ここには置かない。
+   * 震央地名・県名・官署名・見出し文・気象庁の付加文と取消の本文は電文の文字のまま出す
+   */
+  quake: {
+    /** 報の種類（`IssueType`）。一覧の行と開いたカードの見出し・種類の絞り込みに出す */
+    issueType: {
+      '震度速報': '震度速報',
+      '震源情報': '震源情報',
+      '震源・震度情報': '震源・震度情報',
+      '各地の震度情報': '各地の震度情報',
+      '顕著な地震の震源要素更新のお知らせ': '顕著な地震の震源要素更新のお知らせ',
+      '遠地地震': '遠地地震',
+      'その他': 'その他',
+    } as Record<IssueType, string>,
+    /** 地震の報に添えて届く報の名前（報の一覧・種類の絞り込み）。長周期は電文の名乗りがあればそちらを出す */
+    infoName: {
+      lpgm: '長周期地震動に関する観測情報',
+      internationalTsunami: '国際津波関連情報',
+      estimatedIntensity: '推計震度分布図',
+      tsunami: '津波情報',
+    },
+    /** 運用種別の札（電文の `Control/Status`） */
+    operation: { 訓練: '訓練報', 試験: '試験報' } as Record<TelegramOperationStatus, string>,
+    /** 時刻を日時として読めなかったとき（一覧の時刻の列・報の一覧） */
+    timeUnknown: '不明',
+    /** 震央地名の無い報 */
+    unknownHypocenter: '震源調査中',
+    cancelTitle: '取消',
+    cancelText: 'この地震情報は取り消されました',
+    /** 一部の報だけの取消。`name` は報の種類の名前 */
+    retracted: (name: string) => `${name}は取り消されました`,
+    jmaNotes: '気象庁からの補足',
+    /** 補足の中の見出し（`utils/jmaCommentGroups.ts` の種類） */
+    jmaNoteHeading: { tsunami: '津波', eew: '緊急地震速報', var: 'その他', free: '自由付加文' } as Record<JmaCommentKind, string>,
+    /** 津波情報から借りた値の印の説明（印は `※`） */
+    borrowedFrom: '津波情報より',
+    borrowedWhat: { hypocenter: '震源', domesticTsunami: '津波の有無' },
+    /** 借りた値のホバー。`info` は津波の電文の名前（電文の文字のまま）、`at` は発表時刻（読めなければ null） */
+    borrowedSentence: (what: string, info: string, at: string | null) =>
+      at ? `${what}は${at}に発表された${info}で伝えられました。` : `${what}は${info}で伝えられました。`,
+    /** 文をつなぐ（借りた値のホバーで、震源と津波の有無の 2 文を並べる） */
+    joinSentences: (sentences: readonly string[]) => sentences.join(''),
+    replay: '▶ 再生',
+    replayHint: 'この地震の30秒前から再生します',
+    replayHintFirstReport: 'この地震の最初の報の30秒前から再生します',
+    /** 見出しの行の報の一覧の開閉（後ろに最後の報の時刻が付く） */
+    updated: '更新',
+    maxIntensity: '最大震度',
+    tsunami: '津波',
+    depth: '深さ',
+    intensities: '各地の震度',
+    /** 各地の震度の見出しの右の、地図の見せ方の切り替え */
+    segment: { observed: '観測点', official: '推計震度分布', simple: '簡易推定', lpgm: '長周期' },
+    segmentHint: {
+      official: '気象庁が地盤の揺れやすさまで考慮して推計した震度の分布です',
+      simple: '観測点の震度をこのアプリが補間した目安です。気象庁の推計とは精度が違います',
+    },
+    /** 震度の列の下に添える印。own＝その行の震度が届いていない、some＝範囲の中に届いていない地点がある */
+    unreceivedOwn: '（未入電）',
+    unreceivedSome: '（未入電あり）',
+    unreceivedOwnHint: '気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）',
+    unreceivedSomeHint: 'この範囲に、震度が届いていない地点があります',
+    /** 未入電の地点のボタン。鍵は単位（`utils/quakePoints.ts` の `unreceivedUnitLabel`） */
+    unreceivedButton: { 地点: '震度を入手していない地点', 地域: '震度を入手していない地域', 件: '震度を入手していない件' } as Record<UnreceivedUnit, string>,
+    unreceivedCount: (n: number, unit: UnreceivedUnit) => `${n}${unit}`,
+    unreceivedButtonHint: '気象庁が震度5弱以上と推定しているのに、震度が届いていない地点です。押すと一覧と地図に出します',
+    lpgmHeading: '長周期地震動',
+    /** 長周期の「観測情報の種類」（`LgCategory`）の意味（`utils/lpgm.ts` の `lpgmCategoryNote`） */
+    lpgmCategory: {
+      highFloors: '震度が小さくても高層階が大きく揺れた地域があります',
+      class1: '長周期地震動階級1以上を観測した地域は、いずれも震度5弱以上です',
+      class3: '長周期地震動階級3以上を観測した地域は、いずれも震度5弱以上です',
+    },
+    /** 見出し文に並んだ地域名を一文に添える（地域名は電文の文字のまま） */
+    lpgmCategoryRegions: (note: string, regions: readonly string[]) => `${note}（${regions.join('・')}）`,
+    /** 周期ごとの内訳の見出しと読み方（地図の観測点の吹き出しも `utils/lpgm.ts` の定数を通して同じ文を出す） */
+    lpgmPeriodsHeading: '揺れの周期ごと（階級・揺れの大きさ）',
+    lpgmPeriodsNote: '周期が長いほど、高い建物が大きく揺れます',
+    /** 周期帯の中心周期 */
+    lpgmPeriod: (sec: number) => `${sec}秒`,
+    lpgmPeriodUnknown: '周期不明',
+    lpgmDetailLink: '気象庁の詳細ページ（波形・スペクトル）',
+    /** 国際津波関連情報の英文の欄。日本語訳と原文の切り替えは日本語の画面にだけ出す */
+    intlHeading: '国際津波関連情報（英文）',
+    intlTranslation: '日本語訳',
+    intlOriginal: '原文',
+    intlUntranslated: '（未訳）',
+    editorialOffice: '編集官署',
+    publishingOffice: '発表官署',
+    /**
+     * 報の一覧で、カードが採らなかった報のホバー（`utils/quakeMerge.ts` の `QuakeHoldBackReason`。2026-11-07 ユーザー選択
+     * 「末尾をそろえた 3 つ (Recommended)」）。完全版の後の速報・種別として劣る報・震源要素更新の後の報は、どれもカードの
+     * 種別の並びで下にある報なので同じ文にする
+     */
+    heldBack: {
+      superseded: '下位電文のため、カードに反映していません。',
+      lowerPriority: '下位電文のため、カードに反映していません。',
+      amendment: '下位電文のため、カードに反映していません。',
+      olderReport: '発表時刻が前後しているため、カードに反映していません。',
+      noTime: '発表時刻が無いため、カードに反映していません。',
+    } as Record<QuakeHoldBackReason, string>,
+    /** 推計震度分布図の目印が地震カードと食い違うときの一文（`utils/estimatedIntensity.ts` の `estimatedMarkMismatchNote`） */
+    estimatedMark: (mark: string, direction: string, km: number) => `推計の電文では ${mark}の${direction}${km}km付近`,
+    /** 目印の名前が分からないときの呼び名 */
+    markFallback: (code: number) => `目印${code}`,
+    /** 16 方位（北から時計回り） */
+    direction16: ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東', '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'],
+    /** 自作地震計・公開観測点の波形（地震カードの欄と、そこから開く詳細の窓） */
+    seismo: {
+      failed: '自作地震計: 波形を取得できなかった',
+      /** 時間軸の 0（秒まで取れた発生時刻） */
+      origin: '発生',
+      compositePartial: '合成の無い区間あり',
+      part: { max: '最大', measured: '計測', usual: '普段' },
+      partHint: {
+        max: '最大リアルタイム震度',
+        measured: '計測震度',
+        usual: '直前 1 時間の、同じ長さの区間の計測震度の中央値です',
+      },
+      enlarge: '波形を大きく表示',
+      detailTitle: (name: string) => `${name} の波形の詳細`,
+      distance: (km: number) => `震源距離 約${km} km`,
+      composite: '合成',
+      peak: '最大',
+      realtimeTrend: 'リアルタイム震度の推移',
+      close: '閉じる',
+      zoomIn: '拡大',
+      zoomOut: '縮小',
+      fit: '全体',
+    },
+    /** 一覧の状態と読み足し */
+    list: {
+      loading: 'データを取得中…',
+      loadFailed: 'データの取得に失敗',
+      loadFailedWith: (reason: string) => `データの取得に失敗（${reason}）`,
+      noMatch: '条件に合う地震はありません',
+      none: '地震情報はありません',
+      clearAll: 'すべて解除',
+      noMore: 'これ以上は遡れません',
+      loadMore: 'もっと見る',
+      fetching: '取得中…',
+      /** 取得の制限で待っている間。`left` は「1:30」の形 */
+      throttled: (left: string) => `取得制限中（あと ${left}）`,
+      /** 期間の読み足し。`day` は日付（段 9 まで「10月31日」の形） */
+      loadingBackTo: (day: string) => `${day}まで読み込んでいます…`,
+      loadingSuffix: '（読み込み中）',
+      notLoadedBefore: (day: string) => `${day}以前は未読込みです。`,
+      loadedFrom: (day: string) => `（${day}以降を読込済み）`,
+      close: '閉じる',
+    },
+    /** 絞り込みの帯と窓 */
+    filter: {
+      title: '絞り込み',
+      titleCount: (n: number) => `絞り込み（${n}）`,
+      section: { scale: '震度', magnitude: '規模', depth: '深さ', region: '地域', types: '種類', period: '期間' } as Record<QuakeFilterKind, string>,
+      count: (total: number) => `${total}件`,
+      countOf: (total: number, shown: number) => `${total}件中 ${shown}件`,
+      clearSelection: '選択を解除',
+      clearAll: 'すべて解除',
+      close: '閉じる',
+      noLimit: '制限なし',
+      /** 期間の札。鍵は時間（`utils/quakeListView.ts` の `QUAKE_PERIOD_HOURS`） */
+      periodHours: { 24: '24時間', 72: '3日', 168: '7日', 720: '30日' } as Record<number, string>,
+      periodHoursOther: (hours: number) => `${hours}時間`,
+      chooseDates: '日付を指定',
+      startDate: '期間の開始日',
+      endDate: '期間の終了日',
+      periodLimit: '期間は90日までです。',
+      basis: { epicenter: '震央地名', observed: '震度を観測した地域' },
+      mode: { list: '一覧', map: '地図' },
+      search: '地名で探す',
+      mapFailed: '地図を読み込めませんでした。下の一覧から選べます。',
+      mapLoading: '地図を読み込んでいます…',
+      mapLabel: '地図',
+      zoomIn: '拡大',
+      zoomOut: '縮小',
+      fitLabel: '全体を表示',
+      fit: '全体',
+      /** 地域の一覧の、県でない組の名前（組の鍵は日本語のまま `utils/quakeListView.ts` が持つ） */
+      groupName: { 海域: '海域', 遠方: '遠方' } as Record<string, string>,
+      /** 帯の札（震度の札の語は段 9 の語のまま差し込む） */
+      chip: {
+        scaleRange: (from: string, to: string) => `震度${from}〜${to}`,
+        scaleMin: (from: string) => `震度${from}以上`,
+        scaleMax: (to: string) => `震度${to}以下`,
+        magnitudeRange: (from: string, to: string) => `M${from}〜${to}`,
+        magnitudeMin: (from: string) => `M${from}以上`,
+        magnitudeMax: (to: string) => `M${to}以下`,
+        depthRange: (from: number, to: number) => `深さ${from}〜${to}km`,
+        depthMin: (from: number) => `深さ${from}km以上`,
+        depthMax: (to: number) => `深さ${to}km以下`,
+        picked: (label: string, n: number) => `${label}（${n}）`,
+      },
+    },
+    /** 並べ替え（一覧の頭の欄） */
+    sort: {
+      label: { scale: '震度', time: '時刻', region: '震央地名', magnitude: '規模', depth: '深さ' } as Record<QuakeSortKey, string>,
+      /** 一覧の頭に出す語。欄の幅（震度 50px・時刻 37px）に入らない言語だけ短くし、全文の label は指を当てたときと読み上げで出す */
+      heading: { scale: '震度', time: '時刻', region: '震央地名', magnitude: '規模', depth: '深さ' } as Record<QuakeSortKey, string>,
+      asc: { scale: '小さい順', time: '古い順', region: '北から順', magnitude: '小さい順', depth: '浅い順' } as Record<QuakeSortKey, string>,
+      desc: { scale: '大きい順', time: '新しい順', region: '南から順', magnitude: '大きい順', depth: '深い順' } as Record<QuakeSortKey, string>,
+    },
+    /** 並べ替えたときの区切りの行 */
+    section: {
+      depthUnknown: '深さ不明',
+      depthUnder30: '深さ30km未満',
+      depth30to100: '深さ30〜100km',
+      depth100to300: '深さ100〜300km',
+      depth300plus: '深さ300km以上',
+      scale: (label: string) => `震度${label}`,
+      scaleUnknown: '震度不明',
+      magnitude: (m: number) => `M${m}`,
+      magnitudeUnknown: 'M不明',
+    },
   },
 } as const

@@ -11,6 +11,8 @@
 // 出さないと決めてあるので（2026-09-29 のユーザー判断）、載せるものが無ければ
 // 親が丸ごと描かない。
 
+import { useMessages } from '../../i18n/I18nProvider'
+import type { QuakeWords } from '../../utils/quakeListView'
 import { Component, lazy, Suspense, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
@@ -124,13 +126,11 @@ export { buildArrivalMarksForRange }
  * - 分までしか無い: 地震情報の時刻（`13:26:00`）。**発生を名乗らない** —— 発生はこの分の
  *   0〜59 秒のどこかで、0 に「発生」と書くと最大 59 秒ずれた目盛りになる
  */
-export function axisZeroLabel(zero: WaveAxisZero): string {
-  if (zero.kind === 'origin') return '発生'
+export function axisZeroLabel(zero: WaveAxisZero, w: QuakeWords['seismo']): string {
+  if (zero.kind === 'origin') return w.origin
   return formatTime(new Date(zero.ms).toISOString()) ?? ''
 }
 
-/** 合成で描いた絵に、合成の無い列が混ざっているときの見出しの印（2026-10-24 ユーザー選択「その文でよい (Recommended)」）。 */
-const COMPOSITE_PARTIAL_LABEL = '合成の無い区間あり'
 
 /**
  * 地震カードの波形を、描く列へ畳む。
@@ -198,17 +198,18 @@ export interface QuakeIntensityPart {
 export function formatQuakeIntensityParts(
   intensity: QuakeIntensity | null,
   span: { readonly fromMs: number; readonly toMs: number } | null,
+  w: QuakeWords['seismo'],
 ): readonly QuakeIntensityPart[] | null {
   if (intensity === null || span === null) return null
   if (intensity.fromMs !== span.fromMs || intensity.toMs !== span.toMs) return null
   const part = (label: string, title: string, value: number | null): QuakeIntensityPart | null =>
     value === null || !Number.isFinite(value) ? null : { label, value: formatMeasured(value), title }
   const parts = [
-    part('最大', '最大リアルタイム震度', intensity.maxRealtime),
-    part('計測', '計測震度', intensity.measured),
+    part(w.part.max, w.partHint.max, intensity.maxRealtime),
+    part(w.part.measured, w.partHint.measured, intensity.measured),
     // **比べる相手**（2026-10-11 ユーザー承認）。計測震度は静かなときも 0 にならず観測点ごとの値に
     // 落ち着くので、「計測」だけでは上がっているのか分からない。
-    part('普段', '直前 1 時間の、同じ長さの区間の計測震度の中央値です', intensity.usualMeasured),
+    part(w.part.usual, w.partHint.usual, intensity.usualMeasured),
   ].filter((p): p is QuakeIntensityPart => p !== null)
   return parts.length === 0 ? null : parts
 }
@@ -303,6 +304,7 @@ function HistoryWave({
    */
   sharedScales: SharedLaneScales | null
 }) {
+  const w = useMessages().quake.seismo
   // **他の段の値が変わったら描き直す**（カードの段は列が変わったときしか描き直さないので、購読しないと揃わない）。
   // 購読の関数は帳面ごとに 1 つ（描くたびに作り直すと、そのたびに購読し直す）。
   const store = useMemo(
@@ -339,8 +341,8 @@ function HistoryWave({
   // （訊く側は `useSeismoQuakeWaves`。区間の物差しは `columnsSpan`）。
   const intensityParts = useMemo(() => {
     const picked = selectQuakeWindow({ base: wave.columns, zero: wave.axisZero, reach: wave.reach, noiseFloor: wave.unit.onsetNoiseFloor })
-    return formatQuakeIntensityParts(wave.intensity, columnsSpan(picked.columns))
-  }, [wave.columns, wave.axisZero, wave.reach, wave.intensity, wave.unit])
+    return formatQuakeIntensityParts(wave.intensity, columnsSpan(picked.columns), w)
+  }, [wave.columns, wave.axisZero, wave.reach, wave.intensity, wave.unit, w])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -363,7 +365,7 @@ function HistoryWave({
         }
       }
       const spanMs = trimmed.columns.length * trimmed.columnSpanMs
-      const zeroLabel = axisZeroLabel(wave.axisZero)
+      const zeroLabel = axisZeroLabel(wave.axisZero, w)
       const ticks = (widthPx: number) =>
         buildTimeTicks({
           fromMs: trimmed.fromMs,
@@ -494,7 +496,7 @@ function HistoryWave({
     // 0 が動けば静かさを測る区間も動く。**表示の設定も入れる**（合成と 3 成分の切り替え）。
     //
     // **揃える帳面の番号も入れる** —— 他の段の範囲が変わったら、自分の列が変わらなくても描き直す。
-  }, [wave.columns, wave.arrival, wave.axisZero, wave.reach, wave.interrupted, wave.unit, view, sharedScales, sharedVersion])
+  }, [wave.columns, wave.arrival, wave.axisZero, wave.reach, wave.interrupted, wave.unit, view, sharedScales, sharedVersion, w])
 
   // **段が消えたら帳面から外す**（カードを畳んだ・観測点が外れた）。残すと、いない段の範囲で他の段を縛り続ける。
   // 描き直しのたびには外さない —— 外すと他の段が描き直し、その値を書き戻すたびにまた描き直す往復になる。
@@ -512,7 +514,7 @@ function HistoryWave({
         </span>
         {/* **震度は観測点名と同じ行へ置く**（行を増やさない。2026-10-05 のユーザー判断）。 */}
         {intensityParts !== null && <QuakeIntensityLine parts={intensityParts} className="text-white/85" />}
-        {compositePartial && <span className="text-secondary truncate">{COMPOSITE_PARTIAL_LABEL}</span>}
+        {compositePartial && <span className="text-secondary truncate">{w.compositePartial}</span>}
         {/* 縦を圧縮している段だけ、ホバーで一言添える（文面と承認は `COMPRESSED_VERTICAL_NOTE`）。 */}
         <span
           className="ml-auto font-mono tabular-nums text-secondary"
@@ -527,7 +529,7 @@ function HistoryWave({
       <span
         role="button"
         tabIndex={0}
-        aria-label="波形を大きく表示"
+        aria-label={w.enlarge}
         className="block cursor-zoom-in"
         onClick={(e) => {
           e.stopPropagation()

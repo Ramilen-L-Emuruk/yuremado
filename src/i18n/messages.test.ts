@@ -73,3 +73,30 @@ describe('言語の表', () => {
     for (const { id } of LOCALES) expect(localeTag(id)).not.toBe('')
   })
 })
+
+describe('地震タブの語', () => {
+  it('期間の選択肢の時間すべてに、どの言語も札を持つ（時間を足して辞書を忘れると「N時間」に落ちる）', async () => {
+    const { QUAKE_PERIOD_HOURS } = await import('../utils/quakeListView')
+    for (const { id } of LOCALES) {
+      const m = await loadMessages(id)
+      const missing = QUAKE_PERIOD_HOURS.filter(({ hours }) => !(String(hours) in m.quake.filter.periodHours)).map(({ hours }) => hours)
+      expect(missing, id).toEqual([])
+    }
+  })
+
+  it('推計の注記の照合に使う 16 方位の表は、日本語の辞書の 16 方位と同じ並び・同じ語', async () => {
+    const { DIRECTIONS_16 } = await import('../utils/estimatedIntensity')
+    expect([...DIRECTIONS_16]).toEqual([...JA_MESSAGES.quake.direction16])
+  })
+
+  it('韓国語の主題の助詞は、差し込む語の最後の音で 은／는 を選ぶ', async () => {
+    const ko = await loadMessages('ko')
+    // 正: 받침のある語（진원・알림）は 은
+    expect(ko.quake.borrowedSentence('진원', '진도 속보', null)).toMatch(/^진원은 /)
+    expect(ko.quake.retracted('현저한 지진의 진원 요소 갱신 알림')).toMatch(/알림은 /)
+    // 対照: 받침の無い語（정보）は 는
+    expect(ko.quake.retracted('진원・진도 정보')).toMatch(/정보는 /)
+    // 安全弁: ハングルで終わらない語（数字・記号）は 는 のまま
+    expect(ko.quake.retracted('VXSE51#2')).toMatch(/#2는 /)
+  })
+})
