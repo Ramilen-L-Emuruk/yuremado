@@ -2872,12 +2872,12 @@ export function App() {
     if (home && prefectureShapes && homePrefCode === null) log.warn('[帯] 登録地点の座標がどの都道府県にも入らず 5 km 以内にも無いので、津波の帯に登録地点の段を出さない')
   }, [home, prefectureShapes, homePrefCode])
   const dockEews = useMemo(
-    () => (activeTab === 'realtime' ? [] : buildEewDockItems(eewListNoCancelled, swaveArrival)),
-    [activeTab, eewListNoCancelled, swaveArrival],
+    () => (activeTab === 'realtime' ? [] : buildEewDockItems(eewListNoCancelled, swaveArrival, messages)),
+    [activeTab, eewListNoCancelled, swaveArrival, messages],
   )
   const dockTsunami = useMemo(
-    () => (activeTab === 'tsunami' ? null : buildTsunamiDockItem(tsunamis, homePrefCode, TSUNAMI_ZONE_PREFECTURES)),
-    [activeTab, tsunamis, homePrefCode],
+    () => (activeTab === 'tsunami' ? null : buildTsunamiDockItem(tsunamis, homePrefCode, TSUNAMI_ZONE_PREFECTURES, messages)),
+    [activeTab, tsunamis, homePrefCode, messages],
   )
   // 登録地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。

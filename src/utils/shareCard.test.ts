@@ -6,12 +6,13 @@ import {
   shareCardMapHeight,
   layoutSubtitleLines,
   layoutNoticeLines,
-  EEW_NOTICE,
   SHARE_CARD_FORMATS,
   SUBTITLE_MAX_LINES,
   shareOrDownloadImage,
   wrapNoteLines,
 } from './shareCard'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
 
 // 地図に割ける高さは「カード全体 − 見出し帯 − 出典帯」で決まり、撮影側（useShareCard）と
 // 合成側（composeShareCard）の両方が同じ計算を通す。ここが崩れると、撮った地図が貼るときに
@@ -53,17 +54,17 @@ describe('attributionLine', () => {
   // 境界線や活断層は元データを変換して使う（加工にあたる）が、海底地形は配信されるタイルを
   // そのまま描いている。まとめて括ると、加工していないものまで加工したと述べることになる。
   it('加工したものだけを「を加工して作成」で括る', () => {
-    const line = attributionLine({ derived: ['気象庁'], asIs: ['GEBCO'] })
-    expect(line).toBe('出典: GEBCO／気象庁 を加工して作成')
+    const line = attributionLine({ derived: ['jma'], asIs: ['bathymetry'] }, ja.shareImage)
+    expect(line).toBe('出典: GEBCO・NOAA NCEI（Esri のタイルサービス経由）／気象庁 を加工して作成')
   })
 
   it('加工していないものが無ければ、加工の句だけを出す', () => {
-    expect(attributionLine({ derived: ['気象庁'], asIs: [] })).toBe('出典: 気象庁 を加工して作成')
+    expect(attributionLine({ derived: ['jma'], asIs: [] }, ja.shareImage)).toBe('出典: 気象庁 を加工して作成')
   })
 
   it('加工したものが無ければ、加工の句を出さない', () => {
-    const line = attributionLine({ derived: [], asIs: ['GEBCO'] })
-    expect(line).toBe('出典: GEBCO')
+    const line = attributionLine({ derived: [], asIs: ['bathymetry'] }, ja.shareImage)
+    expect(line).toBe('出典: GEBCO・NOAA NCEI（Esri のタイルサービス経由）')
     expect(line).not.toContain('加工')
   })
 })
@@ -263,9 +264,9 @@ describe('layoutNoticeLines', () => {
 
   it('正: 緊急地震速報の注意文は、幅 1080 では 2 行・16:9 では 1 行（全角 15px として数える）', () => {
     const wide = (t: string) => [...t].length * 15
-    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).length).toBe(2)
-    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1600 - 72).length).toBe(1)
-    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).join('')).toBe(EEW_NOTICE)
+    expect(layoutNoticeLines(wide, [ja.shareImage.eewNotice], 1080 - 72).length).toBe(2)
+    expect(layoutNoticeLines(wide, [ja.shareImage.eewNotice], 1600 - 72).length).toBe(1)
+    expect(layoutNoticeLines(wide, [ja.shareImage.eewNotice], 1080 - 72).join('')).toBe(ja.shareImage.eewNotice)
   })
 })
 
@@ -303,5 +304,13 @@ describe('SHARE_CARD_FORMATS', () => {
   })
   it('安全弁: どの寸法でも地図に高さが残る（出典 2 行・副見出し上限でも）', () => {
     for (const f of Object.values(SHARE_CARD_FORMATS)) expect(shareCardMapHeight(f, 2, SUBTITLE_MAX_LINES)).toBeGreaterThan(400)
+  })
+})
+
+// 段 9b: 出典の行は言語ごとの書き方で組む（名前も辞書の語）
+describe('attributionLine（英語）', () => {
+  it('加工したものとそのまま描くものを英語の句で分ける', () => {
+    expect(attributionLine({ derived: ['jma', 'activeFaults'], asIs: ['bathymetry'] }, en.shareImage))
+      .toBe('Source: GEBCO, NOAA NCEI (via Esri tile service) / Created by processing data from JMA, AIST Active Fault Database')
   })
 })

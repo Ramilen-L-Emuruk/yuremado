@@ -3,6 +3,7 @@ import { log } from './logger'
 import { readableTextColor } from './contrast'
 import { countUsage } from '../services/usageStats'
 import type { LegendBlock, LegendChip } from '../components/MapLegend/legendBlocks'
+import type { Messages } from '../i18n/messages'
 
 // 共有カードの合成と書き出し。地図の撮影は components/Map/gl/captureMap.ts の担当で、
 // ここは「撮れた地図に見出しと出典を足して 1 枚の画像にする」ところだけを持つ。
@@ -81,29 +82,13 @@ const NOTICE_FONT = `400 15px ${FONT_STACK}`
  * **地図へ新しいデータのレイヤーを足したら、ここへ出典を足し、載せる条件も見直すこと。**
  * 出典の実体は各ローダーの冒頭コメント（`utils/activeFaults.ts`・`utils/plateBoundaries.ts` など）。
  */
-export const ATTRIBUTION_SOURCES = {
-  jma: '気象庁',
-  /**
-   * 海底地形。**配信元のサービスが求める帰属表示をそのまま採る**——ArcGIS Online の
-   * サービスメタデータ（`?f=json` の `copyrightText`）は
-   * 「General Bathymetric Chart of the Oceans (GEBCO); NOAA National Centers for Environmental
-   * Information (NCEI)」と定めており、GEBCO だけでは足りない。
-   */
-  bathymetry: 'GEBCO・NOAA NCEI（Esri のタイルサービス経由）',
-  activeFaults: '産総研 活断層データベース',
-  plateBoundaries: 'PB2002 (Bird, 2003)',
-  /**
-   * 公開観測点の印（`docs/public-waveform-design.md` §0。2026-10-15 ユーザー承認）。網の運用者は気象庁で、
-   * そちらは上の `jma` が既に挙げている。CC BY 4.0 は運用者と配信した施設の両方を挙げることを求める。
-   */
-  earthScope: 'EarthScope',
-} as const
+export type AttributionSourceId = 'jma' | 'bathymetry' | 'activeFaults' | 'plateBoundaries' | 'earthScope'
 
 export interface AttributionParts {
   /** 自前のデータへ変換して使っているもの。「加工して作成」が掛かる。 */
-  derived: readonly string[]
+  derived: readonly AttributionSourceId[]
   /** 配信されるものをそのまま描いているもの。**加工していないので同じ句で括らない。** */
-  asIs: readonly string[]
+  asIs: readonly AttributionSourceId[]
 }
 
 /**
@@ -117,30 +102,9 @@ export interface AttributionParts {
  * （加工にあたる）が、海底地形は配信されるタイルをそのまま描いている。まとめて括ると、
  * 加工していないものまで加工したと述べることになる。
  */
-export function attributionLine({ derived, asIs }: AttributionParts): string {
-  const segments: string[] = []
-  if (asIs.length > 0) segments.push(asIs.join('、'))
-  if (derived.length > 0) segments.push(`${derived.join('、')} を加工して作成`)
-  return `出典: ${segments.join('／')}`
+export function attributionLine({ derived, asIs }: AttributionParts, w: Messages['shareImage']): string {
+  return w.attribution(asIs.map(id => w.sourceNames[id]), derived.map(id => w.sourceNames[id]))
 }
-
-/**
- * 緊急地震速報を含むカードに足す注意文。
- *
- * 気象庁・DM-D.S.S が利用者へ示すべきとしている注意事項を、画像 1 枚に収まる長さでまとめたもの。
- * **「震源に近い場所では間に合わないことがある」を落とさないこと**——精度の話だけを残すと、
- * 速報が届く前に揺れが来る場合があるという、行動に直結する留保が伝わらない。
- */
-export const EEW_NOTICE =
-  '緊急地震速報は地震発生直後の推定情報です。誤報や震源・規模・予想震度の誤差を伴うことがあり、震源に近い場所では強い揺れに間に合わないことがあります。'
-/**
- * 地図が揃いきる前に撮ったことを示す注記。
- *
- * **出典帯ではなく地図の隅へ重ねる。** 出典の行数は撮影前に確定していないと地図の高さを決め
- * られないが、撮り切れたかどうかは撮影して初めて判る。行を増やす形にすると寸法の計算が
- * 循環する。
- */
-const INCOMPLETE_NOTICE = '一部の地図データは読み込み中に撮影されました'
 
 export interface ShareCardHeader {
   /** 見出し（例: 「最大震度 4」）。 */
@@ -166,6 +130,12 @@ export interface ShareCardOptions {
    * DOM の凡例は WebGL のキャンバスに写らないので、ここで 2D で描き直す。空配列なら描かない。
    */
   legend?: LegendBlock[]
+  /**
+   * 地図が揃いきる前に撮ったことを示す注記の文（辞書の `shareImage.incomplete`）。**出典帯ではなく地図の隅へ重ねる** ——
+   * 出典の行数は撮影前に確定していないと地図の高さを決められないが、撮り切れたかどうかは撮影して初めて判る。
+   * 行を増やす形にすると寸法の計算が循環する。
+   */
+  incompleteNotice: string
 }
 
 /** 出典帯の高さ（論理 px）。行が無ければ帯ごと出さない。行数は折り返した後の数（{@link shareCardNoticeLines}）。 */
@@ -335,7 +305,7 @@ export async function composeShareCard(opts: ShareCardOptions): Promise<Blob> {
   if (opts.legend && opts.legend.length > 0) {
     drawLegend(ctx, opts.legend, format.width, headerH + mapHeight)
   }
-  if (capture.timedOut) drawIncompleteNotice(ctx, headerH + mapHeight)
+  if (capture.timedOut) drawIncompleteNotice(ctx, headerH + mapHeight, opts.incompleteNotice)
   if (noticeLines > 0) drawNotices(ctx, notices, format.width, headerH + mapHeight)
 
   return await canvasToPngBlob(out)
@@ -666,17 +636,17 @@ function drawNotices(ctx: CanvasRenderingContext2D, notices: string[], width: nu
  * 欠けた画像が「正常に撮れたもの」として共有されるのを防ぐための注記。共有した先からは
  * 取り消せないため、画像そのものに残す。
  */
-function drawIncompleteNotice(ctx: CanvasRenderingContext2D, mapBottom: number): void {
+function drawIncompleteNotice(ctx: CanvasRenderingContext2D, mapBottom: number, text: string): void {
   ctx.font = `400 15px ${FONT_STACK}`
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
-  const textWidth = ctx.measureText(INCOMPLETE_NOTICE).width
+  const textWidth = ctx.measureText(text).width
   const boxLeft = PADDING_X
   const boxBottom = mapBottom - 14
   ctx.fillStyle = 'rgba(10, 12, 16, 0.72)'
   ctx.fillRect(boxLeft - 6, boxBottom - 26, textWidth + 20, 30)
   ctx.fillStyle = TEXT_MUTED
-  ctx.fillText(INCOMPLETE_NOTICE, boxLeft + 4, boxBottom - 6)
+  ctx.fillText(text, boxLeft + 4, boxBottom - 6)
 }
 
 /**
