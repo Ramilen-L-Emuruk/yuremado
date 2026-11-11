@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ja } from '../i18n/messages/ja'
 import { buildSettingsFile, keysFileNotice, LEGACY_SETTINGS_FILE_APP, parseSettingsFile, settingsFileHasKeys, settingsFileName, SETTINGS_FILE_VERSION } from './settingsIo'
 import { DEFAULTS, type AppSettings } from '../hooks/useSettings'
 
@@ -271,7 +272,8 @@ describe('設定の読み込み', () => {
     const r = parseSettingsFile(file, DEFAULTS)
     expect(r.ok).toBe(false)
     if (r.ok) return
-    expect(r.error).toContain('アプリを更新')
+    expect(r.error).toBe('newer')
+    expect(ja.settings.io.fileErrors[r.error]).toContain('アプリを更新')
   })
 
   it('対照: 形式の番号が無いファイルは、新しい版とは別の文面で断る', () => {
@@ -282,8 +284,9 @@ describe('設定の読み込み', () => {
     const r = parseSettingsFile(file, DEFAULTS)
     expect(r.ok).toBe(false)
     if (r.ok) return
-    expect(r.error).not.toContain('undefined')
-    expect(r.error).not.toContain('アプリを更新')
+    expect(r.error).toBe('malformed')
+    expect(ja.settings.io.fileErrors[r.error]).not.toContain('undefined')
+    expect(ja.settings.io.fileErrors[r.error]).not.toContain('アプリを更新')
   })
 
   it('対照: settings が無いファイルは受け付けない', () => {
@@ -310,12 +313,12 @@ describe('キーだけのファイル（kind: keys）', () => {
     expect(r.settings.arrivalToken).toBe('old-token')
     expect(r.settings.soundVolume).toBe(0.42)
     expect(r.keysOnly).toEqual({ forecastKey: true, arrivalToken: false })
-    expect(keysFileNotice(r.keysOnly!)).toBe('予報キーを読み込みました（ほかの設定はそのままです）')
+    expect(keysFileNotice(r.keysOnly!, ja.settings.io)).toBe('予報キーを読み込みました（ほかの設定はそのままです）')
   })
 
   it('正: 2 つとも入っていれば両方を名前に出す', () => {
     const r = parseSettingsFile(keysFile({ forecastKey: 'f.k', arrivalToken: 'a.t' }), current)
-    expect(r.ok && r.keysOnly && keysFileNotice(r.keysOnly)).toBe('予報キー・到達予想キーを読み込みました（ほかの設定はそのままです）')
+    expect(r.ok && r.keysOnly && keysFileNotice(r.keysOnly, ja.settings.io)).toBe('予報キー・到達予想キーを読み込みました（ほかの設定はそのままです）')
   })
 
   it('対照: キーが 1 つも無いファイルは断る', () => {

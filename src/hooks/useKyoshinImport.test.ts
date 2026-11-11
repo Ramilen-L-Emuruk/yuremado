@@ -82,7 +82,7 @@ describe('useKyoshinImport', () => {
 
     expect(result.current.errors).toHaveLength(1)
     expect(result.current.errors[0].fileName).toBe('unknown.zip')
-    expect(result.current.errors[0].message).toMatch(/対応するデータが見つかりません/)
+    expect(result.current.errors[0].kind).toBe('noArchive')
     expect(mockSave).not.toHaveBeenCalled()
   })
 
@@ -154,22 +154,22 @@ describe('useKyoshinImport', () => {
     expect(result.current.errors).toHaveLength(1)
   })
 
-  it('正: deleteArchiveが成功すればdeleteErrorはnullのまま', async () => {
+  it('正: deleteArchiveが成功すればdeleteFailedはfalseのまま', async () => {
     mockDelete.mockResolvedValue(true)
     const { result } = renderHook(() => useKyoshinImport(archives))
     await act(async () => {
       await result.current.deleteArchive('2018-osaka')
     })
-    expect(result.current.deleteError).toBeNull()
+    expect(result.current.deleteFailed).toBe(false)
   })
 
-  it('安全弁: deleteArchiveが失敗したらdeleteErrorにメッセージが入る', async () => {
+  it('安全弁: deleteArchiveが失敗したらdeleteFailedが立つ', async () => {
     mockDelete.mockResolvedValue(false)
     const { result } = renderHook(() => useKyoshinImport(archives))
     await act(async () => {
       await result.current.deleteArchive('2018-osaka')
     })
-    expect(result.current.deleteError).not.toBeNull()
+    expect(result.current.deleteFailed).toBe(true)
   })
 
   it('安全弁: 保存先の読み取りに問題があれば、summariesが0件でもstorageErrorで見分けられる', async () => {

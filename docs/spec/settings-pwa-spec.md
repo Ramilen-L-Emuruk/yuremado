@@ -1055,7 +1055,7 @@ github.io の旧 URL（`/yuremado/`・`/yuremado/dmdss/`）には、アプリで
 そのうえで**新しいアドレスに設定の保存がまだ無いときだけ**渡された設定を `quake-viewer-settings` へ保存する
 （2026-10-31 ユーザー選択「上書きしない (Recommended)」。新しいアドレスで変えた設定を古い設定で消さないため）。こちらでも鍵の欄は外す。
 旧アドレスで API キーを使っていた端末には、鍵の入れ直しの案内「予報を受けるには、設定で API キーを入れ直してください（アドレスが変わったため引き継いでいません）」を
-地震タブの帯と設定の API キーの欄の下に出す（`dmdataKeyReentryNotice`・`utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）。
+地震タブの帯と設定の API キーの欄の下に出す（`dmdataKeyReentryNotice`・辞書（`src/i18n/messages/*.ts`・[`i18n-spec.md`](i18n-spec.md)）の `quake.list.keyReentry`）。
 形は 2 つで対になっていて、`scripts/bridgeHandoff.test.ts` が往復で固定している。
 
 ### キャッシュポリシー

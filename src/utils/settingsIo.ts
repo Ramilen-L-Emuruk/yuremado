@@ -7,6 +7,7 @@
  * **React に依存しない純関数だけを置く。** 画面側（`SettingsTab`）はここを呼ぶだけにして、
  * 書式の決まりと検証をテストで固定できるようにする。
  */
+import type { Messages } from '../i18n/messages'
 import type { AppSettings, DevInjectedKeys } from '../hooks/useSettings'
 import { sanitize, migrateStoredSettings } from '../hooks/useSettings'
 import { formatFileStamp } from './formatters'
@@ -120,6 +121,9 @@ export function settingsFileName(now = new Date()): string {
   return `${formatFileStamp(now.getTime())}_quake-viewer-settings.json`
 }
 
+/** 読めなかった理由。画面の文は辞書（`settings.io.fileErrors`）が持つ */
+export type SettingsFileError = 'empty' | 'notThisApp' | 'notSettings' | 'malformed' | 'newer' | 'noSettings' | 'noKeys'
+
 export type ParseResult =
   | {
       ok: true
@@ -134,7 +138,7 @@ export type ParseResult =
        */
       keysOnly: { forecastKey: boolean; arrivalToken: boolean } | null
     }
-  | { ok: false; error: string }
+  | { ok: false; error: SettingsFileError }
 
 /**
  * 読み込んだ中身を検証して設定へ落とす。
@@ -152,19 +156,19 @@ export type ParseResult =
  * @param current いま画面が持っている設定。ファイルに API キーが入っていなければこちらを残す。
  */
 export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResult {
-  if (raw == null || typeof raw !== 'object') return { ok: false, error: '設定ファイルとして読めません（中身がありません）' }
+  if (raw == null || typeof raw !== 'object') return { ok: false, error: 'empty' }
   const o = raw as Omit<Partial<SettingsFile>, 'app'> & { app?: unknown }
-  if (o.app !== SETTINGS_FILE_APP && o.app !== LEGACY_SETTINGS_FILE_APP) return { ok: false, error: 'このアプリの設定ファイルではありません' }
+  if (o.app !== SETTINGS_FILE_APP && o.app !== LEGACY_SETTINGS_FILE_APP) return { ok: false, error: 'notThisApp' }
   if ((o as { kind?: unknown }).kind === 'keys') return parseKeysFile(raw as Partial<KeysFile>, current)
   // `kind` は取り違え防止。読めるのは設定とキーだけのファイル。
-  if (o.kind !== 'settings') return { ok: false, error: 'このアプリのファイルですが、設定ではありません' }
+  if (o.kind !== 'settings') return { ok: false, error: 'notSettings' }
   // 形式の番号が無いものと、この版より新しいものを分ける。**同じ文面にしない** ——
   // 前者は壊れたファイルで、アプリを新しくしても直らない。
-  if (typeof o.version !== 'number') return { ok: false, error: '設定ファイルの形式が正しくありません（壊れている可能性があります）' }
+  if (typeof o.version !== 'number') return { ok: false, error: 'malformed' }
   if (o.version > SETTINGS_FILE_VERSION) {
-    return { ok: false, error: 'より新しいアプリで書き出されたファイルです。アプリを更新してください' }
+    return { ok: false, error: 'newer' }
   }
-  if (o.settings == null || typeof o.settings !== 'object') return { ok: false, error: '設定の中身がありません' }
+  if (o.settings == null || typeof o.settings !== 'object') return { ok: false, error: 'noSettings' }
 
   const incoming = o.settings as Partial<AppSettings>
   const sanitized = sanitize(incoming)
@@ -207,15 +211,15 @@ export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResu
  * キーの中身（署名・期限）はここでは見ない —— 読み込んだ後に設定の窓の行が確かめて出す。
  */
 function parseKeysFile(o: Partial<KeysFile>, current: AppSettings): ParseResult {
-  if (typeof o.version !== 'number') return { ok: false, error: '設定ファイルの形式が正しくありません（壊れている可能性があります）' }
+  if (typeof o.version !== 'number') return { ok: false, error: 'malformed' }
   if (o.version > SETTINGS_FILE_VERSION) {
-    return { ok: false, error: 'より新しいアプリで書き出されたファイルです。アプリを更新してください' }
+    return { ok: false, error: 'newer' }
   }
   const keys = o.keys != null && typeof o.keys === 'object' ? o.keys : {}
   const pick = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
   const forecastKey = pick(keys.forecastKey)
   const arrivalToken = pick(keys.arrivalToken)
-  if (forecastKey === '' && arrivalToken === '') return { ok: false, error: 'キーが入っていません' }
+  if (forecastKey === '' && arrivalToken === '') return { ok: false, error: 'noKeys' }
   return {
     ok: true,
     settings: {
@@ -234,9 +238,11 @@ function parseKeysFile(o: Partial<KeysFile>, current: AppSettings): ParseResult 
  * キーだけのファイルを読んだときの知らせ。
  * 文面は 2026-10-31 ユーザー選択（予報キー・到達予想キーの読み込みの知らせ）。
  */
-export function keysFileNotice(keys: { forecastKey: boolean; arrivalToken: boolean }): string {
-  const names = [keys.forecastKey ? '予報キー' : null, keys.arrivalToken ? '到達予想キー' : null].filter(Boolean)
-  return `${names.join('・')}を読み込みました（ほかの設定はそのままです）`
+export function keysFileNotice(
+  keys: { forecastKey: boolean; arrivalToken: boolean },
+  words: Pick<Messages['settings']['io'], 'keysLoaded'>,
+): string {
+  return words.keysLoaded(keys.forecastKey, keys.arrivalToken)
 }
 
 /**
