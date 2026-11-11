@@ -1,7 +1,7 @@
 import type { JMAQuake } from '../types/earthquake'
 import { extractQuakeEventIdFromId } from './quakeMerge'
 import { hasKnownEpicenter } from './geo'
-import { formatMagnitude, formatMagnitudeWithCondition } from './formatters'
+import { magnitudeText, magnitudeWithConditionText, type FormatterWords } from './formatters'
 
 /**
  * ヒートマップの期間の目盛り。凡例のヒートマップ欄のスライダーで選ぶ（2026-10-25 ユーザー選択「E の案でよい
@@ -183,10 +183,10 @@ export function heatMagnitudeRank(magnitude: number, condition: string | null): 
  * 吹き出しに出す規模の札。巨大地震だけは気象庁の説明（「M8を超える巨大地震」）を出し、
  * それ以外の数値にならない規模は「不明」のまま（「Ｍ不明」の説明を持っていても「M不明」とは出さない）。
  */
-export function heatMagnitudeLabel(magnitude: number, condition: string | null): string {
+export function heatMagnitudeLabel(magnitude: number, condition: string | null, w: Pick<FormatterWords, 'unknown' | 'magnitudeConditions'>): string {
   // 長期震源カタログは電文の種別（`@type`）を持たないので、従来どおり `M` で出す。
-  if (isHugeMagnitudeCondition(condition)) return formatMagnitudeWithCondition(magnitude, condition ?? undefined, undefined)
-  return formatMagnitude(magnitude, undefined)
+  if (isHugeMagnitudeCondition(condition)) return magnitudeWithConditionText(magnitude, condition ?? undefined, undefined, w)
+  return magnitudeText(magnitude, undefined, w)
 }
 
 /** 吹き出しの札の色。巨大地震は M8 と同じ色（最上位の段）にする。 */

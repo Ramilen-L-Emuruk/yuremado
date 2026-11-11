@@ -4,7 +4,8 @@ import { useMapGL } from './mapGLContext'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPointLayer } from './gl/depthPointLayer'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { formatCoordinate, formatMagnitude, hasMagnitude } from '../../utils/formatters'
+import { coordinateText, depthText, magnitudeText, magnitudeWithConditionText, hasMagnitude } from '../../utils/formatters'
+import { intensityLabelWithOrAbove } from '../../utils/intensity'
 import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 import type { CatalogPointCloud } from '../../utils/hypocenterCatalogView'
@@ -83,7 +84,7 @@ function formatCatalogDepth(depthKm: number): string {
  */
 function formatCatalogMagnitude(magnitude: number, m: Messages): string {
   // 長期震源カタログは電文の種別（`@type`）を持たないので、従来どおり `M` で出す。
-  return hasMagnitude(magnitude) ? formatMagnitude(magnitude, undefined) : m.map.popup.magnitudeUnknown
+  return hasMagnitude(magnitude) ? magnitudeText(magnitude, undefined, m.formats) : m.map.popup.magnitudeUnknown
 }
 
 /**
@@ -92,15 +93,21 @@ function formatCatalogMagnitude(magnitude: number, m: Messages): string {
  * 「地震情報の電文」の行は 2026-11-06 ユーザー選択「「地震情報の電文」 (Recommended)」。
  */
 function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null, coord: string, m: Messages): string {
+  const f = m.formats
+  const intensity = label.intensity != null ? m.map.popup.maxIntensity(intensityLabelWithOrAbove(label.intensity.scale, label.intensity.orAbove, f)) : null
+  // 数値が無く説明も無いときだけ、カタログの点と同じ「M 不明」（吹き出しは M と深さを 1 行に並べるので「不明」だけにしない）
+  const mg = label.magnitude
+  const magnitude = hasMagnitude(mg.value) || mg.condition ? magnitudeWithConditionText(mg.value, mg.condition, mg.type, f) : m.map.popup.magnitudeUnknown
+  const depth = label.depth != null ? m.map.popup.depth(depthText(label.depth.km, label.depth.atLeast, f)) : m.map.popup.depthUnknown
   return (
     `<div class="text-sm" style="min-width:170px">` +
     `<div class="font-bold" style="margin-bottom:4px">${escapeHtml(label.time)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${m.map.popup.telegram}</div>` +
     (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
-    (label.intensity != null ? `<div class="text-xs">${escapeHtml(label.intensity)}</div>` : '') +
-    `<div class="text-xs" style="color:#94a3b8">${escapeHtml(label.magnitude)} / ${escapeHtml(label.depth)}</div>` +
+    (intensity != null ? `<div class="text-xs">${escapeHtml(intensity)}</div>` : '') +
+    `<div class="text-xs" style="color:#94a3b8">${escapeHtml(magnitude)} / ${escapeHtml(depth)}</div>` +
     `<div class="text-xs" style="color:#64748b;margin-top:4px">${coord}</div>` +
-    (label.source != null ? `<div class="text-xs" style="color:#64748b;margin-top:4px">${escapeHtml(label.source)}</div>` : '') +
+    (label.source != null ? `<div class="text-xs" style="color:#64748b;margin-top:4px">${escapeHtml(m.formats.hypocenterSource(label.source))}</div>` : '') +
     `</div>`
   )
 }
@@ -108,14 +115,14 @@ function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null,
 function buildPopupHtml(cloud: CatalogPointCloud, i: number, m: Messages): string {
   const lat = cloud.columns.lat[i]
   const lng = cloud.columns.lng[i]
-  const coord = formatCoordinate(lat, lng, 3)
+  const coord = coordinateText(lat, lng, 3, m.formats)
   const telegram = cloud.telegramLabels.get(i)
   if (telegram) return buildTelegramPopupHtml(telegram, cloud.names[i], coord, m)
   // 行の並びは 2026-10-25 ユーザー承認「C の案でよい (Recommended)」・「D の案でよい (Recommended)」。
   // 震央地名と最大震度は、記録が無い地震では行ごと出さない。
   const name = cloud.names[i]
   const code = cloud.intensityCode[i]
-  const intensity = code != null ? hypocenterIntensityLabel(code) : null
+  const intensity = code != null ? hypocenterIntensityLabel(code, { maxIntensity: m.map.popup.maxIntensity, formats: m.formats, catalogOther: m.map.popup.catalogOther }) : null
   // **深さ不明は列に 0 を入れてある**（地表に置くため）。0.0km と書かないこと。
   // 「深さ不明」の文言は 2026-10-25 ユーザー選択「今の実装でよい (Recommended)」。
   const depth = cloud.depthUnknown[i] === 1 ? m.map.popup.depthUnknown : m.map.popup.depth(formatCatalogDepth(cloud.columns.depthKm[i]))

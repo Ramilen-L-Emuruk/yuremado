@@ -1,6 +1,31 @@
 import type { IntensityScale } from '../types/earthquake'
 import { hasDepth, hasMagnitude } from './formatters'
 
+/**
+ * 震度の札を組む語（辞書の `formats` の節が満たす形）。画面は `useMessages().formats` を渡す。
+ *
+ * **辞書（`i18n/messages`）をここで読まない。** このファイルは自作地震計のホストの管理画面と中継にも写されて
+ * 読まれるので、辞書を読むと画面用のファイルまで引き込む。読み上げ・通知・中継が使う日本語の札は、
+ * この下の表（`INTENSITY_LABELS`）と `getIntensityLabel` 系の関数が持つ。辞書の日本語と同じ字面であることは
+ * `intensity.test.ts` が確かめる。
+ */
+export interface IntensityWords {
+  intensity: Readonly<Record<string, string>>
+  intensityShort: Readonly<Record<string, string>>
+  orAbove: (label: string) => string
+  approxAbove: (label: string) => string
+  range: (from: string, to: string) => string
+}
+
+/** 日本語の札を組む語。読み上げ・通知・中継の文面用 */
+const JA_INTENSITY_WORDS: IntensityWords = {
+  get intensity() { return INTENSITY_LABELS_BY_KEY },
+  get intensityShort() { return INTENSITY_LABELS_BY_KEY },
+  orAbove: (label) => `${label}以上`,
+  approxAbove: (label) => `${label}程度以上`,
+  range: (from, to) => `${from}〜${to}`,
+}
+
 export const INTENSITY_LABELS: Record<number, string> = {
   '-1': '不明',
   10: '1',
@@ -13,6 +38,11 @@ export const INTENSITY_LABELS: Record<number, string> = {
   60: '6強',
   70: '7',
 }
+
+/** {@link INTENSITY_LABELS} を辞書と同じ文字列の鍵で引く形 */
+const INTENSITY_LABELS_BY_KEY: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(INTENSITY_LABELS).map(([k, v]) => [String(k), v]),
+)
 
 export const INTENSITY_COLORS: Record<number, string> = {
   '-1': '#666666',
@@ -75,8 +105,24 @@ export function isValidIntensityScale(scale: number): scale is IntensityScale {
   return typeof scale === 'number' && Object.prototype.hasOwnProperty.call(INTENSITY_LABELS, scale)
 }
 
+/**
+ * 震度の札の日本語。**読み上げ・通知・中継の文面用。** 画面は言語に合わせて {@link intensityLabel} を使う。
+ */
 export function getIntensityLabel(scale: number): string {
-  return INTENSITY_LABELS[scale] ?? '不明'
+  return intensityLabel(scale, JA_INTENSITY_WORDS)
+}
+
+/** 震度の札（一覧・カードの枠・文の中）。表に無い値は「不明」の語 */
+export function intensityLabel(scale: number, w: IntensityWords): string {
+  return (isValidIntensityScale(scale) ? w.intensity[String(scale)] : undefined) ?? w.intensity['-1']
+}
+
+/**
+ * 地図の震度の丸の中の札。丸は 2 文字までの大きさなので、英語・ポルトガル語・スペイン語は「5- 5+」の短い形
+ * （2026-11-11 ユーザー選択「丸だけ短い形 (Recommended)」）。
+ */
+export function intensityShortLabel(scale: number, w: IntensityWords): string {
+  return (isValidIntensityScale(scale) ? w.intensityShort[String(scale)] : undefined) ?? w.intensityShort['-1']
 }
 
 /**
@@ -92,8 +138,13 @@ export function getIntensityLabel(scale: number): string {
  * 「不明」（階級外）に語を足しても意味を成さないので、その場合は付けない。
  */
 export function getIntensityLabelWithOrAbove(scale: number, orAbove: boolean): string {
-  const label = getIntensityLabel(scale)
-  return orAbove && isValidIntensityScale(scale) && scale > 0 ? `${label}以上` : label
+  return intensityLabelWithOrAbove(scale, orAbove, JA_INTENSITY_WORDS)
+}
+
+/** {@link getIntensityLabelWithOrAbove} の言語に合わせる形（画面用） */
+export function intensityLabelWithOrAbove(scale: number, orAbove: boolean, w: IntensityWords): string {
+  const label = intensityLabel(scale, w)
+  return orAbove && isValidIntensityScale(scale) && scale > 0 ? w.orAbove(label) : label
 }
 
 /**
@@ -109,8 +160,13 @@ export function getIntensityLabelWithOrAbove(scale: number, orAbove: boolean): s
  * （→ `getLpgmClassLabelWithApproxAbove`）。
  */
 export function getIntensityLabelWithApproxAbove(scale: number, over: boolean): string {
-  const label = getIntensityLabel(scale)
-  return over && isValidIntensityScale(scale) && scale > 0 ? `${label}程度以上` : label
+  return intensityLabelWithApproxAbove(scale, over, JA_INTENSITY_WORDS)
+}
+
+/** {@link getIntensityLabelWithApproxAbove} の言語に合わせる形（画面用） */
+export function intensityLabelWithApproxAbove(scale: number, over: boolean, w: IntensityWords): string {
+  const label = intensityLabel(scale, w)
+  return over && isValidIntensityScale(scale) && scale > 0 ? w.approxAbove(label) : label
 }
 
 /**
@@ -121,12 +177,12 @@ export function getIntensityLabelWithApproxAbove(scale: number, over: boolean): 
  * 上限が定まらない区域（`orAbove`。下限側の値を上限の欄へ入れているので、幅にすると同じ値が 2 つ並ぶ）。
  * どれも上限だけを {@link getIntensityLabelWithApproxAbove} で出す。色は呼び出し側が上限で塗る。
  */
-export function getEewAreaIntensityLabel(scaleFrom: number, scaleTo: number, orAbove: boolean): string {
+export function getEewAreaIntensityLabel(scaleFrom: number, scaleTo: number, orAbove: boolean, w: IntensityWords): string {
   if (!orAbove && isValidIntensityScale(scaleFrom) && isValidIntensityScale(scaleTo)
     && scaleFrom > 0 && scaleFrom < scaleTo) {
-    return `${getIntensityLabel(scaleFrom)}〜${getIntensityLabel(scaleTo)}`
+    return w.range(intensityLabel(scaleFrom, w), intensityLabel(scaleTo, w))
   }
-  return getIntensityLabelWithApproxAbove(scaleTo, orAbove)
+  return intensityLabelWithApproxAbove(scaleTo, orAbove, w)
 }
 
 export function getIntensityColor(scale: number): string {

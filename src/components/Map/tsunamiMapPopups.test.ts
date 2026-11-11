@@ -5,6 +5,7 @@
 //   - 押して開いたままにする・もう一度か別の場所で閉じる・1 枚だけ出す・行から開く
 //   - 海岸線の吹き出しの予想波高と到達予想
 //   - 津波の原因地震の震源の×印（置ける震源・吹き出し）
+import { ja } from '../../i18n/messages/ja'
 import { describe, it, expect, vi } from 'vitest'
 import { obsBarTooltipHtml } from './TsunamiObsBarsGL'
 import { arrivalTooltipHtml } from './TsunamiArrivalMarkersGL'
@@ -21,13 +22,13 @@ vi.mock('./gl/popupRegistry', () => ({ closeMapPopup: vi.fn() }))
 // 時刻は `formatTimeMin` がローカル時刻で組むため、オフセットを書かない表記を使う（CI は TZ=UTC）。
 describe('第1波の語（3 つの吹き出しで共有）', () => {
   it('正: 時刻と押し引きを「第1波 05:12 押し波」の形にする', () => {
-    expect(observationFirstWaveText({ arrivalTime: '2026-04-20T05:12:00', initial: '押し' })).toBe('第1波 05:12 押し波')
+    expect(observationFirstWaveText({ arrivalTime: '2026-04-20T05:12:00', initial: '押し' }, ja.tsunami)).toBe('第1波 05:12 押し波')
   })
   it('正: 時刻が無く電文が「第１波識別不能」と言っていれば「第1波 到達時刻不明」', () => {
-    expect(observationFirstWaveText({ condition: { firstWaveUnidentifiable: true } })).toBe('第1波 到達時刻不明')
+    expect(observationFirstWaveText({ condition: { firstWaveUnidentifiable: true } }, ja.tsunami)).toBe('第1波 到達時刻不明')
   })
   it('対照: 伝えるものが無ければ空', () => {
-    expect(observationFirstWaveText({ arrivalTime: 'こわれた値' })).toBe('')
+    expect(observationFirstWaveText({ arrivalTime: 'こわれた値' }, ja.tsunami)).toBe('')
   })
 })
 

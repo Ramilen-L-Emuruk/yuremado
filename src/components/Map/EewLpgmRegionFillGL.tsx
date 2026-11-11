@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Polygon } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getLpgmClassColor, getLpgmClassLabel } from '../../utils/lpgm'
+import { getLpgmClassColor, lpgmClassLabel } from '../../utils/lpgm'
 import type { EewLpgmRegionAggregate } from '../../hooks/useEewLayerData'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
@@ -59,7 +59,7 @@ function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
     `<div style="font-weight:700;font-size:13px">${escapeHtml(String(f.properties?.name ?? ''))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
-    `<span style="color:#cbd5e1">${m.map.popup.forecastLpgm(escapeHtml(getLpgmClassLabel(lgInt)))}</span></div>` +
+    `<span style="color:#cbd5e1">${m.map.popup.forecastLpgm(escapeHtml(lpgmClassLabel(lgInt, m.formats)))}</span></div>` +
     `</div>`
   )
 }

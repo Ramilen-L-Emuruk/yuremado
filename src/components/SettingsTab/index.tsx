@@ -16,8 +16,8 @@ import type { RelayUpstreamStatus } from '../../services/dmdata'
 import { useMessages } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
-import { INTENSITY_SCALE_COUNT, getIntensityLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
-import { kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
+import { INTENSITY_SCALE_COUNT, intensityLabel, intensityShortLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
+import { kyoshinIndexLabelText, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { readableTextColor } from '../../utils/contrast'
 import { playAlertSound, playCountdownBeep, playKyoshinUpdateSound, unlockAudio } from '../../utils/alertSound'
 import { checkVoicevoxAvailable, clearVoicevoxDown, fetchVoicevoxSpeakers, isValidVoicevoxUrl, speakSequentially, VOICEVOX_URL_DEBOUNCE_MS, type VoicevoxSpeaker } from '../../utils/voicevox'
@@ -972,7 +972,7 @@ function ScaleSelect({ value, onChange, noneLabel, includeNone = true }: {
    */
   includeNone?: boolean
 }) {
-  const w = useMessages().settings
+  const { settings: w, formats: fw } = useMessages()
   return (
     <select
       value={value}
@@ -981,7 +981,7 @@ function ScaleSelect({ value, onChange, noneLabel, includeNone = true }: {
     >
       {includeNone && <option value={-1}>{noneLabel ?? w.scale.all}</option>}
       {SCALE_OPTIONS.map(s => (
-        <option key={s} value={s}>{w.scale.orAbove(getIntensityLabel(s))}</option>
+        <option key={s} value={s}>{w.scale.orAbove(intensityLabel(s, fw))}</option>
       ))}
     </select>
   )
@@ -992,14 +992,14 @@ function ScaleSelect({ value, onChange, noneLabel, includeNone = true }: {
  * （2026-11-04 ユーザー選択「地震タブの枠にそろえる (Recommended)」）。
  */
 function IntensityBadge({ scale }: { scale: number }) {
-  const w = useMessages().settings
+  const { settings: w, formats: fw } = useMessages()
   if (scale === -1) return null
   return (
     <span
       className="inline-block text-xs font-bold px-1.5 py-0.5 rounded-md"
       style={quakeTileColors(scale)}
     >
-      {w.scale.badge(getIntensityLabel(scale))}
+      {w.scale.badge(intensityLabel(scale, fw))}
     </span>
   )
 }
@@ -1066,7 +1066,7 @@ async function speakVoicevoxPreview(baseUrl: string, speakerId: number, volume: 
 // 震度別の色付き小ボタン（通知音テスト用）。表記と色は強震モニタのインデックスから引く
 // （震度0 は地震情報の階級表に無いため。地図の強震モニタの点と同じ色になる）
 function IntensityPlayButton({ kyoshinIndex }: { kyoshinIndex: number }) {
-  const w = useMessages().settings
+  const { settings: w, formats: fw } = useMessages()
   const [active, setActive] = useState(false)
   const handle = () => {
     unlockAudio()
@@ -1074,7 +1074,7 @@ function IntensityPlayButton({ kyoshinIndex }: { kyoshinIndex: number }) {
     setActive(true)
     setTimeout(() => setActive(false), 600)
   }
-  const label = kyoshinIndexToLabel(kyoshinIndex) ?? '?'
+  const label = kyoshinIndexLabelText(kyoshinIndex, fw) ?? '?'
   const fill = kyoshinIntensityColor(kyoshinIndex) ?? '#666666'
   return (
     <button
@@ -1350,6 +1350,7 @@ function SignedKeyRowBody(
 export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arrivalTokenStatus, forecastKeyStatus, forecastKeyRelayRejected, relayForecastLive, onReplaceSettings, onTest, kyoshinTimeOffset, kyoshinInputDateTime, onSetKyoshinInputDateTime, dmdataConnectionStatus, relayUpstream, keyForecastStatus, dmdataClassifications, replayIsFetching, replayError, onStartReplay, onStopReplay, historicalArchives, historicalArchivesLoading, seismoUnreadableCount }: Props) {
   const m = useMessages()
   const w = m.settings
+  const fw = m.formats
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -2056,19 +2057,21 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
 
       <Section category="display" title={w.sections.intensityScale}>
         <div className="px-4 py-3 flex flex-wrap gap-2">
-          {Object.entries(INTENSITY_LABELS)
-            .filter(([k]) => k !== '-1')
-            .map(([scale, label]) => {
-              const fill = getIntensityColor(Number(scale))
+          {Object.keys(INTENSITY_LABELS)
+            .map(Number)
+            .filter(scale => scale !== -1)
+            .map(scale => {
+              const fill = getIntensityColor(scale)
               return (
                 <div key={scale} className="flex items-center gap-1.5">
+                  {/* 四角は 2 文字までの大きさなので、地図の丸と同じ短い札（英語などは「5-」） */}
                   <span
                     className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold"
                     style={{ backgroundColor: fill, color: readableTextColor(fill) }}
                   >
-                    {label}
+                    {intensityShortLabel(scale, fw)}
                   </span>
-                  <span className="text-xs text-secondary">{w.scale.badge(label)}</span>
+                  <span className="text-xs text-secondary">{w.scale.badge(intensityLabel(scale, fw))}</span>
                 </div>
               )
             })}

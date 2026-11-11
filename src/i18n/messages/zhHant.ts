@@ -1,5 +1,9 @@
 import type { Messages } from '../messages'
 import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+import { intlDateWords } from '../intlDates'
+
+/** 日付の書式。言語ごとに 1 回だけ作って使い回す（→ `i18n/intlDates.ts`） */
+const ZH_HANT_DATES = intlDateWords('zh-Hant')
 
 const TSUNAMI_WORDS: TsunamiTermWords = {
   grade: { MajorWarning: '大海嘯警報', Warning: '海嘯警報', Watch: '海嘯注意警報', Forecast: '海嘯預報（略有海平面變化）' },
@@ -146,6 +150,7 @@ export const zhHant: Messages = {
     estimating: '發佈待定',
     weak: '微弱',
     arrivalUnknown: '到達時間不明',
+    firstWaveRow: (rest) => `首波 ${rest}`,
     height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
     cancel: {
       lifted: { title: '海嘯訊息 解除', badge: '解除', desc: '此海嘯訊息已解除。' },
@@ -652,6 +657,7 @@ export const zhHant: Messages = {
       magnitudeUnknown: '規模不明',
       preliminary: '速報值',
       telegram: '地震資訊電文',
+      catalogOther: { F: '有感', X: '附近有感', L: '局部地震', S: '小局部地震', M: '較顯著地震', R: '顯著地震' },
       externalHypocenter: '日本氣象局以外機構的震源',
       epicenterUnknown: '震央不明',
       nearbyCount: (n) => `附近 ${n.toLocaleString('zh-Hant')} 次`,
@@ -1828,5 +1834,62 @@ export const zhHant: Messages = {
         description: '搖晃偵測運作時，在裝置內保留其前後 30 秒的觀測值・偵測明細・學習狀態。若不是地震卻偵測到搖晃，有這份紀錄就能追查原因。匯出之前不會離開此裝置。',
       },
     },
+  },
+  formats: {
+    intensity: { '-1': '不明', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5弱', 50: '5強', 55: '6弱', 60: '6強', 70: '7' },
+    intensityShort: { '-1': '不明', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5弱', 50: '5強', 55: '6弱', 60: '6強', 70: '7' },
+    orAbove: (label) => `${label}以上`,
+    approxAbove: (label) => `約${label}以上`,
+    range: (from, to) => `${from}～${to}`,
+    lpgmClass: (cls) => `${cls}級`,
+    lpgmClassUnknown: '等級不明',
+    lpgmShort: (cls) => `長週期${cls}`,
+    lpgmShortUnknown: '長週期不明',
+    orAboveSuffix: '以上',
+    approxAboveBefore: () => '約',
+    approxAboveAfter: '以上',
+    belowZero: '低於0',
+    unknown: '不明',
+    magnitudeConditions: { 'M不明': 'M不明', 'M8を超える巨大地震': '超過M8' },
+    veryShallow: '極淺',
+    depth: (km) => `${km}km`,
+    depthAtLeast: (km) => `${km}km以上`,
+    hypocenterSource: (source) => `震源測定：${source}（日本氣象局以外）`,
+    magnitudeJma: '日本氣象局規模',
+    magnitude: '規模',
+    coordinate: (lat, lng, south, west) => `${south ? '南緯' : '北緯'} ${lat}° ${west ? '西經' : '東經'} ${lng}°`,
+    originTime: '地震發生時間',
+    arrivalTime: '開始搖晃時間',
+    arrivalTimeUnknown: '開始搖晃時間不明',
+    domesticTsunami: {
+      なし: '無海嘯之虞',
+      不明: '不明',
+      調査中: '調查中',
+      海面変動の可能性: '可能發生海嘯',
+      若干の海面変動: '海面略有變化',
+      注意報: '海嘯注意警報',
+      警報等: '已發布海嘯警報等',
+    },
+    domesticTsunamiCode: {
+      '0213': '注意海面變化',
+      '0214': '注意海面變化',
+      '0216': '可能發生海嘯（震源在海底時）',
+      '0217': '注意後續訊息',
+      '0230': '對日本無影響',
+    },
+    tsunamiGroupTitle: '已發布大海嘯警報、海嘯警報或海嘯注意警報',
+    correct: {
+      訂正: '更正（內容不明）',
+      震度のみ訂正: '更正震度',
+      震源を訂正: '更正震源',
+      '震度・震源を訂正': '更正震度・震源',
+    },
+    nonJmaStation: '由日本氣象局以外的機構營運的觀測點',
+    tsunamiObsLegend: { m3: '3m以上', m1: '1m以上', m02: '0.2m以上', under02: '不足0.2m' },
+    monthDayTime: ZH_HANT_DATES.monthDayTime,
+    dayTime: ZH_HANT_DATES.monthDayTime,
+    monthDay: ZH_HANT_DATES.monthDay,
+    fullDate: ZH_HANT_DATES.fullDate,
+    calendarDate: ZH_HANT_DATES.calendarDate,
   },
 }

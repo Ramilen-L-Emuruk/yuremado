@@ -51,6 +51,7 @@ import {
 } from './tsunami'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../types/earthquake'
 import { log } from './logger'
+import { ja } from '../i18n/messages/ja'
 
 function makeArea(overrides: Partial<TsunamiArea> = {}): TsunamiArea {
   return {
@@ -679,29 +680,29 @@ describe('hasMaxHeightTimeAdvanced', () => {
 describe('overSuffixedHeight', () => {
   // 正: description が「以上」を落としている形（condition 経路）では補う
   it('over で「以上」を含まない数値表記には補う', () => {
-    expect(overSuffixedHeight({ description: '8.5m', over: true })).toBe('8.5m以上')
+    expect(overSuffixedHeight({ description: '8.5m', over: true }, ja.tsunami)).toBe('8.5m以上')
   })
 
   // 対照: 既に「以上」を含むなら足さない（`>8.5m以上` のような二重表記を作らない）
   it('既に「以上」を含むならそのまま', () => {
-    expect(overSuffixedHeight({ description: '8.5m以上', over: true })).toBe('8.5m以上')
+    expect(overSuffixedHeight({ description: '8.5m以上', over: true }, ja.tsunami)).toBe('8.5m以上')
   })
 
   // 対照: over が立っていなければ触らない
   it('over が無ければそのまま', () => {
-    expect(overSuffixedHeight({ description: '7.2m' })).toBe('7.2m')
-    expect(overSuffixedHeight({ description: '7.2m', over: false })).toBe('7.2m')
+    expect(overSuffixedHeight({ description: '7.2m' }, ja.tsunami)).toBe('7.2m')
+    expect(overSuffixedHeight({ description: '7.2m', over: false }, ja.tsunami)).toBe('7.2m')
   })
 
   // 安全弁: 全角表記でも補う（XML 履歴経路は全角で来る。ASCII だけ見ると黙って落ちる）
   it('全角数字の description にも補う', () => {
-    expect(overSuffixedHeight({ description: '８．５ｍ', over: true })).toBe('８．５ｍ以上')
+    expect(overSuffixedHeight({ description: '８．５ｍ', over: true }, ja.tsunami)).toBe('８．５ｍ以上')
   })
 
   // 安全弁: 数値化されない condition（「巨大」「高い」）に繋いで「巨大以上」を作らない
   it('数字を含まない description には補わない', () => {
-    expect(overSuffixedHeight({ description: '巨大', over: true })).toBe('巨大')
-    expect(overSuffixedHeight({ description: '高い', over: true })).toBe('高い')
+    expect(overSuffixedHeight({ description: '巨大', over: true }, ja.tsunami)).toBe('巨大')
+    expect(overSuffixedHeight({ description: '高い', over: true }, ja.tsunami)).toBe('高い')
   })
 })
 
@@ -1353,18 +1354,18 @@ describe('observationMaxHeightTimeText: 最大波の観測時刻', () => {
     expect(observationMaxHeightTimeText(obs({
       height: { value: 8.5, description: '8.5m' },
       maxHeightDateTime: '2026-01-01T12:40:00+09:00',
-    }))).toBe('最大波 12:40')
+    }), ja.tsunami)).toBe('最大波 12:40')
   })
 
   it('対照: 時刻が無ければ何も返さない', () => {
-    expect(observationMaxHeightTimeText(obs({ height: { value: 8.5, description: '8.5m' } }))).toBe('')
+    expect(observationMaxHeightTimeText(obs({ height: { value: 8.5, description: '8.5m' } }), ja.tsunami)).toBe('')
   })
 
   it('安全弁: 波高を出していない行では返さない（値の無い観測点が何かを観測したように見える）', () => {
     expect(observationMaxHeightTimeText(obs({
       maxHeightDateTime: '2026-01-01T12:40:00+09:00',
       condition: { maxHeightMissing: true },
-    }))).toBe('')
+    }), ja.tsunami)).toBe('')
   })
 })
 

@@ -10,6 +10,7 @@ import {
 import { ja } from '../i18n/messages/ja'
 
 const QW = ja.quake
+const QF = ja.formats
 
 interface QuakeOpts {
   id: string
@@ -187,15 +188,15 @@ describe('並び替え', () => {
 
 describe('区切り', () => {
   it('震度は階級、規模は整数、深さは幅、地域は区切らない', () => {
-    expect(quakeListSection(quake({ id: 'a', scale: 45 }), 'scale', QW.section)?.label).toBe('震度5弱')
-    expect(quakeListSection(quake({ id: 'a', magnitude: 5.9 }), 'magnitude', QW.section)?.label).toBe('M5')
-    expect(quakeListSection(quake({ id: 'a', magnitude: Number.NaN }), 'magnitude', QW.section)?.label).toBe('M不明')
-    expect(quakeListSection(quake({ id: 'a' }), 'region', QW.section)).toBeNull()
+    expect(quakeListSection(quake({ id: 'a', scale: 45 }), 'scale', QW.section, QF)?.label).toBe('震度5弱')
+    expect(quakeListSection(quake({ id: 'a', magnitude: 5.9 }), 'magnitude', QW.section, QF)?.label).toBe('M5')
+    expect(quakeListSection(quake({ id: 'a', magnitude: Number.NaN }), 'magnitude', QW.section, QF)?.label).toBe('M不明')
+    expect(quakeListSection(quake({ id: 'a' }), 'region', QW.section, QF)).toBeNull()
   })
 
   // 境界: 30km は「30〜100km」、29km は「30km未満」、300km は「300km以上」
   it('深さの幅の境目', () => {
-    const label = (depth: number) => quakeListSection(quake({ id: 'a', depth }), 'depth', QW.section)?.label
+    const label = (depth: number) => quakeListSection(quake({ id: 'a', depth }), 'depth', QW.section, QF)?.label
     expect([label(29), label(30), label(99), label(100), label(300), label(-1)])
       .toEqual(['深さ30km未満', '深さ30〜100km', '深さ30〜100km', '深さ100〜300km', '深さ300km以上', '深さ不明'])
   })
@@ -203,13 +204,13 @@ describe('区切り', () => {
 
 describe('帯の札', () => {
   it('絞っていない札は名前だけ、絞った札は中身（地域と種類は数）', () => {
-    expect(quakeFilterChipLabels(DEFAULT_QUAKE_LIST_FILTER, QW)).toEqual({
+    expect(quakeFilterChipLabels(DEFAULT_QUAKE_LIST_FILTER, QW, QF)).toEqual({
       scale: '震度', magnitude: '規模', depth: '深さ', region: '地域', types: '種類', period: '期間',
     })
     expect(quakeFilterChipLabels(filter({
       scale: { min: 30, max: 45 }, magnitude: { min: 4, max: null }, depth: { min: 10, max: 100 },
       region: { basis: 'epicenter', names: ['a', 'b'], view: 'list' }, types: ['震度速報', '遠地地震', '震源情報'], period: { kind: 'hours', hours: 168 },
-    }), QW)).toEqual({
+    }), QW, QF)).toEqual({
       scale: '震度3〜5弱', magnitude: 'M4.0以上', depth: '深さ10〜100km', region: '地域（2）', types: '種類（3）', period: '7日',
     })
   })
@@ -325,12 +326,12 @@ describe('地域の一覧', () => {
 describe('注記の日付', () => {
   const now = Date.parse('2026-11-07T06:00:00Z')
   it('日付は「10月31日」の形（先頭の 0 を付けない）', () => {
-    expect(quakeListDayLabel('2026-10-31')).toBe('10月31日')
-    expect(quakeListDayLabel('2026-01-05')).toBe('1月5日')
+    expect(quakeListDayLabel('2026-10-31', QF)).toBe('10月31日')
+    expect(quakeListDayLabel('2026-01-05', QF)).toBe('1月5日')
   })
   it('注記に出す期間の始まりは日本時間の月日', () => {
-    expect(quakeListPeriodStartLabel({ kind: 'range', from: '2026-08-09', to: '2026-11-07' }, now)).toBe('8月9日')
-    expect(quakeListPeriodStartLabel({ kind: 'hours', hours: 24 }, now)).toBe('11月6日')
+    expect(quakeListPeriodStartLabel({ kind: 'range', from: '2026-08-09', to: '2026-11-07' }, now, QF)).toBe('8月9日')
+    expect(quakeListPeriodStartLabel({ kind: 'hours', hours: 24 }, now, QF)).toBe('11月6日')
   })
 })
 

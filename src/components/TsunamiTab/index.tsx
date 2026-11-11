@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatHypocenterSource, formatMagnitude, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { depthText, formatDateTimeMin, formatNameFromMark, formatTimeMin, hasDepth, magnitudeConditionText, magnitudeText } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
 import { linkTsunamiSources, shownTsunamiSource } from '../../utils/tsunamiSourceLinks'
 import { getGradeStyle, type GradeStyle } from '../../utils/tsunamiGradeStyle'
@@ -207,7 +207,7 @@ function SourceEarthquakeLine({ eq, link }: {
   eq: NonNullable<JMATsunami['sourceEarthquakes']>[number]
   link: React.ReactNode
 }) {
-  const tm = useMessages().tsunami
+  const { tsunami: tm, formats: fw } = useMessages()
   const quakeTime = sourceEarthquakeTime(eq)
   // 日時として読めなければ句ごと落とす（→ `formatters.ts` の `readDateTime`）。震源名・規模・
   // 深さが並ぶ行の付随情報なので、「地震発現時刻」の語だけが残るより出さないほうがよい。
@@ -215,24 +215,24 @@ function SourceEarthquakeLine({ eq, link }: {
   // 規模の記号は電文の種別（`Mj7.6`）。地震カードと同じ `formatMagnitude` を通す（2026-10-29 ユーザー承認
   // 「地震カードと同じく出す (Recommended)」「Mj7.6 の形 (Recommended)」）。規模が数値で無いときは気象庁が添えた説明を出す
   // （「Ｍ８を超える巨大地震」）。ここを空にすると、最大級の地震ほど震源名だけの薄い表示になる。
-  const magnitudeText = eq.magnitude !== undefined
-    ? formatMagnitude(eq.magnitude, eq.magnitudeType)
-    : eq.magnitudeCondition ? formatMagnitudeCondition(eq.magnitudeCondition) : null
+  const magnitude = eq.magnitude !== undefined
+    ? magnitudeText(eq.magnitude, eq.magnitudeType, fw)
+    : eq.magnitudeCondition ? magnitudeConditionText(eq.magnitudeCondition, fw) : null
   // 深さ。**遠地地震による津波では、震源の深さがこの電文にしか無い**（対応する地震情報が発表されないことがある）。
   // `0` は「ごく浅い」という有効値なので `hasDepth` で弾く。**値によらず「深さ」を前置する** —— 地震カード・地図・
   // 共有カードもそう出しており、ここだけ省くとアプリの中で表記が割れる。
-  const depthText = eq.depth !== undefined && hasDepth(eq.depth) ? tm.depth(formatDepth(eq.depth, eq.depthAtLeast === true)) : null
+  const depth = eq.depth !== undefined && hasDepth(eq.depth) ? tm.depth(depthText(eq.depth, eq.depthAtLeast === true, fw)) : null
   // 震央地名を大きく、規模と深さを次に大きく（2026-11-04 ユーザー選択「B1 帯は等級だけ (Recommended)」の見本）。
   // 値のかたまりの途中では折り返さず、入らなければかたまりごと次の行へ送る。
   return (
     <div data-source-line="" className="flex flex-wrap items-baseline gap-x-3.5 gap-y-0.5" style={{ marginBottom: 4 }}>
       <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 4px)' }}>{eq.hypocenterName}</span>
-      {magnitudeText && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{magnitudeText}</span>}
-      {depthText && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{depthText}</span>}
+      {magnitude && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{magnitude}</span>}
+      {depth && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{depth}</span>}
       {/* 地震の時刻は `sourceEarthquakeTime` を通す（**発現時刻を先に採る**）。発生時刻を出すと、
           同じ地震が地震カードと津波カードで 1 分違って見える。理由と実電文で測った数字は
           `docs/spec/tsunami-spec.md` §4 が正。 */}
-      {quakeHm && <span className="text-secondary whitespace-nowrap" style={{ fontSize: 'var(--qk-fs)' }}>{QUAKE_ARRIVAL_TIME_LABEL} {quakeHm}</span>}
+      {quakeHm && <span className="text-secondary whitespace-nowrap" style={{ fontSize: 'var(--qk-fs)' }}>{fw.arrivalTime} {quakeHm}</span>}
       {link}
       {/* 震央補助表現（「御前崎の北東40km付近」）と震源決定機関（「ＰＴＷＣ」等）。
           前者は震央地名より具体的に場所が分かり、後者は誰が決めた値かを示す。
@@ -240,7 +240,7 @@ function SourceEarthquakeLine({ eq, link }: {
           後者は**気象庁以外の機関が決めた震源を採用したときだけ**入る（Ⅱ.13 2-3-2）ので、
           機関名だけでは含意（気象庁の決定ではない）が伝わらない。ラベルに書く。 */}
       {eq.nameFromMark && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatNameFromMark(eq.nameFromMark)}</div>}
-      {eq.source && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatHypocenterSource(eq.source)}</div>}
+      {eq.source && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{fw.hypocenterSource(eq.source)}</div>}
     </div>
   )
 }

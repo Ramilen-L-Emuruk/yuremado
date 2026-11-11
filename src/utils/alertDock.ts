@@ -29,6 +29,7 @@ import { getGradeStyle } from './tsunamiGradeStyle'
 import { hasKnownEpicenter, haversineKm, pointInRings, type LatLng } from './geo'
 import { SUBREGION_NEAREST_KM } from './subregions'
 import { log } from './logger'
+import { ja } from '../i18n/messages/ja'
 
 /** 色を塗った値の札（「6強程度以上」「長周期2」「巨大」）。 */
 export interface DockChip { text: string; bg: string; fg: string }
@@ -180,7 +181,7 @@ export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArriv
       if (shake && area) {
         home = {
           area: arrival.areaName,
-          chip: area.scaleTo > 0 ? intensityChip(area.scaleTo, getEewAreaIntensityLabel(area.scaleFrom, area.scaleTo, area.scaleToOrAbove === true)) : null,
+          chip: area.scaleTo > 0 ? intensityChip(area.scaleTo, getEewAreaIntensityLabel(area.scaleFrom, area.scaleTo, area.scaleToOrAbove === true, ja.formats)) : null,
           shake,
         }
       }
@@ -300,7 +301,7 @@ export function buildTsunamiDockItem(
     status: latest.operationStatus ? `${latest.operationStatus}報` : null,
     chip: topHeight ? gradeChip(top.grade, topHeight.maxHeight!.description) : null,
     updated: hm(latest.time),
-    observed: obs ? { value: overSuffixedHeight(obs.height!), station: obs.name } : null,
+    observed: obs ? { value: overSuffixedHeight(obs.height!, ja.tsunami), station: obs.name } : null,
     firstWave: firstWaveAreas.length > 0 ? { first: firstWaveAreas[0].name, rest: new Set(firstWaveAreas.map(a => a.name)).size - 1 } : null,
     home,
   }

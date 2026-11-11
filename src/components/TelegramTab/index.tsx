@@ -279,7 +279,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
     let lastDayKey: string | null = null
     return filtered.map(entry => {
       const d = readDateTime('TelegramTab.dayLabel', entry.receivedAt)
-      const day = d ? quakeListDay(d.toISOString()) : null
+      const day = d ? quakeListDay(d.toISOString(), m.formats) : null
       // 時刻の読めない行（行には「時刻不明」と出る）の次の行には、同じ日でも区切りを出し直す。
       // 出し直さないと、不明な行を挟んだ後の行が、前の日の区切りの下に紛れて見える
       if (!day) {
@@ -290,7 +290,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
       lastDayKey = day.key
       return day.label
     })
-  }, [filtered])
+  }, [filtered, m.formats])
 
   return (
     <div className="quake-list flex flex-col h-full">

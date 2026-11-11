@@ -13,6 +13,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 // （経緯と、モックを併用する場合のつまずきどころは `../services/akamaiClock.test.ts` の同じ import）。
 // 状態を持たない `hypocenterIntensityLabel` は、ここで読んだものをそのまま使う。
 import { hypocenterIntensityLabel } from './hypocenterCatalog'
+import { ja } from '../i18n/messages/ja'
 
 async function freshModule() {
   vi.resetModules()
@@ -344,6 +345,8 @@ describe('深さが決まっていない地震', () => {
 })
 
 describe('hypocenterIntensityLabel', () => {
+  const JA_WORDS = { maxIntensity: ja.map.popup.maxIntensity, formats: ja.formats, catalogOther: ja.map.popup.catalogOther }
+
   // 正: 階級は「最大震度」を冠し、A〜D は弱強へ読み替える。
   it.each([
     ['1', '最大震度 1'],
@@ -354,7 +357,7 @@ describe('hypocenterIntensityLabel', () => {
     ['D', '最大震度 6強'],
     ['7', '最大震度 7'],
   ])('%s → %s', (code, want) => {
-    expect(hypocenterIntensityLabel(code)).toBe(want)
+    expect(hypocenterIntensityLabel(code, JA_WORDS)).toBe(want)
   })
 
   // 正: 震度ではない記号は語だけ（「最大震度」を冠さない）。
@@ -366,12 +369,12 @@ describe('hypocenterIntensityLabel', () => {
     ['M', 'やや顕著地震'],
     ['R', '顕著地震'],
   ])('%s → %s', (code, want) => {
-    expect(hypocenterIntensityLabel(code)).toBe(want)
+    expect(hypocenterIntensityLabel(code, JA_WORDS)).toBe(want)
   })
 
   // 安全弁: 表に無い記号は行を出さない（推し量って震度を名乗らない）。
   it.each(['0', 'Z', '', ' '])('%o は null', (code) => {
-    expect(hypocenterIntensityLabel(code)).toBeNull()
+    expect(hypocenterIntensityLabel(code, JA_WORDS)).toBeNull()
   })
 })
 

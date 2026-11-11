@@ -26,9 +26,9 @@ import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiM
  */
 export function obsBarTooltipHtml(bar: TsunamiObsBar, m: Messages): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const desc = overSuffixedHeight(bar.height)
-  const maxTime = observationMaxHeightTimeText(bar)
-  const firstWave = observationFirstWaveText(bar)
+  const desc = overSuffixedHeight(bar.height, m.tsunami)
+  const maxTime = observationMaxHeightTimeText(bar, m.tsunami)
+  const firstWave = observationFirstWaveText(bar, m.tsunami)
   return (
     `<div class="text-sm"><div class="font-bold">${esc(bar.name)}</div>` +
     `<div class="text-xs" style="color:${bar.color}">${esc(desc)}</div>` +

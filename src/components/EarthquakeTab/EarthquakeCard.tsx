@@ -2,7 +2,7 @@ import { Fragment, memo, useMemo, useRef, useEffect, useLayoutEffect, useState }
 import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, JMAInternationalTsunami, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
 import { quakeEventKey, isKnownCorrection } from '../../utils/quakeMerge'
 import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
-import { getLpgmClassLabel, getLpgmClassColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, lpgmPeriodSeconds, type LpgmStationRow } from '../../utils/lpgm'
+import { lpgmClassLabel, lpgmShortLabel, getLpgmClassColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, lpgmPeriodSeconds, type LpgmStationRow } from '../../utils/lpgm'
 import { readableTextColor, liftForContrast } from '../../utils/contrast'
 import { estimatedIntensityAvailability, estimatedMarkMismatchNote } from '../../utils/estimatedIntensity'
 import { telegramTextSubject, quakeTelegramTextTarget } from '../../utils/ttsFollow'
@@ -12,31 +12,25 @@ import { useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking
 import { scrollParentOf } from '../../hooks/useFollowScroll'
 import { SerialBadge } from '../SerialBadge'
 import {
-  formatQuakeTimeLabeled,
-  formatQuakeTime,
-  QUAKE_ARRIVAL_TIME_LABEL,
-  QUAKE_ORIGIN_TIME_LABEL,
-  QUAKE_ARRIVAL_TIME_UNKNOWN,
-  formatDepth,
-  formatDomesticTsunami,
-  TSUNAMI_WARNING_GROUP_TITLE,
+  quakeTimeLabeledText,
+  quakeTimeText,
+  depthText,
+  domesticTsunamiText,
   quakeReportLabels,
-  formatCorrectType,
+  correctTypeText,
   hasHypocenterFacts,
   hasMagnitude,
-  magnitudeHeading,
-  formatHypocenterSource,
-  formatMagnitudeWithCondition,
-  formatCoordinate,
+  magnitudeHeadingText,
+  magnitudeWithConditionText,
+  coordinateText,
   formatNameFromMark,
   formatTimeMin,
   formatHourMinute,
   readDateTime,
   NON_JMA_MARK,
-  NON_JMA_MARK_TITLE,
   withNonJmaMark,
 } from '../../utils/formatters'
-import { getIntensityLabel, getIntensityColor, getIntensityBgColor, getDepthColor, getMagnitudeColor } from '../../utils/intensity'
+import { intensityLabel, intensityShortLabel, getIntensityColor, getIntensityBgColor, getDepthColor, getMagnitudeColor } from '../../utils/intensity'
 import { hasKnownEpicenter } from '../../utils/geo'
 
 import { areaPrefIndexOf, regionOrderIndexOf, stationPrefIndexOf, lookupPointCoords, lookupStationRegion, regionOrderRank, type LatLng } from '../../utils/stationCoords'
@@ -53,7 +47,7 @@ import { usePrefectures } from '../../hooks/usePrefectures'
 import { ringsBoundsIndex, EMPTY_BOUNDS_INDEX, type RingsBounds } from '../../utils/subregions'
 import { groupUnreceivedPointNames, type UnreceivedPointGroup } from './unreceivedPointNames'
 import { QuakeSeismoWave } from './QuakeSeismoWave'
-import { QuakeListRow, TileScaleLabel, quakeTileColors } from './QuakeListRow'
+import { QuakeListRow, TileScaleLabel, quakeTileColors, orAboveWord } from './QuakeListRow'
 import { QuakeOpenPin } from './QuakeOpenPin'
 import { hasDomesticQuakeReport, quakeReplayStartMs } from '../../utils/quakeReplayStart'
 import { InternationalTsunamiText } from './InternationalTsunamiText'
@@ -194,6 +188,7 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
   unreceivedLayout: boolean
 }) {
   const q = useMessages().quake
+  const f = useMessages().formats
   const canExpand = expandKey != null
   const isOpen = canExpand && expanded.has(expandKey)
   // 行の主アクション。**開閉があればそちらが取る**（`onFocus` の注記を参照）。
@@ -231,7 +226,7 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
         className={`flex flex-col leading-[1.15] whitespace-nowrap${depth === 0 ? ' font-extrabold' : ' font-bold'}`}
         style={{ color: getIntensityColor(scale) }}
       >
-        <span>{getIntensityLabel(scale)}{unreceived && '以上'}</span>
+        <span>{unreceived ? f.orAbove(intensityLabel(scale, f)) : intensityLabel(scale, f)}</span>
         {(unreceivedIsOwn || hasUnreceived) && (
           <small
             className="font-normal"
@@ -246,7 +241,7 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
           開閉を持つ行では、地名だけが寄せの当たり判定になる（`labelFocus`）。 */}
       <span className={`min-w-0 ${depth === 0 ? 'text-white' : 'text-secondary'}`}>
         <span
-          title={nonJma ? NON_JMA_MARK_TITLE : undefined}
+          title={nonJma ? f.nonJmaStation : undefined}
           {...(labelFocus ? {
             role: 'button' as const,
             tabIndex: 0,
@@ -259,7 +254,7 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
         >
           {label}
         </span>
-        {nonJma && <span title={NON_JMA_MARK_TITLE}>{NON_JMA_MARK}</span>}
+        {nonJma && <span title={f.nonJmaStation}>{NON_JMA_MARK}</span>}
       </span>
       {/* 右端は開閉の記号だけ。 */}
       <span className="flex items-center whitespace-nowrap text-secondary">
@@ -434,6 +429,7 @@ function LpgmRow({ label, lgInt, int, nonJma, depth, expandKey, expanded, onTogg
   mark?: UpdateStatus
 }) {
   const q = useMessages().quake
+  const f = useMessages().formats
   const canExpand = expandKey != null
   const isOpen = canExpand && expanded.has(expandKey)
   // 行の主アクション。開閉があればそちらが取る（`IntensityRow` と同じ）。
@@ -462,13 +458,13 @@ function LpgmRow({ label, lgInt, int, nonJma, depth, expandKey, expanded, onTogg
           className="inline-block rounded-[3px] px-1.5 font-bold leading-[1.4]"
           style={{ fontSize: 'var(--qk-fs)', background: classColor, color: readableTextColor(classColor) }}
         >
-          {getLpgmClassLabel(lgInt)}
+          {lpgmClassLabel(lgInt, f)}
         </span>
       </span>
       <span className={`min-w-0 ${depth === 0 ? 'text-white' : 'text-secondary'}`}>
         {/* 気象庁以外が運用する観測点の印。震度一覧・地図の吹き出しと同じ扱い。 */}
         <span
-          title={nonJma ? NON_JMA_MARK_TITLE : undefined}
+          title={nonJma ? f.nonJmaStation : undefined}
           {...(labelFocus ? {
             role: 'button' as const,
             tabIndex: 0,
@@ -481,12 +477,12 @@ function LpgmRow({ label, lgInt, int, nonJma, depth, expandKey, expanded, onTogg
         >
           {label}
         </span>
-        {nonJma && <span title={NON_JMA_MARK_TITLE}>{NON_JMA_MARK}</span>}
+        {nonJma && <span title={f.nonJmaStation}>{NON_JMA_MARK}</span>}
       </span>
       {/* 右端に、その範囲の最大震度と開閉の記号。震度は階級の補足（「揺れは小さいのに高層階が大きく揺れた」
           形が出る）なので、値によらずグレーで置く。 */}
       <span className="flex items-center gap-1.5 whitespace-nowrap text-secondary">
-        {int !== undefined && <span className="text-[0.75rem]">{q.section.scale(getIntensityLabel(int))}</span>}
+        {int !== undefined && <span className="text-[0.75rem]">{q.section.scale(intensityLabel(int, f))}</span>}
         <span className="w-[1em] text-center text-[0.75rem]">{canExpand ? <DisclosureCaret open={isOpen} /> : ''}</span>
       </span>
     </div>
@@ -847,6 +843,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   quake: latestQuake, historyQuake = null, historyInputs = null, historyPickedId = null, onPickHistory, onReplay,
 }: Props) {
   const q = useMessages().quake
+  const f = useMessages().formats
   // 報の一覧で前の報を押している間は、その報の時点のカードを出す（→ `historyQuake`）
   const quake = historyQuake ?? latestQuake
   /** このカードの地震を指す鍵。**親へ返すときに使う。** */
@@ -931,9 +928,12 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   // 開いた表示も横並びのラベルと競る）。**語は本体より小さく添える** —— EEW の予想最大震度
   // バナーが「程度以上」で同じ形を採っている（`RealtimeTab/index.tsx`）。
   // **語は縮められない**（気象庁の表現をそのまま使う決まり）ので、大きさで受ける。
-  const maxScaleLabel = maxScale === -1 ? '?' : getIntensityLabel(maxScale)
+  // **枠と閉じた行の札は短い形**（5+・5-。日本語・韓国語・中国語は長い形と同じ字）。英語・スペイン語・
+  // ポルトガル語の長い形（「5 Upper」「5 fuerte」）は 68px の枠と 46px の札からはみ出す
+  // （2026-11-11 ユーザー選択「枠は短い形（5+）」）。各地の震度の一覧などの文は長い形のまま
+  const maxScaleLabel = maxScale === -1 ? '?' : intensityShortLabel(maxScale, f)
   const maxScaleOrAbove = maxScale !== -1 && isMaxScaleUnreceived(maxScale, quake.points)
-  const tsunamiInfo = formatDomesticTsunami(domesticTsunami, earthquake.domesticTsunamiCode)
+  const tsunamiInfo = domesticTsunamiText(domesticTsunami, earthquake.domesticTsunamiCode, f)
   const hasLocation = hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)
   // **震央地名は名前の有無で出す**（座標の有無で決めない）。津波電文から借りた震源は名前があっても
   // 座標を読めないことがあり（`readHypocenterAreaDetail` が座標を落とす経路）、座標で決めると
@@ -1372,16 +1372,16 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       )}
       {isKnownCorrection(issue.correct) && (
         <span className="shrink-0 rounded-[3px] bg-yellow-900 px-1.5 font-bold leading-[1.55] text-yellow-300">
-          {formatCorrectType(issue.correct)}
+          {correctTypeText(issue.correct, f)}
         </span>
       )}
     </>}
-    tsunami={quake.fromInternationalTsunami ? null : { text: tsunamiInfo.text, color: tsunamiInfo.color, title: domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined }}
+    tsunami={quake.fromInternationalTsunami ? null : { text: tsunamiInfo.text, color: tsunamiInfo.color, title: domesticTsunami === '警報等' ? f.tsunamiGroupTitle : undefined }}
     date={showListDate && quakeDate ? `${String(quakeDate.getMonth() + 1).padStart(2, '0')}/${String(quakeDate.getDate()).padStart(2, '0')}` : null}
     time={quakeDate ? formatHourMinute(quakeDate) : q.timeUnknown}
     name={epicenterLabel}
-    magnitude={hasFacts ? { text: formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType), value: hypocenter.magnitude } : null}
-    depth={hasFacts ? { text: formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true), value: hypocenter.depth } : null}
+    magnitude={hasFacts ? { text: magnitudeWithConditionText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType, f), value: hypocenter.magnitude } : null}
+    depth={hasFacts ? { text: depthText(hypocenter.depth, hypocenter.depthAtLeast === true, f), value: hypocenter.depth } : null}
   />
   )
   // 開いたカードの開閉（報の一覧・気象庁からの補足）と、帯を出すかを見る震度の枠
@@ -1504,7 +1504,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     // 上から: 見出しの行（押すと畳む・「更新」で報の一覧）→ 見出し文 → 震度の枠と震源の値（広い画面では
     // 一覧の上へ貼りつく）→ 気象庁からの補足 → 各地の震度 → 長周期地震動 → 国際津波関連情報 → 波形 → 官署。
     const lpgmShown = lpgm && !lpgm.cancelled ? lpgm : undefined
-    const quakeTimeText = formatQuakeTime(earthquake.time)
+    const quakeTimeShown = quakeTimeText(earthquake.time, f)
     const lastTimeline = [...timeline].reverse().find(e => e.ms !== null)
     // 再生ボタン（→ `utils/quakeReplayStart.ts`）。最初の報は並べるだけの一覧から取る（押せる一覧は「更新 ▾」を開いている間しか組まない）。
     // 始める時刻を決められないカードには出さない（2026-11-08 ユーザー選択「地震タブにも同じ赤字 (Recommended)」の説明）。
@@ -1573,7 +1573,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             </span>
           )}
           {isKnownCorrection(issue.correct) && (
-            <span className="rounded-sm bg-yellow-900 px-1.5 font-bold text-yellow-300">{formatCorrectType(issue.correct)}</span>
+            <span className="rounded-sm bg-yellow-900 px-1.5 font-bold text-yellow-300">{correctTypeText(issue.correct, f)}</span>
           )}
           {lastTimeline && lastTimeline.ms !== null && (
             <button
@@ -1582,7 +1582,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               onClick={() => setTimelineOpen(v => !v)}
               className="whitespace-nowrap rounded border border-border px-1.5 text-[#9fb3c8] hover:text-white"
             >
-              {q.updated} {formatTimelineTime(lastTimeline.ms)} <DisclosureCaret open={timelineOpen} glyph="▾" turn={180} />
+              {q.updated} {formatTimelineTime(lastTimeline.ms, f)} <DisclosureCaret open={timelineOpen} glyph="▾" turn={180} />
             </button>
           )}
           {/* 「更新」の右に置く（2026-11-08 ユーザー選択「A: 「更新」の右」・文面とホバーも同じ問いのまま）。
@@ -1623,7 +1623,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   <span>{heldText
                     ? <span onClick={ev => ev.stopPropagation()} onKeyDown={ev => ev.stopPropagation()}><DescriptionTip label={entryLabel} description={heldText} labelClassName="" /></span>
                     : entryLabel}</span>
-                  <span className="tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms) : q.timeUnknown}</span>
+                  <span className="tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms, f) : q.timeUnknown}</span>
                 </div>
               )
             })}
@@ -1666,7 +1666,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   <TileScaleLabel label={maxScaleLabel} />
                 </span>
                 {/* 「以上」は本体より小さく添える（→ `maxScaleOrAbove` の注記） */}
-                {maxScaleOrAbove && <span className="text-[0.8rem] font-bold">以上</span>}
+                {maxScaleOrAbove && <span className="text-[0.8rem] font-bold">{orAboveWord(f)}</span>}
               </div>
               {lpgmShown && (
                 <div
@@ -1677,7 +1677,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   className="quake-tile-part quake-tile-lpgm flex items-center justify-center font-bold text-white"
                   style={{ height: 'var(--qk-band-h)', fontSize: 'var(--qk-band-f)', backgroundColor: getLpgmClassColor(lpgmShown.maxClass), borderTop: '1px solid rgba(0,0,0,.35)' }}
                 >
-                  {getLpgmClassLabel(lpgmShown.maxClass).replace('階級', '長周期')}
+                  {lpgmShortLabel(lpgmShown.maxClass, f)}
                 </div>
               )}
               {markDot('maxScale', 'md', 'absolute right-1 top-1')}
@@ -1703,7 +1703,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   )}
                   {hasLocation && (
                     <span className="inline-block whitespace-nowrap tabular-nums">
-                      {formatCoordinate(hypocenter.latitude, hypocenter.longitude)}
+                      {coordinateText(hypocenter.latitude, hypocenter.longitude, 1, f)}
                       {borrowedHypocenter && <BorrowedMark />}
                       {markDot('coordinate', 'sm', 'align-top ml-1')}
                     </span>
@@ -1712,24 +1712,24 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               )}
               {/* 震源を決めた機関（`Hypocenter/Source`）。津波カードと同じ文面（2026-10-22 ユーザー承認「6-A 津波タブと同じ」）。 */}
               {hypocenter.source && (
-                <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatHypocenterSource(hypocenter.source)}</div>
+                <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{f.hypocenterSource(hypocenter.source)}</div>
               )}
               <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
                 <div>
-                  {quakeTimeText ? (
+                  {quakeTimeShown ? (
                     <>
                       <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
-                        {quake.fromInternationalTsunami ? QUAKE_ORIGIN_TIME_LABEL : QUAKE_ARRIVAL_TIME_LABEL}
+                        {quake.fromInternationalTsunami ? f.originTime : f.arrivalTime}
                       </span>
-                      <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{quakeTimeText}</b>
+                      <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{quakeTimeShown}</b>
                     </>
                   ) : (
-                    <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{QUAKE_ARRIVAL_TIME_UNKNOWN}</b>
+                    <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{f.arrivalTimeUnknown}</b>
                   )}
                 </div>
                 {/* 国内津波情報。「津波警報等」だけは語に何が含まれるか説明を添える（→ `formatDomesticTsunami`）。
                     国際津波関連情報だけのカードには出さない（英文に国内の津波の区分は無い。→ quake-spec.md §3） */}
-                {!quake.fromInternationalTsunami && <div title={domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined}>
+                {!quake.fromInternationalTsunami && <div title={domesticTsunami === '警報等' ? f.tsunamiGroupTitle : undefined}>
                   <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{q.tsunami}</span>
                   <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)', color: tsunamiInfo.color }}>
                     {tsunamiInfo.text}
@@ -1743,7 +1743,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                     <div>
                       {/* 見出しは種別の名前、値は記号つき（2026-10-23 ユーザー承認「まあそれで行きましょう」）。→ `magnitudeHeading` */}
                       <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
-                        {magnitudeHeading(hypocenter.magnitudeType)}
+                        {magnitudeHeadingText(hypocenter.magnitudeType, f)}
                         {borrowedHypocenter && <BorrowedMark />}
                       </span>
                       {/* 「M8を超える巨大地震」のような文は字だけ縮める。行の大きさは深さの欄と同じに保ち、
@@ -1751,7 +1751,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                       <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'var(--qk-val)' }}>
                         <i className="mr-1.5 inline-block h-[0.9em] w-1 rounded-[2px] align-[-0.05em]" style={{ backgroundColor: magColor }} />
                         <span style={hypocenter.magnitudeCondition && !hasMagnitude(hypocenter.magnitude) ? { fontSize: '0.7em' } : undefined}>
-                          {formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}
+                          {magnitudeWithConditionText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType, f)}
                         </span>
                         {markDot('magnitude', 'md', 'align-top ml-1')}
                       </b>
@@ -1763,7 +1763,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                       </span>
                       <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)' }}>
                         <i className="mr-1.5 inline-block h-[0.9em] w-1 rounded-[2px] align-[-0.05em]" style={{ backgroundColor: depthColor }} />
-                        {formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}
+                        {depthText(hypocenter.depth, hypocenter.depthAtLeast === true, f)}
                         {markDot('depth', 'md', 'align-top ml-1')}
                       </b>
                     </div>
@@ -1923,7 +1923,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                           return (
                             <span
                               key={name}
-                              title={nonJma ? NON_JMA_MARK_TITLE : undefined}
+                              title={nonJma ? f.nonJmaStation : undefined}
                               {...(focus ? {
                                 role: 'button' as const,
                                 tabIndex: 0,
@@ -2219,7 +2219,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           <QuakeSeismoWave
             waves={seismoWaves ?? []}
             view={seismoWaveView}
-            quakeLabel={`${formatQuakeTimeLabeled(earthquake.time)} ${epicenterLabel}`}
+            quakeLabel={`${quakeTimeLabeledText(earthquake.time, f)} ${epicenterLabel}`}
           />
         </div>
 

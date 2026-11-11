@@ -105,8 +105,9 @@ interface DialogProps {
  */
 export function QuakeListFilterDialog({ filter, onChange, quakes, open, onClose, shownCount, totalCount, loadNote }: DialogProps) {
   const q = useMessages().quake
+  const formats = useMessages().formats
   if (!open) return null
-  const labels = quakeFilterChipLabels(filter, q)
+  const labels = quakeFilterChipLabels(filter, q, formats)
   const active = activeKinds(filter)
   const body: Record<FilterKind, ReactNode> = {
     scale: <ScaleRange value={filter.scale} text={labels.scale} onChange={scale => onChange({ ...filter, scale })} />,

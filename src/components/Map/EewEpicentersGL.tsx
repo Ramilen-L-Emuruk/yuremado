@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react'
 import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import type { EewEpicenter } from '../../hooks/useEewLayerData'
-import { getIntensityColor, getIntensityLabelWithApproxAbove } from '../../utils/intensity'
+import { getIntensityColor, intensityLabelWithApproxAbove } from '../../utils/intensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
-import { formatMagnitudeWithCondition, formatDepth, hasDepth } from '../../utils/formatters'
+import { magnitudeWithConditionText, depthText, hasDepth } from '../../utils/formatters'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer, type DepthPointShape } from './gl/depthPointLayer'
@@ -161,7 +161,7 @@ export function buildPopupHtml(ep: EewEpicenter, m: Messages): string {
   // （×印の形を輪つきにする判定と同じ isAssumed を使い、判定を二重に持たない）。
   const provisional = ep.isAssumed
   // 最大予想震度 0 の報は「0」を震度0 の灰色で出す（カードと同じ。2026-10-30 ユーザー決定「全部出す」）
-  const scaleLabel = ep.maxScaleZero ? '0' : getIntensityLabelWithApproxAbove(ep.maxScale, ep.maxScaleOrAbove)
+  const scaleLabel = ep.maxScaleZero ? '0' : intensityLabelWithApproxAbove(ep.maxScale, ep.maxScaleOrAbove, m.formats)
   const scaleColor = ep.maxScaleZero ? SHINDO0_COLOR : getIntensityColor(ep.maxScale)
   return (
     `<div style="min-width:170px">` +
@@ -179,8 +179,8 @@ export function buildPopupHtml(ep: EewEpicenter, m: Messages): string {
       // 規模の説明（「Ｍ８を超える巨大地震」など）は地震情報の吹き出しと同じ部品で出す（2026-10-22 ユーザー承認
       // 「吹き出しと共有カードも揃える (Recommended)」）。前置きの記号は電文の種別どおり（同日「1-A 電文のまま」）。
       : t.magnitudeDepth(
-          escapeHtml(formatMagnitudeWithCondition(ep.magnitude, ep.magnitudeCondition, ep.magnitudeType)),
-          escapeHtml(formatDepth(ep.depth, ep.depthAtLeast)),
+          escapeHtml(magnitudeWithConditionText(ep.magnitude, ep.magnitudeCondition, ep.magnitudeType, m.formats)),
+          escapeHtml(depthText(ep.depth, ep.depthAtLeast, m.formats)),
         )) +
     `</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +

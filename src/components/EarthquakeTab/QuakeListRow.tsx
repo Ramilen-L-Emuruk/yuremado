@@ -1,8 +1,14 @@
 import { useMessages } from '../../i18n/I18nProvider'
 import { useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { getIntensityColor, getIntensityBgColor, getDepthColor, getMagnitudeColor } from '../../utils/intensity'
-import { getLpgmClassColor, getLpgmClassLabel } from '../../utils/lpgm'
+import { getLpgmClassColor, lpgmShortLabel } from '../../utils/lpgm'
 import type { QuakeListSort, QuakeSortKey } from '../../utils/quakeListView'
+import type { Messages } from '../../i18n/messages'
+
+/** 震度の枠の下に小さく添える「以上」の語（日本語は「以上」、英語は「or higher」） */
+export function orAboveWord(f: Pick<Messages['formats'], 'orAboveSuffix'>): string {
+  return f.orAboveSuffix
+}
 
 /**
  * 地震一覧の閉じた行（見本 closed5。→ docs/quake-tab-redesign.md「決まっていること」）。
@@ -124,9 +130,13 @@ export function QuakeListDayLabel({ label }: { label: string }) {
  * 揺れ検知の「0未満」の「未満」も同じく 0.55 倍で添える（2026-11-05 ユーザー発言「未満だけ小さくしたら」、続く選択
  * 「数字の横に 0.55 倍 (Recommended)」）。
  * 値の本体（`data-tile-value`）は 1 つの要素のまま —— 「以上」はこれとは別の要素で添える（→ `maxScaleOrAbove`）。
+ *
+ * **語で切り分けない。** 札は言語ごとに辞書の語で組む（`formats.intensity`・`formats.belowZero`）ので、
+ * 先頭の数字と、その後ろに続く添え字に分ける。日本語は「5」＋「弱」・「0」＋「未満」になり、数字だけの札
+ * （「3」）や数字で始まらない札（「不明」「?」）はそのまま出す。
  */
 export function TileScaleLabel({ label }: { label: string }) {
-  const m = /^(.*?)(弱|強|未満)$/.exec(label)
+  const m = /^(\d+)(\D.*)$/.exec(label)
   return (
     <span data-tile-value className="whitespace-nowrap">
       {m ? <>{m[1]}<span style={{ fontSize: '0.55em' }}>{m[2]}</span></> : label}
@@ -144,17 +154,25 @@ export function quakeTileColors(scale: number): { backgroundColor: string; borde
 }
 
 export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmClass, heading, chips, tsunami, date, time, name, magnitude, depth }: QuakeListRowProps) {
+  const f = useMessages().formats
   const rowRef = useRef<HTMLDivElement>(null)
   const topRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLSpanElement>(null)
   const headingRef = useRef<HTMLSpanElement>(null)
   const chipsRef = useRef<HTMLSpanElement>(null)
+  /** 深さの欄と、その中の文字。文字が欄より広いかを比べる（右寄せの欄は左へはみ出すので `scrollWidth` に出ない）。 */
+  const depthColRef = useRef<HTMLSpanElement>(null)
+  const depthTextRef = useRef<HTMLSpanElement>(null)
   // 入らないときだけ段を下げる。**描いてから測る**（文字の幅は字体と UI 倍率で変わるので、文字数では決められない）。
   const [dropChips, setDropChips] = useState(false)
   const [dropValues, setDropValues] = useState(false)
   // 札を下げても見出しの段に入らない（見出しそのものが長い）ときだけ、見出しを折り返す
   // （2026-11-11 ユーザー選択「2 行に折り返す (Recommended)」。訳した報の名前が津波の札の下に潜っていた）
   const [wrapHeading, setWrapHeading] = useState(false)
+  // 深さの語（訳した「ごく浅い」など）が深さの欄に入らないときだけ、規模と深さを下の段へまとめて右寄せで並べる
+  // （2026-11-11 ユーザー選択「その行だけ下の段へ (Recommended)」。英語 Very shallow 80px・スペイン語
+  // Muy superficial 97px が 68px の欄から左へはみ出し、規模に重なっていた）
+  const [wideDepth, setWideDepth] = useState(false)
   /** 最後に測った中身と幅。どちらかが変わったら段を一度戻して測り直す。 */
   const measuredFor = useRef<string | null>(null)
   const [widthTick, bumpWidth] = useReducer((n: number) => n + 1, 0)
@@ -172,10 +190,11 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
     if (key !== measuredFor.current) {
       measuredFor.current = key
       // 中身か幅が変わった: 一度戻し、戻した形で次の描き直しのときに測る（描く前なので画面には出ない）
-      if (dropChips || dropValues || wrapHeading) {
+      if (dropChips || dropValues || wrapHeading || wideDepth) {
         setDropChips(false)
         setDropValues(false)
         setWrapHeading(false)
+        setWideDepth(false)
         return
       }
     }
@@ -189,6 +208,14 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
       if (hasChips) setDropChips(true)
       else setWrapHeading(true)
     } else if (dropChips && !wrapHeading && topOver) setWrapHeading(true)
+    // 深さの欄は右寄せなので、入らない文字は左（規模の欄）へはみ出す。欄の幅と文字の幅を比べる
+    const dc = depthColRef.current
+    const dt = depthTextRef.current
+    if (!wideDepth && dc && dt && dt.offsetWidth > dc.clientWidth + 1) {
+      setWideDepth(true)
+      setDropValues(true)
+      return
+    }
     if (!dropValues && (row.scrollWidth > row.clientWidth + 1 || nm.scrollWidth > nm.clientWidth + 1)) setDropValues(true)
   })
   useLayoutEffect(() => {
@@ -228,7 +255,7 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
       >
         <div data-tile className="flex flex-1 w-full flex-col items-center justify-center" style={{ fontSize: lpgmClass !== null ? 'calc(var(--qk-tile-f) - 3px)' : 'var(--qk-tile-f)' }}>
           <TileScaleLabel label={scaleLabel} />
-          {orAbove && <small className={lpgmClass !== null ? 'text-[8.5px]' : 'mt-0.5 text-[10px]'}>以上</small>}
+          {orAbove && <small className={lpgmClass !== null ? 'text-[8.5px]' : 'mt-0.5 text-[10px]'}>{orAboveWord(f)}</small>}
         </div>
         {lpgmClass !== null && (
           <div
@@ -237,7 +264,7 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
             className="flex h-[15px] w-full items-center justify-center text-[10.5px] font-bold tracking-[.02em] text-white"
             style={{ backgroundColor: getLpgmClassColor(lpgmClass), borderTop: '1px solid rgba(0,0,0,.35)' }}
           >
-            {getLpgmClassLabel(lpgmClass).replace('階級', '長周期')}
+            {lpgmShortLabel(lpgmClass, f)}
           </div>
         )}
       </div>
@@ -254,12 +281,22 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
           持たせる（2026-11-05 ユーザー選択「B 「…」で省く」。全文の出し方とスマホの扱いは docs/quake-tab-redesign.md の表）。
           省いても `scrollWidth` は全文の幅のままなので、段を下げる判定は変わらない */}
       <span ref={nameRef} title={name} className="col-start-3 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-bold text-white" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{name}</span>
-      <span className="flex items-center justify-end gap-1.5 whitespace-nowrap tabular-nums" style={{ gridRow: valueRow, gridColumn: dropValues ? '3 / 5' : '4', fontSize: 'var(--qk-f)' }}>
-        {magnitude && <><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getMagnitudeColor(magnitude.value) }} />{magnitude.text}</>}
-      </span>
-      <span className="col-start-5 flex items-center justify-end gap-1.5 whitespace-nowrap" style={{ gridRow: valueRow, fontSize: 'var(--qk-f)' }}>
-        {depth && <><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getDepthColor(depth.value) }} />{depth.text}</>}
-      </span>
+      {wideDepth ? (
+        // 深さの語が欄に入らない行: 規模と深さを下の段の右端へ続けて並べる（欄の縦の揃えより、重ならないことを取る）
+        <span className="flex items-center justify-end gap-3 whitespace-nowrap" style={{ gridRow: valueRow, gridColumn: '3 / 6', fontSize: 'var(--qk-f)' }}>
+          {magnitude && <span className="flex items-center gap-1.5 tabular-nums"><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getMagnitudeColor(magnitude.value) }} />{magnitude.text}</span>}
+          {depth && <span className="flex items-center gap-1.5"><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getDepthColor(depth.value) }} />{depth.text}</span>}
+        </span>
+      ) : (
+        <>
+          <span className="flex items-center justify-end gap-1.5 whitespace-nowrap tabular-nums" style={{ gridRow: valueRow, gridColumn: dropValues ? '3 / 5' : '4', fontSize: 'var(--qk-f)' }}>
+            {magnitude && <><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getMagnitudeColor(magnitude.value) }} />{magnitude.text}</>}
+          </span>
+          <span ref={depthColRef} className="col-start-5 flex items-center justify-end whitespace-nowrap" style={{ gridRow: valueRow, fontSize: 'var(--qk-f)' }}>
+            {depth && <span ref={depthTextRef} className="flex shrink-0 items-center gap-1.5"><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getDepthColor(depth.value) }} />{depth.text}</span>}
+          </span>
+        </>
+      )}
     </div>
   )
 }

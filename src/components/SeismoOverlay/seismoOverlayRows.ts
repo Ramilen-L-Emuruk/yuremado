@@ -16,6 +16,7 @@
 import type { SeismoStationState } from '../../hooks/useSeismoStation'
 import { intensityGradeColor, measuredIntensityToGrade } from '../../utils/measuredIntensity'
 import { formatMeasured } from '../../utils/measuredIntensityRounding'
+import { intensityGradeLabel } from '../../utils/kyoshinIntensity'
 import type { Messages } from '../../i18n/messages'
 
 /** 出どころの札の語（辞書の `map.seismo`）。 */
@@ -96,7 +97,8 @@ export function seismoOverlayRows(
     return {
       stationId: station.stationId,
       displayName: station.displayName,
-      gradeLabel: grade?.label ?? null,
+      // 札は辞書の語で（`grade.label` は日本語の字。自作地震計のホストの管理画面と共有なので、そちらは触らない）
+      gradeLabel: grade === null ? null : intensityGradeLabel(grade, m.formats),
       gradeColor: grade === null ? null : intensityGradeColor(grade),
       // **階級を引けなかった値は数字も出さない。** 非有限の値をそのまま
       // 「計測震度」として見せると、壊れていることが読み取れない

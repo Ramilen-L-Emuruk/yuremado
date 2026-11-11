@@ -10,7 +10,7 @@
 
 import type { EnsembleSource } from './kyoshinEnsembleDetector'
 import type { EnsembleDetection } from './kyoshinEnsembleTracker'
-import { detectionScaleLabelFromValue } from './kyoshinIntensity'
+import { detectionScaleTextFromValue, type DetectionScaleWords } from './kyoshinIntensity'
 import type { Messages } from '../i18n/messages'
 
 /** 検知の根拠の語（辞書の `realtime.evidence`） */
@@ -26,11 +26,11 @@ export interface EvidenceRow {
 }
 
 /**
- * 計測震度 → 震度階級ラベル。震度0 未満は「0未満」、欠測は `—`（`kyoshinIntensity.ts` の
- * `detectionScaleLabelFromValue`）。**0.5 刻みのインデックスへ丸めてから引かない** —— 計測震度 4.4 が「5弱」になる
+ * 計測震度 → 震度階級ラベル。震度0 未満は辞書の `belowZero`（日本語は「0未満」）、欠測は `—`（`kyoshinIntensity.ts` の
+ * `detectionScaleTextFromValue`）。**0.5 刻みのインデックスへ丸めてから引かない** —— 計測震度 4.4 が「5弱」になる
  */
-function scaleLabel(value: number | null): string {
-  return detectionScaleLabelFromValue(value) ?? '—'
+function scaleLabel(value: number | null, f: DetectionScaleWords): string {
+  return detectionScaleTextFromValue(value, f) ?? '—'
 }
 
 /** 支えた部分の呼び名を `ENSEMBLE_SOURCE_ORDER` の順に並べる */
@@ -46,10 +46,10 @@ function sourceLabels(d: EnsembleDetection, w: EvidenceWords): string[] {
  * 点数はユーザー選択「点数を外す (Recommended)」で外した —— 本文の「N観測点で反応」と同じ数が並ぶか、数え方の違いで
  * 食い違って見えるため）。支えた部分が無ければ null（呼び出し側は行ごと出さない）。
  */
-export function ensembleSummary(d: EnsembleDetection, w: EvidenceWords): string | null {
+export function ensembleSummary(d: EnsembleDetection, w: EvidenceWords, f: DetectionScaleWords): string | null {
   if (d.confidence === 'confirmed') {
     if (d.confirmedSnapshot === null) return null
-    return w.confirmedAt(d.confirmedSnapshot.size, scaleLabel(d.confirmedSnapshot.maxIntensity))
+    return w.confirmedAt(d.confirmedSnapshot.size, scaleLabel(d.confirmedSnapshot.maxIntensity, f))
   }
   const labels = sourceLabels(d, w)
   if (labels.length === 0) return null
@@ -57,7 +57,7 @@ export function ensembleSummary(d: EnsembleDetection, w: EvidenceWords): string 
 }
 
 /** 「判定の内訳」の表。値はいまのもの（確定までの秒だけは確定した時点で決まる） */
-export function ensembleRows(d: EnsembleDetection, w: EvidenceWords): EvidenceRow[] {
+export function ensembleRows(d: EnsembleDetection, w: EvidenceWords, f: DetectionScaleWords): EvidenceRow[] {
   const sources = sourceLabels(d, w)
   const untilConfirmed = d.firstConfirmedAtMs === null
     ? '—'
@@ -65,7 +65,7 @@ export function ensembleRows(d: EnsembleDetection, w: EvidenceWords): EvidenceRo
   return [
     { label: w.rowSources, value: sources.length > 0 ? sources.join(w.sourceSeparator) : '—' },
     { label: w.rowMembers, value: w.members(d.memberKeys.length) },
-    { label: w.rowMaxIntensity, value: d.maxIntensity === null ? '—' : w.maxIntensity(scaleLabel(d.maxIntensity)) },
+    { label: w.rowMaxIntensity, value: d.maxIntensity === null ? '—' : w.maxIntensity(scaleLabel(d.maxIntensity, f)) },
     { label: w.rowUntilConfirmed, value: untilConfirmed },
   ]
 }

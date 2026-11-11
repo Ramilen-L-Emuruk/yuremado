@@ -10,8 +10,8 @@
 
 import type { JMAQuake } from '../types/earthquake'
 import type { HypocenterYear, TelegramPointLabels } from './hypocenterCatalog'
-import { formatDepth, formatHypocenterSource, formatMagnitudeWithCondition, hasDepth, hasMagnitude } from './formatters'
-import { getIntensityLabelWithOrAbove, isValidIntensityScale } from './intensity'
+import { hasDepth, hasMagnitude } from './formatters'
+import { isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { hasValidHypocenter } from './quakeHeatmap'
 import { log } from './logger'
@@ -81,14 +81,11 @@ export function tailYearFromQuakes(quakes: readonly JMAQuake[], fromMs: number, 
     labels.push({
       time: formatMinuteJst(t),
       intensity: isValidIntensityScale(scale) && scale > 0
-        ? `最大震度 ${getIntensityLabelWithOrAbove(scale, isMaxScaleUnreceived(scale, q.points))}`
+        ? { scale, orAbove: isMaxScaleUnreceived(scale, q.points) }
         : null,
-      // 数値が無く説明も無いときだけ、カタログの点と同じ「M 不明」（吹き出しは M と深さを 1 行に並べるので「不明」だけにしない）
-      magnitude: hasMagnitude(h.magnitude) || h.magnitudeCondition
-        ? formatMagnitudeWithCondition(h.magnitude, h.magnitudeCondition, h.magnitudeType)
-        : 'M 不明',
-      depth: hasDepth(h.depth) ? `深さ ${formatDepth(h.depth, h.depthAtLeast ?? false)}` : '深さ不明',
-      source: h.source ? formatHypocenterSource(h.source) : null,
+      magnitude: { value: h.magnitude, condition: h.magnitudeCondition || undefined, type: h.magnitudeType },
+      depth: hasDepth(h.depth) ? { km: h.depth, atLeast: h.depthAtLeast ?? false } : null,
+      source: h.source || null,
     })
   })
   return {
