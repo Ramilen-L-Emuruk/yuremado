@@ -942,8 +942,7 @@ export const ja = {
     },
     sections: {
       connection: '接続',
-      browserNotify: 'ブラウザ通知',
-      push: 'プッシュ通知',
+      notify: '通知',
       sound: '音と読み上げ',
       timeSignal: '時報',
       speech: '読み上げ設定',
@@ -1050,15 +1049,13 @@ export const ja = {
       notifyPermission: {
         label: '通知許可',
         description: 'ブラウザの通知権限を確認・許可します',
+        deniedDescription: 'ブラウザで通知が拒否されています。通知を受け取るには、ブラウザのサイトの設定で通知を許可してください',
+        unsupportedDescription: 'このブラウザは通知に対応していません',
       },
       testNotification: {
         label: 'テスト通知',
         description: 'テスト通知を即時送信（要通知許可）',
         button: '通知テスト',
-      },
-      pushNotify: {
-        label: 'プッシュ通知',
-        description: 'アプリを閉じているときや、ほかのアプリを使っているときも通知を受け取ります。オンにすると、この端末の通知の届け先と通知の設定を配信サーバーに登録します',
       },
       sound: {
         label: '通知音',
@@ -1376,6 +1373,7 @@ export const ja = {
     permission: {
       granted: '許可済み',
       denied: 'ブラウザで拒否済み',
+      unsupported: '非対応',
       request: '通知を許可する',
     },
     clock: {

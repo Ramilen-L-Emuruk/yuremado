@@ -785,8 +785,7 @@ export const es: Messages = {
     },
     sections: {
       connection: 'Conexión',
-      browserNotify: 'Notificaciones del navegador',
-      push: 'Notificaciones push',
+      notify: 'Notificaciones',
       sound: 'Sonido y lectura en voz alta',
       timeSignal: 'Señal horaria',
       speech: 'Ajustes de lectura',
@@ -893,15 +892,13 @@ export const es: Messages = {
       notifyPermission: {
         label: 'Permiso de notificación',
         description: 'Comprueba y concede el permiso de notificaciones del navegador',
+        deniedDescription: 'Las notificaciones están bloqueadas en el navegador. Para recibirlas, permite las notificaciones en la configuración del sitio del navegador',
+        unsupportedDescription: 'Este navegador no admite notificaciones',
       },
       testNotification: {
         label: 'Notificación de prueba',
         description: 'Envía ya una notificación de prueba (requiere permiso)',
         button: 'Probar notificación',
-      },
-      pushNotify: {
-        label: 'Notificaciones push',
-        description: 'Recibe notificaciones aunque la app esté cerrada o use otra app. Al activarlo, se registran en el servidor de distribución el destino de notificaciones de este dispositivo y sus ajustes de notificación',
       },
       sound: {
         label: 'Sonidos de alerta',
@@ -1214,6 +1211,7 @@ export const es: Messages = {
     permission: {
       granted: 'Permitido',
       denied: 'Bloqueado en el navegador',
+      unsupported: 'No compatible',
       request: 'Permitir notificaciones',
     },
     clock: {

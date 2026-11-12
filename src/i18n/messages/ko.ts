@@ -792,8 +792,7 @@ export const ko: Messages = {
     },
     sections: {
       connection: '연결',
-      browserNotify: '브라우저 알림',
-      push: '푸시 알림',
+      notify: '알림',
       sound: '소리와 음성 읽기',
       timeSignal: '시보',
       speech: '음성 읽기 설정',
@@ -900,15 +899,13 @@ export const ko: Messages = {
       notifyPermission: {
         label: '알림 권한',
         description: '브라우저의 알림 권한을 확인·허용합니다',
+        deniedDescription: '브라우저에서 알림이 차단되어 있습니다. 알림을 받으려면 브라우저의 사이트 설정에서 알림을 허용하세요',
+        unsupportedDescription: '이 브라우저는 알림을 지원하지 않습니다',
       },
       testNotification: {
         label: '테스트 알림',
         description: '테스트 알림을 즉시 보냅니다(알림 권한 필요)',
         button: '알림 테스트',
-      },
-      pushNotify: {
-        label: '푸시 알림',
-        description: '앱을 닫았을 때나 다른 앱을 사용할 때도 알림을 받습니다. 켜면 이 기기의 알림 수신처와 알림 설정을 배포 서버에 등록합니다',
       },
       sound: {
         label: '알림음',
@@ -1221,6 +1218,7 @@ export const ko: Messages = {
     permission: {
       granted: '허용됨',
       denied: '브라우저에서 거부됨',
+      unsupported: '지원 안 함',
       request: '알림 허용',
     },
     clock: {

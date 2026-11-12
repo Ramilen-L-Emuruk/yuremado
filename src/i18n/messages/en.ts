@@ -785,8 +785,7 @@ export const en: Messages = {
     },
     sections: {
       connection: 'Connection',
-      browserNotify: 'Browser notifications',
-      push: 'Push notifications',
+      notify: 'Notifications',
       sound: 'Sound and reading aloud',
       timeSignal: 'Time signal',
       speech: 'Reading settings',
@@ -893,15 +892,13 @@ export const en: Messages = {
       notifyPermission: {
         label: 'Notification permission',
         description: 'Checks and grants the browser\'s notification permission',
+        deniedDescription: 'Notifications are blocked in this browser. To receive them, allow notifications in the browser\'s site settings',
+        unsupportedDescription: 'This browser does not support notifications',
       },
       testNotification: {
         label: 'Test notification',
         description: 'Sends a test notification right away (requires notification permission)',
         button: 'Test notification',
-      },
-      pushNotify: {
-        label: 'Push notifications',
-        description: 'Receive notifications even when the app is closed or you are using another app. When on, this device\'s notification address and notification settings are registered with the distribution server',
       },
       sound: {
         label: 'Alert sounds',
@@ -1214,6 +1211,7 @@ export const en: Messages = {
     permission: {
       granted: 'Allowed',
       denied: 'Blocked in browser',
+      unsupported: 'Not supported',
       request: 'Allow notifications',
     },
     clock: {
