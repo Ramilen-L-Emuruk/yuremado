@@ -2366,6 +2366,9 @@ export const ja = {
     joinParts: (parts: readonly string[]) => parts.join(' '),
     quakeTitle: '地震情報',
     quakeCancelTitle: '地震情報 取消',
+    /** 初めてプッシュ通知を購読したときに中継が試しに送る通知の題と本文（中継だけが使う。2026-11-13 ユーザー選択「この訳で入れる (Recommended)」） */
+    pushReadyTitle: '揺れ窓',
+    pushReadyBody: 'プッシュ通知を受け取れるようになりました',
     /** 最大震度を観測した区域が複数あるときの区域の語 */
     areaAndOthers: (name: string) => `${name}ほか`,
     /** 震度速報（震源がまだ判らない報）。`area` は最大震度を観測した区域（読めなければ null） */

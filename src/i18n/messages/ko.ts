@@ -2132,6 +2132,8 @@ export const ko: Messages = {
     joinParts: (parts) => parts.join(' · '),
     quakeTitle: '지진 정보',
     quakeCancelTitle: '지진 정보 취소',
+    pushReadyTitle: 'Yuremado',
+    pushReadyBody: '이제 푸시 알림을 받을 수 있습니다',
     areaAndOthers: (name) => `${name} 외`,
     scalePrompt: (area, scale) => (area === null ? `진도 속보 · 최대 진도 ${scale}` : `진도 속보 · ${area} · 최대 진도 ${scale}`),
     hypocenter: (name, scale, magnitude) => `${name} · 최대 진도 ${scale} · ${magnitude}`,
