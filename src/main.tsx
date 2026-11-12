@@ -7,7 +7,8 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import './index.css'
 import { App } from './App'
 import { I18nProvider } from './i18n/I18nProvider'
-import { DEFAULT_LOCALE } from './i18n/messages'
+import { deviceLanguageTags, loadMessages, resolveLocale, type Locale, type Messages } from './i18n/messages'
+import { readStoredLocaleSetting } from './hooks/useSettings'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { log } from './utils/logger'
 import { installFrameProfiler } from './utils/frameProfiler'
@@ -69,30 +70,72 @@ if ('serviceWorker' in navigator) {
 const rootEl = document.getElementById('root')
 if (!rootEl) throw new Error('描画先の要素（#root）が見つからない')
 
-// 最後の受け皿。**`App` 自身のレンダー例外はここでしか拾えない** —— `App` は 1700 行超の単一
-// コンポーネントで、メモ化していない裸の計算式を本体に多数持つ。その中で投げられた例外は、React が
-// 子の照合に入る前に `App()` の呼び出しそのものの中で起きるため、`App` の内側へ境界を置いても届かない。
-//
-// ここまで落ちると `App` の state は失われ、副作用の後始末で WebSocket も切れる。地図・各タブには
-// 別に境界を置いてあり（`App.tsx`）、そちらで受け止められるものはここまで来ない。
-createRoot(rootEl).render(
-  <StrictMode>
-    <ErrorBoundary variant="root">
-      {/* 言語を選ぶ設定はまだ無いので、日本語で配る（→ i18n/messages.ts） */}
-      <I18nProvider locale={DEFAULT_LOCALE}>
-        <App />
-      </I18nProvider>
-    </ErrorBoundary>
-  </StrictMode>,
-)
+/**
+ * 最初の画面を描く前に辞書を待つ上限 (ms)。日本語以外の辞書は別の束で、ふつうは端末の控えから読むので待ちは短い。
+ * 回線が詰まって読めないまま待ち続けると、地震のときに画面が出ない。上限を過ぎたら日本語で描き、読み終えたら差し替える。
+ */
+const PRELOAD_MESSAGES_TIMEOUT_MS = 3_000
 
-// ここまで来たら、起動に要るファイルは全部読めている。起動の途中で読めずに読み直していたら、そのことを残す。
+/**
+ * 選んだ言語（端末に合わせるなら端末の言語）の辞書を、最初の画面を描く前に読む（2026-11-12 ユーザー選択「辞書を読んでから描く (Recommended)」）。
+ * 日本語はすぐ返る。読めない・上限を過ぎたときは辞書を渡さず、配り役が日本語で描いてから読み直す。
+ */
+async function preloadMessages(): Promise<{ locale: Locale; preloaded: Messages | undefined }> {
+  const locale = resolveLocale(readStoredLocaleSetting(), deviceLanguageTags())
+  if (locale === 'ja') return { locale, preloaded: undefined }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), PRELOAD_MESSAGES_TIMEOUT_MS) })
+  try {
+    const result = await Promise.race([loadMessages(locale), timeout])
+    if (result === 'timeout') {
+      log.warn(`[i18n] 言語「${locale}」の辞書を ${PRELOAD_MESSAGES_TIMEOUT_MS / 1000} 秒で読めず、日本語で描いてから差し替える`)
+      return { locale, preloaded: undefined }
+    }
+    return { locale, preloaded: result }
+  } catch (err) {
+    // 配り役が同じ言語を読み直し、読めなければ日本語のまま記録を残す
+    log.warn(`[i18n] 言語「${locale}」の辞書を起動の前に読めず、日本語で描いてから読み直す`, err)
+    return { locale, preloaded: undefined }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// 起動の受け皿へ「起動が終わった」と知らせるのは、辞書を待つ前にする。辞書は無くても日本語で描けるので起動に要るファイルに
+// 数えない —— 待った後に知らせると、日本語以外の辞書だけが読めないときにページごと読み直し、2 回目には
+// 「画面を読み込めませんでした」の文面まで出す。知らせた後に辞書が読めなければ、受け皿は新しい版の確認を前倒しする。
+watchBootRecovery()
+
+void preloadMessages().then(({ locale, preloaded }) => {
+  // 最後の受け皿。**`App` 自身のレンダー例外はここでしか拾えない** —— `App` は 1700 行超の単一
+  // コンポーネントで、メモ化していない裸の計算式を本体に多数持つ。その中で投げられた例外は、React が
+  // 子の照合に入る前に `App()` の呼び出しそのものの中で起きるため、`App` の内側へ境界を置いても届かない。
+  //
+  // ここまで落ちると `App` の state は失われ、副作用の後始末で WebSocket も切れる。地図・各タブには
+  // 別に境界を置いてあり（`App.tsx`）、そちらで受け止められるものはここまで来ない。
+  //
+  // 受け皿は言語の配り役の内側に置く。落ちたときの表示も選んだ言語で出すため（2026-11-12 ユーザー選択「選んだ言語で出す (Recommended)」）。
+  // 配り役は辞書を持つだけで、描き方の誤りで落ちる処理を持たない。
+  createRoot(rootEl).render(
+    <StrictMode>
+      <I18nProvider locale={locale} preloaded={preloaded}>
+        <ErrorBoundary variant="root">
+          <App />
+        </ErrorBoundary>
+      </I18nProvider>
+    </StrictMode>,
+  )
+})
+
+// 入口のモジュールがここまで動けば、起動に要るファイルは全部読めている。起動の途中で読めずに読み直していたら、そのことを残す。
 // 起動した後に読めないファイルが出たら、読み直さずに新しい版を確かめに行く（発表の最中に画面を消さないため。
 // 新しい版が見つかれば、いつものとおり待つ条件を見てから適用する）。仕組みは public/boot-recovery.js。
-const bootRecovery = (window as Window & { __bootRecovery?: BootRecovery }).__bootRecovery
-if (bootRecovery === undefined) {
-  log.warn('[起動] 読み込みの受け皿（boot-recovery.js）が見つからない（読めないファイルがあっても読み直さない）')
-} else {
+function watchBootRecovery(): void {
+  const bootRecovery = (window as Window & { __bootRecovery?: BootRecovery }).__bootRecovery
+  if (bootRecovery === undefined) {
+    log.warn('[起動] 読み込みの受け皿（boot-recovery.js）が見つからない（読めないファイルがあっても読み直さない）')
+    return
+  }
   const recovered = bootRecovery.markBooted()
   if (recovered !== null) {
     if (recovered.failedShown) log.warn(`[起動] 読み直してもファイルを読めず「画面を読み込めませんでした」を出していた。再読み込みで起動できた（${recovered.reason}）`)

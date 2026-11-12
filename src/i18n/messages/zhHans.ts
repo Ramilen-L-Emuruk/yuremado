@@ -1003,6 +1003,11 @@ export const zhHans: Messages = {
         label: '日本气象厅的发布文',
         description: '朗读电文附带的正文、附加文（南海海槽地震临时信息的正文等）。在烈度和海啸的朗读结束后才朗读，因此电文接连送达期间可能无法朗读',
       },
+      locale: {
+        label: '语言 (Language)',
+        description: '界面和通知的语言。朗读仍为日语。',
+        auto: '跟随设备',
+      },
       uiScale: {
         label: 'UI 缩放',
         description: '更改整个画面的显示倍率',

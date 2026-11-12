@@ -1165,6 +1165,14 @@ export const ja = {
         label: '気象庁の発表文',
         description: '電文に添えられた本文・付加文（南海トラフ地震臨時情報の本文など）を読み上げます。震度や津波の読み上げが終わってから読むため、電文が続いている間は読み上げられないことがあります',
       },
+      // 名前に英語を添える（読めない言語になった人が英語で探せるように）。言語の名前は辞書に置かない（→ messages.ts の LOCALES）
+      // （2026-11-12 ユーザー選択「言語 (Language) (Recommended)」「この文面でよい (Recommended)」・説明は同日「この文面に変える (Recommended)」）
+      locale: {
+        label: '言語 (Language)',
+        description: '画面と通知の言葉。読み上げは日本語のまま。',
+        auto: '端末に合わせる',
+        // 辞書を読めないときに行の下へ出す知らせは辞書の外（messages.ts の LOCALE_LOAD_FAILED_JA・_EN）
+      },
       uiScale: {
         label: 'UI 倍率',
         description: '画面全体の表示倍率を変更します',

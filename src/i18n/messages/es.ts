@@ -1006,6 +1006,11 @@ export const es: Messages = {
         label: 'Textos de la JMA',
         description: 'Lee el texto principal y los textos adicionales de los telegramas (como el texto principal de la Información extraordinaria del terremoto de la Fosa de Nankai). Se leen al terminar la lectura de intensidades y tsunamis, así que puede que no se lean mientras sigan llegando telegramas',
       },
+      locale: {
+        label: 'Idioma (Language)',
+        description: 'Idioma de las pantallas y de las notificaciones. La lectura en voz alta sigue en japonés.',
+        auto: 'Según el dispositivo',
+      },
       uiScale: {
         label: 'Escala de la interfaz',
         description: 'Cambia la escala de toda la pantalla',

@@ -1003,6 +1003,11 @@ export const zhHant: Messages = {
         label: '日本氣象局的發表文',
         description: '朗讀電文附帶的內文、附加文（南海海槽地震臨時訊息的內文等）。在震度與海嘯的朗讀結束後才讀，因此電文接連到達時可能不會朗讀',
       },
+      locale: {
+        label: '語言 (Language)',
+        description: '畫面與通知的語言。朗讀仍為日語。',
+        auto: '跟隨裝置',
+      },
       uiScale: {
         label: 'UI 倍率',
         description: '變更整個畫面的顯示倍率',

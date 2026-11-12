@@ -4,10 +4,15 @@
 //
 // **ここで押さえられるのは React の呼び出しスタックの中だけ。** rAF・イベントハンドラ・Promise の
 // 中の例外はこの境界に届かないので、そちらは別の仕組みの担当（ErrorBoundary.tsx の冒頭を見ること）。
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { muteConsoleError } from '../test-utils/muteConsoleError'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { ErrorBoundary } from './ErrorBoundary'
+import { I18nProvider } from '../i18n/I18nProvider'
+import { loadMessages } from '../i18n/messages'
+
+// 英語の辞書を先に一度読んでおく（初回の変換の待ちをテスト本体に載せない）
+await import('../i18n/messages/en')
 
 /** 押すたびに throw するかどうかを外から決められる子。 */
 function Bomb({ explode }: { explode: boolean }) {
@@ -158,5 +163,21 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('情報の受信も止まっています')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '再表示' })).toBeNull()
     expect(screen.getByRole('button', { name: '再読み込み' })).toBeTruthy()
+  })
+
+  // 根の受け皿は言語の配り役の内側に置く（main.tsx）。落ちても配り役は残り、選んだ言語で出す
+  // （2026-11-12 ユーザー選択「選んだ言語で出す (Recommended)」）
+  it('根が落ちたときの表示も、配り役が出している言語で出す', async () => {
+    const en = await loadMessages('en')
+    render(
+      <I18nProvider locale="en" preloaded={en}>
+        <ErrorBoundary variant="root">
+          <Bomb explode />
+        </ErrorBoundary>
+      </I18nProvider>,
+    )
+    expect(screen.getByText(en.errorScreen.rootTitle)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.errorScreen.reload })).toBeTruthy()
+    expect(screen.queryByText('画面を表示できなくなりました')).toBeNull()
   })
 })

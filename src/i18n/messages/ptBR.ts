@@ -1006,6 +1006,11 @@ export const ptBR: Messages = {
         label: 'Textos da JMA',
         description: 'Lê o corpo e os comentários do telegrama (como o corpo da Informação extraordinária sobre terremoto na Fossa de Nankai). Como são lidos depois da intensidade e do tsunami, podem não ser lidos enquanto os telegramas continuam chegando',
       },
+      locale: {
+        label: 'Idioma (Language)',
+        description: 'Idioma das telas e das notificações. A leitura em voz alta continua em japonês.',
+        auto: 'Igual ao dispositivo',
+      },
       uiScale: {
         label: 'Escala da interface',
         description: 'Altera a escala de toda a tela',

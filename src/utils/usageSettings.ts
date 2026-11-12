@@ -166,6 +166,8 @@ export const USAGE_TOP_LEVEL_SPECS = {
   timeSignalVolume: num('timeSignal', '時報の音量（null は通知音と同じ）', 0, 1, null, true),
   timeSignalSpeakerId: num('timeSignal', '時報の声（null は読み上げと同じ）', 0, 100000, null, true),
   // 表示設定
+  // 値の並びは i18n/messages.ts の LOCALE_SETTINGS と同じ（このファイルは中継へ写すので import しない。食い違いは usageSettings.test.ts が落とす）
+  locale: choice('display', '言語', ['auto', 'ja', 'en', 'zh-Hans', 'zh-Hant', 'ko', 'pt-BR', 'es'], 'auto'),
   uiScale: num('display', 'UI 倍率', 0.5, 3, 1),
   mapIconScale: num('display', '地図アイコンの倍率', 0.5, 3, 1),
   hypocenterDepthScale: num('display', '震源の深さの強調', 1, 20, 1),

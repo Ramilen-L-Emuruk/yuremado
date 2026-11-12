@@ -4,7 +4,7 @@
 // ほかのテストと混ざらないようファイルを分けている。
 import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { I18nProvider, useLocale, useMessages } from './I18nProvider'
+import { I18nProvider, useLocale, useLocaleLoadFailed, useMessages } from './I18nProvider'
 import { loadMessages, type Locale } from './messages'
 import { muteConsoleError } from '../test-utils/muteConsoleError'
 
@@ -15,6 +15,10 @@ await import('./messages/en')
 
 function Probe() {
   return <span data-testid="probe">{`${useLocale()}:${useMessages().nav.earthquake}`}</span>
+}
+
+function FailedProbe() {
+  return <span data-testid="failed">{useLocaleLoadFailed() ?? 'none'}</span>
 }
 
 async function settle(locale: Locale) {
@@ -36,6 +40,22 @@ describe('I18nProvider の読み込みの失敗', () => {
       await act(async () => { await settle('ko') })
       const i18nErrors = muted.mock.calls.filter((args) => args.some((a) => typeof a === 'string' && a.includes('[i18n]')))
       expect(i18nErrors).toHaveLength(1)
+    } finally {
+      muted.mockRestore()
+    }
+  })
+
+  it('読めなかった言語は、回線が戻ったらもう一度読みに行く（読めなければ日本語のまま、記録をもう 1 回残す）', async () => {
+    const muted = muteConsoleError()
+    try {
+      await act(async () => { render(<I18nProvider locale="ko"><Probe /><FailedProbe /></I18nProvider>); await settle('ko') })
+      const errorsOf = () => muted.mock.calls.filter((args) => args.some((a) => typeof a === 'string' && a.includes('[i18n]'))).length
+      expect(errorsOf()).toBe(1)
+      await act(async () => { window.dispatchEvent(new Event('online')); await settle('ko') })
+      expect(errorsOf()).toBe(2)
+      expect(screen.getByTestId('probe').textContent).toBe('ja:地震情報')
+      // 設定の窓が知らせを出すための印も立ったまま
+      expect(screen.getByTestId('failed').textContent).toBe('ko')
     } finally {
       muted.mockRestore()
     }

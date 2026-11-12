@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { QUAKE_PERIOD_HOURS } from '../utils/quakeListView'
 import { DIRECTIONS_16 } from '../utils/estimatedIntensity'
 import { CHECKLIST_SOURCE_URLS } from '../utils/actionChecklist'
-import { DEFAULT_LOCALE, isLocale, JA_MESSAGES, LOCALES, loadMessages, localeTag, type Messages } from './messages'
+import { isLocale, JA_MESSAGES, LOCALE_SETTINGS, LOCALES, loadMessages, localeFromLanguageTags, localeTag, resolveLocale, type Messages } from './messages'
 import { historicalArchiveLabel } from '../utils/historicalArchiveLabel'
 import { regionLabel } from '../utils/regions'
 
@@ -61,11 +61,48 @@ describe('辞書の形', () => {
   })
 })
 
-describe('言語の表', () => {
-  it('既定の言語は日本語で、表に載っている', () => {
-    expect(DEFAULT_LOCALE).toBe('ja')
-    expect(isLocale(DEFAULT_LOCALE)).toBe(true)
+describe('端末の言語から画面の言語を決める', () => {
+  it('ブラウザの言語の並びを前から見て、最初に当たった言語を使う', () => {
+    expect(localeFromLanguageTags(['ko-KR', 'en-US'])).toBe('ko')
+    expect(localeFromLanguageTags(['fr-FR', 'es-MX', 'en'])).toBe('es')
+    expect(localeFromLanguageTags(['ja-JP'])).toBe('ja')
+    expect(localeFromLanguageTags(['EN-gb'])).toBe('en')
   })
+
+  it('中国語は文字の種類、無ければ地域で簡体と繁体を分ける', () => {
+    expect(localeFromLanguageTags(['zh-CN'])).toBe('zh-Hans')
+    expect(localeFromLanguageTags(['zh'])).toBe('zh-Hans')
+    expect(localeFromLanguageTags(['zh-TW'])).toBe('zh-Hant')
+    expect(localeFromLanguageTags(['zh-HK'])).toBe('zh-Hant')
+    expect(localeFromLanguageTags(['zh-Hant-CN'])).toBe('zh-Hant')
+    // 文字の種類が地域より先に効く（台湾の簡体字）
+    expect(localeFromLanguageTags(['zh-Hans-TW'])).toBe('zh-Hans')
+  })
+
+  it('ポルトガル語はポルトガル式もブラジル式の辞書で出す', () => {
+    expect(localeFromLanguageTags(['pt-PT'])).toBe('pt-BR')
+    expect(localeFromLanguageTags(['pt'])).toBe('pt-BR')
+  })
+
+  it('どれにも当たらない・並びが空なら英語', () => {
+    expect(localeFromLanguageTags(['fr-FR', 'de'])).toBe('en')
+    expect(localeFromLanguageTags([])).toBe('en')
+    // 言語の前の部分だけで見る（「jav」（ジャワ語）を日本語と取り違えない）
+    expect(localeFromLanguageTags(['jav'])).toBe('en')
+  })
+
+  it('端末に合わせるときだけ端末の言語を見て、選んだ言語はそのまま使う', () => {
+    expect(resolveLocale('auto', ['ko'])).toBe('ko')
+    expect(resolveLocale('ja', ['ko'])).toBe('ja')
+    expect(resolveLocale('es', [])).toBe('es')
+  })
+})
+
+describe('言語の表', () => {
+  it('設定に保存できる値は「端末に合わせる」と表の言語だけ', () => {
+    expect(LOCALE_SETTINGS).toEqual(['auto', ...LOCALES.map((l) => l.id)])
+  })
+
 
   it('表に無い値は言語として受け取らない', () => {
     expect(isLocale('xx')).toBe(false)
