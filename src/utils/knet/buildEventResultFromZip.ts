@@ -7,6 +7,9 @@ import { parseAllStationFiles } from './parseAllStationFiles'
 import { computeRealtimeIntensityTimeSeries } from './realtimeIntensity'
 import type { EventResult, StationSeries } from './kyoshinEventMerge'
 import { log } from '../logger'
+// 失敗は日本語の文に辞書の鍵と引数を添えて投げる（生成スクリプトも読むので辞書は読まない。→ `utils/keyedError.ts`）。
+// 中に入るファイルごとの失敗・外した観測点の理由も、鍵と引数のまま入れ子にする（画面が言語の辞書で組む）
+import { errorDetailOf, keyedError, type ErrorText } from '../keyedError'
 
 /**
  * 3成分が揃わない観測点の割合がこれを超えたら失敗として止める。
@@ -27,8 +30,11 @@ export interface ZipEventBuild {
    * 3 成分が揃わない観測点は含めない（以前から黙って外していたもので、知らせる対象にしていない）。
    */
   excludedStations: number
-  /** 外した観測点ごとの名前（観測点コード、読めないときはファイル名の拡張子を除いた部分）と理由。 */
-  excluded: { station: string; reason: string }[]
+  /**
+   * 外した観測点ごとの名前（観測点コード、読めないときはファイル名の拡張子を除いた部分）と理由。`reason` は日本語の文、
+   * `reasonText` は画面で言語の辞書から組み直すための鍵と引数
+   */
+  excluded: { station: string; reason: string; reasonText: ErrorText }[]
 }
 
 /** 地中（KiK-net の `.NS1` 等）のファイルか。取り込みに使わないので、読めなくても数えない。 */
@@ -85,29 +91,37 @@ export function buildEventResultFromZip(zip: Uint8Array, stepSec: number): ZipEv
   // 丸められて衝突し、mergeEvents側のMap.set()で後着が先着を無警告で上書き・消失させる
   // （実データが欠落した状態で「成功」してしまう）。CLI（parseCliArgs）は既に検証しているが、
   // ブラウザ内インポートはCLI引数解析を経由しないため、共有関数自身でも検証する。
-  if (!Number.isInteger(stepSec) || stepSec <= 0) throw new Error('stepSec は正の整数（秒）で指定してください')
+  if (!Number.isInteger(stepSec) || stepSec <= 0) throw keyedError('stepSec は正の整数（秒）で指定してください', 'knetStepSec')
 
   const parsed = parseAllStationFiles(zip)
+  /** ファイルごとの失敗（日本語の文と、鍵と引数） */
+  const fileFailure = (f: { fileName: string; message: string; detail: ErrorText | string }) => ({
+    text: `${f.fileName}: ${f.message}`,
+    detail: { key: 'knetFileFailure', args: [f.fileName, f.detail] } satisfies ErrorText,
+  })
   // 読めなかった地表のファイルを持つ観測点は、読めたほかの成分ごと外す。残すと 3 成分が揃わない
   // 観測点に数えられ、「成分の判定の誤り」を疑う安全弁（下の incompleteRatio）を読めないファイルで
   // 鳴らしてしまう。地中のファイルは初めから使わないので、読めなくても外さない。
-  const unreadable = new Map<string, string>()
+  const unreadable = new Map<string, { text: string; detail: ErrorText }>()
   for (const f of parsed.failures) {
     if (isBoreholeFileName(f.fileName)) continue
     const stem = stationFileStem(f.fileName)
-    if (!unreadable.has(stem)) unreadable.set(stem, `${f.fileName}: ${f.message}`)
+    if (!unreadable.has(stem)) unreadable.set(stem, fileFailure(f))
   }
   const unreadableStems = new Set(unreadable.keys())
   const files = parsed.files.filter((f) => !unreadableStems.has(stationFileStem(f.fileName))).map((f) => f.file)
   if (files.length === 0) {
     if (parsed.failures.length > 0) {
-      throw new Error(
+      const shown = parsed.failures.slice(0, 20).map(fileFailure)
+      const more = parsed.failures.length > 20
+      throw keyedError(
         `${parsed.failures.length}件のファイルでパースに失敗し、読めた観測点がありません: `
-        + parsed.failures.slice(0, 20).map((f) => `${f.fileName}: ${f.message}`).join(' / ')
-        + (parsed.failures.length > 20 ? ' ...' : ''),
+        + shown.map((f) => f.text).join(' / ')
+        + (more ? ' ...' : ''),
+        'knetNoReadableStation', parsed.failures.length, shown.map((f) => f.detail), more,
       )
     }
-    throw new Error('ZIP内にNS/EW/UD波形ファイルが1件も見つかりませんでした')
+    throw keyedError('ZIP内にNS/EW/UD波形ファイルが1件も見つかりませんでした', 'knetNoWaveFiles')
   }
 
   // 全ファイルが同一の地震を指している前提。異なるOrigin Timeが混在していれば、複数の地震の
@@ -115,29 +129,31 @@ export function buildEventResultFromZip(zip: Uint8Array, stepSec: number): ZipEv
   // どちらか一方のOrigin Timeを採用して混合データを作ってしまうより、ここで止める方が安全。
   const originTimes = new Set(files.map((f) => f.originTime.getTime()))
   if (originTimes.size > 1) {
-    throw new Error(
+    throw keyedError(
       `ZIP内に異なる地震のOrigin Timeが混在しています（${originTimes.size}種類）。`
       + '複数の地震のファイルを1つのZIPにまとめていないか確認してください',
+      'knetMixedOrigin', originTimes.size,
     )
   }
   const originTimeJst = toJstTimestamp(files[0].originTime)
 
   const { stations, skippedIncomplete } = groupIntoStations(files)
-  if (stations.length === 0) throw new Error(`origin=${originTimeJst}: 3成分が揃った観測点が0件です`)
+  if (stations.length === 0) throw keyedError(`origin=${originTimeJst}: 3成分が揃った観測点が0件です`, 'knetNoCompleteStation', originTimeJst)
   // 半数を超えたら ZIP ごと断ることは承認済み（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
   // 除外が大半を占める場合、component/depthKindの判定ロジック（resolveComponentFromFileName）に
   // 系統的な誤りがある可能性が高い。無警告で続けると、実質ほぼ空のデータが「成功」として
   // 扱われるのに気付けない。
   const incompleteRatio = skippedIncomplete / (skippedIncomplete + stations.length)
   if (incompleteRatio > INCOMPLETE_STATION_RATIO_LIMIT) {
-    throw new Error(
+    throw keyedError(
       `origin=${originTimeJst}: 3成分が揃わない観測点が${Math.round(incompleteRatio * 100)}%に達しました`
       + '（成分・深度の判定ロジックに誤りがある可能性があります）',
+      'knetIncompleteRatio', originTimeJst, Math.round(incompleteRatio * 100),
     )
   }
 
   const stationSeries: StationSeries[] = []
-  const uncomputable: { station: string; reason: string }[] = []
+  const uncomputable: { station: string; reason: string; detail: ErrorText }[] = []
   for (const station of stations) {
     const startEpochSec = Math.round(station.recordStartTime.getTime() / 1000)
     let series: ReturnType<typeof computeRealtimeIntensityTimeSeries>
@@ -155,6 +171,7 @@ export function buildEventResultFromZip(zip: Uint8Array, stepSec: number): ZipEv
       uncomputable.push({
         station: station.stationCode,
         reason: `毎秒 ${station.samplingHz} 回: ${error instanceof Error ? error.message : String(error)}`,
+        detail: { key: 'knetUncomputableReason', args: [station.samplingHz, errorDetailOf(error)] },
       })
       continue
     }
@@ -165,18 +182,25 @@ export function buildEventResultFromZip(zip: Uint8Array, stepSec: number): ZipEv
     stationSeries.push({ stationCode: station.stationCode, latitude: station.latitude, longitude: station.longitude, points })
   }
 
-  const excluded = [
-    ...[...unreadable].map(([station, reason]) => ({ station, reason: `読めない（${reason}）` })),
-    ...uncomputable.map((u) => ({ station: u.station, reason: `震度を計算できない（${u.reason}）` })),
+  const excluded: ZipEventBuild['excluded'] = [
+    ...[...unreadable].map(([station, r]) => ({
+      station, reason: `読めない（${r.text}）`, reasonText: { key: 'knetExcludedUnreadable', args: [r.detail] },
+    })),
+    ...uncomputable.map((u) => ({
+      station: u.station, reason: `震度を計算できない（${u.reason}）`, reasonText: { key: 'knetExcludedUncomputable', args: [u.detail] },
+    })),
   ]
   // 外した観測点を合わせて数える（3 成分が揃わない・読めない・震度を計算できない）
   const removed = skippedIncomplete + excluded.length
   const removedRatio = removed / (removed + stationSeries.length)
   if (removedRatio > INCOMPLETE_STATION_RATIO_LIMIT) {
-    throw new Error(
+    const examples = excluded.slice(0, 5)
+    throw keyedError(
       `origin=${originTimeJst}: 外した観測点が${Math.round(removedRatio * 100)}%に達しました`
       + `（3成分が揃わない ${skippedIncomplete}点・読めない ${unreadable.size}点・震度を計算できない ${uncomputable.length}点）。`
-      + `例: ${excluded.slice(0, 5).map((x) => `${x.station} ${x.reason}`).join(' / ')}`,
+      + `例: ${examples.map((x) => `${x.station} ${x.reason}`).join(' / ')}`,
+      'knetTooManyExcluded', originTimeJst, Math.round(removedRatio * 100), skippedIncomplete, unreadable.size, uncomputable.length,
+      examples.map((x): ErrorText => ({ key: 'knetExcludedItem', args: [x.station, x.reasonText] })),
     )
   }
   if (excluded.length > 0) {
@@ -196,9 +220,10 @@ export function buildEventResultFromZip(zip: Uint8Array, stepSec: number): ZipEv
   // 全ウィンドウがデータ不足でnullだった場合、-1（欠測）だけのフレームが無警告で書き出されて
   // しまうため、他のイベントを巻き込む前にここで止める。
   if (!Number.isFinite(peakIntensity)) {
-    throw new Error(
+    throw keyedError(
       `origin=${originTimeJst}: 有効な計測震度を1件も算出できませんでした（全ウィンドウがデータ不足でnullでした）。`
       + 'サンプリング周波数・スケールファクタ等、算出パイプラインの誤りを疑ってください',
+      'knetNoIntensity', originTimeJst,
     )
   }
 

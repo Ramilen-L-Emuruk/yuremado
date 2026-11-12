@@ -8,7 +8,7 @@ import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { escapeHtml, popupCodeLineHtml } from './gl/popupHtml'
-import { tsunamiAreaPopupLines } from '../../utils/tsunami'
+import { tsunamiAreaPopupLines, tsunamiAreaPopupParts, type TsunamiAreaPopupParts } from '../../utils/tsunami'
 import { createTsunamiBlink, TSUNAMI_LINE_OPACITY_ON, type TsunamiBlink } from './gl/tsunamiBlink'
 import { registerCaptureHold } from './gl/captureMap'
 import { useMessagesRef } from '../../i18n/I18nProvider'
@@ -39,18 +39,37 @@ export function buildTsunamiLinesFC(lines: TsunamiLine[], iconScale: number): Fe
     const style = TSUNAMI_STYLE[line.grade]
     return {
       type: 'Feature',
-      // 吹き出しの補足の行（予想波高・到達予想。→ `tsunamiAreaPopupLines`）。地物の属性は平らな値しか持てないので、
-      // 改行で繋いで持たせ、吹き出しを組むときに割る。
+      // 吹き出しの補足の行（予想波高・到達予想。→ `tsunamiAreaPopupLines`）は、材料の値だけを平らに持たせ、
+      // 吹き出しを組むときに辞書の文にする（`tsunamiDetailsOf`）。
       properties: {
         // 等級は鍵のまま持たせ、吹き出しを組むときに辞書の語へ直す（言語が変わっても地物を組み直さずに済む）
         color: style.color, width: style.weight * iconScale, grade: line.grade, name: line.name,
-        details: tsunamiAreaPopupLines(line.area).join('\n'),
+        ...popupPartsProps(tsunamiAreaPopupParts(line.area)),
         code: line.area.code,
       },
       geometry: { type: 'MultiLineString', coordinates: line.segments.map(ringToLngLat) },
     }
   })
   return { type: 'FeatureCollection', features }
+}
+
+/** 吹き出しの行の材料を地物の属性へ（無い値は属性ごと置かない。地物の属性に null を置くと、読み戻すと文字列になることがある） */
+function popupPartsProps(p: TsunamiAreaPopupParts): Record<string, string> {
+  return {
+    ...(p.height !== null && { heightDesc: p.height }),
+    ...(p.arrivalTime !== null && { arrivalTime: p.arrivalTime }),
+    ...(p.arrivalCondition !== null && { arrivalCondition: p.arrivalCondition }),
+  }
+}
+
+/** 地物の属性から、吹き出しの補足の行を言語の辞書で組む */
+export function tsunamiDetailsOf(props: Record<string, unknown> | null | undefined, m: Messages): string[] {
+  const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null)
+  return tsunamiAreaPopupLines({
+    height: str(props?.heightDesc),
+    arrivalTime: str(props?.arrivalTime),
+    arrivalCondition: str(props?.arrivalCondition),
+  }, m)
 }
 
 /**
@@ -111,7 +130,7 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
       buildClickHtml: (f) => tsunamiLinePopupHtml(
         String(f.properties?.name ?? ''),
         tsunamiGradeLabel(f.properties?.grade, mRef.current),
-        String(f.properties?.details ?? '').split('\n').filter(Boolean),
+        tsunamiDetailsOf(f.properties, mRef.current),
         f.properties?.code === undefined ? undefined : String(f.properties.code),
         mRef.current,
       ),

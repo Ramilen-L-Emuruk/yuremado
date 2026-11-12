@@ -17,6 +17,8 @@ import type { DmdataClassification } from '../../services/dmdataClassifications'
 import type { SettingsFileError } from '../../utils/settingsIo'
 import type { ArrivalTokenProblem } from '../../utils/arrivalToken'
 import type { ShareCardFormatId } from '../../utils/shareCard'
+import { EVALUATION_SPEECH, type InternationalTsunamiNoticeParts } from '../../utils/internationalTsunamiSpeech'
+import type { UpdateStatus } from '../../utils/updateMark'
 
 /** 等級ごとの避難の呼びかけ（気象庁の付加文が採れなかったときに出す。読み上げも同じ文を読む → `utils/tsunami.ts` の `fallbackEvacuationAction`）。 */
 const TSUNAMI_EVACUATION: Record<Exclude<TsunamiGrade, 'Unknown'>, string> = {
@@ -87,6 +89,23 @@ export const ja = {
     /** 名前を並べる。`rest` は並べきれなかった数（0 なら全部並べた）。 */
     nameList: (shown: readonly string[], rest: number) => (rest > 0 ? `${shown.join('・')} ほか ${rest} 件` : shown.join('・')),
     loadingData: 'データを取得中…',
+    /** 地図の生成データの名前（取得の名前 → 画面の名前。`utils/mapDataStatusText.ts`） */
+    dataNames: {
+      prefectures: '県境',
+      subregions: '区域の境界',
+      'station-coords': '観測点の位置',
+      'tsunami-zones': '津波予報区',
+      'active-faults': '活断層',
+      'plate-boundaries': 'プレート境界',
+      'tsunami-obs-coords': '津波観測点の位置',
+      'public-stations': '公開観測点',
+    } as Record<string, string>,
+    /** 表に無い取得の名前のときの語（取得の名前の英字を画面に出さない） */
+    unknownData: '地図のデータ',
+    /** 欠けたデータの名前を並べる。`rest` は並べきれなかった数 */
+    dataNameList: (names: readonly string[], rest: number) => (rest > 0 ? `${names.join('・')}ほか${rest}件` : names.join('・')),
+    /** 欠けたデータの 1 行。`gaveUp` は 1 つでも取り直しを諦めたか */
+    dataLoadFailed: (subject: string, gaveUp: boolean) => `${subject}を取り込めず（${gaveUp ? '再読み込みで取得し直します' : '取り直しています'}）`,
     /** 地図の隅の更新時刻。`time` は書式を済ませた時刻（まだ受けていなければ null）。 */
     updatedAt: (time: string | null) => (time !== null ? `更新 ${time}` : '更新 受信待機中…'),
     seismoDisconnected: '地震計 未接続',
@@ -139,6 +158,8 @@ export const ja = {
     observedAsOf: (time: string) => `観測 ${time} 時点`,
     expires: (time: string) => `失効 ${time}`,
     estimatedArrival: (time: string) => `到達予想 ${time}`,
+    /** 地図の海岸線の吹き出しの予想波高の行（`utils/tsunami.ts` の `tsunamiAreaPopupLines`） */
+    forecastHeight: (height: string) => `予想 ${height}`,
     /** 沿岸への推定の行の、高さの後ろに続ける形 */
     estimatedArrivalAfter: (time: string) => `${time}到達予想`,
     highTide: (time: string) => `満潮 ${time}`,
@@ -280,6 +301,19 @@ export const ja = {
       IXAC41: '推計震度分布図作図用データ',
       IXAC40: '推計震度分布図作図用データ（旧形式）',
       WEPA60: '国際津波関連情報（英文）',
+    },
+    /**
+     * 二進電文（推計震度分布図の BUFR）の行で、本文の代わりに出す文（行は鍵と値 `bodyNote` を持ち、描くときにここで文にする。
+     * → `utils/telegramBodyNote.ts`）。`bytes` は長さ（バイト）
+     */
+    bodyNote: {
+      bufr: (bytes: number) => `（BUFR ${bytes} バイト）`,
+      bufrFragment: (bytes: number) => `（BUFR の断片 ${bytes} バイト）`,
+      bufrFragmentWaiting: (bytes: number) => `（BUFR の断片 ${bytes} バイト・結合待ち）`,
+      bufrKind: (bytes: number, telegramKind: number) => `（BUFR ${bytes} バイト・電文の種類 ${telegramKind}）`,
+      bufrCells: (bytes: number, cells: number) => `（BUFR ${bytes} バイト・${cells} セル）`,
+      bufrFragmentSkipped: '（BUFR の断片・本文は取りません）',
+      bufrFile: (file: string) => `（BUFR ${file}）`,
     },
     /**
      * 行の赤字の欄。受信の側が `errorMessage` に入れる印（鍵。`utils/telegramLogErrorMark.ts`）を、画面の文へ引く。表に無い印はそのまま出す
@@ -640,6 +674,17 @@ export const ja = {
       /** 取得の制限で待っている間。`left` は「1:30」の形 */
       throttled: (left: string) => `取得制限中（あと ${left}）`,
       /**
+       * 履歴の取りこぼしの帯（`utils/telegramLoss.ts`）。内訳は取得元と電文を分けて数える。`parts` は内訳の語
+       * （`lossSources`・`lossTelegrams`、再生では `replayBanner.prefetchBlocks` も）
+       */
+      lossSources: (n: number) => `取得元${n}件`,
+      lossTelegrams: (n: number) => `電文${n}件`,
+      historyLoss: (parts: readonly string[]) => `${parts.join('・')}を取り込めず（再読み込みで取得し直します）`,
+      loadMoreFailed: '続きの読み込みに失敗（もう一度お試しください）',
+      reconnectGapLoss: '接続が切れていた間の電文を取り込めず（再読み込みで取得し直します）',
+      fetchThrottled: 'リクエスト過多のため、取得制限中（自動で再開します）',
+      rateLimited: (parts: readonly string[]) => `リクエスト過多のため、取得制限中（${parts.join('・')}が未取得）`,
+      /**
        * 鍵の入れ直しの案内（地震タブの青い帯と、設定のキー欄の下）。古い URL の橋渡しのページから来て、前の設定に鍵があった端末にだけ出す
        * （橋渡しは鍵を渡さない）。文面は 2026-10-31 ユーザー選択「地震タブの帯＋設定のキー欄 (Recommended)」
        */
@@ -680,7 +725,11 @@ export const ja = {
       fitLabel: '全体を表示',
       fit: '全体',
       /** 地域の一覧の、県でない組の名前（組の鍵は日本語のまま `utils/quakeListView.ts` が持つ） */
-      groupName: { 海域: '海域', 遠方: '遠方' } as Record<string, string>,
+      groupName: {
+        海域: '海域', 遠方: '遠方',
+        /** 地方の段の名前（一般の 8 地方区分。地図の地方名とは別の区分） */
+        北海道: '北海道', 東北: '東北', 関東: '関東', 中部: '中部', 近畿: '近畿', 中国: '中国', 四国: '四国', 九州沖縄: '九州沖縄',
+      } as Record<string, string>,
       /** 帯の札（震度の札の語は段 9 の語のまま差し込む） */
       chip: {
         scaleRange: (from: string, to: string) => `震度${from}〜${to}`,
@@ -722,6 +771,14 @@ export const ja = {
    * （値は書式を済ませた文字列で受ける）。
    */
   map: {
+    /**
+     * 地図の地方名のラベル（気象庁の地方予報区。鍵は `utils/regions.ts` の日本語の名前）。地図の字は焼いた字形で描くので、
+     * 字形に無い字を使うと描けない（`scripts/build-glyphs.mjs`。日本語の地名と ASCII だけを焼いている）
+     */
+    regionName: {
+      北海道: '北海道', 東北: '東北', 関東: '関東', 伊豆諸島: '伊豆諸島', 小笠原: '小笠原', 北陸: '北陸', 甲信: '甲信',
+      東海: '東海', 近畿: '近畿', 中国: '中国', 四国: '四国', 九州: '九州', 奄美: '奄美', 沖縄: '沖縄',
+    } as Record<string, string>,
     /** 地図の隅の「〜を描けず」「〜はクリックに応じず」に入る名前（`utils/renderHealth.ts` が鍵で持つ） */
     layerName: {
       eewEpicenters: '緊急地震速報の震源',
@@ -1529,6 +1586,21 @@ export const ja = {
       map: {
         label: '地図',
       },
+      /**
+       * 出典の名称に添える語。**名称（気象庁・EarthScope・NSF NGF・CC BY 4.0 など）は配信元の表記のまま**で辞書を通さず、
+       * 用途の添え書きと「配信」だけを訳す。`paren` は括弧（日本語は全角、ほかの言語は半角と前の空白）
+       */
+      paren: (text: string) => `（${text}）`,
+      jpNetwork: 'JP 網',
+      /**
+       * 配信した施設の名前（と括弧の添え書き）を「配信」の語と並べた文。`name` の位置に名前が入る（画面はそこへ名前のリンクを置く）。
+       * 語順は言語で違う（日本語「配信 EarthScope」・韓国語「EarthScope 배포」・中国語「由 EarthScope（NSF NGF）发布」。
+       * 2026-11-12 ユーザー選択「言語ごとに語順を変える (Recommended)」）。名前との間の空きもこの文が持つ（中国語は括弧の後ろに空きを置かない）
+       */
+      distributedBy: (name: string) => `配信 ${name}`,
+      boundaries: '境界・海岸線',
+      seafloor: '海底地形',
+      plateBoundaries: 'プレート境界',
     },
     soundTest: {
       intensityTitle: (label: string) => `震度${label} の更新音を試聴`,
@@ -1915,6 +1987,16 @@ export const ja = {
       archives: {
         label: '収録済みの地震',
         description: 'ここから再生すると地震情報・津波は再現されますが、リアルタイム震度は含まれません。必要な場合は下記の「K-NETデータの取り込み」から読み込んでください。',
+        /**
+         * 収録済みの地震の名前（鍵は目録 `public/data/historical-archives/index.json` の `id`）。表に無い地震は目録の `label` のまま出す
+         * （→ `utils/historicalArchiveLabel.ts`）
+         */
+        names: {
+          '2016-kumamoto': '2016年熊本地震',
+          '2016-tottori': '2016年鳥取県中部地震',
+          '2018-osaka': '2018年大阪府北部地震',
+          '2018-iburi': '2018年北海道胆振東部地震',
+        } as Record<string, string>,
       },
       play: '再生',
       start: {
@@ -1995,6 +2077,8 @@ export const ja = {
     more: (n: number) => `ほか ${n} 件`,
     noticeBadge: 'お知らせ',
     countBadge: '地震回数',
+    /** 南海トラフ地震関連解説情報の札（電文の `InfoSerial/Name`）。表に無い語は電文のまま出す */
+    commentarySerial: { 臨時解説: '臨時解説', 定例解説: '定例解説' } as Record<string, string>,
     /** 南海トラフ地震臨時情報の札（電文の `InfoSerial/Name`）。表に無い語は電文のまま出す */
     nankaiKind: { 巨大地震警戒: '巨大地震警戒', 巨大地震注意: '巨大地震注意', 調査中: '調査中', 調査終了: '調査終了' } as Record<string, string>,
     internationalTsunami: '国際津波関連情報',
@@ -2150,8 +2234,230 @@ export const ja = {
     incomplete: '一部の地図データは読み込み中に撮影されました',
   },
   /**
+   * 再生の帯の文（`hooks/useReplayController.ts`）。`from` は書式を済ませた日時、`reason` は失敗の中身の文。
+   * 記録とログに残す文は日本語のまま組む
+   */
+  replayBanner: {
+    unreadable: '再生する日時として読み取れません',
+    tooEarly: (year: number) => `${year} 年より前は再生できません（どの取得元にもデータがありません）`,
+    future: '未来の時刻は再生できません',
+    mainFailed: (from: string, reason: string) => `本編（${from} 以降）の取得に失敗: ${reason}`,
+    initialFailed: (reason: string) => `初期状態（過去 24 時間）の取得に失敗: ${reason}`,
+    historyFailed: (reason: string) => `地震カードの履歴を復元できませんでした（再生開始より前の地震が一覧に出ません。再生は継続中）: ${reason}`,
+    archiveFailed: (reason: string) => `${reason}（地震・津波の電文は再生されません。リアルタイム震度の再生は継続します）`,
+    prefetchLost: (from: string, reason: string) => `先読みに失敗しました。${from} からの 1 時間ぶんは再生されません: ${reason}`,
+    prefetchRetrying: (from: string, reason: string) => `先読みに失敗しました。${from} からの 1 時間ぶんを取り直しています: ${reason}`,
+    /** 取りこぼしの内訳の、読めなかった先読みの区間 */
+    prefetchBlocks: (n: number) => `先読み${n}区間`,
+    /** 取りこぼしの 1 行。`parts` は内訳の語（`quake.list.lossSources` など） */
+    lossNotice: (parts: readonly string[]) => `${parts.join('・')}を取り込めず（再生は継続中・詳細はコンソール）`,
+  },
+  /** 地図の下端の波形グラフ（`components/SeismoWaveChart`）と、同じ語を使う地震カードの波形・波形の詳細の窓 */
+  waveChart: {
+    /** 波形が届かなくなっているとき（接続は生きていて震度は届いている。「接続断」とは書かない） */
+    stale: '波形 途絶',
+    /** 公開観測点の接続が続けて断られているとき（接続数の上限とみなす） */
+    publicRefused: '公開観測点 接続数の上限',
+    composite: '合成',
+    /** 合成が止まってセンサー単独を描いている間の、段の名前と見出しの印 */
+    sensorLane: '単独',
+    compositeStopped: '合成 途絶',
+    /** 3 成分の名前。並びはホストの `gal` の並び（東・北・上） */
+    axes: ['東西', '南北', '上下'] as readonly [string, string, string],
+    /** 波形を抱えている間に起きたことの数え上げ（0 でないものだけを並べる） */
+    tallyGaps: (n: number) => `欠測 ${n}`,
+    tallyRestarts: (n: number) => `引き直し ${n}`,
+    tallyDuplicates: (n: number) => `重複 ${n}`,
+    tallySeparator: ' / ',
+    collapse: '波形を畳む',
+    expand: '波形を展開',
+    /** 縦を圧縮して描いた段の、縦の範囲に添えるホバーの一言（地図の下端と地震カード） */
+    compressedNote: '縦は対数に近い目盛りで描いています。',
+  },
+  /** 「この報で動いた」の印の意味（ホバーと読み上げソフト向けの名前。`components/UpdateDot.tsx`） */
+  updateMark: {
+    new: '最新の情報で初めて出た値です',
+    raised: '最新の情報で上がりました',
+    lowered: '最新の情報で下がりました',
+    changed: '最新の情報で変わりました',
+  } satisfies Record<UpdateStatus, string>,
+  /**
+   * 画面に届くエラーの文（再生の帯・地震タブの履歴の帯・K-NET の取り込みの失敗。→ `utils/localizedError.ts`）。
+   * エラーの `message` もこの日本語の文で組むので、ログと記録には日本語が残る。ほかの言語の、普段は出ない実装の誤りの文には
+   * 頭に「Internal error:」の類を付ける。ファイル名・値・URL・K-NET のファイルの欄の名前（`Scale Factor` など）はそのまま
+   */
+  errorText: {
+    /** 通信そのものの失敗（ブラウザの英語の文は出さない。2026-11-03 ユーザー選択「通信の失敗だけ日本語に (Recommended)」） */
+    networkFailure: () => '通信できませんでした',
+    /** エラーでない値で失敗したとき */
+    fetchFailed: () => '取得失敗',
+    fetchTimeout: (seconds: number, url: string) => `取得が ${seconds} 秒以内に終わりませんでした: ${url}`,
+    apiKeyInvalid: () => 'APIキーに使用できない文字が含まれています。半角の英数字・記号のみで入力してください。',
+    apiKeyMissing: () => 'APIキーが未設定です。DM-D.S.S の APIキーを設定してください。',
+    relayTokenHttp: (status: number) => `中継の札を受け取れませんでした（HTTP ${status}）`,
+    relayTokenUnreadable: () => '中継の札の応答を読めませんでした',
+    relayTokenMalformed: () => '中継の札の応答の形が想定と違います',
+    relayTokenShort: () => '中継の札の期限が短すぎます',
+    relayTokenNotReady: () => '中継の札を用意する前に見出しを作ろうとしました',
+    archiveListHttp: (status: number) => `アーカイブの一覧を取得できなかった: ${status}`,
+    archiveListNotOk: () => 'アーカイブの一覧が成功（ok）を返さなかった',
+    archiveListCutOff: (maxPages: number, start: string, end: string, count: number) =>
+      `アーカイブの一覧が途中で切れた: ページ上限（${maxPages}）に達した 範囲=${start}~${end} 件数=${count}`,
+    archiveAllFailed: (sources: number) => `アーカイブを取得できなかった: 取得元${sources}件すべてを読み取れませんでした`,
+    sameDayRangeTooLong: (days: number, max: number, from: string, to: string) =>
+      `当日経路の対象期間が広すぎます（${days} 日 / 上限 ${max} 日）: ${from}〜${to}`,
+    /** ローカル履歴アーカイブ。`name` は収録済みの地震の名前（`utils/historicalArchiveLabel.ts`） */
+    localArchiveNoDay: (name: string) => `ローカル履歴アーカイブ「${name}」は、この日の電文を収録していません`,
+    localArchiveEnded: (name: string) => `ローカル履歴アーカイブ「${name}」の収録範囲の終端に達しました。これ以降は再生できません`,
+    /** K-NET の取り込み（`utils/knet`）。`file` はファイル名、`origin` は発生時刻（日本時間の数字の形） */
+    knetComponentFromName: (file: string) => `ファイル名から成分(NS/EW/UD)を判定できません: "${file}"`,
+    knetScaleFactorFormat: (file: string, value: string) => `${file} ヘッダー: Scale Factor の形式が不明です "${value}"`,
+    knetScaleFactorDenominator: (file: string, value: string) => `${file} ヘッダー: Scale Factor の分母が不正です "${value}"`,
+    knetSamplingFreq: (file: string, value: string) => `${file} ヘッダー: Sampling Freq を解釈できません "${value}"`,
+    knetDateFormat: (file: string, value: string) => `${file} ヘッダー: 日時の形式が不明です "${value}"`,
+    knetTooShort: (file: string, headerLines: number) => `${file}: ヘッダー行数(${headerLines}行)に満たないデータです`,
+    knetNoMemo: (file: string, line: number) =>
+      `${file}: ${line}行目が"Memo."で始まっていません（ヘッダー行数の前提が実ファイルと食い違っている可能性があります）`,
+    /** `field` はファイルの欄の名前（`Station Code` など） */
+    knetFieldMissing: (file: string, field: string) => `${file}: ${field} が見つかりません`,
+    knetNonNumericToken: (file: string, token: string, line: number) => `${file}: データ行に数値でないトークンがあります ("${token}", 行${line})`,
+    knetNoData: (file: string) => `${file}: データが0件です`,
+    knetStepSec: () => 'stepSec は正の整数（秒）で指定してください',
+    /** 読めたファイルが 1 つも無い。`items` はファイルごとの失敗の文（先頭 20 件）、`more` はそれより多いか */
+    knetNoReadableStation: (count: number, items: readonly string[], more: boolean) =>
+      `${count}件のファイルでパースに失敗し、読めた観測点がありません: ${items.join(' / ')}${more ? ' ...' : ''}`,
+    /** ファイルごとの失敗（`reason` はそのファイルの失敗の文） */
+    knetFileFailure: (file: string, reason: string) => `${file}: ${reason}`,
+    knetNoWaveFiles: () => 'ZIP内にNS/EW/UD波形ファイルが1件も見つかりませんでした',
+    knetMixedOrigin: (kinds: number) =>
+      `ZIP内に異なる地震のOrigin Timeが混在しています（${kinds}種類）。複数の地震のファイルを1つのZIPにまとめていないか確認してください`,
+    knetNoCompleteStation: (origin: string) => `origin=${origin}: 3成分が揃った観測点が0件です`,
+    knetIncompleteRatio: (origin: string, percent: number) =>
+      `origin=${origin}: 3成分が揃わない観測点が${percent}%に達しました（成分・深度の判定ロジックに誤りがある可能性があります）`,
+    /** 外した観測点が多すぎる。`examples` は外した観測点と理由（先頭 5 件。`knetExcludedItem`） */
+    knetTooManyExcluded: (origin: string, percent: number, incomplete: number, unreadable: number, uncomputable: number, examples: readonly string[]) =>
+      `origin=${origin}: 外した観測点が${percent}%に達しました（3成分が揃わない ${incomplete}点・読めない ${unreadable}点・震度を計算できない ${uncomputable}点）。例: ${examples.join(' / ')}`,
+    knetExcludedItem: (station: string, reason: string) => `${station} ${reason}`,
+    knetExcludedUnreadable: (reason: string) => `読めない（${reason}）`,
+    knetExcludedUncomputable: (reason: string) => `震度を計算できない（${reason}）`,
+    knetUncomputableReason: (hz: number, reason: string) => `毎秒 ${hz} 回: ${reason}`,
+    knetNoIntensity: (origin: string) =>
+      `origin=${origin}: 有効な計測震度を1件も算出できませんでした（全ウィンドウがデータ不足でnullでした）。サンプリング周波数・スケールファクタ等、算出パイプラインの誤りを疑ってください`,
+    knetSampleRate: () => 'sampleRateHz は正の数で指定すること',
+    knetFilterDiverges: (hz: number, stage: number) => `毎秒 ${hz} 回では近似フィルタの ${stage} 段目が発散する（サンプリング周波数が低すぎる）`,
+    knetDurationUnjudgeable: (seconds: number, hz: number) => `${seconds} 秒の判定ができない（毎秒 ${hz} 回）`,
+    knetNonFiniteSample: (position: number) => `有限でないサンプルが混じっている: 位置 ${position}`,
+    knetStepSecPositive: () => 'stepSec は正の数で指定すること',
+    fftLengthMismatch: (n: number, m: number) => `実部と虚部の長さが違う: ${n}/${m}`,
+    fftNotPowerOfTwo: (n: number) => `長さが 2 の冪でない: ${n}`,
+  },
+  /**
+   * ブラウザ通知の文と、ウィンドウの題名（段 10）。震度・規模・長周期の札は共有の書式の語、情報名は電文ログの題名の語、
+   * 津波の等級・高さは津波の節の語を使う。電文の値（震源名・区域名・観測点名・気象庁の文）は辞書を通さない。
+   * 中継のプッシュ通知は日本語の辞書（`JA_MESSAGES`）を渡して同じ文を組む。
+   * **ウィンドウの題名は外の道具が字面を見るので、日本語の文を変えない**
+   */
+  alertText: {
+    /** 文の項目を並べる（緊急地震速報の通知の本文・ウィンドウの題名・長周期の通知の本文） */
+    joinParts: (parts: readonly string[]) => parts.join(' '),
+    quakeTitle: '地震情報',
+    quakeCancelTitle: '地震情報 取消',
+    /** 最大震度を観測した区域が複数あるときの区域の語 */
+    areaAndOthers: (name: string) => `${name}ほか`,
+    /** 震度速報（震源がまだ判らない報）。`area` は最大震度を観測した区域（読めなければ null） */
+    scalePrompt: (area: string | null, scale: string) =>
+      area === null ? `震度速報 最大震度${scale}` : `震度速報 ${area} 最大震度${scale}`,
+    /** 震源が判った報 */
+    hypocenter: (name: string, scale: string, magnitude: string) => `${name} 最大震度${scale} ${magnitude}`,
+    /** 最大震度が上がった報。`body` は震源が判った報の文 */
+    maxScaleRaised: (body: string) => `最大震度更新 ${body}`,
+    /** 最大震度を持たない国内の地震。`noneObserved` は電文が震度1以上を観測しなかったと言っているか（震源・震度情報） */
+    noIntensity: (name: string, magnitude: string, noneObserved: boolean) => {
+      const base = name ? `${name} ${magnitude}` : magnitude
+      return noneObserved ? `${base}（震度1以上の観測なし）` : base
+    },
+    /** 遠地地震（通知の本文とウィンドウの題名）。名前が無ければ省く */
+    foreignQuake: (name: string, magnitude: string) => (name ? `遠地地震 ${name} ${magnitude}` : `遠地地震 ${magnitude}`),
+    /** 取り消された通知の文 */
+    quakeCancelled: (body: string) => `${body} は取り消されました`,
+    /** 緊急地震速報の通知の見出し。予報級は区分の名前（`eewKind.forecast`）を使う */
+    eewWarningTitle: '緊急地震速報 警報',
+    eewSpecialWarningTitle: '緊急地震速報 特別警報',
+    eewFinal: (title: string) => `${title}（最終報）`,
+    eewCancelTitle: '緊急地震速報 取消',
+    /** 誤報取消の本文。震央地名を引けなければ名前抜き */
+    eewCancelled: (name: string | undefined) => (name ? `${name} の緊急地震速報は取り消されました` : '緊急地震速報は取り消されました'),
+    /** ウィンドウの題名・通知の見出しの区分の名前（警報級・予報級） */
+    eewKind: { warning: '緊急地震速報', forecast: '地震動予報' },
+    maxScaleForecast: (scale: string) => `最大震度${scale}予想`,
+    lpgmForecast: (cls: string) => `長周期地震動${cls}予想`,
+    /** 発表中の緊急地震速報がほかにもある数 */
+    eewMore: (n: number) => `他${n}件`,
+    kyoshinDetected: '揺れを検知中',
+    kyoshinOtherPlace: '別の地点で揺れを検知',
+    kyoshinReonset: '同じ場所で再び揺れを検知',
+    kyoshinMax: (label: string) => `最大リアルタイム震度 ${label}`,
+    /** 区域名・観測点名を並べる区切り */
+    nameSeparator: '、',
+    tsunamiLifted: (areas: string) => `解除：${areas}`,
+    tsunamiMoreAreas: (names: string, n: number) => `${names} ほか ${n} 区域`,
+    tsunamiMorePoints: (names: string, n: number) => `${names} ほか ${n} 地点`,
+    tsunamiLiftTitle: '津波警報等の解除',
+    tsunamiAllLifted: '津波警報等は全て解除されました。',
+    /** 観測情報の通知の見出し（電文が情報名を持たないとき） */
+    tsunamiObservationTitle: '津波観測に関する情報',
+    tsunamiInfoRetractTitle: '津波情報の取消',
+    /** 取り消された報の名前（電文が情報名を持たないとき） */
+    tsunamiInfo: '津波情報',
+    tsunamiInfoRetracted: (name: string) => `${name}は取り消されました。`,
+    tsunamiRetractTitle: '津波警報等の取消',
+    tsunamiRetracted: '津波警報等は誤って発表されたため取り消されました。',
+    tsunamiExpireTitle: '津波予報の失効',
+    tsunamiExpired: '津波予報は失効しました。',
+    /** 南海トラフ地震臨時情報の段階を添えた見出し（通知とウィンドウの題名） */
+    withStage: (name: string, stage: string) => `${name}（${stage}）`,
+    /** 長周期地震動の取消の件名。`infoName` は情報名 */
+    lpgmFor: (name: string, infoName: string) => `${name}の${infoName}`,
+    lpgmMaxClass: (cls: number) => `最大長周期地震動階級${cls}`,
+    /** 推計震度分布図の通知。`at` は地震発現時刻（日本時間。読めなければ null）、`name` は情報名 */
+    estimatedIntensity: (at: { hour: number; minute: number } | null, name: string, isNew: boolean) =>
+      `${at ? `${at.hour}時${String(at.minute).padStart(2, '0')}分頃発生した地震の` : ''}${name}${isNew ? 'を受信しました' : 'が更新されました'}`,
+    /** 国際津波関連情報の通知の本文。`when` は発生時刻（その瞬間）で、日本時間で書く */
+    internationalTsunami: (p: InternationalTsunamiNoticeParts) => {
+      const jst = p.when ? new Date(p.when.getTime() + 9 * 3_600_000) : null
+      const when = jst ? `${jst.getUTCDate()}日${jst.getUTCHours()}時${jst.getUTCMinutes()}分頃、` : ''
+      const depth = p.depthKm !== null ? `深さ${p.depthKm}キロメートル、` : ''
+      const mag = p.magnitude !== null ? `マグニチュード${p.magnitude.toFixed(1)}の` : ''
+      const subject = `${when}${p.where ? `${p.where}で` : ''}発生した${depth}${mag}地震`
+      return p.evaluation ? `${subject}について、${p.evaluation}と発表されました。` : `${subject}について、${p.name}が発表されました。`
+    },
+    /** 国際津波関連情報の評価（英文の 5 種）。日本語は読み上げと同じ語 */
+    internationalTsunamiEvaluation: EVALUATION_SPEECH,
+    /** 震源名を引けないときの震央の位置。日本語は読み上げと同じ言い方 */
+    internationalTsunamiCoordinate: (lat: number, lon: number, _coordinate: (lat: string, lng: string, south: boolean, west: boolean) => string) =>
+      `${lat < 0 ? '南緯' : '北緯'}${Math.abs(lat).toFixed(1)}度、${lon < 0 ? '西経' : '東経'}${Math.abs(lon).toFixed(1)}度`,
+    communicationsTest: '通信試験です。',
+    /** ウィンドウの題名 */
+    titleTsunamiWarnings: '津波警報・注意報 発表中',
+    titleTsunamiForecast: '津波予報 発表中',
+    titleShakingDetected: '揺れ検知',
+    titlePossibleShaking: '揺れの可能性',
+    titleInEffect: (name: string) => `${name} 発表中`,
+    titleLpgm: '長周期地震動',
+    titleLpgmMaxClass: (cls: number) => `最大階級${cls}`,
+    titleQuake: (name: string, scale: string) => `地震情報 ${name} 最大震度${scale}`,
+    titleForeignQuake: (name: string, magnitude: string) => `遠地地震 ${name} ${magnitude}`,
+    /** 読み直しの数え下げ。`periodic` は定期の読み直し（そうでなければ新しい版の適用） */
+    titleReloadCountdown: (sec: number, periodic: boolean, app: string) => `${sec}秒後に${periodic ? '再読み込みします' : '更新します'} — ${app}`,
+    /** 設定の窓のテスト通知 */
+    testTitle: '地震情報テスト',
+    testBody: '東京都内陸部（テスト） 最大震度4 M5.5',
+    /** テスト通知を押したのに通知の許可が無いとき。`button` は許可のボタンの語 */
+    permissionFirst: (button: string) => `先に「${button}」を押してください。`,
+  },
+  /**
    * いくつもの画面が使う書式の語（段 9）。震度・長周期の札・深さ・規模・緯度経度・津波の区分・訂正の種類・日付。
-   * 読み上げと通知の文面は日本語のまま組むので、そちらはこの日本語の節を直に渡す（`JA_MESSAGES.formats`）。
+   * 読み上げの文面は日本語のまま組むので、そちらはこの日本語の節を直に渡す（`JA_MESSAGES.formats`）。通知はいまの言語の節を渡す。
    */
   formats: {
     /** 震度の札（一覧・カードの枠・文の中） */
@@ -2230,5 +2536,20 @@ export const ja = {
     fullDate: (d: Date) => `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`,
     /** 曜日の無い年・月・日（震源カタログの期間など）。日本語は日付の区切りと同じ */
     calendarDate: (d: Date) => `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`,
+    /**
+     * 語・値の後ろに添える括弧（段 10e）。前の語とのあいだの空白も含む —— 日本語・中国語は全角の括弧だけ、
+     * 韓国語は半角の括弧を詰めて、英語・スペイン語・ポルトガル語は前に空白を置いた半角の括弧。前の語に続けて `${語}${paren(添え書き)}` と書く
+     */
+    paren: (text: string) => `（${text}）`,
+    /** 名前などを並べる区切り（「、」） */
+    listSep: '、',
+    /** 語と語を空けて並べる区切り（全角空白）。空白だけの語なので、空の文字列を落とす辞書の検査に掛からないよう関数で持つ */
+    spaceSep: () => '　',
+    /** 種類などを詰めて並べる区切り（「／」） */
+    slash: '／',
+    /** 前後に空白を置いて並べる区切り（「 ／ 」） */
+    slashSpaced: ' ／ ',
+    /** 日時の範囲を前後に空白を置いて書く形（「A 〜 B」）。詰めて書く範囲は `range` */
+    rangeSpaced: (from: string, to: string) => `${from} 〜 ${to}`,
   },
 } as const

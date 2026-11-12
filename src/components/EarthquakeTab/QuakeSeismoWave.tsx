@@ -35,7 +35,6 @@ import {
 } from '../SeismoWaveChart/paintWave'
 import { ownScaleOf } from '../SeismoWaveChart/liveLanes'
 import { SharedLaneScales, sharedPaint } from '../SeismoWaveChart/sharedScale'
-import { COMPRESSED_VERTICAL_NOTE } from '../SeismoWaveChart/verticalMap'
 import { buildTimeTicks } from '../SeismoWaveChart/timeTicks'
 import type { WaveUnit } from '../SeismoWaveChart/waveUnit'
 
@@ -305,6 +304,8 @@ function HistoryWave({
   sharedScales: SharedLaneScales | null
 }) {
   const w = useMessages().quake.seismo
+  const compressedNote = useMessages().waveChart.compressedNote
+  const range = useMessages().formats.range
   // **他の段の値が変わったら描き直す**（カードの段は列が変わったときしか描き直さないので、購読しないと揃わない）。
   // 購読の関数は帳面ごとに 1 つ（描くたびに作り直すと、そのたびに購読し直す）。
   const store = useMemo(
@@ -437,6 +438,7 @@ function HistoryWave({
               vertical,
               marks,
               ticks,
+              range,
               overlays:
                 smooth === null
                   ? undefined
@@ -496,7 +498,7 @@ function HistoryWave({
     // 0 が動けば静かさを測る区間も動く。**表示の設定も入れる**（合成と 3 成分の切り替え）。
     //
     // **揃える帳面の番号も入れる** —— 他の段の範囲が変わったら、自分の列が変わらなくても描き直す。
-  }, [wave.columns, wave.arrival, wave.axisZero, wave.reach, wave.interrupted, wave.unit, view, sharedScales, sharedVersion, w])
+  }, [wave.columns, wave.arrival, wave.axisZero, wave.reach, wave.interrupted, wave.unit, view, sharedScales, sharedVersion, w, range])
 
   // **段が消えたら帳面から外す**（カードを畳んだ・観測点が外れた）。残すと、いない段の範囲で他の段を縛り続ける。
   // 描き直しのたびには外さない —— 外すと他の段が描き直し、その値を書き戻すたびにまた描き直す往復になる。
@@ -515,10 +517,10 @@ function HistoryWave({
         {/* **震度は観測点名と同じ行へ置く**（行を増やさない。2026-10-05 のユーザー判断）。 */}
         {intensityParts !== null && <QuakeIntensityLine parts={intensityParts} className="text-white/85" />}
         {compositePartial && <span className="text-secondary truncate">{w.compositePartial}</span>}
-        {/* 縦を圧縮している段だけ、ホバーで一言添える（文面と承認は `COMPRESSED_VERTICAL_NOTE`）。 */}
+        {/* 縦を圧縮している段だけ、ホバーで一言添える（文面と承認は `verticalMap.ts`、語は辞書の `waveChart.compressedNote`）。 */}
         <span
           className="ml-auto font-mono tabular-nums text-secondary"
-          title={sharedScales !== null ? COMPRESSED_VERTICAL_NOTE : undefined}
+          title={sharedScales !== null ? compressedNote : undefined}
         >
           {scaleText ?? '—'}
         </span>

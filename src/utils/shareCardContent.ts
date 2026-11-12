@@ -219,7 +219,7 @@ function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[], m: 
     return hm ? m.shareImage.withTime(text, m.shareImage.labeled(m.formats.arrivalTime, hm)) : text
   })
   const parts: string[] = []
-  if (sourceTexts.length > 0) parts.push(sourceTexts.join(' ／ '))
+  if (sourceTexts.length > 0) parts.push(sourceTexts.join(m.formats.slashSpaced))
   if (areaCount > 0) parts.push(m.shareImage.areas(areaCount))
   const issued = live[0]?.issue.time ?? live[0]?.time
   // 日時として読めない発表時刻は、時刻を持たない電文と同じく欄ごと落とす。
@@ -240,7 +240,7 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
   // **複数の緊急地震速報が発表中なら、副見出しに全件を並べる**（2026-10-23 ユーザー選択「全件を並べる」。全期間で同時発表の組
   // 108・200 地震。並べ方は 2026-10-24 ユーザー選択「副見出しで折り返す (Recommended)」）。見出しの区分・色と右上の報番号・
   // 発生時刻は最も深刻な 1 件のまま。並びは深刻な順（見出しの 1 件が先頭）。
-  const subtitle = sortEewsBySeverity(liveEews).map(e => eewSubtitle(e, m)).join(' ／ ')
+  const subtitle = sortEewsBySeverity(liveEews).map(e => eewSubtitle(e, m)).join(m.formats.slashSpaced)
   const info = eewMaxScaleInfo(eew)
   const knownScale = isValidIntensityScale(info.scale) && info.scale >= 0
   const serial = eewDisplaySerial(eew)

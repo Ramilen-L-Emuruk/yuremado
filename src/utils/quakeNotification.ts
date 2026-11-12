@@ -19,11 +19,18 @@
 import type { AreaPrefIndex } from './quakePoints'
 import { isAreaPoint, isMaxScaleUnreceived } from './quakePoints'
 import type { JMAQuake } from '../types/earthquake'
-import { getIntensityLabelWithOrAbove } from './intensity'
-import { formatMagnitudeWithCondition } from './formatters'
+import { intensityLabelWithOrAbove } from './intensity'
+import { magnitudeWithConditionText } from './formatters'
 import { isHypocenterPending, quakeEventKey, sameQuakeEntry } from './quakeMerge'
 import { log } from './logger'
 import type { NotificationOpen } from './notificationOpen'
+import type { Messages } from '../i18n/messages'
+
+/**
+ * 通知の文を組む語（辞書の通知の節と書式の語）。アプリはいまの言語の辞書、中継は日本語の辞書（`JA_MESSAGES`）を渡す。
+ * 通知の記憶（`QuakeNotifiedState.bodies`）に入る本文は、出したときの言語の文のまま。
+ */
+export type QuakeNotificationWords = Pick<Messages, 'alertText' | 'formats'>
 
 /**
  * 通知の重複判定に使う、報の鍵。電文の鍵（`telegramKey`）が無い報は **id・発表時刻・種別の組**で作る
@@ -114,13 +121,14 @@ export function scheduleQuakeNotification(args: {
   reportKeys: readonly string[]
   notifyMinScale: number
   areaPrefIndex: AreaPrefIndex
+  m: QuakeNotificationWords
   show: (notification: QuakeNotification) => Promise<boolean>
 }): Promise<void> {
-  const { chains, memory, quake, reportKeys, notifyMinScale, areaPrefIndex, show } = args
+  const { chains, memory, quake, reportKeys, notifyMinScale, areaPrefIndex, m, show } = args
   const key = quakeEventKey(quake)
   const before = chains.get(key) ?? Promise.resolve()
   const run = before.then(async () => {
-    const decided = decideQuakeNotification(quake, reportKeys, memory.get(key) ?? null, notifyMinScale, areaPrefIndex)
+    const decided = decideQuakeNotification(quake, reportKeys, memory.get(key) ?? null, notifyMinScale, areaPrefIndex, m)
     if (!decided) return
     const previous = memory.get(key) ?? null
     const shown = await show(decided.notification)
@@ -144,13 +152,14 @@ export function scheduleQuakeCancelNotification(args: {
   cancel: JMAQuake
   whole: boolean
   notifyMinScale: number
+  m: QuakeNotificationWords
   show: (notification: QuakeNotification) => Promise<boolean>
 }): Promise<void> {
-  const { chains, memory, target, cancel, whole, notifyMinScale, show } = args
+  const { chains, memory, target, cancel, whole, notifyMinScale, m, show } = args
   const key = quakeEventKey(target)
   const before = chains.get(key) ?? Promise.resolve()
   const run = before.then(async () => {
-    const decided = decideQuakeCancelNotification(target, cancel, whole, memory.get(key) ?? null, notifyMinScale)
+    const decided = decideQuakeCancelNotification(target, cancel, whole, memory.get(key) ?? null, notifyMinScale, m)
     if (!decided) return
     await show(decided.notification)
     if (decided.next) rememberQuakeNotified(memory, decided.next)
@@ -180,11 +189,18 @@ export interface QuakeNotification {
  * OS 通知はカードを開かない利用者が最初に目にする経路なので、「以上」を落とすと
  * 「実際にはもっと強いかもしれない」が誰にも届かない。
  */
-function maxScaleLabel(quake: JMAQuake): string {
-  return getIntensityLabelWithOrAbove(
+function maxScaleLabel(quake: JMAQuake, m: QuakeNotificationWords): string {
+  return intensityLabelWithOrAbove(
     quake.earthquake.maxScale,
     isMaxScaleUnreceived(quake.earthquake.maxScale, quake.points),
+    m.formats,
   )
+}
+
+/** 規模の語（説明つきの規模は電文の説明を辞書の語へ） */
+function magnitudeLabel(quake: JMAQuake, m: QuakeNotificationWords): string {
+  const { magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
+  return magnitudeWithConditionText(magnitude, magnitudeCondition, magnitudeType, m.formats)
 }
 
 /**
@@ -193,7 +209,7 @@ function maxScaleLabel(quake: JMAQuake): string {
  * 区域は電文の区域の行（`isAreaPoint`。都道府県のロールアップ点は除く）。並びは電文の順のまま
  * （気象庁の並び）で、その先頭を採る。
  */
-export function maxScaleAreaLabel(quake: JMAQuake, areaPrefIndex: AreaPrefIndex): string | null {
+export function maxScaleAreaLabel(quake: JMAQuake, areaPrefIndex: AreaPrefIndex, m: QuakeNotificationWords): string | null {
   const names: string[] = []
   for (const p of quake.points) {
     if (p.scale !== quake.earthquake.maxScale) continue
@@ -201,29 +217,25 @@ export function maxScaleAreaLabel(quake: JMAQuake, areaPrefIndex: AreaPrefIndex)
     if (!names.includes(p.addr)) names.push(p.addr)
   }
   if (names.length === 0) return null
-  return names.length === 1 ? names[0] : `${names[0]}ほか`
+  return names.length === 1 ? names[0] : m.alertText.areaAndOthers(names[0])
 }
 
 /**
  * 震度速報（震源がまだ判らない報）の本文。例「震度速報 石川県能登ほか 最大震度5弱」。
  * 最大震度の区域が読めないときは区域を省く（「震度速報 最大震度5弱」）。
  */
-export function scalePromptNotificationBody(quake: JMAQuake, areaPrefIndex: AreaPrefIndex): string {
-  const area = maxScaleAreaLabel(quake, areaPrefIndex)
-  return area === null
-    ? `震度速報 最大震度${maxScaleLabel(quake)}`
-    : `震度速報 ${area} 最大震度${maxScaleLabel(quake)}`
+export function scalePromptNotificationBody(quake: JMAQuake, areaPrefIndex: AreaPrefIndex, m: QuakeNotificationWords): string {
+  return m.alertText.scalePrompt(maxScaleAreaLabel(quake, areaPrefIndex, m), maxScaleLabel(quake, m))
 }
 
 /** 震源が判った報の本文。例「石川県能登地方 最大震度5弱 M5.2」。 */
-export function hypocenterNotificationBody(quake: JMAQuake): string {
-  const { name, magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
-  return `${name} 最大震度${maxScaleLabel(quake)} ${formatMagnitudeWithCondition(magnitude, magnitudeCondition, magnitudeType)}`
+export function hypocenterNotificationBody(quake: JMAQuake, m: QuakeNotificationWords): string {
+  return m.alertText.hypocenter(quake.earthquake.hypocenter.name, maxScaleLabel(quake, m), magnitudeLabel(quake, m))
 }
 
 /** 最大震度が上がった報の本文。例「最大震度更新 石川県能登地方 最大震度6強 M7.6」。 */
-export function maxScaleRaisedNotificationBody(quake: JMAQuake): string {
-  return `最大震度更新 ${hypocenterNotificationBody(quake)}`
+export function maxScaleRaisedNotificationBody(quake: JMAQuake, m: QuakeNotificationWords): string {
+  return m.alertText.maxScaleRaised(hypocenterNotificationBody(quake, m))
 }
 
 /**
@@ -235,21 +247,16 @@ export function maxScaleRaisedNotificationBody(quake: JMAQuake): string {
  *   「この報が言っていない」だけ（控えの全期間で、VXSE52 が 1 通目に届き後から震度つきの報が来た地震が 32 件）。震度に触れず
  *   「鳥島近海 M6.5」とだけ言う（2026-11-09 ユーザー選択「扱いは残し本文を地名と規模だけに (Recommended)」）
  */
-export function noIntensityQuakeNotificationBody(quake: JMAQuake): string {
-  const { name, magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
-  const mag = formatMagnitudeWithCondition(magnitude, magnitudeCondition, magnitudeType)
-  const base = name ? `${name} ${mag}` : mag
-  return quake.issue.type === '震源・震度情報' ? `${base}（震度1以上の観測なし）` : base
+export function noIntensityQuakeNotificationBody(quake: JMAQuake, m: QuakeNotificationWords): string {
+  return m.alertText.noIntensity(quake.earthquake.hypocenter.name, magnitudeLabel(quake, m), quake.issue.type === '震源・震度情報')
 }
 
 /**
  * 遠地地震の本文。例「遠地地震 メキシコ、チアパス州沿岸 M7.4」。震源名は詳細震央地名
  * （パーサーが `Area/DetailedName` を優先して入れる）。名前が無ければ省く。
  */
-export function foreignQuakeNotificationBody(quake: JMAQuake): string {
-  const { name, magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
-  const mag = formatMagnitudeWithCondition(magnitude, magnitudeCondition, magnitudeType)
-  return name ? `遠地地震 ${name} ${mag}` : `遠地地震 ${mag}`
+export function foreignQuakeNotificationBody(quake: JMAQuake, m: QuakeNotificationWords): string {
+  return m.alertText.foreignQuake(quake.earthquake.hypocenter.name, magnitudeLabel(quake, m))
 }
 
 /**
@@ -272,6 +279,7 @@ export function decideQuakeNotification(
   previous: QuakeNotifiedState | null,
   notifyMinScale: number,
   areaPrefIndex: AreaPrefIndex,
+  m: QuakeNotificationWords,
 ): { notification: QuakeNotification; next: QuakeNotifiedState } | null {
   if (notifyMinScale < 0) return null
   const key = quakeEventKey(quake)
@@ -289,20 +297,20 @@ export function decideQuakeNotification(
   // （2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」。地震タブの震度の絞り `passesQuakeListFilter` と同じ扱い）
   if (!foreign && !noIntensity && maxScale < notifyMinScale && !isMaxScaleUnreceived(maxScale, quake.points)) return null
   const withHypocenter = foreign || !isHypocenterPending(quake)
-  const body = foreign ? foreignQuakeNotificationBody(quake)
-    : noIntensity ? noIntensityQuakeNotificationBody(quake)
-    : !withHypocenter ? scalePromptNotificationBody(quake, areaPrefIndex)
+  const body = foreign ? foreignQuakeNotificationBody(quake, m)
+    : noIntensity ? noIntensityQuakeNotificationBody(quake, m)
+    : !withHypocenter ? scalePromptNotificationBody(quake, areaPrefIndex, m)
     // 「最大震度更新」は、前の通知が震度を言っていたときだけ（震度に触れない通知の後に初めて震度が付いた報は、ふつうの震源の文。
     // 2026-11-09 ユーザー選択「「最大震度更新」を付けない (Recommended)」）
-    : same?.withHypocenter && same.maxScale >= 0 && maxScale > same.maxScale ? maxScaleRaisedNotificationBody(quake)
-    : hypocenterNotificationBody(quake)
+    : same?.withHypocenter && same.maxScale >= 0 && maxScale > same.maxScale ? maxScaleRaisedNotificationBody(quake, m)
+    : hypocenterNotificationBody(quake, m)
   // 新しい順に並べる（`reportKeys` は届いた順なので、新しい報が先頭へ来るよう裏返す）
   const notified = [...reportKeys.filter(k => !same?.reportKeys.includes(k)).reverse(), ...(same?.reportKeys ?? [])]
   if (notified.length > QUAKE_NOTIFIED_REPORTS_MAX) {
     log.debug(`[notify] 地震情報の通知した報の記憶が上限 ${QUAKE_NOTIFIED_REPORTS_MAX} 件を超えたので、古い ${notified.length - QUAKE_NOTIFIED_REPORTS_MAX} 件を忘れる（${key}）`)
   }
   return {
-    notification: { title: '地震情報', body, tag: key, open: { tab: 'earthquake', quake: key } },
+    notification: { title: m.alertText.quakeTitle, body, tag: key, open: { tab: 'earthquake', quake: key } },
     next: {
       key, withHypocenter, maxScale, reportKeys: notified.slice(0, QUAKE_NOTIFIED_REPORTS_MAX),
       // 最後に通知した情報名が末尾に来るよう、同じ情報名を一度外してから足す（取消の通知の既定の文は末尾を使う）
@@ -333,6 +341,7 @@ export function decideQuakeCancelNotification(
   whole: boolean,
   previous: QuakeNotifiedState | null,
   notifyMinScale: number,
+  m: QuakeNotificationWords,
 ): { notification: QuakeNotification; next: QuakeNotifiedState | null } | null {
   if (notifyMinScale < 0) return null
   const key = quakeEventKey(target)
@@ -343,7 +352,7 @@ export function decideQuakeCancelNotification(
   if (cancelledBody === undefined) return null
   const rest = Object.fromEntries(Object.entries(bodies).filter(([type]) => type !== cancel.issue.type))
   return {
-    notification: { title: '地震情報 取消', body: `${cancelledBody} は取り消されました`, tag: key, open: { tab: 'earthquake', quake: key } },
+    notification: { title: m.alertText.quakeCancelTitle, body: m.alertText.quakeCancelled(cancelledBody), tag: key, open: { tab: 'earthquake', quake: key } },
     next: whole ? null : { ...previous, bodies: rest },
   }
 }

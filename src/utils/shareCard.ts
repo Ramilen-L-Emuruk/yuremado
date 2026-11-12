@@ -187,8 +187,20 @@ function wrapAtSeparators(measure: (text: string) => number, text: string, maxWi
   return lines
 }
 
-/** 副見出しの区切り（全角の空き・「／」と、その前後の半角の空き）。 */
-const SUBTITLE_TOKEN = /[^　／]+[　／ ]*|[　／ ]+/g
+/**
+ * 副見出しの区切り。項目どうしは辞書の `formats.slashSpaced`（日本語・中国語は「 ／ 」、ほかは「 / 」）、
+ * 項目の中の値どうしは `shareImage.joinParts`（日本語・中国語は全角の空き、ほかは半角の空き 2 つ）でつなぐ。
+ * 半角の空き 1 つと、前後に空きの無い「/」は区切りにしない（値の中の空き「10 km」・「5-/5+」で割らない）。
+ */
+const SUBTITLE_SEPARATOR = '(?:[　／]| {2,}| / )'
+/** 副見出しの 1 つの塊とその後ろの区切り（区切りの前後の半角の空きも塊に付ける）。 */
+const SUBTITLE_TOKEN = new RegExp(`(?:(?!${SUBTITLE_SEPARATOR})[^])+(?:${SUBTITLE_SEPARATOR}| )*|(?:${SUBTITLE_SEPARATOR}| )+`, 'g')
+/** 行の中で最後の区切りの位置（無ければ -1）。上限を超えた行を項目の境目で切るために使う */
+function lastSubtitleSeparatorAt(text: string): number {
+  let at = -1
+  for (const match of text.matchAll(new RegExp(SUBTITLE_SEPARATOR, 'g'))) at = match.index
+  return at
+}
 /** 注意文・出典の区切り（読点・句点・「／」）。**文の途中で切らずに折る**ためだけに使う（文は全部描く）。 */
 const NOTICE_TOKEN = /[^、。／]+[、。／]*|[、。／]+/g
 
@@ -207,7 +219,7 @@ export function layoutSubtitleLines(measure: (text: string) => number, subtitle:
   // 画像は後から訂正できない）。区切りが 1 つも無い行だけは文字の途中で切る。
   let cut = kept[SUBTITLE_MAX_LINES - 1]
   while (cut && measure(`${cut}…`) > maxWidth) {
-    const at = Math.max(cut.lastIndexOf('　'), cut.lastIndexOf('／'))
+    const at = lastSubtitleSeparatorAt(cut)
     cut = at > 0 ? cut.slice(0, at).replace(/[　／ ]+$/, '') : cut.slice(0, -1)
   }
   kept[SUBTITLE_MAX_LINES - 1] = `${cut}…`
@@ -220,7 +232,8 @@ export function layoutSubtitleLines(measure: (text: string) => number, subtitle:
  * 緊急地震速報の注意文が 1 行に収まらない（16:9 の 1600 では収まる）。
  */
 export function layoutNoticeLines(measure: (text: string) => number, notices: readonly string[], maxWidth: number): string[] {
-  return notices.flatMap(n => wrapAtSeparators(measure, n, maxWidth, NOTICE_TOKEN))
+  // かな・漢字を含まない文（英語・韓国語など）は読点・句点を持たないので、語の境で折る（語の途中で切らない）
+  return notices.flatMap(n => wrapAtSeparators(measure, n, maxWidth, CJK_CHAR.test(n) ? NOTICE_TOKEN : WORD_TOKEN))
 }
 
 /** 注意文・出典の行数（撮影の前に地図の高さを決めるため。合成と同じ字体・幅で数える）。 */

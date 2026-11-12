@@ -1,3 +1,5 @@
+import type { Messages } from '../i18n/messages'
+
 /**
  * 電文の取得で取りこぼした量を持つ入れ物。
  *
@@ -257,12 +259,18 @@ export function isTelegramLossEmpty(loss: TelegramLoss): boolean {
  * **確定した損失（`describeTelegramLossParts`）と 429 の見送り（`formatRateLimitedNotice`）で
  * 共有する。** 同じ画面に並びうるので、片方だけ語順を変えると同じ内訳が別物に見える。
  */
-function countParts(sources: number, telegrams: number): string[] {
+function countParts(sources: number, telegrams: number, w: TelegramLossWords): string[] {
   const parts: string[] = []
-  if (sources > 0) parts.push(`取得元${sources}件`)
-  if (telegrams > 0) parts.push(`電文${telegrams}件`)
+  if (sources > 0) parts.push(w.lossSources(sources))
+  if (telegrams > 0) parts.push(w.lossTelegrams(telegrams))
   return parts
 }
+
+/** 帯の文を組む語（辞書の地震タブの一覧の節） */
+export type TelegramLossWords = Pick<
+  Messages['quake']['list'],
+  'lossSources' | 'lossTelegrams' | 'historyLoss' | 'loadMoreFailed' | 'reconnectGapLoss' | 'fetchThrottled' | 'rateLimited' | 'throttled'
+>
 
 /**
  * 損失の内訳を語に直す（何も欠けていなければ空）。
@@ -274,8 +282,8 @@ function countParts(sources: number, telegrams: number): string[] {
  * リプレイとライブで同じ語を使うためにここへ置く。片方だけ言い換えると、同じ障害が経路に
  * よって別の重さに見える。
  */
-export function describeTelegramLossParts(loss: TelegramLoss): string[] {
-  return countParts(loss.failedSources.size, totalSkipped(loss))
+export function describeTelegramLossParts(loss: TelegramLoss, w: TelegramLossWords): string[] {
+  return countParts(loss.failedSources.size, totalSkipped(loss), w)
 }
 
 /**
@@ -294,10 +302,10 @@ export function describeTelegramLossParts(loss: TelegramLoss): string[] {
  * 文の形の規約（言い切りで止める理由・括弧の中身の決め方）は
  * `docs/spec/settings-pwa-spec.md` §5.5「通知の文の形」が単一情報源。
  */
-export function formatHistoryLossNotice(loss: TelegramLoss): string | null {
-  const parts = describeTelegramLossParts(loss)
+export function formatHistoryLossNotice(loss: TelegramLoss, w: TelegramLossWords): string | null {
+  const parts = describeTelegramLossParts(loss, w)
   if (parts.length === 0) return null
-  return `${parts.join('・')}を取り込めず（再読み込みで取得し直します）`
+  return w.historyLoss(parts)
 }
 
 /**
@@ -310,7 +318,9 @@ export function formatHistoryLossNotice(loss: TelegramLoss): string | null {
  * 出す」）、末尾の括弧書きだけが違う形にすると、同じ主張が重複しているように見えて肝心の差
  * （戻らない／もう一度で直るかもしれない）を読み飛ばされる。
  */
-export const HISTORY_LOAD_MORE_FAILED_NOTICE = '続きの読み込みに失敗（もう一度お試しください）'
+export function historyLoadMoreFailedNotice(w: TelegramLossWords): string {
+  return w.loadMoreFailed
+}
 
 /**
  * 接続が切れていた間の電文を取り戻せていないときの一文（2026-10-21 ユーザー承認
@@ -320,7 +330,9 @@ export const HISTORY_LOAD_MORE_FAILED_NOTICE = '続きの読み込みに失敗�
  * 括弧の「再読み込みで取得し直します」は `formatHistoryLossNotice` と同じ。出す条件と、再読み込みでも取り切れない
  * 場合は `docs/spec/data-sources-spec.md` §2「繋がっていなかった間の電文を取り戻す」。
  */
-export const RECONNECT_GAP_LOSS_NOTICE = '接続が切れていた間の電文を取り込めず（再読み込みで取得し直します）'
+export function reconnectGapLossNotice(w: TelegramLossWords): string {
+  return w.reconnectGapLoss
+}
 
 /**
  * いま配信元の上限に達していて、取得を待たせていることを知らせる一文。
@@ -334,7 +346,9 @@ export const RECONNECT_GAP_LOSS_NOTICE = '接続が切れていた間の電文�
  * 下の `formatRateLimitedNotice` と**主節をそろえてある** —— 利用者にとっては
  * どちらも「アプリが自分で取得を絞っている」という同じ事実で、違うのは結果だけ。
  */
-export const FETCH_THROTTLED_NOTICE = 'リクエスト過多のため、取得制限中（自動で再開します）'
+export function fetchThrottledNotice(w: TelegramLossWords): string {
+  return w.fetchThrottled
+}
 
 /**
  * 「もっと見る」が上限で待たされている間、ボタンに出す一文（例「取得制限中（あと 2:15）」）。
@@ -346,8 +360,8 @@ export const FETCH_THROTTLED_NOTICE = 'リクエスト過多のため、取得�
  *
  * @param remainingMs 待っている取得が全部通り終えるまでの残り（→ `dmdataThrottleDrainsAt`）
  */
-export function formatLoadMoreThrottleLabel(remainingMs: number): string {
-  return `取得制限中（あと ${formatLoadMoreThrottleLeft(remainingMs)}）`
+export function formatLoadMoreThrottleLabel(remainingMs: number, w: TelegramLossWords): string {
+  return w.throttled(formatLoadMoreThrottleLeft(remainingMs))
 }
 
 /** 待ちの残りを「1:30」の形に（1 秒未満も 0:01 と出す）。画面の文は地震タブの辞書（`quake.list.throttled`）が組む */
@@ -361,7 +375,7 @@ export function formatLoadMoreThrottleLeft(remainingMs: number): string {
 /**
  * 429 の窓で取りに行かなかった分を知らせる一文。見送りが無ければ null。
  *
- * **上の `FETCH_THROTTLED_NOTICE` と主節をそろえ、括弧だけ変える。** あちらは「待っていて、
+ * **上の `fetchThrottledNotice` と主節をそろえ、括弧だけ変える。** あちらは「待っていて、
  * これから取る」、こちらは「その回は取らずに先へ進んだ」。
  *
  * **取得元と電文は単位が違うので混ぜない**（`describeTelegramLossParts` と同じ理由）。
@@ -379,8 +393,8 @@ export function formatLoadMoreThrottleLeft(remainingMs: number): string {
  * 文の形の規約（括弧へ行動ではなく内訳を入れる理由も含む）は
  * `docs/spec/settings-pwa-spec.md` §5.5「通知の文の形」が単一情報源。
  */
-export function formatRateLimitedNotice(loss: TelegramLoss): string | null {
-  const parts = countParts(loss.rateLimitedSources.size, loss.rateLimitedTelegrams)
+export function formatRateLimitedNotice(loss: TelegramLoss, w: TelegramLossWords): string | null {
+  const parts = countParts(loss.rateLimitedSources.size, loss.rateLimitedTelegrams, w)
   if (parts.length === 0) return null
-  return `リクエスト過多のため、取得制限中（${parts.join('・')}が未取得）`
+  return w.rateLimited(parts)
 }

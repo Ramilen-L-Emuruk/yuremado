@@ -11,6 +11,8 @@
 // 採る——下のテストが `forecastMaxScale` を持たせていないのは、その状態を作るため）
 import { describe, it, expect } from 'vitest'
 import { computeEEWTitle } from './useAlertTitle'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
 import type { EEWAlert, IntensityScale } from '../types/earthquake'
 
 function makeEEW(over: {
@@ -44,22 +46,22 @@ function makeEEW(over: {
 describe('computeEEWTitle', () => {
   it('最大予想震度 0 の報は通知と同じ「最大震度0予想」と名乗る（2026-10-30 ユーザー決定「全部出す」）', () => {
     const eew = { ...makeEEW({ id: 'a', name: '八丈島東方沖', severity: 'Forecast' }), forecastMaxScaleBelow1: true } as EEWAlert
-    expect(computeEEWTitle(new Map([['a', eew]]))).toBe('地震動予報 八丈島東方沖 最大震度0予想')
+    expect(computeEEWTitle(new Map([['a', eew]]), ja)).toBe('地震動予報 八丈島東方沖 最大震度0予想')
   })
 
   it('対照: 予想震度なしの報は震度を名乗らない', () => {
     const eews = new Map([['a', makeEEW({ id: 'a', name: '八丈島東方沖', severity: 'Forecast' })]])
-    expect(computeEEWTitle(eews)).toBe('地震動予報 八丈島東方沖')
+    expect(computeEEWTitle(eews, ja)).toBe('地震動予報 八丈島東方沖')
   })
 
   it('予報級だけなら「地震動予報」と名乗る', () => {
     const eews = new Map([['a', makeEEW({ id: 'a', name: '宮城県沖', severity: 'Forecast', scaleTo: 20 })]])
-    expect(computeEEWTitle(eews)).toBe('地震動予報 宮城県沖 最大震度2予想')
+    expect(computeEEWTitle(eews, ja)).toBe('地震動予報 宮城県沖 最大震度2予想')
   })
 
   it('警報級なら「緊急地震速報」と名乗る', () => {
     const eews = new Map([['a', makeEEW({ id: 'a', name: '日向灘', severity: 'Warning', scaleTo: 50 })]])
-    expect(computeEEWTitle(eews)).toBe('緊急地震速報 日向灘 最大震度5強予想')
+    expect(computeEEWTitle(eews, ja)).toBe('緊急地震速報 日向灘 最大震度5強予想')
   })
 
   // これが本題。警報級が震度未確定（仮定震源要素 → eewMaxScale は 0）で、予報級に震度が付いていると
@@ -70,7 +72,7 @@ describe('computeEEWTitle', () => {
       ['warn', makeEEW({ id: 'warn', name: '能登半島沖', severity: 'Warning', condition: '仮定震源要素' })],
       ['fcst', makeEEW({ id: 'fcst', name: '宮城県沖', severity: 'Forecast', scaleTo: 30 })],
     ])
-    const title = computeEEWTitle(eews)
+    const title = computeEEWTitle(eews, ja)
     expect(title.startsWith('緊急地震速報 ')).toBe(true)
     // 地名と震度は primary（最大震度）から取るので、予報級の方が出るのは正しい
     expect(title).toContain('宮城県沖')
@@ -83,16 +85,24 @@ describe('computeEEWTitle', () => {
   // 下限を断定した「最大震度4予想」にすると実際の危険度より低く見える。
   it('上限が定まらない予想は「程度以上」を添える', () => {
     const eews = new Map([['a', makeEEW({ id: 'a', name: '能登半島沖', severity: 'Forecast', scaleTo: 40, scaleToOrAbove: true })]])
-    expect(computeEEWTitle(eews)).toBe('地震動予報 能登半島沖 最大震度4程度以上予想')
+    expect(computeEEWTitle(eews, ja)).toBe('地震動予報 能登半島沖 最大震度4程度以上予想')
   })
 
   it('上限が定まっている予想には添えない（境界の手前）', () => {
     const eews = new Map([['a', makeEEW({ id: 'a', name: '能登半島沖', severity: 'Forecast', scaleTo: 40 })]])
-    expect(computeEEWTitle(eews)).toBe('地震動予報 能登半島沖 最大震度4予想')
+    expect(computeEEWTitle(eews, ja)).toBe('地震動予報 能登半島沖 最大震度4予想')
   })
 
   it('予想震度が無ければ震度句を省く', () => {
     const eews = new Map([['a', makeEEW({ id: 'a', name: '能登半島沖', severity: 'Warning', condition: '仮定震源要素' })]])
-    expect(computeEEWTitle(eews)).toBe('緊急地震速報 能登半島沖')
+    expect(computeEEWTitle(eews, ja)).toBe('緊急地震速報 能登半島沖')
+  })
+
+  it('英語の辞書を渡すと、区分の名前・予想・件数が英語になる（地名は電文のまま）', () => {
+    const eews = new Map([
+      ['a', makeEEW({ id: 'a', name: '能登半島沖', severity: 'Warning', scaleTo: 40, scaleToOrAbove: true })],
+      ['b', makeEEW({ id: 'b', name: '宮城県沖', severity: 'Forecast', scaleTo: 20 })],
+    ])
+    expect(computeEEWTitle(eews, en)).toBe(`Earthquake Early Warning · 能登半島沖 · Max intensity ${en.formats.approxAbove('4')} forecast · +1 more`)
   })
 })

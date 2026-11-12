@@ -4,12 +4,14 @@ import type { TabId } from '../components/IconNav'
 import type { AppSettings } from './useSettings'
 import { joinTitleParts, type AlertTitleApi } from './useAlertTitle'
 import type { ReplayEntry, ReplayPayload } from '../types/replay'
-import { getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove } from '../utils/intensity'
+import { intensityLabelWithOrAbove, intensityLabelWithApproxAbove } from '../utils/intensity'
 import { isMaxScaleUnreceived } from '../utils/quakePoints'
-import { formatMagnitudeWithCondition, formatMagnitudeCondition } from '../utils/formatters'
+import { magnitudeWithConditionText, magnitudeConditionText } from '../utils/formatters'
+import type { Messages } from '../i18n/messages'
+import { useMessagesRef } from '../i18n/I18nProvider'
 import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
-  selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
+  selectEEWSoundType, eewKindLabel, eewKindText, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast,
   isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewNotified, eewAnnounceShouldNotify, eewCancelShouldNotify, rememberEewFirstIssueTime,
   eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, raisesNotifiedForecast, type EewNotifiedForecast,
@@ -22,8 +24,9 @@ import { forgetNotifiedSpecialInfo, loadNotifiedSpecialInfo, rememberNotifiedSpe
 import {
   type SpecialInfoEvent, type SpecialInfoGate, planSpecialInfoNotification,
 } from '../utils/specialInfoPush'
-import { earthquakeCountHeadline } from '../utils/earthquakeCountSummary'
+import { earthquakeCountHeadlineText } from '../utils/earthquakeCountSummary'
 import { TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
+import { COMMENTARY_NAME, KOHATSU_NAME, NANKAI_NAME, localizedInfoName, localizedNankaiStage } from '../utils/specialInfoNotification'
 import { tsunamiCardOrderBasis, tsunamiReportDropped, tsunamiCancelKey, partialRetractionKey, tsunamiPartialRetractionNotificationFor, forgetPartialRetractionsOf, forgetRetractedObservations, type TsunamiObservationMemories, isTsunamiSameGradeReport, nextTsunamiGrade, tsunamiObservationMarks, rememberTsunamiObsDisplay, rememberObservations, rememberObservationHeights, tsunamiIssueNotificationFor, tsunamiObservationNotificationFor, tsunamiEndNotificationFor, type TsunamiCardOrderBasis, type TsunamiObsDisplayMemory } from '../utils/tsunamiNotifyTracker'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, forecastHeightChangedAreas, rememberForecastHeights, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
 import { linkTsunamiSources, shownTsunamiSource } from '../utils/tsunamiSourceLinks'
@@ -528,10 +531,11 @@ function sleep(ms: number): Promise<void> {
  *
  * **規模が判らなければ「M不明」と出す**（2026-10-23 ユーザー選択「「M不明」を出す方へ揃える (Recommended)」）。
  * 電文の説明（`Ｍ不明`）を持つ報はそれを通して「M不明」と出る。説明を持たない報もここで同じく「M不明」と出す。
+ * 語は辞書の書式の語（規模の条件の訳）。
  */
-function magnitudeTitlePart(hypocenter: Hypocenter): string {
-  const text = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)
-  return text === '不明' ? ` ${formatMagnitudeCondition('Ｍ不明')}` : ` ${text}`
+function magnitudeTitlePart(hypocenter: Hypocenter, m: Pick<Messages, 'formats'>): string {
+  const text = magnitudeWithConditionText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType, m.formats)
+  return text === m.formats.unknown ? magnitudeConditionText('Ｍ不明', m.formats) : text
 }
 
 // 待ちきれずに割り込むことを選んだときの警告。VOICEVOX が無応答だと読み上げごとに起こりうるため
@@ -1142,19 +1146,19 @@ function isEarlierOrSameEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
  * 発表中の緊急地震速報のウィンドウタイトル。**ライブの受信と、張り直しで初めて見る速報の復元とで同じ文にする。**
  *
  * 区分の名前は「発表中の EEW すべての最大レベル」から決める（この報の区分では決めない）。予報級の報を受けた瞬間に、
- * 別に発表中の警報級が隠れてしまうため。useAlertTitle の computeEEWTitle と同じ `eewKindLabel` を使い、文言がずれないようにする。
+ * 別に発表中の警報級が隠れてしまうため。useAlertTitle の computeEEWTitle と同じ `eewKindText` を使い、文言がずれないようにする。
  */
-function eewOngoingTitleText(levels: ReadonlyMap<string, 0 | 1 | 2>, event: EEWAlert): string {
+function eewOngoingTitleText(levels: ReadonlyMap<string, 0 | 1 | 2>, event: EEWAlert, m: Pick<Messages, 'alertText' | 'formats'>): string {
   // 上限が定まらない報は「以上」を添える（値だけでは下限の断定になる）。
   const { scale, orAbove } = eewMaxScaleInfo(event)
-  const titleLevel = Array.from(levels.values()).reduce<0 | 1 | 2>((m, l) => Math.max(m, l) as 0 | 1 | 2, 0)
+  const titleLevel = Array.from(levels.values()).reduce<0 | 1 | 2>((max, l) => Math.max(max, l) as 0 | 1 | 2, 0)
   // 震央地名が空でも空白を残さない（→ `joinTitleParts`）
-  return joinTitleParts(
-    eewKindLabel(titleLevel), event.earthquake.hypocenter.name,
-    scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想`
+  return joinTitleParts(m,
+    eewKindText(titleLevel, m), event.earthquake.hypocenter.name,
+    scale > 0 ? m.alertText.maxScaleForecast(intensityLabelWithApproxAbove(scale, orAbove, m.formats))
       // 最大予想震度 0 の報は通知と同じ「最大震度0予想」（→ `computeEEWTitle`）
-      : isEewScaleZeroForecast(event) ? '最大震度0予想' : '',
-    levels.size > 1 ? `他${levels.size - 1}件` : '',
+      : isEewScaleZeroForecast(event) ? m.alertText.maxScaleForecast('0') : '',
+    levels.size > 1 ? m.alertText.eewMore(levels.size - 1) : '',
   )
 }
 
@@ -1168,6 +1172,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     selectQuake, openLpgmFromQuake, openEstimatedIntensity,
     closeDistributionOnQuakeReport,
   } = deps
+  // 通知の文とウィンドウの題名を組む辞書。後から呼ばれる受信処理でも、呼ばれた時点の言語で組む
+  const messagesRef = useMessagesRef()
 
   /**
    * 最新の設定。**`useCallback([])` で包んだ関数から読むためだけに持つ**
@@ -1604,7 +1610,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    */
   const notifySpecialInfo = (event: SpecialInfoEvent): boolean => {
     const memory = notifiedMemory()
-    const plan = planSpecialInfoNotification(event, id => memory.lpgmNames.get(id))
+    const plan = planSpecialInfoNotification(event, id => memory.lpgmNames.get(id), messagesRef.current)
     if (!plan) return false
     // 試験の報は試験報を受け取る設定のときだけ（受信の入口でも止めている。中継と同じ判定をここでも持つ）
     if (plan.test && !settings.dmdataTestDelivery) return false
@@ -2926,7 +2932,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // （2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・#1201。2026-10-24 の通知の下限「階級1以上
       // (Recommended)」を覆した）。通知は地震情報の通知の設定に従う。
       const lpgmName = lpgmEvent.hypocenter?.name.trim() ?? ''
-      title.setTitle(joinTitleParts('長周期地震動', lpgmName, `最大階級${lpgmEvent.maxClass}`))
+      const tm = messagesRef.current
+      title.setTitle(joinTitleParts(tm, tm.alertText.titleLpgm, lpgmName, tm.alertText.titleLpgmMaxClass(lpgmEvent.maxClass)))
       title.scheduleTitleRevert('lpgm', lpgmEvent.eventId)
       // 取消の通知で言う地名は、通知を出したときだけ `notifySpecialInfo` が一緒に覚える（取消の電文は震源を持たない）
       notifySpecialInfo({ kind: 'lpgm', data: lpgmEvent })
@@ -3053,8 +3060,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         playAlertSound('earthquakeCount')
       }
       // タイトルと通知は帯の見出しと同じ数字を出す（見出しが種別名だけの報はタイトルも種別名だけ）
-      const countHeadline = earthquakeCountHeadline(count)
-      title.setTitle(countHeadline === '地震回数に関する情報' ? countHeadline : `地震回数に関する情報 ${countHeadline}`)
+      const countWords = messagesRef.current.specialInfo
+      const countHeadline = earthquakeCountHeadlineText(count, countWords)
+      title.setTitle(countHeadline === countWords.countHeadlineNone ? countHeadline : `${countWords.countHeadlineNone} ${countHeadline}`)
       title.scheduleTitleRevert('earthquakeCount', count.eventId)
       notifySpecialInfo({ kind: 'earthquakeCount', data: count })
       if (settings.ttsEnabled) {
@@ -3143,7 +3151,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       if (!nankaiActiveRef.current) {
         // 見出しは電文の情報名（「（第１号）」を含む）。読めなければ種別名
-        title.setTitle(commentary.headline.trim() || '南海トラフ地震関連解説情報')
+        title.setTitle(commentary.headline.trim() || localizedInfoName(COMMENTARY_NAME, messagesRef.current))
         title.scheduleTitleRevert('nankaiCommentary', commentary.id)
       }
       // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
@@ -3185,9 +3193,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             event.kind === 'nankai' ? 'nankai' : 'kohatsu')
         }
         // タイトル更新
+        const sm = messagesRef.current
         const specialTitle = event.kind === 'nankai'
-          ? `南海トラフ地震臨時情報（${event.data.kindName}）`
-          : '北海道・三陸沖後発地震注意情報 発表中'
+          ? sm.alertText.withStage(localizedInfoName(NANKAI_NAME, sm), localizedNankaiStage(event.data.kindName, sm))
+          : sm.alertText.titleInEffect(localizedInfoName(KOHATSU_NAME, sm))
         title.setTitle(specialTitle)
         title.scheduleTitleRevert(event.kind === 'nankai' ? 'specialInfo' : 'kohatsu', event.data.eventId)
       } else {
@@ -3742,10 +3751,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       } else {
         // 遠地地震は国内で震度を観測しない（maxScale は常に -1）。「最大震度不明」と出すと
         // 震度が判明していないだけに読めてしまうため、規模を出す別書式にする。
+        const qm = messagesRef.current
         title.setTitle(isForeignQuake
-          ? `遠地地震 ${hypocenter.name}${magnitudeTitlePart(hypocenter)}`
+          ? qm.alertText.titleForeignQuake(hypocenter.name, magnitudeTitlePart(hypocenter, qm))
           // ウィンドウタイトルも断定形にしない（理由は App.tsx の通知と同じ）。
-          : `地震情報 ${hypocenter.name} 最大震度${getIntensityLabelWithOrAbove(maxScale, isMaxScaleUnreceived(maxScale, event.points))}`)
+          : qm.alertText.titleQuake(hypocenter.name, intensityLabelWithOrAbove(maxScale, isMaxScaleUnreceived(maxScale, event.points), qm.formats)))
         title.scheduleTitleRevert('earthquake', null)
       }
     } else if (event.kind === 'tsunami' && !event.cancelled) {
@@ -3843,7 +3853,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       } else {
         spokenTsunamiCancelEventIdsRef.current.add(retractKey)
         // 観測の通知を出したかは、組み直す報が残らないときの後始末（`forgetEndedTsunami`）が記憶を消す前に読む
-        const retractNotice = tsunamiPartialRetractionNotificationFor(event, tsunamiObsNotifiedRef.current)
+        const retractNotice = tsunamiPartialRetractionNotificationFor(event, tsunamiObsNotifiedRef.current, messagesRef.current)
         const refolded = tsunamiStep.kind === 'live' ? tsunamiStep.tsunami : null
         // 録画ツール向けの記録。`alert` は全体の等級が動いたときだけ出す（→ recording-interface-spec.md）——
         // 組み直す報が残らなければ津波は画面から消えるので取消、残れば組み直した津波の等級が動いたときだけ。
@@ -3930,7 +3940,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 落とすより重い。
         // 止めていても、閉じるまで残る通知を出していたなら置き換える（`tsunamiPersistentNotificationShownRef`）
         // 出すかと中身は `tsunamiEndNotificationFor`（中継のプッシュ通知と共用）。
-        const n = tsunamiEndNotificationFor(event, tsunamiStep)
+        const n = tsunamiEndNotificationFor(event, tsunamiStep, messagesRef.current)
         if (n && ((notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion))
             || tsunamiPersistentNotificationShownRef.current)) {
           showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction, n.open)
@@ -4078,7 +4088,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 remembered: eewLastHypocenterNameRef.current.size,
               })
             }
-            const notice = eewCancelNotice(key, cancelName)
+            const notice = eewCancelNotice(key, cancelName, messagesRef.current)
             showBrowserNotification(notice.title, notice.body, notice.tag, false, notice.open)
           }
         }
@@ -4180,7 +4190,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 見出し・本文・tag は共用の部品（→ `eewAnnounceNotice`。見出しは表示用の区分で、特別警報の下げ止まりを効かせる）。
         // `event` は入口で統合した報で、印（`everSpecialWarning`）を運んでいる（`useEarthquakes` の `mergeEewReport`）。
         // 出すかどうか（格上げ・予想の引き上げ）は生の区分のまま —— 下げ止まりは見出しの文言だけに効かせる
-        const notice = eewAnnounceNotice(key, event, announce.forecast)
+        const notice = eewAnnounceNotice(key, event, announce.forecast, messagesRef.current)
         const shown = notificationWouldShow()
         showBrowserNotification(notice.title, notice.body, notice.tag, true, notice.open)
         // 差し替えの相手は、実際に出た通知だけ（出ていない通知を、後の続報で初めて静かに出さない）
@@ -4190,7 +4200,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         && notificationAllowed(settings, 'eew') && notificationRegionAllowed(settings, eewPrefectures(event))) {
         // 格上げも引き上げも無い続報は、通知の字面（規模・最終報・震央地名・予想）が変わったときだけ**鳴らさずに**同じ札で
         // 差し替える（2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
-        const quiet = eewQuietReplaceNotice(eewAnnounceNotice(key, event, announce.forecast), eewLastNoticeRef.current.get(key))
+        const quiet = eewQuietReplaceNotice(eewAnnounceNotice(key, event, announce.forecast, messagesRef.current), eewLastNoticeRef.current.get(key))
         // 差し替えが出せないとき（「アプリを開いている間は通知しない」など）は字面を進めない。進めると、裏へ回った後の
         // 同じ字面の続報で差し替えず、通知が古い字面のまま残る
         if (quiet && notificationWouldShow()) {
@@ -4199,7 +4209,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         }
       }
       // EEW タイトルをイベントデータから構築（state は未更新のため event 直接参照）
-      title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event))
+      title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event, messagesRef.current))
       title.scheduleTitleRevert('eew', null)
 
       // VOICEVOX: 2フェーズ読み上げ
@@ -5226,7 +5236,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 閉じるまで残すか）は `tsunamiIssueNotification`。**区域はカードの材料（`tsunamiCardBasis`）から取る**——電文順で切ると、
     // カードの先頭に並ぶ深刻な区域が通知から落ちる。
     const tsunamiIssue = event.kind === 'tsunami' && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)
-      ? tsunamiIssueNotificationFor(event, tsunamiCardBasis)
+      ? tsunamiIssueNotificationFor(event, tsunamiCardBasis, messagesRef.current)
       : null
     if (tsunamiIssue) {
       const n = tsunamiIssue
@@ -6040,7 +6050,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 満潮時刻だけの報）は出さない。
       // 出すかと中身は `tsunamiObservationNotificationFor`（中継のプッシュ通知と共用）。
       if (notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
-        const n = tsunamiObservationNotificationFor(event, marks552, tsunamiCardBasis)
+        const n = tsunamiObservationNotificationFor(event, marks552, tsunamiCardBasis, messagesRef.current)
         if (n) {
           const shown = notificationWouldShow()
           showBrowserNotification(n.title, n.body, TSUNAMI_OBS_NOTIFICATION_TAG, n.requireInteraction, n.open)
@@ -6801,7 +6811,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     }
     // タイトルの失敗は呼び出し元の catch（「読み上げ側へ渡せませんでした」）へ流さない。記憶は書き込み済みなので文面が事実と違う
     try {
-      titleRef.current.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, titled[titled.length - 1]))
+      titleRef.current.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, titled[titled.length - 1], messagesRef.current))
       titleRef.current.scheduleTitleRevert('eew', null)
     } catch (err) {
       log.warn('[eew] 復元した緊急地震速報のウィンドウタイトルを付けられませんでした（次の報で付きます）:', err)

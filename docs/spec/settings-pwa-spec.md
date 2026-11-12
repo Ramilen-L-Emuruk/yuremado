@@ -1257,9 +1257,9 @@ SW は `SKIP_WAITING` の合図を受けたときだけ `skipWaiting` し、`cli
 |---|---|
 | `formatHistoryLossNotice` | 取得元N件・電文N件を取り込めず（再読み込みで取得し直します） |
 | `formatRateLimitedNotice` | リクエスト過多のため、取得制限中（取得元N件・電文N件が未取得） |
-| `HISTORY_LOAD_MORE_FAILED_NOTICE` | 続きの読み込みに失敗（もう一度お試しください） |
-| `RECONNECT_GAP_LOSS_NOTICE` | 接続が切れていた間の電文を取り込めず（再読み込みで取得し直します） |
-| `FETCH_THROTTLED_NOTICE` | リクエスト過多のため、取得制限中（自動で再開します） |
+| `historyLoadMoreFailedNotice` | 続きの読み込みに失敗（もう一度お試しください） |
+| `reconnectGapLossNotice` | 接続が切れていた間の電文を取り込めず（再読み込みで取得し直します） |
+| `fetchThrottledNotice` | リクエスト過多のため、取得制限中（自動で再開します） |
 | `MapDataStatus` | 県境・活断層を取り込めず（取り直しています）／（再読み込みで取得し直します）。名前は 3 つまでで「ほかN件」（→ [`data-sources-spec.md`](data-sources-spec.md) §6「取得状況の表示」） |
 | `MapRenderStatus` | 〇〇を描けず／〇〇はクリックに応じず ＋ 再読み込みで直ることがあります |
 | `formatLossNotice`（再生） | 取得元N件・電文N件を取り込めず（再生は継続中・詳細はコンソール） |
@@ -1294,7 +1294,7 @@ SW は `SKIP_WAITING` の合図を受けたときだけ `skipWaiting` し、`cli
 「中継でも残り時間を出す (Recommended)」の行）。中継の門は、中継が返す 429 の `Retry-After` の秒数だけ待つ
 （`services/relayEndpoint.ts` の `relayGate`）。ボタンは中継の門の残りと、DMDATA の門の残り（`loadMoreDrainsAt`。数え方は下の箇条）の
 両方を読み、両方で待っていれば遅いほうを出す（`components/EarthquakeTab/LoadMoreButton.tsx`）。
-`FETCH_THROTTLED_NOTICE` の帯は一覧のいちばん上にあり、末尾のボタンを押した位置からは見えないため。
+`fetchThrottledNotice` の帯は一覧のいちばん上にあり、末尾のボタンを押した位置からは見えないため。
 帯は残す（起動時の履歴が待たされているときにも出るもので、「もっと見る」専用ではない）。
 **上の表の 8 本には数えない** —— 帯ではなくボタンの文言で、待っている間だけ出て数字が刻々と変わる。
 文の形（`{状態}（{内訳}）`・言い切り）は揃えてあり、文面は `LoadMoreButton.test.tsx` と `telegramLoss.test.ts` が固定する。
@@ -1323,7 +1323,7 @@ SW は `SKIP_WAITING` の合図を受けたときだけ `skipWaiting` し、`cli
 **内訳の置き場所は 2 通りある。** 主節へ出す形（`取得元N件・電文N件を取り込めず`）と、
 主節を状態だけにして括弧へ回す形（`取得制限中（…が未取得）`）。**分かれ目は、括弧に行動の案内を
 入れる余地があるかどうか。** 前者は打てる手があるので括弧をそちらへ譲り、後者は待つほかない
-（`FETCH_THROTTLED_NOTICE` が「自動で再開します」と既に言っている）ので括弧が内訳へ空く。
+（`fetchThrottledNotice` が「自動で再開します」と既に言っている）ので括弧が内訳へ空く。
 
 **括弧をまったく使わない形もある。** `MapRenderStatus` は 2 つの主節（描けない／掴めない）が
 同じ手掛かりを共有するので、行動の案内を下の 1 行へ置き、名前を主節の主語に据える。揃えるのは
@@ -3255,7 +3255,7 @@ Playwright / Chrome DevTools でボタン発火後の DOM 状態を確認した�
   §4.5 が単一情報源。
 - 2026-09-30: §7 の一覧「種別遷移テスト」と 2026-09-20 の項が、**地震カードの更新の印を向きで
   色分けしている**（赤＝上がった・緑＝下がった）と書いていたのを実装へ揃えた。向きは色ではなく
-  印に添える言葉（`UPDATE_MARK_TITLE`）が持つ —— 色の意味は
+  印に添える言葉（辞書の `updateMark`）が持つ —— 色の意味は
   [`quake-spec.md`](quake-spec.md) §8「カードの更新の印」が単一情報源で、経緯も同ファイルの
   同じ日の項に書いた。**印を足した最初のコミットからの誤記**だったので 2026-09-20 の項も
   併せて直している。7 通目の続報で実機から確かめられるのは、印そのものと、それが親の行

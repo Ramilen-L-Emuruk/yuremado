@@ -107,7 +107,7 @@ function AlertDockInner({ eews, tsunami, onOpen }: Props) {
           {(tsunami.observed || tsunami.firstWave) && (
             // 観測の最大波と第 1 波の到達は広い画面だけ（2026-11-09 ユーザー発言「津波増やしすぎてゴチャゴチャ」）
             <Line className="hidden side:flex">
-              {tsunami.observed && <Unit><span className={LABEL}>{w.maxWave}</span><span className={VALUE}>{tsunami.observed.value}</span><span className={LABEL}>（{tsunami.observed.station}）</span></Unit>}
+              {tsunami.observed && <Unit><span className={LABEL}>{w.maxWave}</span><span className={VALUE}>{tsunami.observed.value}</span><span className={LABEL}>{m.formats.paren(tsunami.observed.station)}</span></Unit>}
               {tsunami.firstWave && <Unit><span className={LABEL}>{w.firstWave}</span><span className={VALUE}>{tsunami.firstWave.first}</span>{tsunami.firstWave.rest > 0 && <span className={LABEL}>{w.moreAreas(tsunami.firstWave.rest)}</span>}</Unit>}
             </Line>
           )}

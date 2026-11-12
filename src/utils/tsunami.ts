@@ -1,5 +1,6 @@
 import type { JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiEstimationCondition, TsunamiGrade, TsunamiObservation, TsunamiObservationCondition, TsunamiSourceEarthquake, TsunamiStation, TsunamiWarningComment } from '../types/earthquake'
 import { ja } from '../i18n/messages/ja'
+import type { Messages } from '../i18n/messages'
 import { formatTimeMin, readDateTime } from './formatters'
 import { log } from './logger'
 import { compareReportAge, reportOrderKey } from './quakeMerge'
@@ -2397,12 +2398,39 @@ export function arrivalConditionBadge(condition: string | undefined): string | u
  * （「まもなく到達」「到達中」「第1波到達」）。2026-10-21 ユーザー選択「波高と到達予想も出す (Recommended)」・
  * 形は 2026-10-24 ユーザー選択「この形で (Recommended)」。**語はカードと同じ関数から採る**（`arrivalConditionBadge`）。
  */
-export function tsunamiAreaPopupLines(area: TsunamiArea): string[] {
+export function tsunamiAreaPopupLines(parts: TsunamiAreaPopupParts, m: Pick<Messages, 'tsunami'>): string[] {
   const lines: string[] = []
-  if (hasForecastHeight(area)) lines.push(`予想 ${area.maxHeight!.description}`)
-  const hm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
-  const arrival = hm ? `到達予想 ${hm}`
-    : (arrivalConditionBadge(area.firstHeight?.condition) ?? (area.immediate ? ARRIVAL_CONDITION_BADGE['ただちに津波来襲と予測'] : undefined))
+  // 高さは電文の語（数値にならないときは「巨大」など）。上限を定めない形の「以上」は前からここでは添えていない
+  if (parts.height !== null) lines.push(m.tsunami.forecastHeight(m.tsunami.height(parts.height, false)))
+  const arrival = parts.arrivalTime !== null ? m.tsunami.estimatedArrival(parts.arrivalTime) : arrivalConditionText(parts.arrivalCondition, m)
   if (arrival) lines.push(arrival)
   return lines
+}
+
+/**
+ * 吹き出しの行の材料（地物の属性に平らな値で持たせ、押されたときに {@link tsunamiAreaPopupLines} が言語の辞書で文にする）。
+ * `arrivalTime` は書式を済ませた到達予想の時刻、`arrivalCondition` は時刻が無いときの電文の到達状況の語
+ * （語が無く「ただちに津波来襲と予測」の区域なら、その語）
+ */
+export interface TsunamiAreaPopupParts {
+  readonly height: string | null
+  readonly arrivalTime: string | null
+  readonly arrivalCondition: string | null
+}
+
+/** 吹き出しの行の材料を区域から取る */
+export function tsunamiAreaPopupParts(area: TsunamiArea): TsunamiAreaPopupParts {
+  const hm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
+  return {
+    height: hasForecastHeight(area) ? area.maxHeight!.description : null,
+    arrivalTime: hm || null,
+    arrivalCondition: hm ? null : (area.firstHeight?.condition || (area.immediate ? 'ただちに津波来襲と予測' : null)),
+  }
+}
+
+/** 到達状況の語を言語の辞書の札へ。表に無い語は電文の語のまま（記録は {@link arrivalConditionBadge} が残す） */
+function arrivalConditionText(condition: string | null, m: Pick<Messages, 'tsunami'>): string | undefined {
+  if (!condition) return undefined
+  const key = arrivalConditionKey(condition)
+  return key !== undefined ? m.tsunami.arrivalCondition[key] : arrivalConditionBadge(condition)
 }

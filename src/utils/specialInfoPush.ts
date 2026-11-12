@@ -2,10 +2,11 @@ import type {
   JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, JMAKohatsu, JMALpgm, JMANankai, JMANankaiCommentary,
   JMAQuakeNotice,
 } from '../types/earthquake'
-import { earthquakeCountHeadline } from './earthquakeCountSummary'
+import { earthquakeCountHeadlineText } from './earthquakeCountSummary'
 import {
   earthquakeCountNotification, estimatedIntensityNotification, internationalTsunamiNotification, kohatsuNotification,
   lpgmNotification, nankaiCommentaryNotification, nankaiNotification, quakeNoticeNotification, type SpecialInfoNotification,
+  type SpecialInfoNotificationWords,
 } from './specialInfoNotification'
 
 /**
@@ -74,28 +75,31 @@ export interface SpecialInfoPlan {
 /** 取消の通知で地名を言うための、発表で読んだ長周期の震央地名（地震ごと） */
 export type LpgmNameLookup = (eventId: string) => string | undefined
 
-/** 通知を出しうるなら、その中身と条件を返す（今はどの種類も返す。`null` は出さない報のための口） */
-export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: LpgmNameLookup): SpecialInfoPlan | null {
+/**
+ * 通知を出しうるなら、その中身と条件を返す（今はどの種類も返す。`null` は出さない報のための口）。
+ * `m` は文を組む辞書（アプリはいまの言語、中継は日本語の辞書 `JA_MESSAGES`）。
+ */
+export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: LpgmNameLookup, m: SpecialInfoNotificationWords): SpecialInfoPlan | null {
   switch (event.kind) {
     case 'lpgm': {
       const e = event.data
       const key = `lpgm:${e.eventId}`
       if (e.cancelled) {
-        return { notification: lpgmNotification(e, lpgmName(e.eventId) ?? ''), kind: 'quake', prefectures: null, requires: key }
+        return { notification: lpgmNotification(e, lpgmName(e.eventId) ?? '', m), kind: 'quake', prefectures: null, requires: key }
       }
       // 長周期地震動は電文に都道府県ごとの階級を持つので、その県で絞る（2026-11-03 の問いの説明「長周期地震動は電文に
       // 都道府県ごとの階級があるので、その県で絞る」）
       const prefectures = (e.prefs ?? []).map(p => p.code).filter(c => /^\d{2}$/.test(c))
       // 都道府県を 1 つも読めなかった報は、絞れないので絞らない（空のまま渡すと、地域を選んだ人には届かなくなる）
-      return { notification: lpgmNotification(e, ''), kind: 'quake', prefectures: prefectures.length > 0 ? prefectures : null, remember: key }
+      return { notification: lpgmNotification(e, '', m), kind: 'quake', prefectures: prefectures.length > 0 ? prefectures : null, remember: key }
     }
     case 'estimatedIntensity':
-      return { notification: estimatedIntensityNotification(event.data, event.isNew), kind: 'quake', prefectures: null }
+      return { notification: estimatedIntensityNotification(event.data, event.isNew, m), kind: 'quake', prefectures: null }
     case 'earthquakeCount': {
       const e = event.data
       const key = `earthquakeCount:${e.eventId}`
-      if (e.cancelled) return { notification: earthquakeCountNotification(e, ''), kind: 'quake', prefectures: null, requires: key }
-      return { notification: earthquakeCountNotification(e, earthquakeCountHeadline(e)), kind: 'quake', prefectures: null, remember: key }
+      if (e.cancelled) return { notification: earthquakeCountNotification(e, '', m), kind: 'quake', prefectures: null, requires: key }
+      return { notification: earthquakeCountNotification(e, earthquakeCountHeadlineText(e, m.specialInfo), m), kind: 'quake', prefectures: null, remember: key }
     }
     case 'nankaiCommentary': {
       const e = event.data
@@ -107,8 +111,8 @@ export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: L
       // ここで取消に付ける設定は使われない。発表を通知したものにだけ出すのはどちらも同じ
       const routine = e.serialName === '定例解説' || e.serialCode === '200'
       const gate = routine ? { kind: 'nankaiRoutine' as const } : { kind: 'nankai' as const, commentary: true as const }
-      if (e.cancelled) return { notification: nankaiCommentaryNotification(e), ...gate, prefectures: null, requires: key }
-      return { notification: nankaiCommentaryNotification(e), ...gate, prefectures: null, remember: key }
+      if (e.cancelled) return { notification: nankaiCommentaryNotification(e, m), ...gate, prefectures: null, requires: key }
+      return { notification: nankaiCommentaryNotification(e, m), ...gate, prefectures: null, remember: key }
     }
     case 'quakeNotice': {
       // 地震・津波に関するお知らせ。設定「お知らせの通知」（既定は切）に従い、地域では絞らない（2026-11-09 ユーザー選択「新設・既定オフ」）。
@@ -117,19 +121,19 @@ export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: L
       // 鍵は `EventID`。id は電文の作成時刻まで含み、取消の電文とは一致しない（帯の取消も `EventID` で照合する
       // → `applyQuakeNotice`）
       const key = `quakeNotice:${e.eventId}`
-      if (e.cancelled) return { notification: quakeNoticeNotification(e), kind: 'quakeNotice', prefectures: null, requires: key }
-      return { notification: quakeNoticeNotification(e), kind: 'quakeNotice', prefectures: null, remember: key }
+      if (e.cancelled) return { notification: quakeNoticeNotification(e, m), kind: 'quakeNotice', prefectures: null, requires: key }
+      return { notification: quakeNoticeNotification(e, m), kind: 'quakeNotice', prefectures: null, remember: key }
     }
     case 'nankai':
-      return { notification: nankaiNotification(event.data), kind: 'nankai', prefectures: null }
+      return { notification: nankaiNotification(event.data, m), kind: 'nankai', prefectures: null }
     case 'kohatsu':
-      return { notification: kohatsuNotification(event.data), kind: 'nankai', prefectures: null }
+      return { notification: kohatsuNotification(event.data, m), kind: 'nankai', prefectures: null }
     case 'internationalTsunami':
       // 津波の通知の設定に従い、地域では絞らない（2026-11-06 ユーザー選択「津波の通知の設定で出す (Recommended)」。説明は
       // 「通知する地域では絞らない（国外の地震で県が無いため。南海トラフと同じ扱い）」）。通信試験は試験報を受け取る設定の
       // 受け手にだけ出す（`test`。2026-11-09 ユーザー選択「試験報の設定で止める (Recommended)」）
       return {
-        notification: internationalTsunamiNotification(event.data, event.quakeName), kind: 'tsunami', prefectures: null,
+        notification: internationalTsunamiNotification(event.data, event.quakeName, m), kind: 'tsunami', prefectures: null,
         ...(event.data.isCommunicationsTest && { test: true as const }),
       }
   }

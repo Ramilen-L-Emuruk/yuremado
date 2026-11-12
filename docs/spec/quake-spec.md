@@ -3078,7 +3078,7 @@ IXAC40 を扱い始めた最初の実機確認がこれで落ちた（ユニッ�
 帯は地図に重ねて出るので、どのタブからも読める。並びと色は
 [architecture-spec.md](architecture-spec.md) §4。
 
-- **畳んだ見出しは自分で組む**（`earthquakeCountHeadline`）。電文の `Head/Headline/Text` は
+- **畳んだ見出しは自分で組む**（`earthquakeCountHeadlineText`）。電文の `Head/Headline/Text` は
   「地震回数に関する情報をお知らせします。」という定型文で、畳んだままでは何も伝わらない。
   区間の数字から「9/9 04時から 1,704回（うち有感 1回）」を組む
 - **どの区間の数字を出すかは読み上げと同じ関数で選ぶ**（`utils/earthquakeCountSummary.ts` の
@@ -3687,7 +3687,7 @@ IXAC40 を扱い始めた最初の実機確認がこれで落ちた（ユニッ�
 （→ [`eew-spec.md`](eew-spec.md) §4）—— あちらは値が秒ごとに書き換わって追えない。
 
 区別そのものは `UpdateStatus` が保っているので、色を分け直すことはいつでもできる。
-欄に添える言葉は向きまで言う（`UPDATE_MARK_TITLE`）。
+欄に添える言葉は向きまで言う（辞書の `updateMark`）。
 
 津波カードと同じ語彙で、色の定義は
 [`src/utils/updateMark.ts`](../../src/utils/updateMark.ts) が単一情報源。

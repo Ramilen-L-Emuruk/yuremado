@@ -35,7 +35,6 @@ import { foldHistoryColumns } from '../SeismoWaveChart/historyColumns'
 import {
   AXIS_AVERAGE_COLORS,
   AXIS_COLORS,
-  AXIS_LABELS,
   COMPOSITE_COLOR,
   COMPOSITE_SMOOTH_COLOR,
   paintWaveColumns,
@@ -118,7 +117,7 @@ interface Props {
 }
 
 export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
-  const { quake: { seismo: w, section: quakeSection }, formats: fw } = useMessages()
+  const { quake: { seismo: w, section: quakeSection }, formats: fw, waveChart: { axes: axisLabels } } = useMessages()
   // 震度の推移の境目に添える名前（「震度5弱」）。辞書が変わったときだけ作り直す（描く効果の依存に入る）
   const intensityEdgeLabel = useCallback((scale: number) => quakeSection.scale(intensityLabel(scale, fw)), [quakeSection, fw])
   const [axes, setAxes] = useState<readonly boolean[]>([true, true, true])
@@ -440,7 +439,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
             marks: [...arrivalMarks, ...peakMarkAt(compositePeak?.atMs), ...boundaryMarks],
           })
           if (!ok) throttledNoContext(() => log.error('[seismo] 詳細の窓の波形を描く 2D コンテキストを取れなかった'))
-          setCompositeScaleText(`0〜${formatGal(compositeScale)} ${wave.unit.label}`)
+          setCompositeScaleText(`${fw.range('0', formatGal(compositeScale))} ${wave.unit.label}`)
         }
         // 縦の表示はカードと同じ書式。
         setScaleText(formatScale(scaleGal, wave.unit.label))
@@ -498,7 +497,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
     // `visibleIdx` は `axes` から作るので `axes` で足りる。`view` は `useSamples` のときだけ使い、
     // そのとき `displayFromMs`/`displayToMs` が `view` と一致する。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted, wave.unit, w, intensityEdgeLabel])
+  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted, wave.unit, w, intensityEdgeLabel, fw])
 
   // ---- 操作 ----
   const zoomBy = useCallback(
@@ -605,7 +604,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-          {AXIS_LABELS.map((label, i) => (
+          {axisLabels.map((label, i) => (
             <ToggleChip key={label} on={axes[i] !== false} color={AXIS_COLORS[i]} onToggle={() => toggleAxis(i)}>
               {label}
             </ToggleChip>
@@ -641,7 +640,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
             axes[a] === false ? null : (
               <div key={a}>
                 <div className="flex gap-2 text-[11px] leading-none" style={{ color: AXIS_COLORS[a] }}>
-                  <span>{AXIS_LABELS[a]}</span>
+                  <span>{axisLabels[a]}</span>
                   {peaks[a] !== null && (
                     <span className="tabular-nums text-secondary">{w.peak} {formatGal((peaks[a] as AxisPeak).gal)} {wave.unit.label}</span>
                   )}

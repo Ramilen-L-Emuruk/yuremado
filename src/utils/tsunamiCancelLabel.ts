@@ -10,7 +10,7 @@ import { ja } from '../i18n/messages/ja'
 // 伝わらない。
 //
 // **見出し（`title`）はウィンドウタイトルにもそのまま出す**（`useAlertTitle` の `showTsunamiEndTitle`。
-// 2026-10-12 ユーザー承認）。画面とタイトルで語を割らないため、語は日本語の辞書の `tsunami.cancel` 1 か所に持つ。
-// 津波タブは同じ形をいまの言語の辞書から引く。ウィンドウタイトルはまだ日本語のまま（画面の外で組む文は
-// 辞書へ移す段の最後に回してある → docs/spec/i18n-spec.md §5）ので、日本語以外では画面とタイトルの言語が違う。
+// 2026-10-12 ユーザー承認）。画面とタイトルで語を割らないため、語は辞書の `tsunami.cancel` 1 か所に持つ。
+// 津波タブとウィンドウタイトルは同じ形をいまの言語の辞書から引く。この日本語の表は、ウィンドウタイトルが理由の値を
+// 確かめるのに使う（表に無い値を「解除」へ倒す）。
 export const CANCEL_REASON_LABEL: Record<NonNullable<JMATsunami['cancelReason']>, { title: string; desc: string; badge: string }> = ja.tsunami.cancel

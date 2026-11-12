@@ -804,8 +804,9 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
               {((isAssumed && hypocenter.name) || eew.landOrSea) && (
                 <span className="whitespace-nowrap text-secondary">
                   {isAssumed && hypocenter.name && rt.provisional}
-                  {/* 表に無い語が来たら電文の語のまま出す（パーサーが語を足しても画面から消さない） */}
-                  {eew.landOrSea && (rt.landOrSea[eew.landOrSea] ?? `（${eew.landOrSea}）`)}
+                  {/* 表に無い語が来たら電文の語のまま出す（パーサーが語を足しても画面から消さない）。括弧は言語の形にし、
+                      表の語（英語「(inland)」）と同じく前の空白は付けない */}
+                  {eew.landOrSea && (rt.landOrSea[eew.landOrSea] ?? fw.paren(eew.landOrSea).trimStart())}
                 </span>
               )}
             </div>

@@ -39,7 +39,7 @@ function makeEvent(originTimeJst: string): EventResult {
 }
 
 function makeBuild(originTimeJst: string, excludedStations = 0) {
-  return { event: makeEvent(originTimeJst), excludedStations, excluded: Array.from({ length: excludedStations }, (_, i) => ({ station: `S${i}`, reason: 'テスト' })) }
+  return { event: makeEvent(originTimeJst), excludedStations, excluded: Array.from({ length: excludedStations }, (_, i) => ({ station: `S${i}`, reason: 'テスト', reasonText: { key: 'knetExcludedUnreadable', args: ['テスト'] } })) }
 }
 
 /** Array.from(files)で回せれば十分なため、実際のFileListは作らずFile配列で代用する。 */

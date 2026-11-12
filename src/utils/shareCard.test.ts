@@ -239,6 +239,27 @@ describe('layoutSubtitleLines', () => {
     expect(subtitle).toContain(last.slice(0, -1).trim())
   })
 
+  // 日本語・中国語以外は、項目どうしを「 / 」、値どうしを半角の空き 2 つでつなぐ（辞書の formats.slashSpaced・shareImage.joinParts）
+  it('正: 英語の副見出しも項目と値の境目で折り、値の中の空きでは割らない', () => {
+    const subtitle = [en.shareImage.joinParts(['Noto', 'M7.6', 'Depth 10 km']), en.shareImage.joinParts(['Joetsu', 'M5.0'])]
+      .join(en.formats.slashSpaced)
+    expect(layoutSubtitleLines(measure, subtitle, 26)).toEqual(['Noto  M7.6  Depth 10 km /', 'Joetsu  M5.0'])
+  })
+
+  it('対照: 前後に空きの無い「/」（5-/5+ など）では割らない', () => {
+    expect(layoutSubtitleLines(measure, 'Max 5-/5+  M6.8', 10)).toEqual(['Max 5-/5+', 'M6.8'])
+  })
+
+  it('安全弁: 英語でも上限を超えて切るときは項目の境目で切り、数値の途中で切らない', () => {
+    const subtitle = ['Noto  M7.6', 'Joetsu  M5.0', 'Chiba  M4.8', 'Hyuga  M4.2'].join(en.formats.slashSpaced)
+    const lines = layoutSubtitleLines(measure, subtitle, 13)
+    expect(lines).toHaveLength(SUBTITLE_MAX_LINES)
+    const last = lines[SUBTITLE_MAX_LINES - 1]
+    expect(last.endsWith('…')).toBe(true)
+    expect(last).not.toMatch(/M\d(\.\d)?…$/)
+    expect(measure(last)).toBeLessThanOrEqual(13)
+  })
+
   it('正: 副見出しの行が増えるぶん地図が縮む', () => {
     const format = SHARE_CARD_FORMATS.wide16x9
     expect(shareCardMapHeight(format, 1, 1) - shareCardMapHeight(format, 1, 2)).toBe(30)
@@ -260,6 +281,13 @@ describe('layoutNoticeLines', () => {
 
   it('対照: 収まれば 1 件 1 行', () => {
     expect(layoutNoticeLines(measure, ['出典: 気象庁', '注意文'], 40)).toEqual(['出典: 気象庁', '注意文'])
+  })
+
+  it('正: かな・漢字の無い注意文（英語）は語の境で折り、語の途中で切らない', () => {
+    const lines = layoutNoticeLines(measure, [en.shareImage.eewNotice], 30)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines.join(' ')).toBe(en.shareImage.eewNotice)
+    for (const l of lines) expect(measure(l)).toBeLessThanOrEqual(30)
   })
 
   it('正: 緊急地震速報の注意文は、幅 1080 では 2 行・16:9 では 1 行（全角 15px として数える）', () => {

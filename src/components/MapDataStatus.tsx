@@ -53,7 +53,7 @@ export function MapDataStatus() {
       {/* 取り直しは取得口（`utils/fetchJson.ts`）が 30 秒から倍々で 5 回行い、諦めたら再読み込みを促す。
           主節を言い切りで止めて 1 行へ収める形は、地震タブの通知に揃えてある
           （→ `utils/telegramLoss.ts` の `formatHistoryLossNotice`）。 */}
-      <Marquee text={(failed ? mapDataFailureText(status.failures) : t.loadingData) ?? ''} />
+      <Marquee text={(failed ? mapDataFailureText(status.failures, t) : t.loadingData) ?? ''} />
     </div>
   )
 }

@@ -13,26 +13,31 @@
 // 実在のキーにはピリオドが含まれる。英数だけに絞ると正規のキーを弾く事故になる。
 // ここで判定したいのは「`btoa` と HTTP ヘッダを壊さないか」だけ。
 
+// 自作地震計のホストもこのファイルを読むので、辞書は読まない。文は辞書の日本語（`errorText.apiKeyInvalid`・`apiKeyMissing`）と同じ字面で
+// ここに置き、画面はエラーが持つ鍵（`errorText`）で言語の辞書から組む（→ `utils/keyedError.ts`・`utils/localizedError.ts`）
+import type { ErrorText } from './keyedError'
+
 // 印字可能 ASCII のみ。空白・制御文字・非 ASCII（全角・日本語等）を除く。
 const PRINTABLE_ASCII_ONLY = /^[\x21-\x7E]+$/
 
 /**
- * APIキーが不正なときにユーザーへ見せる文言。設定の窓の入力欄と履歴取得のエラー表示で
- * 同じ文を使う（片方だけ直して食い違うのを防ぐ）。
+ * APIキーが不正なときにユーザーへ見せる文言（日本語。語は辞書の `errorText.apiKeyInvalid`）。設定の窓の入力欄と履歴取得の
+ * エラー表示で同じ文を使う（片方だけ直して食い違うのを防ぐ）。
  */
 export const DMDATA_API_KEY_INVALID_MESSAGE =
   'APIキーに使用できない文字が含まれています。半角の英数字・記号のみで入力してください。'
 
 /**
- * APIキーが未設定のときにユーザーへ見せる文言。
+ * APIキーが未設定のときにユーザーへ見せる文言（日本語。語は辞書の `errorText.apiKeyMissing`）。
  *
  * **「不正な文字」と言い分けるのが要点。** 原因も対処も違う——未設定は利用者がまだ入れていない
  * 状態（入れれば直る）で、不正は入れた値が通信に載せられない状態（直し方が分からないと詰まる）。
  * 同じ文で通知すると、一度も入力していない人に「使用できない文字が含まれています」と告げることに
  * なり、入れた覚えのない文字を探させる（2026-08-24 にリプレイの経路で実際に起きた）。
+ *
+ * 文言は場所に依らない形にする。この文は設定の窓（リプレイの失敗表示）にも出るため、
+ * 「設定の窓で」と案内すると、その設定の窓の中で自分を指すことになる。
  */
-// 文言は場所に依らない形にする。この文は設定の窓（リプレイの失敗表示）にも出るため、
-// 「設定の窓で」と案内すると、その設定の窓の中で自分を指すことになる。
 export const DMDATA_API_KEY_MISSING_MESSAGE =
   'APIキーが未設定です。DM-D.S.S の APIキーを設定してください。'
 
@@ -67,11 +72,14 @@ export function dmdataApiKeyMessage(problem: DmdataApiKeyProblem): string {
  */
 export class DmdataApiKeyError extends Error {
   readonly problem: DmdataApiKeyProblem
+  /** 画面に出す文の鍵（`message` は日本語の文。→ `utils/localizedError.ts`） */
+  readonly errorText: ErrorText
 
   constructor(problem: DmdataApiKeyProblem) {
     super(dmdataApiKeyMessage(problem))
     this.name = 'DmdataApiKeyError'
     this.problem = problem
+    this.errorText = { key: problem === 'missing' ? 'apiKeyMissing' : 'apiKeyInvalid', args: [] }
   }
 }
 

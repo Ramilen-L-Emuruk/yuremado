@@ -4,6 +4,14 @@
 
 import { unzipSync } from 'fflate'
 import { parseKnetAsciiFile, type KnetAsciiFile } from './knetAscii'
+import { errorDetailOf, type ErrorText } from '../keyedError'
+
+/** 読めなかったファイル。`message` は日本語の文、`detail` は画面で言語の辞書から組み直すための鍵と引数（無ければ `message`） */
+export interface StationFileFailure {
+  fileName: string
+  message: string
+  detail: ErrorText | string
+}
 
 /**
  * ZIP内のNS/EW/UD波形ファイルをすべて解析する。それ以外のファイル（メタ情報等）は無視する。
@@ -13,11 +21,11 @@ import { parseKnetAsciiFile, type KnetAsciiFile } from './knetAscii'
  */
 export function parseAllStationFiles(zip: Uint8Array): {
   files: { fileName: string; file: KnetAsciiFile }[]
-  failures: { fileName: string; message: string }[]
+  failures: StationFileFailure[]
 } {
   const entries = unzipSync(zip)
   const files: { fileName: string; file: KnetAsciiFile }[] = []
-  const failures: { fileName: string; message: string }[] = []
+  const failures: StationFileFailure[] = []
   const decoder = new TextDecoder('utf-8')
   for (const [path, data] of Object.entries(entries)) {
     const fileName = path.split('/').pop() ?? path
@@ -25,7 +33,7 @@ export function parseAllStationFiles(zip: Uint8Array): {
     try {
       files.push({ fileName, file: parseKnetAsciiFile(decoder.decode(data), fileName) })
     } catch (err) {
-      failures.push({ fileName, message: err instanceof Error ? err.message : String(err) })
+      failures.push({ fileName, message: err instanceof Error ? err.message : String(err), detail: errorDetailOf(err) })
     }
   }
   return { files, failures }

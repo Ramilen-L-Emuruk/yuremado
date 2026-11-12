@@ -21,6 +21,9 @@ import { recordReplayEvent } from '../utils/replayEventLog'
 import { fetchFailureReason } from '../utils/fetchFailure'
 import { retryDelayAfter } from '../utils/retrySchedule'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
+import type { Messages } from '../i18n/messages'
+import { ja } from '../i18n/messages/ja'
+import { useMessages } from '../i18n/I18nProvider'
 import {
   type TelegramLoss, createEmptyTelegramLoss, addTelegramLoss, describeTelegramLossParts,
   formatRateLimitedNotice,
@@ -60,20 +63,33 @@ export const REPLAY_EARLIEST_MS = Date.UTC(2016, 0, 1)
  */
 export const REPLAY_FUTURE_MARGIN_MS = 60 * 60_000
 
+/** 再生を始められない理由（文は {@link replayTargetProblemText} が辞書から組む） */
+export type ReplayTargetProblem =
+  | { readonly kind: 'unreadable' }
+  | { readonly kind: 'tooEarly'; readonly year: number }
+  | { readonly kind: 'future' }
+
 /**
- * その時刻から再生を始めてよいか。**駄目な理由を文面で返す**（`null` なら始めてよい）。
+ * その時刻から再生を始めてよいか。**駄目な理由を返す**（`null` なら始めてよい）。
  *
  * 取得を 1 件も投げる前に判定する。取得元ごとに「無い時代」の扱いが違うので、
  * 下流へ流すと取得元の数だけ空振りのリクエストが出る。
  */
-export function replayTargetProblem(targetDate: Date, nowMs: number): string | null {
+export function replayTargetProblem(targetDate: Date, nowMs: number): ReplayTargetProblem | null {
   const ms = targetDate.getTime()
-  if (!Number.isFinite(ms)) return '再生する日時として読み取れません'
-  if (ms < REPLAY_EARLIEST_MS) {
-    return `${new Date(REPLAY_EARLIEST_MS).getFullYear()} 年より前は再生できません（どの取得元にもデータがありません）`
-  }
-  if (ms > nowMs + REPLAY_FUTURE_MARGIN_MS) return '未来の時刻は再生できません'
+  if (!Number.isFinite(ms)) return { kind: 'unreadable' }
+  if (ms < REPLAY_EARLIEST_MS) return { kind: 'tooEarly', year: new Date(REPLAY_EARLIEST_MS).getFullYear() }
+  if (ms > nowMs + REPLAY_FUTURE_MARGIN_MS) return { kind: 'future' }
   return null
+}
+
+/** 再生を始められない理由の文（帯は画面の言語、記録とログは日本語の辞書を渡す） */
+export function replayTargetProblemText(problem: ReplayTargetProblem, w: Pick<Messages['replayBanner'], 'unreadable' | 'tooEarly' | 'future'>): string {
+  switch (problem.kind) {
+    case 'unreadable': return w.unreadable
+    case 'tooEarly': return w.tooEarly(problem.year)
+    case 'future': return w.future
+  }
 }
 
 /**
@@ -337,24 +353,27 @@ export function lateEntriesSilenced(entries: readonly ReplayEntry[], nowMs: numb
  * 主節の形（言い切り）と語（「取り込めず」）も `formatHistoryLossNotice` に揃える。
  * 同じ障害を再生とライブで別の重さに見せないため。
  */
-export function formatLossNotice(loss: ReplayLoss): string | null {
-  const parts = describeTelegramLossParts(loss)
-  if (loss.failedPrefetches > 0) parts.push(`先読み${loss.failedPrefetches}区間`)
+export function formatLossNotice(loss: ReplayLoss, m: Pick<Messages, 'quake' | 'replayBanner'>): string | null {
+  const parts = describeTelegramLossParts(loss, m.quake.list)
+  if (loss.failedPrefetches > 0) parts.push(m.replayBanner.prefetchBlocks(loss.failedPrefetches))
   if (parts.length === 0) return null
-  return `${parts.join('・')}を取り込めず（再生は継続中・詳細はコンソール）`
+  return m.replayBanner.lossNotice(parts)
 }
 
 export function useReplayController(deps: ReplayControllerDeps): ReplayController {
   // start/stop の内側は depsRef 経由で最新の deps を読む（下記参照）。
   // ここで取り出すのは、effect の依存として直接必要なものだけ。
   const { fetchEvents, timeOffset } = deps
+  // 帯の文の辞書。**帯の文は描くときにいまの辞書で組む**（失敗した時点の言語で文を state に焼かない。
+  // 焼くと、言語を切り替えても帯だけ前の言語のまま残る）。state には何の失敗か（`ReplayNotice`）だけを持つ
+  const messages = useMessages()
 
   const [isFetching, setIsFetching] = useState(false)
   // 回復しうる失敗（取得エラー）。次の取得が成功したら消してよい。
-  const [fetchError, setFetchError] = useState<string | null>(null)
-  // 履歴の復元だけが失敗した場合の理由。再生は続くので取得エラーとは分けて持つ
+  const [fetchError, setFetchError] = useState<ReplayNotice | null>(null)
+  // 履歴の復元だけが失敗した場合の原因。再生は続くので取得エラーとは分けて持つ
   // （片方の成功でもう片方の表示を消さないようにする）。
-  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<{ cause: unknown } | null>(null)
   // 確定した損失。取り込めなかった電文は後続の取得が成功しても戻らないので、
   // 停止するまで積み上げたまま表示し続ける。
   const [loss, setLoss] = useState<ReplayLoss>(createEmptyLoss)
@@ -362,8 +381,8 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
   const prefetchEndRef = useRef<Date | null>(null)
   /** 失敗した先読みの区間（取り直しの待ち。`retryAt` は単調時計）。止める・始め直すと捨てる。 */
   const prefetchRetriesRef = useRef<{ from: Date; to: Date; failures: number; retryAt: number; inFlight: boolean }[]>([])
-  /** 先読みの取り直しを知らせるために出した文言（取り直しが済んだら、**これと同じ文言のときだけ**消す）。 */
-  const prefetchRetryingMessageRef = useRef<string | null>(null)
+  /** 先読みの取り直しを知らせるために出した知らせ（取り直しが済んだら、**これと同じ知らせのときだけ**消す）。 */
+  const prefetchRetryingMessageRef = useRef<ReplayNotice | null>(null)
   // 世代照合。開始・停止のたびに世代を進め、非同期の完了時に現役かどうかを照合する。
   // これが無いと「停止 → 別の日で再開」した直後に、前の日の電文が後から注入されたり、
   // 古い側の finally が新しい取得中の表示を消したりする。
@@ -390,11 +409,13 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
     // 空振りのリクエストが出る（→ `replayTargetProblem`）。
     const problem = replayTargetProblem(targetDate, Date.now())
     if (problem !== null) {
-      log.error(`[replay] 再生を始められません: ${problem} (targetDate=${String(targetDate)})`)
-      setFetchError(problem)
+      // ログと録画ツール向けの記録は日本語の文、帯は画面の言語の文
+      const recorded = replayTargetProblemText(problem, ja.replayBanner)
+      log.error(`[replay] 再生を始められません: ${recorded} (targetDate=${String(targetDate)})`)
+      setFetchError({ kind: 'target', problem })
       // 録画ツール向けの記録。**始められなかったことも残す** —— 残さないと、外からは
       // 「開始したのに何も起きない」としか見えない（→ `docs/spec/recording-interface-spec.md`）。
-      recordReplayEvent({ type: 'fetch', phase: 'error', target: 'main', message: problem })
+      recordReplayEvent({ type: 'fetch', phase: 'error', target: 'main', message: recorded })
       return
     }
     log.info(`[replay] リプレイ開始 targetDate=${targetDate.toISOString()}`)
@@ -443,10 +464,10 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       //   実際の状況と食い違うため）。どちらで失敗したかはメッセージに含める。
       const [normal, pre, history] = await Promise.all([
         d.fetchEvents(targetDate, toTime, signal, 'main').catch((e) => {
-          throw new WrappedFetchError(`本編（${fmt(targetDate)} 以降）の取得に失敗: ${screenMsgOf(e)}`, e)
+          throw new WrappedFetchError({ kind: 'main', at: targetDate }, e)
         }),
         d.fetchEvents(preFrom, targetDate, signal, 'initial').catch((e) => {
-          throw new WrappedFetchError(`初期状態（過去 24 時間）の取得に失敗: ${screenMsgOf(e)}`, e)
+          throw new WrappedFetchError({ kind: 'initial' }, e)
         }),
         historySettled,
       ])
@@ -463,7 +484,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         d.restoreQuakeHistory(history.result)
       } else {
         log.error('[replay] 履歴の取得に失敗（初期状態は 24 時間ぶんで作る）', history.error)
-        setHistoryError(`地震カードの履歴を復元できませんでした（再生開始より前の地震が一覧に出ません。再生は継続中）: ${screenMsgOf(history.error)}`)
+        setHistoryError({ cause: history.error })
       }
 
       // pre-window: T 時点で有効な電文を即時発火（replayTime = T-1ms）させて初期状態を再現する
@@ -547,7 +568,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       // 「再生中」と赤字が並ぶ矛盾は、設定の窓が `replayStartLabel` の有無で見出しを
       // 「再生中の警告」と「取得失敗」に出し分けることで既に解消されている。
       // 先読み位置だけは畳む（アーカイブが読めない以上、続きを取りに行っても同じ失敗を繰り返す）。
-      setFetchError(`${screenMsgOf(e)}（地震・津波の電文は再生されません。リアルタイム震度の再生は継続します）`)
+      setFetchError({ kind: 'archive', cause: e })
       prefetchEndRef.current = null
       // 録画ツール向けの記録。**世代の照合を通った後に置く** —— 前に置くと、停止済みの
       // セッションの失敗まで「いまの再生が失敗した」として並ぶ。
@@ -617,7 +638,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         } catch (e) {
           log.error(`[replay] 先読みした ${fmt(nextFrom)} からの 1 時間を積む途中で投げた（取り直さない）`, e)
           setLoss((prev) => addFailedPrefetch(addLoss(prev, result)))
-          setFetchError(`先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんは再生されません: ${screenMsgOf(e)}`)
+          setFetchError({ kind: 'prefetchLost', from: nextFrom, cause: e })
           recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
           return
         }
@@ -645,7 +666,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
             { from: nextFrom, to: nextTo, failures: 1, retryAt: performance.now() + delay, inFlight: false },
           ]
         }
-        const retrying = `先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんを取り直しています: ${screenMsgOf(e)}`
+        const retrying: ReplayNotice = { kind: 'prefetchRetrying', from: nextFrom, cause: e }
         prefetchRetryingMessageRef.current = retrying
         setFetchError(retrying)
         // 世代の照合を通った後に置く（本編の失敗と同じ理由）
@@ -701,7 +722,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
             if (prefetchRetriesRef.current.length === 0) prefetchRetryingMessageRef.current = null
             // 区間の欠けは数えたまま（`failedPrefetches` は外さない）。電文の取りこぼしの内訳だけ足す。
             setLoss((prev) => addLoss(prev, result))
-            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${screenMsgOf(e)}`)
+            setFetchError({ kind: 'prefetchLost', from: item.from, cause: e })
             recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
             return
           }
@@ -720,7 +741,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
           if (delay === null) {
             prefetchRetriesRef.current = prefetchRetriesRef.current.filter((r) => r !== item)
             log.error(`[replay] 先読みに失敗した ${fmt(item.from)} からの 1 時間を ${item.failures} 回続けて取れず、取り直しを諦めた`, e)
-            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${screenMsgOf(e)}`)
+            setFetchError({ kind: 'prefetchLost', from: item.from, cause: e })
           } else {
             item.retryAt = performance.now() + delay
             log.warn(`[replay] 先読みに失敗していた ${fmt(item.from)} からの 1 時間をまた取れなかった（${item.failures} 回目）。${Math.round(delay / 1000)} 秒後に取り直す:`, msgOf(e))
@@ -744,10 +765,35 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
   //（履歴の失敗はカードの一覧が薄くなるだけで、再生そのものには影響しない）。
   // 429 の見送りは**最後に置く**。取りこぼしとは別の事実（待てば取れる）で、
   // 上の 3 つより軽い —— 先に置くと、再生が止まっている事実の前に出てしまう。
-  const error = [fetchError, historyError, formatLossNotice(loss), formatRateLimitedNotice(loss)]
-    .filter(Boolean).join(' / ') || null
+  const error = [
+    fetchError === null ? null : replayNoticeText(fetchError, messages),
+    historyError === null ? null : messages.replayBanner.historyFailed(screenMsgOf(historyError.cause, messages)),
+    formatLossNotice(loss, messages),
+    formatRateLimitedNotice(loss, messages.quake.list),
+  ].filter(Boolean).join(' / ') || null
 
   return { isFetching, error, start, stop }
+}
+
+/**
+ * 帯の取得エラーの欄に出す知らせ（何の失敗か）。文は描くときに {@link replayNoticeText} がいまの辞書で組む
+ */
+type ReplayNotice =
+  | { kind: 'target'; problem: ReplayTargetProblem }
+  | { kind: 'archive'; cause: unknown }
+  | { kind: 'prefetchLost'; from: Date; cause: unknown }
+  | { kind: 'prefetchRetrying'; from: Date; cause: unknown }
+
+/** 帯の文を組む辞書（`m` は画面の言語の辞書） */
+type BannerWords = Pick<Messages, 'replayBanner' | 'errorText'>
+
+function replayNoticeText(n: ReplayNotice, m: BannerWords): string {
+  switch (n.kind) {
+    case 'target': return replayTargetProblemText(n.problem, m.replayBanner)
+    case 'archive': return m.replayBanner.archiveFailed(screenMsgOf(n.cause, m))
+    case 'prefetchLost': return m.replayBanner.prefetchLost(fmt(n.from), screenMsgOf(n.cause, m))
+    case 'prefetchRetrying': return m.replayBanner.prefetchRetrying(fmt(n.from), screenMsgOf(n.cause, m))
+  }
 }
 
 /**
@@ -759,16 +805,33 @@ function msgOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-/** どの取得で失敗したかを添えて包み直した失敗。画面の文は日本語にし、元の失敗（英語の文を含む）は記録のために持つ */
+/** どの取得で失敗したか（本編か初期状態か） */
+type WrappedStage = { kind: 'main'; at: Date } | { kind: 'initial' }
+
+/**
+ * どの取得で失敗したかを添えて包み直した失敗。`message` は記録とログに残す日本語の文。帯の文は描くときに
+ * {@link screenMsgOf} が `stage` と元の失敗から画面の言語で組む。元の失敗（英語の文を含む）は記録のためにも持つ
+ */
 class WrappedFetchError extends Error {
-  constructor(message: string, readonly original: unknown) {
-    super(message)
+  constructor(readonly stage: WrappedStage, readonly original: unknown) {
+    super(wrappedText(stage, original, ja))
   }
 }
 
-/** 画面へ出す文。通信そのものの失敗はブラウザの英語の文にせず「通信できませんでした」（→ `fetchFailureReason`） */
-function screenMsgOf(e: unknown): string {
-  return fetchFailureReason(e)
+function wrappedText(stage: WrappedStage, original: unknown, m: BannerWords): string {
+  const reason = screenMsgOf(original, m)
+  return stage.kind === 'main' ? m.replayBanner.mainFailed(fmt(stage.at), reason) : m.replayBanner.initialFailed(reason)
+}
+
+/**
+ * 画面へ出す文。通信そのものの失敗はブラウザの英語の文にせず「通信できませんでした」の語、鍵を持つ失敗は言語の辞書で組む
+ * （→ `fetchFailureReason`）。`m` は画面の言語の辞書（記録に残す日本語の文を組むときは日本語の辞書）
+ */
+function screenMsgOf(e: unknown, m: BannerWords): string {
+  if (e instanceof WrappedFetchError) return wrappedText(e.stage, e.original, m)
+  // 文の無いエラー（`message` が空）でも、帯の理由の欄を空にしない（「…: 」で終わる文にしない）
+  const reason = fetchFailureReason(e, m.errorText)
+  return reason.trim() === '' ? m.errorText.fetchFailed() : reason
 }
 
 function fmt(d: Date): string {

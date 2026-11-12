@@ -302,7 +302,7 @@ function TypePicker({ value, onChange }: { value: readonly QuakeListType[]; onCh
 }
 
 function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; nowMs: number; onChange: (f: QuakeListFilter) => void }) {
-  const q = useMessages().quake
+  const { quake: q, catalog } = useMessages()
   const today = jstYmd(nowMs)
   const p = filter.period
   // 「日付を指定」を押した時点で範囲を入れるので、選んでいるかは値から導く（解除したら戻る）
@@ -337,7 +337,8 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
       {custom && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <DateField label={q.filter.startDate} value={from} min={PERIOD_MIN_DAY} max={today} onCommit={setFrom} className={DATE_INPUT_CLASS} />
-          <span>〜</span>
+          {/* 2 つの日付の欄の間の区切りは、震源カタログの期間の欄と同じ語 */}
+          <span>{catalog.dateSeparator}</span>
           <DateField label={q.filter.endDate} value={to} min={PERIOD_MIN_DAY} max={today} onCommit={setTo} className={DATE_INPUT_CLASS} />
         </div>
       )}
@@ -355,7 +356,7 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
  * （震央地名は「石川県能登地方」「石川県西方沖」のように細分区域の名前と合わない）。
  */
 function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; quakes: readonly JMAQuake[]; onChange: (f: QuakeListFilter) => void }) {
-  const w = useMessages().quake
+  const { quake: w, formats } = useMessages()
   // 県でない組（海域・遠方）の名前を画面の語にする。県と地方の名前は地名なので電文の文字のまま
   const groupLabel = (label: string) => w.filter.groupName[label] ?? label
   // 一覧と地図のどちらを出すかは設定に覚える（2026-11-08 選択「最後に選んだ方を覚える」）
@@ -420,7 +421,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
       className={`mb-1 flex w-full items-center gap-1 text-left hover:text-blue-300 ${className}`}
     >
       <span aria-hidden="true" className="w-3 text-secondary">{isOpen ? '▾' : '▸'}</span>
-      {label}{picked > 0 && <span className="text-blue-300">（{picked}）</span>}
+      {label}{picked > 0 && <span className="text-blue-300">{formats.paren(String(picked))}</span>}
     </button>
   )
   const optionGrid = (options: readonly QuakeRegionOption[]) => (

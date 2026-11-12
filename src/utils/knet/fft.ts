@@ -6,6 +6,9 @@
 // 「止まった」と記録する作り（`seismo-host/src/receiver/loopStall.ts`）なので、地震 1 件の
 // 計測震度を出すたびにそれを踏む。型付き配列で持てば同じ計算が 1/10 ほどで済む
 // （2026-10-04 の実測で 1 成分 432 ms → 37 ms。出力の差は最大 2.9e-13）。
+//
+// 失敗は日本語の文に辞書の鍵と引数を添えて投げる（ホストも読むので辞書は読まない。→ `utils/keyedError.ts`）。
+import { keyedError } from '../keyedError'
 
 /**
  * `re`・`im` をその場で変換する。**長さは 2 の冪に限る**（呼び出し側がゼロで詰める）。
@@ -18,8 +21,8 @@
  */
 export function fftInPlace(re: Float64Array, im: Float64Array, inverse: boolean): void {
   const n = re.length
-  if (im.length !== n) throw new Error(`実部と虚部の長さが違う: ${n}/${im.length}`)
-  if (n === 0 || (n & (n - 1)) !== 0) throw new Error(`長さが 2 の冪でない: ${n}`)
+  if (im.length !== n) throw keyedError(`実部と虚部の長さが違う: ${n}/${im.length}`, 'fftLengthMismatch', n, im.length)
+  if (n === 0 || (n & (n - 1)) !== 0) throw keyedError(`長さが 2 の冪でない: ${n}`, 'fftNotPowerOfTwo', n)
 
   // ビット反転の並べ替え
   for (let i = 1, j = 0; i < n; i++) {

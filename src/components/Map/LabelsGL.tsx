@@ -4,7 +4,8 @@ import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import { loadPrefectures } from '../../utils/prefectures'
 import { loadSubRegions } from '../../utils/subregions'
-import { REGIONS } from '../../utils/regions'
+import { REGIONS, regionLabel } from '../../utils/regions'
+import { useMessages, useMessagesRef } from '../../i18n/I18nProvider'
 import { addOrderedLayer } from './gl/layerOrder'
 import { JP_FONT_STACK } from './gl/fontStack'
 import { log } from '../../utils/logger'
@@ -261,6 +262,9 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
   // 重なり判定のスケジュール関数（下のトリガー用 useEffect が設定する）。県名・区域名の
   // 非同期ロード完了時にもここから呼べるようにするため ref に持たせる。
   const scheduleOverlapCheckRef = useRef<() => void>(() => {})
+  // 地方名の語（言語が変わったら下の effect が地方のラベルの字だけを差し替える）
+  const messages = useMessages()
+  const messagesRef = useMessagesRef()
 
   useEffect(() => {
     if (!map) return
@@ -276,7 +280,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
       source: REGION_SRC,
       id: i,
       lngLat: [r.lng, r.lat],
-      text: r.name,
+      text: regionLabel(r.name, messagesRef.current.map),
       textSize: REGION_TEXT_SIZE,
       shiftEm: REGION_SHIFT_EM,
       unboundedShift: true,
@@ -559,6 +563,22 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
     if (!map) return
     scheduleOverlapCheckRef.current()
   }, [map, overlapSignature])
+
+  // 言語が変わったら、地方のラベルの字を差し替える（県名・区域名は電文と同じ地名なので訳さない）。
+  // **レイヤーは作り直さない。** 字を変えて地方のソースの書き戻しを 1 回だけ起こし（前回の署名を外す）、字の幅が変わるので重なりも測り直す。
+  // 言語が変わったときだけ走る（地図の移動や毎秒の更新では走らない）
+  useEffect(() => {
+    if (!map) return
+    let changed = false
+    for (const t of targetsRef.current) {
+      if (t.source !== REGION_SRC) continue
+      const text = regionLabel(REGIONS[Number(t.id)]?.name ?? t.text, messages.map)
+      if (t.text !== text) { t.text = text; changed = true }
+    }
+    if (!changed) return
+    delete lastSigRef.current[REGION_SRC]
+    scheduleOverlapCheckRef.current()
+  }, [map, messages])
 
   return null
 }
