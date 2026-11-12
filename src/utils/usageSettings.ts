@@ -29,8 +29,7 @@ export type UsageSettingRule =
 /** 管理の画面の節。並びは設定の窓の節の順 */
 export const USAGE_SETTING_GROUPS = {
   connection: '接続',
-  notification: 'ブラウザ通知',
-  push: 'プッシュ通知',
+  notification: '通知',
   sound: '音と読み上げ',
   timeSignal: '時報',
   voicevox: 'VOICEVOX',
@@ -117,9 +116,9 @@ export const USAGE_TOP_LEVEL_SPECS = {
   dmdataApiKey: present('connection', 'APIキー'),
   forecastKey: present('connection', '予報キー'),
   dmdataTestDelivery: bool('connection', '試験報を受信（検証用）', false),
-  // ブラウザ通知
+  // 通知
   notifyEnabled: bool('notification', '通知を表示', true),
-  notifyQuietWhileOpen: bool('notification', 'アプリを開いている間は通知しない', false),
+  notifyQuietWhileOpen: bool('notification', 'アプリを開いている間は通知しない', true),
   notifyQuake: bool('notification', '地震情報の通知', true),
   notifyMinScale: choice('notification', '通知する最低震度', INTENSITY_SCALES, 30),
   notifyDetection: bool('notification', '揺れ検知通知', false),
@@ -129,7 +128,6 @@ export const USAGE_TOP_LEVEL_SPECS = {
   notifyNankaiRoutine: bool('notification', '定例の解説情報の通知', false),
   notifyQuakeNotice: bool('notification', 'お知らせの通知', false),
   notifyPrefectures: { group: 'notification', label: '通知する地域（選んだ都道府県の数。0 は全国）', rule: { kind: 'count', max: 47 }, default: '0' },
-  pushNotifyEnabled: bool('push', 'プッシュ通知', false),
   // 音と読み上げ
   soundEnabled: bool('sound', '通知音', true),
   soundVolume: num('sound', '音量', 0, 1, 1),

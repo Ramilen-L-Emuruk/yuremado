@@ -105,19 +105,8 @@ function sameBytes(a: ArrayBuffer | null, b: Uint8Array): boolean {
 }
 
 /**
- * 通知の許可を求める。**設定の切り替えを押した操作の中で、ほかの待ちより先に呼ぶ** —— Safari（iOS のホーム画面から
- * 開いたものを含む）と Firefox は、操作から離れたところで求めた許可を尋ねない。許可されたかを返す
- */
-export async function requestPushPermission(): Promise<boolean> {
-  if (!pushSupported()) return false
-  if (Notification.permission === 'granted') return true
-  if (Notification.permission === 'denied') return false
-  return (await Notification.requestPermission()) === 'granted'
-}
-
-/**
- * 購読を作るか、既にあるものを使い、中継へ送り先と設定の写しを登録する。通知の許可は尋ねない（`requestPushPermission` が
- * 設定の切り替えの中で尋ねる）。返すのは登録できたか。出来なかった理由は記録に残す（設定を戻す・やり直すのは呼び出し側）
+ * 購読を作るか、既にあるものを使い、中継へ送り先と設定の写しを登録する。通知の許可は尋ねない（設定の窓の許可のボタンが
+ * `hooks/useNotificationPermission.ts` の `requestNotificationPermission` で尋ねる）。返すのは登録できたか。出来なかった理由は記録に残す（設定を戻す・やり直すのは呼び出し側）
  */
 export async function subscribePush(
   settings: PushSettings,
@@ -167,6 +156,8 @@ export async function unsubscribePush(): Promise<void> {
   if (!pushSupported()) return
   let endpoint: string
   try {
+    // Service Worker がまだ登録されていなければ購読も無い。用意を待たずに抜ける（初めて開いた端末・dev サーバーで、起動のたびに待ちが切れて警告を残さない）
+    if (!(await navigator.serviceWorker.getRegistration())) return
     const registration = await serviceWorkerReady()
     const subscription = await registration.pushManager.getSubscription()
     if (!subscription) return

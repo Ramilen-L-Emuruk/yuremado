@@ -785,8 +785,7 @@ export const ptBR: Messages = {
     },
     sections: {
       connection: 'Conexão',
-      browserNotify: 'Notificações do navegador',
-      push: 'Notificações push',
+      notify: 'Notificações',
       sound: 'Som e leitura',
       timeSignal: 'Sinal horário',
       speech: 'Configurações de leitura',
@@ -893,15 +892,13 @@ export const ptBR: Messages = {
       notifyPermission: {
         label: 'Permissão de notificação',
         description: 'Verifica e concede a permissão de notificação do navegador',
+        deniedDescription: 'As notificações estão bloqueadas no navegador. Para recebê-las, permita as notificações nas configurações do site no navegador',
+        unsupportedDescription: 'Este navegador não oferece suporte a notificações',
       },
       testNotification: {
         label: 'Notificação de teste',
         description: 'Envia uma notificação de teste agora (requer permissão)',
         button: 'Testar',
-      },
-      pushNotify: {
-        label: 'Notificações push',
-        description: 'Recebe notificações mesmo com o app fechado ou usando outro app. Ao ativar, o destino das notificações deste dispositivo e suas configurações de notificação são registrados no servidor de distribuição',
       },
       sound: {
         label: 'Som de notificação',
@@ -1214,6 +1211,7 @@ export const ptBR: Messages = {
     permission: {
       granted: 'Permitido',
       denied: 'Negado no navegador',
+      unsupported: 'Sem suporte',
       request: 'Permitir notificações',
     },
     clock: {

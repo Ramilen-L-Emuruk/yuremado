@@ -8,7 +8,7 @@ import { Toggle } from '../Toggle'
 import { quakeTileColors } from '../EarthquakeTab/QuakeListRow'
 import { DisclosureCaret, Reveal } from '../EarthquakeTab/quakeMotion'
 import { PrefecturePicker } from './PrefecturePicker'
-import { pushSupported, requestPushPermission } from '../../services/pushSubscription'
+import { requestNotificationPermission, useNotificationPermission, type NotificationPermissionState } from '../../hooks/useNotificationPermission'
 import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, type TelegramTextBlockKey, type TelegramTextBlocks, type TelegramBoilerplateReads } from '../../utils/ttsText'
 import type { ConnectionStatus } from '../../types/earthquake'
 import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLabel'
@@ -1142,25 +1142,14 @@ function CountdownPlayButton({ second }: { second: number }) {
   )
 }
 
-function NotificationPermissionButton() {
+function NotificationPermissionButton({ permission }: { permission: NotificationPermissionState }) {
   const w = useMessages().settings
-  const [perm, setPerm] = useState<NotificationPermission>(
-    typeof Notification !== 'undefined' ? Notification.permission : 'denied',
-  )
-
-  const request = useCallback(async () => {
-    if (typeof Notification === 'undefined') return
-    const result = await Notification.requestPermission()
-    setPerm(result)
-  }, [])
-
-  if (perm === 'granted') return <span className="text-xs text-green-400 font-medium">{w.permission.granted}</span>
-  if (perm === 'denied') return <span className="text-xs text-red-400">{w.permission.denied}</span>
+  if (permission === 'granted') return <span className="text-xs text-green-400 font-medium">{w.permission.granted}</span>
+  if (permission === 'denied') return <span className="text-xs text-red-400">{w.permission.denied}</span>
+  if (permission === 'unsupported') return <span className="text-xs text-secondary">{w.permission.unsupported}</span>
   return (
-    <button
-      onClick={request}
-      className={ACTION_BUTTON_CLASS}
-    >
+    // 押した操作の中で最初に尋ねる（Safari・Firefox は操作から離れた許可の要求を尋ねない）
+    <button onClick={() => { void requestNotificationPermission() }} className={ACTION_BUTTON_CLASS}>
       {w.permission.request}
     </button>
   )
@@ -1472,6 +1461,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
 
   // スクロールと余白は窓の中身の領域（`SettingsDialog`）が受け持つ。見出しどうしの間を `gap` で空けるのは、
   // 隠した見出し（`hidden`）が間を取らないため（余白を見出し側に持たせると、隠れた見出しの分だけ末尾がずれる）。
+  const notifyPermission = useNotificationPermission()
   return (
     <div className="flex flex-col gap-6">
 
@@ -1551,97 +1541,89 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      {/* ブラウザ通知。**まとめて止めると、種類ごとの行とテスト通知を隠す**（値は書き換えないので、戻せば元どおり効く。
-          文言とこの見せ方は 2026-10-25 ユーザー承認）。通知を出すかの判定は `utils/notificationGate.ts` の 1 箇所。
-          「通知許可」だけは止めていても出す（許可はブラウザ側の状態で、この設定とは別）。 */}
-      <Section category="notification" title={w.sections.browserNotify}>
-        <Row label={w.rows.notifyEnabled.label} description={w.rows.notifyEnabled.description}>
-          <Toggle checked={settings.notifyEnabled} onChange={v => onUpdate('notifyEnabled', v)} />
-        </Row>
-        {settings.notifyEnabled && (
+      {/* 通知。**許可が出るまでは許可のボタンの行だけを置き、許可が出たら通知の設定を出す**（2026-11-12 ユーザー発言「最初は許可のボタンを
+          置いておく。許可されたら通知設定を表示するでいいと思います。」）。プッシュ通知だけを入り切りする行は置かない —— 許可していて
+          「通知を表示」が入っていれば、扱えるブラウザでは購読する（同日「プッシュ通知オンオフを別途設定できるようにする必要は無いと思います。」。
+          `hooks/usePushSubscription.ts`）。**まとめて止めると、種類ごとの行とテスト通知を隠す**（値は書き換えないので、戻せば元どおり効く。
+          文言とこの見せ方は 2026-10-25 ユーザー承認）。通知を出すかの判定は `utils/notificationGate.ts` の 1 箇所。 */}
+      <Section category="notification" title={w.sections.notify}>
+        {notifyPermission !== 'granted' ? (
+          <Row
+            label={w.rows.notifyPermission.label}
+            description={
+              notifyPermission === 'denied' ? w.rows.notifyPermission.deniedDescription
+                : notifyPermission === 'unsupported' ? w.rows.notifyPermission.unsupportedDescription
+                  : w.rows.notifyPermission.description
+            }
+          >
+            <NotificationPermissionButton permission={notifyPermission} />
+          </Row>
+        ) : (
           <>
-            {/* 名前と説明は 2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」。止める場所は
-                services/notifyQuietWhileOpen.ts（プッシュ通知は中継が送る前に尋ねる。2026-11-05 選択「受け取りを待って送る (Recommended)」） */}
-            <Row label={w.rows.notifyQuietWhileOpen.label} description={w.rows.notifyQuietWhileOpen.description}>
-              <Toggle checked={settings.notifyQuietWhileOpen} onChange={v => onUpdate('notifyQuietWhileOpen', v)} />
+            <Row label={w.rows.notifyEnabled.label} description={w.rows.notifyEnabled.description}>
+              <Toggle checked={settings.notifyEnabled} onChange={v => onUpdate('notifyEnabled', v)} />
             </Row>
-            {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
-                行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。入り切りは最低震度と別の値で持つ
-                （切って入れ直しても最低震度を忘れない。2026-10-25 ユーザー承認）。 */}
-            <Row label={w.rows.notifyQuake.label} description={w.rows.notifyQuake.description}>
-              <Toggle checked={settings.notifyQuake} onChange={v => onUpdate('notifyQuake', v)} />
-            </Row>
-            {settings.notifyQuake && (
-              <Row label={w.rows.notifyMinScale.label} description={w.rows.notifyMinScale.description}>
-                <div className="flex items-center gap-2">
-                  <IntensityBadge scale={settings.notifyMinScale} />
-                  <ScaleSelect
-                    value={settings.notifyMinScale}
-                    onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
-                    noneLabel={w.rows.notifyMinScale.noneLabel}
-                  />
-                </div>
+            {settings.notifyEnabled && (
+              <>
+                {/* 名前と説明は 2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」。止める場所は
+                    services/notifyQuietWhileOpen.ts（プッシュ通知は中継が送る前に尋ねる。2026-11-05 選択「受け取りを待って送る (Recommended)」） */}
+                <Row label={w.rows.notifyQuietWhileOpen.label} description={w.rows.notifyQuietWhileOpen.description}>
+                  <Toggle checked={settings.notifyQuietWhileOpen} onChange={v => onUpdate('notifyQuietWhileOpen', v)} />
+                </Row>
+                {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
+                    行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。入り切りは最低震度と別の値で持つ
+                    （切って入れ直しても最低震度を忘れない。2026-10-25 ユーザー承認）。 */}
+                <Row label={w.rows.notifyQuake.label} description={w.rows.notifyQuake.description}>
+                  <Toggle checked={settings.notifyQuake} onChange={v => onUpdate('notifyQuake', v)} />
+                </Row>
+                {settings.notifyQuake && (
+                  <Row label={w.rows.notifyMinScale.label} description={w.rows.notifyMinScale.description}>
+                    <div className="flex items-center gap-2">
+                      <IntensityBadge scale={settings.notifyMinScale} />
+                      <ScaleSelect
+                        value={settings.notifyMinScale}
+                        onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
+                        noneLabel={w.rows.notifyMinScale.noneLabel}
+                      />
+                    </div>
+                  </Row>
+                )}
+                {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
+                <Row label={w.rows.notifyDetection.label} description={w.rows.notifyDetection.description}>
+                  <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
+                </Row>
+                <Row label={w.rows.notifyEEW.label} description={w.rows.notifyEEW.description}>
+                  <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
+                </Row>
+                <Row label={w.rows.notifyTsunami.label} description={w.rows.notifyTsunami.description}>
+                  <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
+                </Row>
+                <Row label={w.rows.notifyNankai.label} description={w.rows.notifyNankai.description}>
+                  <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
+                </Row>
+                {/* 定例解説とお知らせの通知は既定オフ（2026-11-09 ユーザー選択「新設・既定オフ」） */}
+                <Row label={w.rows.notifyNankaiRoutine.label} description={w.rows.notifyNankaiRoutine.description}>
+                  <Toggle checked={settings.notifyNankaiRoutine} onChange={v => onUpdate('notifyNankaiRoutine', v)} />
+                </Row>
+                <Row label={w.rows.notifyQuakeNotice.label} description={w.rows.notifyQuakeNotice.description}>
+                  <Toggle checked={settings.notifyQuakeNotice} onChange={v => onUpdate('notifyQuakeNotice', v)} />
+                </Row>
+                {/* 地域の絞りは画面内の通知にもプッシュ通知にも効く（2026-11-03 ユーザー選択「両方に掛ける (Recommended)」。
+                    名前と説明は 2026-11-03 ユーザー選択「通知する地域」） */}
+                <Row label={w.rows.notifyPrefectures.label} description={w.rows.notifyPrefectures.description}>
+                  <PrefecturePicker value={settings.notifyPrefectures} onChange={v => onUpdate('notifyPrefectures', v)} />
+                </Row>
+              </>
+            )}
+            {/* 試すボタンは設定の隣に置く（読み上げの「テスト読み上げ」と同じ）。まとめて止めている間は出さない */}
+            {settings.notifyEnabled && (
+              <Row label={w.rows.testNotification.label} description={w.rows.testNotification.description}>
+                <TestButton color="green" onClick={onTest.notification}>{w.rows.testNotification.button}</TestButton>
               </Row>
             )}
-            {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
-            <Row label={w.rows.notifyDetection.label} description={w.rows.notifyDetection.description}>
-              <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
-            </Row>
-            <Row label={w.rows.notifyEEW.label} description={w.rows.notifyEEW.description}>
-              <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
-            </Row>
-            <Row label={w.rows.notifyTsunami.label} description={w.rows.notifyTsunami.description}>
-              <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
-            </Row>
-            <Row label={w.rows.notifyNankai.label} description={w.rows.notifyNankai.description}>
-              <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
-            </Row>
-            {/* 定例解説とお知らせの通知は既定オフ（2026-11-09 ユーザー選択「新設・既定オフ」） */}
-            <Row label={w.rows.notifyNankaiRoutine.label} description={w.rows.notifyNankaiRoutine.description}>
-              <Toggle checked={settings.notifyNankaiRoutine} onChange={v => onUpdate('notifyNankaiRoutine', v)} />
-            </Row>
-            <Row label={w.rows.notifyQuakeNotice.label} description={w.rows.notifyQuakeNotice.description}>
-              <Toggle checked={settings.notifyQuakeNotice} onChange={v => onUpdate('notifyQuakeNotice', v)} />
-            </Row>
-            {/* 地域の絞りは画面内の通知にもプッシュ通知にも効く（2026-11-03 ユーザー選択「両方に掛ける (Recommended)」。
-                名前と説明は 2026-11-03 ユーザー選択「通知する地域」） */}
-            <Row label={w.rows.notifyPrefectures.label} description={w.rows.notifyPrefectures.description}>
-              <PrefecturePicker value={settings.notifyPrefectures} onChange={v => onUpdate('notifyPrefectures', v)} />
-            </Row>
           </>
         )}
-        <Row label={w.rows.notifyPermission.label} description={w.rows.notifyPermission.description}>
-          <NotificationPermissionButton />
-        </Row>
-        {/* 試すボタンは設定の隣に置く（読み上げの「テスト読み上げ」と同じ）。まとめて止めている間は出さない */}
-        {settings.notifyEnabled && (
-          <Row label={w.rows.testNotification.label} description={w.rows.testNotification.description}>
-            <TestButton color="green" onClick={onTest.notification}>{w.rows.testNotification.button}</TestButton>
-          </Row>
-        )}
       </Section>
-
-      {/* プッシュ通知（docs/relay-server-design.md §6.7）は配信サーバーへ届け先を登録する別の仕組みなので、見出しを分ける
-          （2026-11-06 ユーザー選択「プッシュ通知」）。上の種類ごとの通知・地域の絞りがそのまま効くので、
-          通知をまとめて止めている間は見出しごと出さない。購読を扱えないブラウザ（安全な接続でない・Push API が無い）でも出さない。
-          名前と説明は 2026-11-03 ユーザー選択「プッシュ通知」 */}
-      {settings.notifyEnabled && pushSupported() && (
-        <Section category="notification" title={w.sections.push}>
-          <Row label={w.rows.pushNotify.label} description={w.rows.pushNotify.description}>
-            {/* 入れるときは、押した操作の中で最初に許可を求める（Safari・Firefox は操作から離れた許可の要求を尋ねない）。
-                許可されなければ入れない */}
-            <Toggle
-              checked={settings.pushNotifyEnabled}
-              onChange={v => {
-                if (!v) { onUpdate('pushNotifyEnabled', false); return }
-                void requestPushPermission()
-                  .then(ok => { if (ok) onUpdate('pushNotifyEnabled', true) })
-                  .catch((err: unknown) => log.warn('[push] 通知の許可を求められませんでした', err))
-              }}
-            />
-          </Row>
-        </Section>
-      )}
 
       <Section category="sound" title={w.sections.sound}>
         <Row label={w.rows.sound.label} description={w.rows.sound.description}>

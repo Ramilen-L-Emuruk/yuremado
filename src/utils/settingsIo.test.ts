@@ -381,20 +381,12 @@ describe('使用状況データの送信の許可', () => {
   })
 })
 
-// プッシュ通知の購読も運ばない（2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）
-describe('プッシュ通知の購読', () => {
-  const on: AppSettings = { ...DEFAULTS, pushNotifyEnabled: true }
-  it('書き出したファイルには入れない（いつもオフで書く）', () => {
-    expect(buildSettingsFile(on, NO_KEYS).settings.pushNotifyEnabled).toBe(false)
-  })
-  it('安全弁: オンと書かれたファイルを読み込んでも、購読していない端末はオフのまま', () => {
+// プッシュ通知の購読は設定ではなく、端末の通知の許可から決まる（hooks/usePushSubscription.ts）。ファイルで運ぶものは無い
+describe('通知の設定', () => {
+  it('前の版のファイルにあるプッシュ通知の入り切りは、読み込んでも設定に残らない', () => {
     const file = { ...buildSettingsFile(DEFAULTS, NO_KEYS), settings: { ...DEFAULTS, pushNotifyEnabled: true } }
     const r = parseSettingsFile(file, DEFAULTS)
-    expect(r.ok && r.settings.pushNotifyEnabled).toBe(false)
-  })
-  it('対照: 購読している端末は、オフと書かれたファイルを読み込んでもオンのまま', () => {
-    const r = parseSettingsFile(buildSettingsFile(DEFAULTS, NO_KEYS), on)
-    expect(r.ok && r.settings.pushNotifyEnabled).toBe(true)
+    expect(r.ok && 'pushNotifyEnabled' in r.settings).toBe(false)
   })
   it('通知する地域は運ぶ（端末に結びつかない設定）', () => {
     const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, notifyPrefectures: ['13', '16'] }, NO_KEYS), DEFAULTS)

@@ -782,8 +782,7 @@ export const zhHans: Messages = {
     },
     sections: {
       connection: '连接',
-      browserNotify: '浏览器通知',
-      push: '推送通知',
+      notify: '通知',
       sound: '声音与朗读',
       timeSignal: '报时',
       speech: '朗读设置',
@@ -890,15 +889,13 @@ export const zhHans: Messages = {
       notifyPermission: {
         label: '通知权限',
         description: '确认并允许浏览器的通知权限',
+        deniedDescription: '浏览器已阻止通知。如需接收通知，请在浏览器的网站设置中允许通知',
+        unsupportedDescription: '此浏览器不支持通知',
       },
       testNotification: {
         label: '测试通知',
         description: '立即发送测试通知（需通知权限）',
         button: '通知测试',
-      },
-      pushNotify: {
-        label: '推送通知',
-        description: '关闭应用或使用其他应用时也能收到通知。开启后，会将此设备的通知接收地址和通知设置登记到分发服务器',
       },
       sound: {
         label: '提示音',
@@ -1211,6 +1208,7 @@ export const zhHans: Messages = {
     permission: {
       granted: '已允许',
       denied: '已在浏览器中拒绝',
+      unsupported: '不支持',
       request: '允许通知',
     },
     clock: {

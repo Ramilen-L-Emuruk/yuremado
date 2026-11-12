@@ -225,7 +225,7 @@ export function App() {
   // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
   useApplyLocaleSetting(settings.locale)
   // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
-  usePushSubscription(settings, updateSetting)
+  usePushSubscription(settings)
   // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す
   // （→ services/notifyQuietWhileOpen.ts）
   useEffect(() => { setNotifyQuietWhileOpen(settings.notifyQuietWhileOpen) }, [settings.notifyQuietWhileOpen])
@@ -1117,21 +1117,21 @@ export function App() {
   }, [settings.usageStatsEnabled])
   // 別のタブ（ブラウザで開いたものとホーム画面から開いたもの）で切り替えたら追う。追わないと、古いタブが
   // 許可を外した後も識別子を持ったまま送り、設定を保存したときに古い「オン」を書き戻す。
-  // プッシュ通知の購読も同じ（古いタブが「オン」を書き戻すと、消した購読をそのタブが作り直す）
+  // 「通知を表示」も同じ（プッシュ通知の購読はこれで決まる。古いタブが「オン」を書き戻すと、消した購読をそのタブが作り直す）
   const usageEnabledRef = useRef(settings.usageStatsEnabled)
   usageEnabledRef.current = settings.usageStatsEnabled
-  const pushEnabledRef = useRef(settings.pushNotifyEnabled)
-  pushEnabledRef.current = settings.pushNotifyEnabled
+  const notifyEnabledRef = useRef(settings.notifyEnabled)
+  notifyEnabledRef.current = settings.notifyEnabled
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== SETTINGS_STORAGE_KEY || e.newValue === null) return
-      let other: { usageStatsEnabled?: unknown; pushNotifyEnabled?: unknown }
+      let other: { usageStatsEnabled?: unknown; notifyEnabled?: unknown }
       try { other = JSON.parse(e.newValue) as typeof other } catch { return }
       if (typeof other.usageStatsEnabled === 'boolean' && other.usageStatsEnabled !== usageEnabledRef.current) {
         adoptExternalSetting('usageStatsEnabled', other.usageStatsEnabled)
       }
-      if (typeof other.pushNotifyEnabled === 'boolean' && other.pushNotifyEnabled !== pushEnabledRef.current) {
-        adoptExternalSetting('pushNotifyEnabled', other.pushNotifyEnabled)
+      if (typeof other.notifyEnabled === 'boolean' && other.notifyEnabled !== notifyEnabledRef.current) {
+        adoptExternalSetting('notifyEnabled', other.notifyEnabled)
       }
     }
     window.addEventListener('storage', onStorage)
