@@ -4,6 +4,7 @@ import { readableTextColor } from './contrast'
 import { countUsage } from '../services/usageStats'
 import type { LegendBlock, LegendChip } from '../components/MapLegend/legendBlocks'
 import type { Messages } from '../i18n/messages'
+import type { ShareCardFormatId } from '../i18n/messageKeys'
 
 // 共有カードの合成と書き出し。地図の撮影は components/Map/gl/captureMap.ts の担当で、
 // ここは「撮れた地図に見出しと出典を足して 1 枚の画像にする」ところだけを持つ。
@@ -28,8 +29,8 @@ export interface ShareCardFormat {
   height: number
 }
 
-/** 設定で選べる寸法の識別子（`AppSettings.shareCardFormat`）。 */
-export type ShareCardFormatId = 'wide16x9' | 'square1x1' | 'portrait4x5'
+/** 設定で選べる寸法の識別子（`AppSettings.shareCardFormat`）。辞書も鍵に使うので型は i18n/messageKeys.ts に置く */
+export type { ShareCardFormatId }
 
 /**
  * 選べる寸法。**追加するときは全体の比率で定義すること**（地図の比率ではない）。

@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, posix } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 // 対象のモジュールは頭で読む。テストの中で初めて読むと、全件並列のときに読み込みの待ちが 1 件目の時間に乗って時間切れになる
 import { QUAKE_PERIOD_HOURS } from '../utils/quakeListView'
@@ -272,5 +275,49 @@ describe('地震タブの語', () => {
     expect(ko.quake.retracted('진원・진도 정보')).toMatch(/정보는 /)
     // 安全弁: ハングルで終わらない語（数字・記号）は 는 のまま
     expect(ko.quake.retracted('VXSE51#2')).toMatch(/#2는 /)
+  })
+})
+
+describe('辞書から辿れるファイル（中継へ写すもの）', () => {
+  // 中継は 7 言語の辞書を写してプッシュ通知の文を組む（relay-server-design.md §6.7「通知の言語」）。中継の型検査は画面の型
+  // （DOM・React・MapLibre）を持たないので、辞書が型だけでも画面や地図の部品を読むと、写した先で型検査が通らなくなる。
+  // 辞書が鍵に使う型は i18n/messageKeys.ts（何も読まない葉）に置く
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  /** 相対の import・export（型だけのものも含む）を辿って、読むファイルを全部集める */
+  function closure(entries: readonly string[]): Set<string> {
+    const seen = new Set<string>()
+    const walk = (rel: string) => {
+      if (seen.has(rel)) return
+      seen.add(rel)
+      const body = readFileSync(join(root, rel), 'utf8')
+      for (const m of body.matchAll(/^\s*(?:import|export)\s[^;]*?from\s+'(\.[^']+)'/gms)) {
+        const base = posix.join(posix.dirname(rel), m[1])
+        const hit = ['.ts', '.tsx', '/index.ts'].map((e) => base + e).find((c) => existsSync(join(root, c)))
+        if (hit) walk(hit)
+      }
+    }
+    entries.forEach(walk)
+    return seen
+  }
+  const files = closure([
+    'src/i18n/messages.ts',
+    ...LOCALES.map((l) => `src/i18n/messages/${l.id === 'zh-Hans' ? 'zhHans' : l.id === 'zh-Hant' ? 'zhHant' : l.id === 'pt-BR' ? 'ptBR' : l.id}.ts`),
+  ])
+
+  // 正: 7 言語の辞書と表を辿れている（入口の名前の読み替えを誤ると、何も辿らずに通ってしまう）
+  it('7 言語の辞書を辿る', () => {
+    for (const f of ['src/i18n/messages/ja.ts', 'src/i18n/messages/en.ts', 'src/i18n/messages/zhHant.ts', 'src/i18n/messageKeys.ts']) expect(files).toContain(f)
+  })
+  // 安全弁: 画面の部品・フック・地図の描画・.tsx は辿らない。components の下でも、何も読まない葉（設定の分類の表
+  // settingsCategories.ts のように、辞書が鍵の型を読むために JSX から分けたもの）は写しても型が通るので許す
+  it('画面・地図の部品へ届かない', () => {
+    const importsAnything = (f: string) => /^\s*(?:import|export)\s[^;]*?from\s+'/m.test(readFileSync(join(root, f), 'utf8'))
+    const ui = [...files].filter((f) => f.endsWith('.tsx') || /^src\/(hooks|gl)\//.test(f) || (/^src\/components\//.test(f) && importsAnything(f)))
+    expect(ui).toEqual([])
+  })
+  // 安全弁: 辿った先が React・MapLibre を読まない
+  it('React・MapLibre を読まない', () => {
+    const offenders = [...files].filter((f) => /^\s*import\s[^;]*?from\s+'(react|react-dom|maplibre-gl)(\/[^']*)?'/m.test(readFileSync(join(root, f), 'utf8')))
+    expect(offenders).toEqual([])
   })
 })
