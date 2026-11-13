@@ -11,6 +11,7 @@ import {
   offlineDataUrlPattern,
 } from './offlineData'
 import { GENERATED_DICT_FETCH_TIMEOUT_MS } from '../src/utils/ttsGeneratedDict'
+import { LOCALES } from '../src/i18n/messages'
 
 const DATA_DIR = join('public', 'data')
 
@@ -52,10 +53,26 @@ function referencedDataPaths(): { path: string; ref: string }[] {
   return out
 }
 
+/**
+ * 名前を組み立てて読むディレクトリ（`data/place-names/${locale}.json`）と、そこでアプリが読むファイルの全部。
+ * src からはディレクトリの頭までしか拾えないので、読むファイルはここで言語の一覧から導く。
+ * ここに無いディレクトリの頭は、読む先として認めない（何でも通す抜け道にしない）
+ */
+const COMPOSED_DIRS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['place-names/', LOCALES.filter(l => l.id !== 'ja').map(l => `place-names/${l.id}.json`)],
+])
+
 function isClassifiedRef(ref: string): boolean {
   if ((OFFLINE_DATA_FILES as readonly string[]).includes(ref)) return true
   // `data/hypocenter` のように末尾の `/` を付けずにディレクトリを指す書き方もある
-  return isExcluded(ref) || isExcluded(`${ref}/`)
+  if (isExcluded(ref) || isExcluded(`${ref}/`)) return true
+  const files = COMPOSED_DIRS.get(ref)
+  return files !== undefined && files.every(f => (OFFLINE_DATA_FILES as readonly string[]).includes(f) || isExcluded(f))
+}
+
+/** 控えるファイルが、アプリの読む先（ファイル名そのもの、または組み立てて読むディレクトリの決まったファイル）に当たるか */
+function isReferenced(file: string, refs: ReadonlySet<string>): boolean {
+  return refs.has(file) || [...refs].some(r => COMPOSED_DIRS.get(r)?.includes(file) ?? false)
 }
 
 // 生成データを足したとき、控えるか控えないかを決めずに済ませると、オフラインでだけ
@@ -77,14 +94,22 @@ describe('public/data の分類', () => {
 
   it('アプリが読む先もすべてどちらかに載っている（public/data に無い名前で読みに行っていない）', () => {
     const refs = referencedDataPaths()
-    // 拾えていることの検算（0 件だと「全部載っている」と区別が付かない）
-    expect(refs.length).toBeGreaterThanOrEqual(OFFLINE_DATA_FILES.length)
+    // 拾えていることの検算（0 件だと「全部載っている」と区別が付かない）。名前を組み立てて読むディレクトリ
+    // （`place-names/`）の下のファイルは、読む先 1 つにまとめて数える
+    const readTargets = new Set(OFFLINE_DATA_FILES.map(f => (f.includes('/') ? f.slice(0, f.lastIndexOf('/') + 1) : f)))
+    expect(refs.length).toBeGreaterThanOrEqual(readTargets.size)
     expect(refs.filter(r => !isClassifiedRef(r.ref))).toEqual([])
   })
 
   it('控える生成データはすべてアプリから読まれている（読まれないものを控える一覧に残していない）', () => {
     const refs = new Set(referencedDataPaths().map(r => r.ref))
-    expect(OFFLINE_DATA_FILES.filter(f => !refs.has(f))).toEqual([])
+    expect(OFFLINE_DATA_FILES.filter(f => !isReferenced(f, refs))).toEqual([])
+  })
+
+  it('組み立てて読むディレクトリの下は、アプリが読むファイルとちょうど同じ（言語を外した表・余分な表を残さない）', () => {
+    for (const [dir, files] of COMPOSED_DIRS) {
+      expect(DATA_FILES.filter(p => p.startsWith(dir)).sort()).toEqual([...files].sort())
+    }
   })
 
   it('控えない一覧の理由は空でない', () => {
