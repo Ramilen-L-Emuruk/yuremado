@@ -134,14 +134,13 @@ export interface AppSettings extends QuakeListSettings {
   notifyNankaiRoutine: boolean     // 南海トラフ地震関連解説情報の定例解説のブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
   notifyQuakeNotice: boolean       // 地震・津波に関するお知らせのブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
   /**
-   * アプリを閉じている間も中継からプッシュ通知を受け取る（docs/relay-server-design.md §6.7）。既定はオフ
-   * （2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）。入れた端末だけが中継へ送り先と通知の設定の写しを登録する
-   */
-  pushNotifyEnabled: boolean
-  /**
-   * アプリが画面に出ている間は、通知（プッシュ通知を含む）を出さない。画面の表示・通知音・読み上げは止めない。既定はオフ
+   * アプリが画面に出ている間は、通知（プッシュ通知を含む）を出さない。画面の表示・通知音・読み上げは止めない
    * （2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」「受け取りを待って送る (Recommended)」）。
-   * 判定と止める場所は `services/notifyQuietWhileOpen.ts`
+   * 既定はオン（2026-11-12 ユーザー発言「アプリを開いている間通知しないをオンにしていいと思います」。保存した値のある人はその値のまま＝
+   * 同日ユーザー選択「開いている間は今の値のまま (Recommended)」）。判定と止める場所は `services/notifyQuietWhileOpen.ts`。
+   *
+   * プッシュ通知だけを入り切りする設定は持たない。通知を許可していて「通知を表示」が入っていれば購読する
+   * （2026-11-12 ユーザー発言「プッシュ通知オンオフを別途設定できるようにする必要は無いと思います。」。`hooks/usePushSubscription.ts`）
    */
   notifyQuietWhileOpen: boolean
   /**
@@ -409,8 +408,7 @@ export const DEFAULTS: AppSettings = {
   notifyNankai: true,
   notifyNankaiRoutine: false,
   notifyQuakeNotice: false,
-  pushNotifyEnabled: false,
-  notifyQuietWhileOpen: false,
+  notifyQuietWhileOpen: true,
   notifyPrefectures: [],
   homeLat: null,
   homeLng: null,
@@ -725,7 +723,6 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
     notifyNankaiRoutine: ensureBool(partial.notifyNankaiRoutine, DEFAULTS.notifyNankaiRoutine),
     notifyQuakeNotice: ensureBool(partial.notifyQuakeNotice, DEFAULTS.notifyQuakeNotice),
-    pushNotifyEnabled: ensureBool(partial.pushNotifyEnabled, DEFAULTS.pushNotifyEnabled),
     notifyQuietWhileOpen: ensureBool(partial.notifyQuietWhileOpen, DEFAULTS.notifyQuietWhileOpen),
     notifyPrefectures: ensurePrefectureCodes(partial.notifyPrefectures),
     homeLat: clampNumberOrNull(partial.homeLat, -90, 90),

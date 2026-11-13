@@ -782,8 +782,7 @@ export const zhHant: Messages = {
     },
     sections: {
       connection: '連線',
-      browserNotify: '瀏覽器通知',
-      push: '推播通知',
+      notify: '通知',
       sound: '音效與朗讀',
       timeSignal: '報時',
       speech: '朗讀設定',
@@ -890,15 +889,13 @@ export const zhHant: Messages = {
       notifyPermission: {
         label: '通知權限',
         description: '確認並允許瀏覽器的通知權限',
+        deniedDescription: '瀏覽器已封鎖通知。如需接收通知，請在瀏覽器的網站設定中允許通知',
+        unsupportedDescription: '此瀏覽器不支援通知',
       },
       testNotification: {
         label: '測試通知',
         description: '立即發送測試通知（需允許通知）',
         button: '通知測試',
-      },
-      pushNotify: {
-        label: '推播通知',
-        description: '在應用程式關閉時或使用其他應用程式時也能收到通知。開啟後，會將此裝置的通知接收端與通知設定登錄到發送伺服器',
       },
       sound: {
         label: '提示音',
@@ -1211,6 +1208,7 @@ export const zhHant: Messages = {
     permission: {
       granted: '已允許',
       denied: '已被瀏覽器拒絕',
+      unsupported: '不支援',
       request: '允許通知',
     },
     clock: {

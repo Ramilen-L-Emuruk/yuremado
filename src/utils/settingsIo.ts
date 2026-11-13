@@ -99,9 +99,6 @@ export function buildSettingsFile(
       // 使用状況データの送信の許可は運ばない（2026-11-03 ユーザー選択「運ばない (Recommended)」）。読み込む側も
       // ファイルの値を見ずに端末の値を残すが、ファイルにも許可の印を残さないよう常にオフで書く
       usageStatsEnabled: false,
-      // プッシュ通知の購読も運ばない。購読は設定の窓で入れたときだけ作る（2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）ので、
-      // ファイルを読んだだけで別の端末が購読を始めないようにする
-      pushNotifyEnabled: false,
     },
   }
 }
@@ -193,8 +190,6 @@ export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResu
   settings.forecastKey = fileForecastKey !== '' ? fileForecastKey : current.forecastKey
   // 使用状況データの送信の許可は運ばない。端末ごとに同意の窓か設定の窓で決める（2026-11-03 ユーザー選択「運ばない (Recommended)」）
   settings.usageStatsEnabled = current.usageStatsEnabled
-  // プッシュ通知の購読も運ばない（同日ユーザー選択「設定で入れたときだけ (Recommended)」。購読は端末ごとのもの）
-  settings.pushNotifyEnabled = current.pushNotifyEnabled
 
   return {
     ok: true,
