@@ -57,6 +57,8 @@ import { quakeHistoryEntries, type QuakeHistoryEntry, type QuakeHistoryInputs } 
 import { useMessages } from '../../i18n/I18nProvider'
 import { ja } from '../../i18n/messages/ja'
 import type { QuakeWords } from '../../utils/quakeListView'
+import type { Messages } from '../../i18n/messages'
+import { borrowedInfoName } from '../../utils/borrowFromTsunami'
 import { quakeReportNameText } from './quakeNames'
 import { DescriptionTip } from '../DescriptionTip'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
@@ -711,6 +713,7 @@ function borrowedSourceNote(
   hypocenter: BorrowedFromTsunami | undefined,
   domesticTsunami: BorrowedFromTsunami | undefined,
   w: QuakeWords,
+  alertWords: Messages['alertText'],
 ): { text: string; title: string } | null {
   if (!hypocenter && !domesticTsunami) return null
   // **文として読めるように書く。** 「震源: 〜／津波区分: 〜」の列挙は開発者向けの体裁で、
@@ -719,7 +722,7 @@ function borrowedSourceNote(
     const at = formatTimeMin(src.reportTime)
     // 時刻を読めない電文では時刻だけ落とす。文そのものは出す ——
     // どの情報が伝えたかは時刻が無くても伝わる。
-    return w.borrowedSentence(what, src.infoName, at || null)
+    return w.borrowedSentence(what, borrowedInfoName(src, { alertText: alertWords }), at || null)
   }
   const parts: string[] = []
   if (hypocenter) parts.push(sentence(hypocenter, w.borrowedWhat.hypocenter))
@@ -844,6 +847,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 }: Props) {
   const q = useMessages().quake
   const f = useMessages().formats
+  const alertWords = useMessages().alertText
   // 報の一覧で前の報を押している間は、その報の時点のカードを出す（→ `historyQuake`）
   const quake = historyQuake ?? latestQuake
   /** このカードの地震を指す鍵。**親へ返すときに使う。** */
@@ -954,7 +958,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const borrowedHypocenter = quake.hypocenterSource
   const borrowedDomesticTsunami = quake.domesticTsunamiSource
   // 説明は**常に 1 行**。詳しい出どころ（名乗り・発表時刻）はホバーの説明へ回す。
-  const borrowedNote = borrowedSourceNote(borrowedHypocenter, borrowedDomesticTsunami, q)
+  const borrowedNote = borrowedSourceNote(borrowedHypocenter, borrowedDomesticTsunami, q, alertWords)
   // 気象庁が添えた文の段落（電文の並び順。空の段落は持たない）。何も残らなければ枠ごと出さない。
   const forecastRest = quake.forecastText ? domesticTsunamiCardForecastText(quake.forecastText, earthquake.domesticTsunamiCode) : ''
   // 固定付加文の原文が無い報では、海外への津波の見通しを値から起こした文（→ `foreignTsunamiText`。
@@ -1465,10 +1469,10 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       const key = `${src.infoName}|${src.reportTime}`
       if (seen.has(key)) continue
       seen.add(key)
-      out.push({ label: src.infoName, time: src.reportTime })
+      out.push({ label: borrowedInfoName(src, { alertText: alertWords }), time: src.reportTime })
     }
     return out
-  }, [quake.hypocenterSource, quake.domesticTsunamiSource])
+  }, [quake.hypocenterSource, quake.domesticTsunamiSource, alertWords])
   // **開いたカードでだけ組む**（閉じた行は一覧を出さない）。長周期は最新の 1 報だけを持つが、
   // 全期間の控え（2020-11〜2026-10・VXSE62 の地震 91 件）で同じ地震の 2 通目は 0 件だった
   // （2026-11-02 に数えた）ので、1 報で届いた報をすべて指している。推計震度分布図は置き換えた

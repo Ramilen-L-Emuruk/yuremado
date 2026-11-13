@@ -28,8 +28,6 @@ export function compressedVertical(knee: number): VerticalMap {
   }
 }
 
-/**
- * 縦を圧縮して描いた段の、縦の範囲の表示へ添えるホバーの一言（2026-10-19 ユーザー選択「ホバーで一言 (推奨)」。
- * 文面もそのとき諮ったもの。経緯は docs/public-waveform-design.md §0）。地図の下端と地震カードで同じ文を使う。
- */
-export const COMPRESSED_VERTICAL_NOTE = '縦は対数に近い目盛りで描いています。'
+// 縦を圧縮して描いた段の、縦の範囲の表示へ添えるホバーの一言（2026-10-19 ユーザー選択「ホバーで一言 (推奨)」。
+// 文面もそのとき諮ったもの。経緯は docs/public-waveform-design.md §0）。地図の下端と地震カードで同じ文を使う。
+// 語は辞書の `waveChart.compressedNote`。

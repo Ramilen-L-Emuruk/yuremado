@@ -267,7 +267,7 @@ export async function buildTestLogOnlyEntries(
     return {
       replayTime: new Date(now.getTime() + step.atMs),
       logEntry: makeReplayLogEntry({
-        headType: step.headType, origin: 'test', rawBody: xml, rawHead: undefined, rawBytes: null,
+        headType: step.headType, origin: 'test', rawBody: xml, bodyNote: null, rawHead: undefined, rawBytes: null,
         errorMessage: null, payload: null, isTest: false,
       }),
     }
@@ -330,7 +330,8 @@ export async function buildTestTelegramEntries(
         headType: step.headType,
         origin: 'test',
         // 二進電文は本文を持たない（ビット列）ので、ライブ・リプレイと同じく要約を入れる
-        rawBody: xml || `（BUFR ${step.file}）`,
+        rawBody: xml || null,
+        bodyNote: xml ? null : { kind: 'bufrFile', file: step.file },
         // テストボタンの電文は DMDATA の head を持たない。二進電文は結合した元の電文を持たせ、ライブと同じく .bin で落とせるようにする
         rawHead: undefined,
         rawBytes: bytes,

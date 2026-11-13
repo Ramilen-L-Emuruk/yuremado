@@ -4,11 +4,12 @@ import { hasDepth, hasMagnitude } from './formatters'
 import { hasKnownEpicenter, hypocentralDistanceKm } from './geo'
 import type { AlertSoundType } from './alertSoundType'
 import { travelTimeSec } from './travelTime'
-import { isValidIntensityScale, getIntensityLabelWithApproxAbove } from './intensity'
-import { isValidLpgmClass, getLpgmClassLabel, getLpgmClassLabelWithApproxAbove } from './lpgm'
+import { isValidIntensityScale, intensityLabelWithApproxAbove } from './intensity'
+import { isValidLpgmClass, lpgmClassLabel, lpgmClassLabelWithApproxAbove } from './lpgm'
 import { isEewArrivedKindCode, isEewPlumKindCode } from './eewKind'
 import { EEW_WARNING_REGION_ORDER } from './eewWarningRegions'
 import type { Messages } from '../i18n/messages'
+import { ja } from '../i18n/messages/ja'
 import { log } from './logger'
 
 // 司・翠川(1999)の距離減衰式を使ってEEW最終報後の自動解除秒数を計算する。
@@ -563,8 +564,8 @@ export function rememberEewFirstIssueTime(memory: Map<string, string | null>, ke
  * 誤報取消のブラウザ通知の本文。名前を引けなければ名前抜きの文にする
  * （2026-10-14 ユーザー選択「緊急地震速報は取り消されました」）。
  */
-export function eewCancelNotificationBody(name: string | undefined): string {
-  return name ? `${name} の緊急地震速報は取り消されました` : '緊急地震速報は取り消されました'
+export function eewCancelNotificationBody(name: string | undefined, m: Pick<Messages, 'alertText'>): string {
+  return m.alertText.eewCancelled(name)
 }
 
 /**
@@ -794,18 +795,19 @@ export function eewNotifiedForecast(eew: EEWAlert): EewNotifiedForecast {
  * 例「八丈島東方沖 最大震度0予想」）。電文が長周期地震動階級 0 と言い切った報は「長周期地震動階級0予想」を添える
  * （2026-10-30 ユーザー決定「全部出す」・同日ユーザー選択「震度と並べて出す (Recommended)」）。
  */
-export function eewNotificationBody(name: string, forecast: EewNotifiedForecast, magnitude: string): string {
+export function eewNotificationBody(name: string, forecast: EewNotifiedForecast, magnitude: string, m: Pick<Messages, 'alertText' | 'formats'>): string {
   const { scale, scaleZero, lpgm } = forecast
+  const w = m.alertText
   // 震央地名が空の報（実配信では未観測）でも先頭に空白を残さない（2026-10-24 ユーザー選択「備えとして直す (Recommended)」）
-  return [
+  return w.joinParts([
     name.trim(),
     // 規模（例「M6.3」。添えないときは空。2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
     magnitude,
-    scale.scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale.scale, scale.orAbove)}予想`
-      : scaleZero ? '最大震度0予想' : '',
-    lpgm.cls > 0 ? `長周期地震動${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}予想`
-      : lpgm.zeroStated ? `長周期地震動${getLpgmClassLabel(0)}予想` : '',
-  ].filter(p => p !== '').join(' ')
+    scale.scale > 0 ? w.maxScaleForecast(intensityLabelWithApproxAbove(scale.scale, scale.orAbove, m.formats))
+      : scaleZero ? w.maxScaleForecast('0') : '',
+    lpgm.cls > 0 ? w.lpgmForecast(lpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over, m.formats))
+      : lpgm.zeroStated ? w.lpgmForecast(lpgmClassLabel(0, m.formats)) : '',
+  ].filter(p => p !== ''))
 }
 
 /**
@@ -1411,9 +1413,15 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
  * 対応表は docs/spec/eew-spec.md §3「電文の名称と表示・読み上げ」。
  * レベル 1 と 2（特別警報）は同じ名前を返すので、ウィンドウタイトルでは特別警報と警報の差が出ない
  * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
+ * 語は辞書の `alertText.eewKind`。
  */
+export function eewKindText(level: 0 | 1 | 2, m: Pick<Messages, 'alertText'>): string {
+  return level >= 1 ? m.alertText.eewKind.warning : m.alertText.eewKind.forecast
+}
+
+/** {@link eewKindText} の日本語。**録画ツール向けの記録（`recordReplayEvent` の `grade`）に使う**（記録は言語を変えない） */
 export function eewKindLabel(level: 0 | 1 | 2): string {
-  return level >= 1 ? '緊急地震速報' : '地震動予報'
+  return eewKindText(level, ja)
 }
 
 export function computeSingleEEWLevel(eew: EEWAlert): 0 | 1 | 2 {

@@ -33,6 +33,16 @@ export function intlDateWords(tag: string): DateWords {
   }
 }
 
+/**
+ * 月・日と時刻を**日本時間で**書く（通知の本文の発生時刻。時間帯の印「JST」は辞書の文が添える）。
+ * 渡すのはその瞬間そのもの（`Date.parse` した値）。端末の時刻として組み直さないので、端末の時間帯の夏時間に左右されない
+ * （2026-11-12 ユーザー選択「日本時間＋JST を添える (Recommended)」）
+ */
+export function intlJstMonthDayTime(tag: string): (d: Date) => string {
+  const fmt = new Intl.DateTimeFormat(tag, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Tokyo' })
+  return (d) => safeFormat(fmt, d, tag, 'jstMonthDayTime')
+}
+
 /** 記録を出した書式（言語と書式の組）。一覧の行ごと・描き直しごとに同じ記録を積まないよう、組ごとに 1 回だけ出す */
 const warned = new Set<string>()
 

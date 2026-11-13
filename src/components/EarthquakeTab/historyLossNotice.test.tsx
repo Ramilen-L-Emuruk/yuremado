@@ -14,7 +14,13 @@
 // （カードが 0 件なら全画面の失敗表示）。
 import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { I18nProvider } from '../../i18n/I18nProvider'
+import { loadMessages, type Locale } from '../../i18n/messages'
+
+// 英語の辞書はファイルの読み込み時に一度読んでおく（テスト本体で初めて読むと、並列実行の順番待ちが待ちの時間に乗る）
+await loadMessages('en')
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
 import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
@@ -61,9 +67,19 @@ async function renderTab(opts: {
   reconnectGapLoss?: boolean
   fetchThrottled?: boolean
   onDismissKeyReentry?: (() => void) | null
+  /** 失敗の中身の文（`Error` に包んで渡す）。`cause` を渡したときはそちらを使う */
   error?: string | null
+  /** 失敗として投げられたもの（そのまま渡す） */
+  cause?: unknown
+  /** 画面の言語（渡すと `I18nProvider` で包む） */
+  locale?: Locale
 }) {
   const earthquakes = opts.earthquakes ?? [QUAKE]
+  const error = opts.cause !== undefined ? { cause: opts.cause }
+    : opts.error === undefined || opts.error === null ? null
+    : { cause: new Error(opts.error) }
+  const wrapper = opts.locale === undefined ? undefined
+    : ({ children }: { children: ReactNode }) => <I18nProvider locale={opts.locale!}>{children}</I18nProvider>
   const result = render(
     <EarthquakeTab matchedCount={0}
       earthquakes={earthquakes}
@@ -77,7 +93,7 @@ async function renderTab(opts: {
       hasMore={false}
       onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
-      error={opts.error ?? null}
+      error={error}
       historyLoss={opts.historyLoss ?? createEmptyTelegramLoss()}
       loadMoreFailed={opts.loadMoreFailed ?? false}
       reconnectGapLoss={opts.reconnectGapLoss ?? false}
@@ -113,6 +129,7 @@ async function renderTab(opts: {
       onReplayQuake={() => {}}
       replayError={null}
     />,
+    { wrapper },
   )
   // 観測点を持たない空の一覧（`earthquakes: []`）ではカードが 1 枚も描かれず、
   // `useSubRegions` の失敗経路も起きない。それでも毎回呼んでおけば無害。
@@ -333,5 +350,19 @@ describe('全画面の失敗表示と帯', () => {
 
     expect(screen.getByText('データの取得に失敗')).toBeTruthy()
     expect(screen.getByText(/入れ直してください/)).toBeTruthy()
+  })
+
+  // 正: 失敗の理由は描く時点の言語の文にする。言語の辞書は後から読み込まれるので、失敗した時点で文にすると
+  // 読み込み前の失敗が日本語のまま残る（起動直後の通信の失敗で実際に「通信できませんでした」が英語の画面に出た）
+  it('正: 英語の画面では通信の失敗の理由も英語で出る（辞書を読み込んだ後に描き直される）', async () => {
+    await renderTab({ earthquakes: [], cause: new TypeError('Failed to fetch'), locale: 'en' })
+    await waitFor(() => expect(screen.getByText('Could not connect')).toBeTruthy(), { timeout: 3000 })
+    expect(screen.queryByText('通信できませんでした')).toBeNull()
+  })
+
+  // 対照: 日本語の画面は今までどおり
+  it('対照: 日本語の画面では通信の失敗の理由は日本語のまま', async () => {
+    await renderTab({ earthquakes: [], cause: new TypeError('Failed to fetch') })
+    expect(screen.getByText('通信できませんでした')).toBeTruthy()
   })
 })

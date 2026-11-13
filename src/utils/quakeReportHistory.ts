@@ -224,7 +224,8 @@ function tsunamiStepsFor(inputs: QuakeHistoryInputs): readonly TsunamiFactStep[]
   if (mine.length > 0) return mine
   const src = card.hypocenterSource ?? card.domesticTsunamiSource ?? card.appliedTsunamiSource?.mark
   if (!src || !related(inputs.tsunamis)) return []
-  return [{ time: src.reportTime, label: src.infoName, tsunamis: inputs.tsunamis }]
+  // 名乗りを読めなかった電文は空で持つ（→ `borrowFromTsunami.ts` の `borrowedInfoName`）。記録の札は記録と同じ日本語の語で補う
+  return [{ time: src.reportTime, label: src.infoName || '津波情報', tsunamis: inputs.tsunamis }]
 }
 
 const NO_TSUNAMIS: readonly JMATsunami[] = []

@@ -13,7 +13,7 @@
 import type { SeismoWaveWindow } from './seismoWaveBuffer'
 import type { PublicChannelCode } from './publicStations'
 
-/** 成分 → 段の並び（東・北・上。自作地震計の `AXIS_LABELS` と揃える）。 */
+/** 成分 → 段の並び（東・北・上。自作地震計の成分の名前（辞書の `waveChart.axes`）と揃える）。 */
 const AXIS_OF: Readonly<Record<PublicChannelCode, 0 | 1 | 2>> = { BHE: 0, BHN: 1, BHZ: 2 }
 
 /**

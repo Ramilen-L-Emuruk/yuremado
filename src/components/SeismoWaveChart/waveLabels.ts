@@ -1,6 +1,7 @@
 // 波形グラフに添える短い文字列。**描画から切り離してテストする。**
 
 import type { SeismoWaveTally } from '../../utils/seismoWaveBuffer'
+import type { Messages } from '../../i18n/messages'
 
 /**
  * 縦の振れ幅の表示（`±N gal`）。
@@ -41,10 +42,13 @@ export function formatGal(gal: number): string {
  * 裏付けが 1〜3 本欠ける（#374）ように、ここに数字が立つこと自体は
  * 故障を意味しない —— 起きた回数を見せるところまでが役目。
  */
-export function formatWaveTally(tally: SeismoWaveTally): string | null {
+export function formatWaveTally(
+  tally: SeismoWaveTally,
+  w: Pick<Messages['waveChart'], 'tallyGaps' | 'tallyRestarts' | 'tallyDuplicates' | 'tallySeparator'>,
+): string | null {
   const parts: string[] = []
-  if (tally.gapSamples > 0) parts.push(`欠測 ${tally.gapSamples}`)
-  if (tally.restarts > 0) parts.push(`引き直し ${tally.restarts}`)
-  if (tally.droppedSamples > 0) parts.push(`重複 ${tally.droppedSamples}`)
-  return parts.length === 0 ? null : parts.join(' / ')
+  if (tally.gapSamples > 0) parts.push(w.tallyGaps(tally.gapSamples))
+  if (tally.restarts > 0) parts.push(w.tallyRestarts(tally.restarts))
+  if (tally.droppedSamples > 0) parts.push(w.tallyDuplicates(tally.droppedSamples))
+  return parts.length === 0 ? null : parts.join(w.tallySeparator)
 }

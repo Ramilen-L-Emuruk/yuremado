@@ -744,6 +744,23 @@ describe('buildShareCardContent — 英語の辞書', () => {
     expect(c.header.subtitle).toBe('日向灘  M unknown  Depth unknown')
   })
 
+  // 原因地震・緊急地震速報を並べる区切りも英語の形（` / `）にする
+  it('複数の原因地震・緊急地震速報を「 / 」で並べる', () => {
+    const t = {
+      ...tsunami(),
+      sourceEarthquakes: [
+        { hypocenterName: '石川県能登地方', magnitude: 7.6 },
+        { hypocenterName: '佐渡付近', magnitude: 6.1 },
+      ],
+    } as unknown as JMATsunami
+    const tsunamiSubtitle = buildEn(input({ mode: 'tsunami', tsunamis: [t] })).header.subtitle ?? ''
+    expect(tsunamiSubtitle.startsWith('石川県能登地方  M7.6  Depth unknown / 佐渡付近  M6.1  Depth unknown')).toBe(true)
+    expect(tsunamiSubtitle).not.toContain('／')
+    const eewSubtitle = buildEn(input({ mode: 'kyoshin', eews: [eew({ name: '福島県沖', scaleTo: 30 }), eew({ name: '日向灘', severity: 'Warning', scaleTo: 55 })] })).header.subtitle ?? ''
+    expect(eewSubtitle).toContain(' / 福島県沖')
+    expect(eewSubtitle).not.toContain('／')
+  })
+
   // 対照: 日本語の辞書では今までの字面のまま
   it('日本語の辞書では全角の空きで並べる', () => {
     expect(build(input({ mode: 'quake', quake: quake() })).header.subtitle).toBe('日向灘　M5.2　深さ 30km')

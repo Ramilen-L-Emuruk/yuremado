@@ -288,6 +288,7 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
   /** 押すと地図がその観測点へ寄る。押せない行は undefined。 */
   onActivate?: () => void
 }) {
+  const spaceSep = useMessages().formats.spaceSep()
   return (
     <div
       ref={rowRef}
@@ -310,7 +311,7 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
               // **区切りの空白は色を当てる範囲の外に置く。** 中へ入れると、動いた項目の
               // 手前の空白まで塗られて色の帯が項目からずれる。値の途中では折り返さない。
               <Fragment key={pi}>
-                {pi > 0 ? '　' : ''}
+                {pi > 0 ? spaceSep : ''}
                 <span className="whitespace-nowrap" style={part.color ? { color: part.color, fontWeight: 600 } : undefined}>{part.text}</span>
               </Fragment>
             ))}
@@ -329,7 +330,10 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
   )
 }
 
-/** 観測点の札（実測・欠測・到達確認など。語は `observationBadges` が決める）。 */
+/**
+ * 観測点の札（実測・欠測・到達確認など。語は `observationBadges` が決める）。
+ * 札が列の幅より長いとき（英語などの長い語）は札の中で折り返す。折り返さないと右の波高の列に重なる。
+ */
 function ObservationChips({ obs, tint }: { obs: TsunamiObservation; tint: { bg: string; fg: string } }) {
   const tm = useMessages().tsunami
   return (
@@ -337,7 +341,7 @@ function ObservationChips({ obs, tint }: { obs: TsunamiObservation; tint: { bg: 
       {observationBadgeKeys(obs).map(key => (
         <span
           key={key}
-          className="font-bold px-1.5 rounded-[3px] whitespace-nowrap"
+          className="font-bold px-1.5 rounded-[3px] max-w-full"
           style={{ fontSize: 'var(--qk-fs)', ...(key === 'missing'
             ? { background: `${MISSING_COLOR}26`, color: MISSING_COLOR }
             : { background: tint.bg, color: tint.fg }) }}
@@ -608,7 +612,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
  * 画面が示せない状態になる。
  */
 function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerSpeechRow, obsUpdateStatus }: { obs: TsunamiObservation; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: ReadonlyMap<string, ObsUpdateMark> }) {
-  const tm = useMessages().tsunami
+  const { tsunami: tm, formats } = useMessages()
   const clickable = !!onObservationClick && canFocusObs(obs.name)
   // 日時として読めない到達時刻は、時刻が無い電文と同じ落とし先（下の fallback 群）へ回す。
   const arrivalHm = obs.arrivalTime ? formatTimeMin(obs.arrivalTime) : null
@@ -627,7 +631,7 @@ function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerS
     { text: maxHeightTimeText, color: fieldColor('maxHeightTime') },
     // 特殊観測機器（「ＧＮＳＳ波浪計」「水圧計」）。沖合の観測点だけが持つ。電文の語をそのまま出す ——
     // 言い換えると、どちらの計器が測った値か分からなくなる。**括弧で括る** —— 素で並べると地名や別の値と読める。
-    { text: obs.sensor ? `（${obs.sensor}）` : '' },
+    { text: obs.sensor ? formats.paren(obs.sensor).trimStart() : '' },
   ].filter(p => p.text)
   const heightText = observationHeightLabel(obs, tm)
   return (
@@ -854,7 +858,8 @@ function TsunamiCommentBody({ endText, bodyText, comments, freeText, borderColor
 }
 
 export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEarthquakeLink, onObservationClick, onFocusMap, focusedDistrict, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, speechSession, speakingTelegramText, isVisible, speechFollowEnabled, autoShowTick }: Props) {
-  const tm = useMessages().tsunami
+  const { tsunami: tm, formats: fw } = useMessages()
+  const spaceSep = fw.spaceSep()
   // 行をクリックできるかは「地図がその観測点へ寄れるか」で決める。
   //
   // 座標表（`tsunami-obs-coords.json`）に無い観測点は地図に印が出ず、`FocusObsGL` も寄せ先を
@@ -1629,7 +1634,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 // 語は「失効」の 2 文字（気象庁の要素名は「失効時刻」。読み上げは「失効時刻」と言う → `utils/ttsText.ts`）。
                 expiryText && tm.expires(expiryText),
               ].filter((s): s is string => !!s).map((s, i) => (
-                <Fragment key={s}>{i > 0 && '　'}<span className="whitespace-nowrap">{s}</span></Fragment>
+                <Fragment key={s}>{i > 0 && spaceSep}<span className="whitespace-nowrap">{s}</span></Fragment>
               ))}
             </div>
           )}
@@ -1739,7 +1744,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
           {(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && (
             <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)', padding: '6px 12px 8px' }}>
               {[active[0].infoName, ...officeLabels(active[0].issue, tm)].filter((s): s is string => !!s).map((s, i) => (
-                <Fragment key={s}>{i > 0 && '　'}<span className="whitespace-nowrap">{s}</span></Fragment>
+                <Fragment key={s}>{i > 0 && spaceSep}<span className="whitespace-nowrap">{s}</span></Fragment>
               ))}
             </div>
           )}

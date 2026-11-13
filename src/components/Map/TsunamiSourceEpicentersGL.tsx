@@ -72,7 +72,7 @@ export function sourcePopupHtml(s: TsunamiSourceEarthquake, m: Messages): string
   const depth = s.depth !== undefined && hasDepth(s.depth) ? m.map.popup.depth(depthText(s.depth, s.depthAtLeast === true, m.formats)) : ''
   const quakeTime = sourceEarthquakeTime(s)
   const hm = quakeTime ? formatTimeMin(quakeTime) : null
-  const detail = [mag, depth].filter(Boolean).join('　')
+  const detail = [mag, depth].filter(Boolean).join(m.formats.spaceSep())
   return (
     `<div class="text-sm"><div class="font-bold">${escapeHtml(s.hypocenterName)}</div>` +
     (detail ? `<div class="text-xs" style="color:#e5e7eb">${escapeHtml(detail)}</div>` : '') +

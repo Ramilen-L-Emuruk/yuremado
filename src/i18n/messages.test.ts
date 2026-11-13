@@ -4,6 +4,8 @@ import { QUAKE_PERIOD_HOURS } from '../utils/quakeListView'
 import { DIRECTIONS_16 } from '../utils/estimatedIntensity'
 import { CHECKLIST_SOURCE_URLS } from '../utils/actionChecklist'
 import { DEFAULT_LOCALE, isLocale, JA_MESSAGES, LOCALES, loadMessages, localeTag, type Messages } from './messages'
+import { historicalArchiveLabel } from '../utils/historicalArchiveLabel'
+import { regionLabel } from '../utils/regions'
 
 // 日本語以外の辞書を先に一度読んでおく。`loadMessages` は `import()` で読むので、初回の変換の待ちが
 // テスト本体に乗ると、全件を並列で回したときだけ既定の 5 秒を超える（実際に 2 件が時間切れになった）
@@ -106,6 +108,99 @@ describe('地震回数の見出し', () => {
     expect(es.specialInfo.countHeadline(null, null, '1')).toBe('1 sentido')
     // 安全弁: 日本語は前と同じ字面
     expect(JA_MESSAGES.specialInfo.countHeadline(null, '23', '12')).toBe('23回（うち有感 12回）')
+  })
+})
+
+// 段 10: 通知の文とウィンドウの題名。日本語は外の道具（題名を見る AutoHotKey）と中継のプッシュ通知が字面を見るので変えない
+describe('通知の文とウィンドウの題名', () => {
+  it('日本語の題名・揺れ検知の通知は前と同じ字面', () => {
+    const w = JA_MESSAGES.alertText
+    expect(w.titleQuake('石川県能登地方', '5弱')).toBe('地震情報 石川県能登地方 最大震度5弱')
+    expect(w.titleForeignQuake('メキシコ', 'M7.4')).toBe('遠地地震 メキシコ M7.4')
+    expect(w.titleReloadCountdown(10, true, '揺れ窓')).toBe('10秒後に再読み込みします — 揺れ窓')
+    expect(w.titleReloadCountdown(10, false, '揺れ窓')).toBe('10秒後に更新します — 揺れ窓')
+    expect(w.withStage('南海トラフ地震臨時情報', '調査中')).toBe('南海トラフ地震臨時情報（調査中）')
+    expect(w.titleInEffect('北海道・三陸沖後発地震注意情報')).toBe('北海道・三陸沖後発地震注意情報 発表中')
+    expect(w.joinParts([w.titleLpgm, '石川県能登地方', w.titleLpgmMaxClass(3)])).toBe('長周期地震動 石川県能登地方 最大階級3')
+    expect([w.titleShakingDetected, w.titlePossibleShaking, w.kyoshinDetected, w.kyoshinMax('5弱')])
+      .toEqual(['揺れ検知', '揺れの可能性', '揺れを検知中', '最大リアルタイム震度 5弱'])
+    expect(w.permissionFirst(JA_MESSAGES.settings.permission.request)).toBe('先に「通知を許可する」を押してください。')
+  })
+
+  it('英語の題名・揺れ検知の通知・テスト通知', async () => {
+    const en = await loadMessages('en')
+    const w = en.alertText
+    expect(w.titleQuake('石川県能登地方', '5-')).toBe('Earthquake Information 石川県能登地方 · Max intensity 5-')
+    expect(w.titleForeignQuake('メキシコ', 'M7.4')).toBe('Distant earthquake メキシコ M7.4')
+    expect(w.titleReloadCountdown(10, true, '揺れ窓')).toBe('Reloading in 10s — 揺れ窓')
+    expect(w.titleReloadCountdown(10, false, '揺れ窓')).toBe('Updating in 10s — 揺れ窓')
+    expect(w.joinParts([w.titleLpgm, w.titleLpgmMaxClass(3)])).toBe('Long-period ground motion · Max class 3')
+    expect(w.titleInEffect(en.telegramLog.controlTitle['北海道・三陸沖後発地震注意情報'])).toBe('Hokkaido and Sanriku-oki Subsequent Earthquake Advisory in effect')
+    expect([w.titleShakingDetected, w.titlePossibleShaking]).toEqual(['Shaking detected', 'Possible shaking'])
+    expect([w.kyoshinDetected, w.kyoshinOtherPlace, w.kyoshinReonset, w.kyoshinMax('3')])
+      .toEqual(['Shaking detected', 'Shaking detected at another location', 'Shaking detected again at the same location', 'Max real-time intensity 3'])
+    expect(w.permissionFirst(en.settings.permission.request)).toBe('Press "Allow notifications" first.')
+    expect([w.testTitle, w.testBody]).toEqual(['Earthquake Information test', '東京都内陸部 (test) · Max intensity 4 · M5.5'])
+  })
+
+  it('英語・ポルトガル語・スペイン語の区域・観測点の残りは、1 つだけ単数にする', async () => {
+    const en = await loadMessages('en')
+    expect(en.alertText.tsunamiMoreAreas('A', 1)).toBe('A and 1 more area')
+    expect(en.alertText.tsunamiMoreAreas('A', 2)).toBe('A and 2 more areas')
+    const pt = await loadMessages('pt-BR')
+    expect(pt.alertText.tsunamiMorePoints('A', 1)).toBe('A e mais 1 estação')
+    const es = await loadMessages('es')
+    expect(es.alertText.tsunamiMoreAreas('A', 3)).toBe('A y 3 áreas más')
+  })
+})
+
+// 段 10b: 画面の外で組んでいた文（目録の名前・更新の印・地方名・地域の窓・出典の添え書き）
+describe('段 10b の語', () => {
+  it('収録済みの地震の名前は目録の id で引き、表に無い地震は目録の label のまま', async () => {
+    const en = await loadMessages('en')
+    expect(historicalArchiveLabel({ id: '2018-iburi', label: '2018年北海道胆振東部地震' }, en.settings.replay.archives)).toBe('2018 Hokkaido Eastern Iburi Earthquake')
+    expect(historicalArchiveLabel({ id: '2018-iburi', label: '2018年北海道胆振東部地震' }, JA_MESSAGES.settings.replay.archives)).toBe('2018年北海道胆振東部地震')
+    expect(historicalArchiveLabel({ id: 'something-new', label: '新しい地震' }, en.settings.replay.archives)).toBe('新しい地震')
+  })
+
+  it('目録の 4 件はすべての言語に名前がある（目録へ足したら辞書にも足す）', async () => {
+    const ids = ['2016-kumamoto', '2016-tottori', '2018-osaka', '2018-iburi']
+    for (const { id } of LOCALES) {
+      const m = await loadMessages(id)
+      expect(Object.keys(m.settings.replay.archives.names).sort(), id).toEqual([...ids].sort())
+    }
+  })
+
+  it('更新の印の意味', async () => {
+    const en = await loadMessages('en')
+    expect(JA_MESSAGES.updateMark.raised).toBe('最新の情報で上がりました')
+    expect(en.updateMark).toEqual({
+      new: 'New in the latest report', raised: 'Raised in the latest report', lowered: 'Lowered in the latest report', changed: 'Changed in the latest report',
+    })
+  })
+
+  it('地図の地方名は ASCII と日本語の地名の字だけで書く（地図の字は焼いた字形で描く）', async () => {
+    const jaChars = new Set([...Object.keys(JA_MESSAGES.map.regionName).join('')])
+    for (const { id } of LOCALES) {
+      const m = await loadMessages(id)
+      for (const name of Object.values(m.map.regionName)) {
+        for (const ch of name) {
+          const cp = ch.codePointAt(0) ?? 0
+          expect(cp >= 0x20 && cp < 0x7f || jaChars.has(ch), `${id}: ${name}`).toBe(true)
+        }
+      }
+    }
+    const en = await loadMessages('en')
+    expect(regionLabel('伊豆諸島', en.map)).toBe('Izu Islands')
+    expect(regionLabel('伊豆諸島', JA_MESSAGES.map)).toBe('伊豆諸島')
+  })
+
+  it('地域の窓の地方の名前と、出典の添え書き（日本語は全角の括弧、英語は半角の括弧）', async () => {
+    const en = await loadMessages('en')
+    expect(en.quake.filter.groupName['九州沖縄']).toBe('Kyushu & Okinawa')
+    expect(JA_MESSAGES.quake.filter.groupName['九州沖縄']).toBe('九州沖縄')
+    expect(`PB2002 (Bird, 2003)${JA_MESSAGES.settings.credits.paren(JA_MESSAGES.settings.credits.plateBoundaries)}`).toBe('PB2002 (Bird, 2003)（プレート境界）')
+    expect(`PB2002 (Bird, 2003)${en.settings.credits.paren(en.settings.credits.plateBoundaries)}`).toBe('PB2002 (Bird, 2003) (plate boundaries)')
   })
 })
 

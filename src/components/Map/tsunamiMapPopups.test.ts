@@ -14,7 +14,9 @@ import { tsunamiLinePopupHtml } from './TsunamiLinesGL'
 import { buildSourcePoints, sourcePopupHtml } from './TsunamiSourceEpicentersGL'
 import { JA_MESSAGES } from '../../i18n/messages'
 import { attachTsunamiMarkerPopup, openTsunamiMarkerPopup, closeTsunamiMarkerPopups } from './gl/tsunamiMarkerPopup'
-import { observationFirstWaveText, tsunamiAreaPopupLines } from '../../utils/tsunami'
+import { observationFirstWaveText, tsunamiAreaPopupLines, tsunamiAreaPopupParts } from '../../utils/tsunami'
+import { tsunamiDetailsOf, buildTsunamiLinesFC } from './TsunamiLinesGL'
+import { en } from '../../i18n/messages/en'
 import type { TsunamiArea } from '../../types/earthquake'
 
 vi.mock('./gl/popupRegistry', () => ({ closeMapPopup: vi.fn() }))
@@ -54,12 +56,20 @@ describe('海岸線の吹き出し（予想波高と到達予想）', () => {
   const area = (over: Partial<TsunamiArea>): TsunamiArea => ({ name: '石川県能登', code: '360', grade: 'MajorWarning', immediate: false, ...over })
   // 正（2026-10-21 ユーザー選択「波高と到達予想も出す (Recommended)」）
   it('正: 予想波高と到達予想時刻を行にする', () => {
-    expect(tsunamiAreaPopupLines(area({ maxHeight: { description: '5m', value: 5 }, firstHeight: { arrivalTime: '2026-04-20T16:12:00', condition: '' } })))
+    expect(tsunamiAreaPopupLines(tsunamiAreaPopupParts(area({ maxHeight: { description: '5m', value: 5 }, firstHeight: { arrivalTime: '2026-04-20T16:12:00', condition: '' } })), JA_MESSAGES))
       .toEqual(['予想 5m', '到達予想 16:12'])
   })
   it('正: 時刻が無ければカードと同じバッジの語を出す', () => {
-    expect(tsunamiAreaPopupLines(area({ maxHeight: { description: '巨大' }, firstHeight: { condition: '津波到達中と推測' } })))
+    expect(tsunamiAreaPopupLines(tsunamiAreaPopupParts(area({ maxHeight: { description: '巨大' }, firstHeight: { condition: '津波到達中と推測' } })), JA_MESSAGES))
       .toEqual(['予想 巨大', '到達中'])
+    // 語も時刻も無い「ただちに津波来襲と予測」の区域は、その語のバッジ
+    expect(tsunamiAreaPopupLines(tsunamiAreaPopupParts(area({ immediate: true })), JA_MESSAGES)).toEqual(['まもなく到達'])
+  })
+  it('正: 地物の属性には値だけを持たせ、吹き出しを組むときに言語の辞書で文にする', () => {
+    const a = area({ maxHeight: { description: '5m', value: 5 }, firstHeight: { arrivalTime: '2026-04-20T16:12:00', condition: '' } })
+    const props = buildTsunamiLinesFC([{ name: a.name, grade: a.grade, area: a, segments: [] } as never], 1).features[0].properties
+    expect(tsunamiDetailsOf(props, JA_MESSAGES)).toEqual(['予想 5m', '到達予想 16:12'])
+    expect(tsunamiDetailsOf(props, en)).toEqual(['Forecast 5m', 'Est. arrival 16:12'])
   })
   it('正: 区域名・等級の下に行を並べる', () => {
     const html = tsunamiLinePopupHtml('石川県能登', '大津波警報', ['予想 5m', 'まもなく到達'], undefined, JA_MESSAGES)

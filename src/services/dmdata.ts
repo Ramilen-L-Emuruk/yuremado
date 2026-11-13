@@ -27,6 +27,7 @@ import { fetchJsonOutcome, outcomeJson, API_FETCH_TIMEOUT_MS } from '../utils/fe
 import { fetchTelegramText } from './telegramBody'
 import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
 import { TELEGRAM_LOG_ERROR } from '../utils/telegramLogErrorMark'
+import { bodyNoteFields, type TelegramBodyNote } from '../utils/telegramBodyNote'
 import {
   negotiateClassifications, eewHeadTypeFor, classificationLabel, PREFERRED_CLASSIFICATIONS,
   type DmdataClassification,
@@ -974,8 +975,8 @@ export class DmdataWebSocket {
     if (joined === null) {
       // まだ揃っていない断片。**本文は電文ログへ入れない** —— 1 断片が最大 512KB あり、
       // ログは直近ぶんを保持するので、生の本文を積むと数 MB が居座る。
-      this.onRawMessage?.(this.makeLogEntry(
-        headType, head, `（BUFR の断片 ${bytes.length} バイト・結合待ち）`, isTest, 'filtered', undefined, undefined, undefined,
+      this.onRawMessage?.(this.makeBufrLogEntry(
+        headType, head, { kind: 'bufrFragmentWaiting', bytes: bytes.length }, isTest, 'filtered', undefined, undefined, undefined,
       ))
       return
     }
@@ -983,8 +984,8 @@ export class DmdataWebSocket {
     const payload = buildBinaryPayload(headType, joined, id, time)
     if (payload?.kind !== 'estimatedIntensity') {
       // 読めなかった理由は復号側が記録している（→ `bufrEstimatedIntensity.ts`）。
-      this.onRawMessage?.(this.makeLogEntry(
-        headType, head, `（BUFR ${joined.length} バイト）`, isTest, 'error', undefined, TELEGRAM_LOG_ERROR.bufrDecodeFailed, joined,
+      this.onRawMessage?.(this.makeBufrLogEntry(
+        headType, head, { kind: 'bufr', bytes: joined.length }, isTest, 'error', undefined, TELEGRAM_LOG_ERROR.bufrDecodeFailed, joined,
       ))
       return
     }
@@ -995,16 +996,16 @@ export class DmdataWebSocket {
       if (this.debug) {
         dlog('二進電文の試験報を破棄（includeTest 無効）', { headType, telegramKind: payload.data.telegramKind })
       }
-      this.onRawMessage?.(this.makeLogEntry(
+      this.onRawMessage?.(this.makeBufrLogEntry(
         headType, head,
-        `（BUFR ${joined.length} バイト・電文の種類 ${payload.data.telegramKind}）`,
+        { kind: 'bufrKind', bytes: joined.length, telegramKind: payload.data.telegramKind },
         true, 'filtered', undefined, undefined, joined,
       ))
       return
     }
     if (this.debug) dlog('推計震度分布図を受信', { bytes: joined.length, cells: payload.data.count })
-    this.onRawMessage?.(this.makeLogEntry(
-      headType, head, `（BUFR ${joined.length} バイト・${payload.data.count} セル）`,
+    this.onRawMessage?.(this.makeBufrLogEntry(
+      headType, head, { kind: 'bufrCells', bytes: joined.length, cells: payload.data.count },
       // 結合した元の電文も行に持たせ、ダウンロードで .bin を落とす（2026-11-04 ユーザー選択「残して落とせる (Recommended)」。
       // 1 通の中央 45,502 バイト・最大 1,245,910 バイト＝全期間の控え 83 通）
       isTest, 'parsed', 'estimatedIntensity', undefined, joined,
@@ -1054,6 +1055,21 @@ export class DmdataWebSocket {
       ...(rawBytes ? { rawBytes } : {}),
       errorMessage,
     }
+  }
+
+  /** 二進電文の行（本文の代わりに要約の鍵と値を持たせる。→ `utils/telegramBodyNote.ts`）。引数は {@link makeLogEntry} と同じ並び */
+  private makeBufrLogEntry(
+    headType: string,
+    rawHead: unknown,
+    note: TelegramBodyNote,
+    isTest: boolean,
+    status: TelegramLogEntry['status'],
+    kind: TelegramLogEntry['kind'] | undefined,
+    errorMessage: string | undefined,
+    rawBytes: Uint8Array | undefined,
+  ): TelegramLogEntry {
+    const { rawBody, bodyNote } = bodyNoteFields(note)
+    return { ...this.makeLogEntry(headType, rawHead, rawBody, isTest, status, kind, errorMessage, rawBytes), bodyNote }
   }
 
   /**

@@ -7,6 +7,7 @@
 //
 // 生成データ（public/data/*.json）は取得状況の集計を持つ `fetchJsonWithTimeout` を使う。
 // 外部の配信元（DMDATA・強震モニタ・VOICEVOX・海底地形）はこちらを使う。
+import { errorText, jaErrorText, type ErrorText } from './localizedError'
 
 /**
  * DMDATA のアーカイブ本体（1 日ぶんの tar.gz）の上限。
@@ -43,11 +44,15 @@ export const KYOSHIN_FRAME_FETCH_TIMEOUT_MS = 2_500
 export class FetchTimeoutError extends Error {
   readonly url: string
   readonly timeoutMs: number
+  /** 画面に出す文の鍵と引数（`message` は日本語の文。→ `utils/localizedError.ts`） */
+  readonly errorText: ErrorText
   constructor(url: string, timeoutMs: number) {
-    super(`取得が ${timeoutMs / 1000} 秒以内に終わりませんでした: ${url}`)
+    const text = errorText('fetchTimeout', timeoutMs / 1000, url)
+    super(jaErrorText(text))
     this.name = 'FetchTimeoutError'
     this.url = url
     this.timeoutMs = timeoutMs
+    this.errorText = text
   }
 }
 

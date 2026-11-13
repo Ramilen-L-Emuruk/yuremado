@@ -4,7 +4,7 @@ import {
   isTsunamiExpired, mergeTsunamiObservations, isObservationMissing, firstWaveSpokenKey, changedObservationFields,
   sortObservationsForCardDisplay, isPartialTsunamiRetraction, type ObsUpdateMark, type TsunamiStateStep,
 } from './tsunami'
-import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, tsunamiPartialRetractionNotification, type TsunamiNotification } from './tsunamiNotification'
+import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, tsunamiPartialRetractionNotification, type TsunamiNotification, type TsunamiNotificationWords } from './tsunamiNotification'
 
 /**
  * 津波の報を受けたときの、通知と観測点の印の判定。**アプリの受信処理（`useLiveEventHandler`）と中継のプッシュ通知が同じものを使う**
@@ -268,9 +268,9 @@ export function tsunamiObservationMarks(
  * 発表のたびに同じ「発表」の通知が重なる。区域が空の報を弾くのは、見出しを等級から・本文を区域名から作るため。
  * 区域はカードの材料から取る（電文順で切ると、カードの先頭に並ぶ深刻な区域が通知から落ちる）。
  */
-export function tsunamiIssueNotificationFor(event: JMATsunami, basis: TsunamiCardOrderBasis): TsunamiNotification | null {
+export function tsunamiIssueNotificationFor(event: JMATsunami, basis: TsunamiCardOrderBasis, m: TsunamiNotificationWords): TsunamiNotification | null {
   if (event.cancelled || !isTsunamiGradeReport(event) || isTsunamiObservationOnly(event)) return null
-  return tsunamiIssueNotification(event, basis)
+  return tsunamiIssueNotification(event, basis, m)
 }
 
 /**
@@ -281,11 +281,12 @@ export function tsunamiObservationNotificationFor(
   event: JMATsunami,
   marks: Pick<TsunamiObservationMarks, 'entries'>,
   basis: TsunamiCardOrderBasis,
+  m: TsunamiNotificationWords,
 ): TsunamiNotification | null {
   if (event.cancelled || isTsunamiGradeReport(event) || marks.entries.length === 0) return null
   const markedNames = new Set(marks.entries.map(([name]) => name))
   const marked = sortObservationsForCardDisplay(basis.observations, basis.areas, basis.liftedAreas).filter(o => markedNames.has(o.name))
-  return marked.length > 0 ? tsunamiObservationNotification(event, marked) : null
+  return marked.length > 0 ? tsunamiObservationNotification(event, marked, m) : null
 }
 
 /**
@@ -293,13 +294,13 @@ export function tsunamiObservationNotificationFor(
  * **観測情報の通知を出した報（`notifiedObs` に {@link partialRetractionKey} がある報）への取消にだけ出す**（2026-11-09 ユーザー選択
  * 「音は全部・通知は通知した報だけ (Recommended)」）。札は観測情報の通知と同じ `tsunami-obs` で置き換える。中継も同じ判定を写す
  */
-export function tsunamiPartialRetractionNotificationFor(event: JMATsunami, notifiedObs: ReadonlySet<string>): TsunamiNotification | null {
+export function tsunamiPartialRetractionNotificationFor(event: JMATsunami, notifiedObs: ReadonlySet<string>, m: TsunamiNotificationWords): TsunamiNotification | null {
   if (!isPartialTsunamiRetraction(event)) return null
   // 種類だけで当てる（`forgetPartialRetractionsOf` と同じ理由。原因地震が加わると EventID が「A」から「A B」へ伸び、
   // 観測の通知を出したときの鍵と取消の鍵が一致しない。控えの全期間で、続く津波の報の間で伸びたのは 2 回）
   const suffix = `|${event.headType}`
   if (![...notifiedObs].some(key => key.endsWith(suffix))) return null
-  return tsunamiPartialRetractionNotification(event)
+  return tsunamiPartialRetractionNotification(event, m)
 }
 
 /**
@@ -308,11 +309,11 @@ export function tsunamiPartialRetractionNotificationFor(event: JMATsunami, notif
  * しまう。取消・失効だけを終わりの通知へ回し、それ以外（読めない値を含む）は解除の通知へ倒す（音・読み上げの扱いと揃える）。
  * 同じ取消の 2 通目を止めるのは呼び出し側（`tsunamiCancelKey`）。
  */
-export function tsunamiEndNotificationFor(event: JMATsunami, step: TsunamiStateStep | null): TsunamiNotification | null {
+export function tsunamiEndNotificationFor(event: JMATsunami, step: TsunamiStateStep | null, m: TsunamiNotificationWords): TsunamiNotification | null {
   if (!event.cancelled || step?.kind !== 'ended') return null
   return event.cancelReason === 'retracted' || event.cancelReason === 'expired'
-    ? tsunamiEndNotification(event)
-    : tsunamiLiftNotification(event)
+    ? tsunamiEndNotification(event, m)
+    : tsunamiLiftNotification(event, m)
 }
 
 /**

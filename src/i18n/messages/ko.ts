@@ -1,9 +1,10 @@
 import type { Messages } from '../messages'
 import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
-import { intlDateWords } from '../intlDates'
+import { intlDateWords, intlJstMonthDayTime } from '../intlDates'
 
 /** 日付の書式。言語ごとに 1 回だけ作って使い回す（→ `i18n/intlDates.ts`） */
 const KO_DATES = intlDateWords('ko')
+const KO_JST = intlJstMonthDayTime('ko')
 
 const TSUNAMI_WORDS: TsunamiTermWords = {
   grade: { MajorWarning: '대형 지진해일 경보', Warning: '지진해일 경보', Watch: '지진해일 주의보', Forecast: '지진해일 예보(약간의 해수면 변동)' },
@@ -86,6 +87,19 @@ export const ko: Messages = {
     notClickable: (names) => `${names}이(가) 클릭에 반응하지 않음`,
     nameList: (shown, rest) => (rest > 0 ? `${shown.join(', ')} 외 ${rest}건` : shown.join(', ')),
     loadingData: '데이터를 가져오는 중…',
+    dataNames: {
+      prefectures: '현 경계',
+      subregions: '구역 경계',
+      'station-coords': '관측점 위치',
+      'tsunami-zones': '지진해일 예보구',
+      'active-faults': '활성단층',
+      'plate-boundaries': '판 경계',
+      'tsunami-obs-coords': '지진해일 관측점 위치',
+      'public-stations': '공개 관측점',
+    },
+    unknownData: '지도 데이터',
+    dataNameList: (names, rest) => (rest > 0 ? `${names.join(', ')} 외 ${rest}건` : names.join(', ')),
+    dataLoadFailed: (subject, gaveUp) => `${subject}을(를) 가져오지 못함(${gaveUp ? '다시 불러오면 다시 가져옵니다' : '다시 가져오는 중'})`,
     updatedAt: (time) => (time !== null ? `갱신 ${time}` : '수신 대기 중…'),
     seismoDisconnected: '지진계 미연결',
   },
@@ -127,6 +141,7 @@ export const ko: Messages = {
     observedAsOf: (t) => `${t} 기준 관측`,
     expires: (t) => `만료 ${t}`,
     estimatedArrival: (t) => `도달 예상 ${t}`,
+    forecastHeight: (h) => `예상 ${h}`,
     estimatedArrivalAfter: (t) => `도달 예상 ${t}`,
     highTide: (t) => `만조 ${t}`,
     maxWave: (t) => `최대파 ${t}`,
@@ -203,7 +218,7 @@ export const ko: Messages = {
       internationalTsunami: '국제 지진해일 관련 정보',
     },
     controlTitle: {
-      '津波警報・注意報・予報a': '지진해일 경보・주의보・예보(a)',
+      '津波警報・注意報・予報a': '지진해일 경보·주의보·예보(a)',
       '津波情報a': '지진해일 정보(a)',
       '沖合の津波観測に関する情報': '앞바다 지진해일 관측 정보',
       '緊急地震速報配信テスト': '긴급 지진 속보 배포 테스트',
@@ -212,38 +227,47 @@ export const ko: Messages = {
       '緊急地震速報（地震動予報）': '긴급 지진 속보(지진동 예보)',
       '震度速報': '진도 속보',
       '震源に関する情報': '진원 정보',
-      '震源・震度に関する情報': '진원・진도 정보',
+      '震源・震度に関する情報': '진원·진도 정보',
       '地震の活動状況等に関する情報': '지진 활동 상황 정보',
       '地震回数に関する情報': '지진 횟수 정보',
       '顕著な地震の震源要素更新のお知らせ': '현저한 지진의 진원 요소 갱신 알림',
       '長周期地震動に関する観測情報': '장주기 지진동 관측 정보',
       '南海トラフ地震臨時情報': '난카이 해곡 지진 임시 정보',
       '南海トラフ地震関連解説情報': '난카이 해곡 지진 관련 해설 정보',
-      '北海道・三陸沖後発地震注意情報': '홋카이도・산리쿠 앞바다 후발 지진 주의 정보',
-      '地震・津波に関するお知らせ': '지진・지진해일 관련 알림',
+      '北海道・三陸沖後発地震注意情報': '홋카이도·산리쿠 앞바다 후발 지진 주의 정보',
+      '地震・津波に関するお知らせ': '지진·지진해일 관련 알림',
     },
     headType: {
       VXSE42: '긴급 지진 속보 배포 테스트',
       VXSE43: '긴급 지진 속보(경보)',
-      VXSE44: '긴급 지진 속보(예보・구 형식)',
+      VXSE44: '긴급 지진 속보(예보·구 형식)',
       VXSE45: '긴급 지진 속보(지진동 예보)',
       VXSE51: '진도 속보',
       VXSE52: '진원 정보',
-      VXSE53: '진원・진도',
+      VXSE53: '진원·진도',
       VXSE60: '지진 횟수 정보',
       VXSE61: '현저한 지진의 진원 요소 갱신 알림',
       VXSE62: '장주기 지진동',
-      VTSE41: '지진해일 경보・주의보',
+      VTSE41: '지진해일 경보·주의보',
       VTSE51: '지진해일 관측 정보',
       VTSE52: '앞바다 지진해일 관측 정보',
       VYSE50: '난카이 해곡 지진 임시 정보',
       VYSE51: '난카이 해곡 지진 관련 해설 정보(임시 해설)',
       VYSE52: '난카이 해곡 지진 관련 해설 정보(정례 해설)',
-      VYSE60: '홋카이도・산리쿠 앞바다 후발 지진 주의 정보',
-      VZSE40: '지진・지진해일 관련 알림',
+      VYSE60: '홋카이도·산리쿠 앞바다 후발 지진 주의 정보',
+      VZSE40: '지진·지진해일 관련 알림',
       IXAC41: '추계 진도 분포도 작도용 데이터',
       IXAC40: '추계 진도 분포도 작도용 데이터(구 형식)',
       WEPA60: '국제 지진해일 관련 정보(영문)',
+    },
+    bodyNote: {
+      bufr: (bytes) => `(BUFR ${bytes}바이트)`,
+      bufrFragment: (bytes) => `(BUFR 조각 ${bytes}바이트)`,
+      bufrFragmentWaiting: (bytes) => `(BUFR 조각 ${bytes}바이트·결합 대기)`,
+      bufrKind: (bytes, telegramKind) => `(BUFR ${bytes}바이트·전문 종류 ${telegramKind})`,
+      bufrCells: (bytes, cells) => `(BUFR ${bytes}바이트·${cells}셀)`,
+      bufrFragmentSkipped: '(BUFR 조각·본문은 가져오지 않음)',
+      bufrFile: (file) => `(BUFR ${file})`,
     },
     errorMessage: {
       'body decode failed': '본문을 복호화하지 못했습니다',
@@ -436,7 +460,7 @@ export const ko: Messages = {
     issueType: {
       '震度速報': '진도 속보',
       '震源情報': '진원 정보',
-      '震源・震度情報': '진원・진도 정보',
+      '震源・震度情報': '진원·진도 정보',
       '各地の震度情報': '각지의 진도 정보',
       '顕著な地震の震源要素更新のお知らせ': '현저한 지진의 진원 요소 갱신 알림',
       '遠地地震': '원지 지진 정보',
@@ -486,12 +510,12 @@ export const ko: Messages = {
       class1: '장주기 지진동 계급 1 이상을 관측한 지역은 모두 진도 5약 이상입니다',
       class3: '장주기 지진동 계급 3 이상을 관측한 지역은 모두 진도 5약 이상입니다',
     },
-    lpgmCategoryRegions: (note, regions) => `${note}(${regions.join('・')})`,
-    lpgmPeriodsHeading: '주기별(계급・흔들림의 크기)',
+    lpgmCategoryRegions: (note, regions) => `${note}(${regions.join('·')})`,
+    lpgmPeriodsHeading: '주기별(계급·흔들림의 크기)',
     lpgmPeriodsNote: '주기가 길수록 높은 건물이 크게 흔들립니다',
     lpgmPeriod: (sec) => `${sec}초`,
     lpgmPeriodUnknown: '주기 불명',
-    lpgmDetailLink: '기상청 상세 페이지(파형・스펙트럼)',
+    lpgmDetailLink: '기상청 상세 페이지(파형·스펙트럼)',
     intlHeading: '국제 지진해일 관련 정보(영문)',
     intlTranslation: '일본어 번역',
     intlOriginal: '원문',
@@ -540,6 +564,13 @@ export const ko: Messages = {
       loadMore: '더 보기',
       fetching: '가져오는 중…',
       throttled: (left) => `가져오기 제한 중(남은 시간 ${left})`,
+      lossSources: (n) => `출처 ${n}건`,
+      lossTelegrams: (n) => `전문 ${n}건`,
+      historyLoss: (parts) => `${parts.join('·')}을(를) 가져오지 못함(다시 불러오면 다시 가져옵니다)`,
+      loadMoreFailed: '이어서 불러오기 실패(다시 시도하세요)',
+      reconnectGapLoss: '연결이 끊겼던 동안의 전문을 가져오지 못함(다시 불러오면 다시 가져옵니다)',
+      fetchThrottled: '요청이 많아 가져오기 제한 중(자동으로 재개합니다)',
+      rateLimited: (parts) => `요청이 많아 가져오기 제한 중(${parts.join('·')} 미취득)`,
       keyReentry: '예보를 받으려면 설정에서 API 키를 다시 입력하세요(주소가 바뀌어 이어받지 않았습니다)',
       loadingBackTo: (day) => `${day}까지 읽어 들이는 중…`,
       loadingSuffix: '(읽는 중)',
@@ -573,7 +604,10 @@ export const ko: Messages = {
       zoomOut: '축소',
       fitLabel: '전체 표시',
       fit: '전체',
-      groupName: { 海域: '해역', 遠方: '원방' },
+      groupName: {
+        海域: '해역', 遠方: '원방',
+        北海道: '홋카이도', 東北: '도호쿠', 関東: '간토', 中部: '주부', 近畿: '긴키', 中国: '주고쿠', 四国: '시코쿠', 九州沖縄: '규슈·오키나와',
+      },
       chip: {
         scaleRange: (from, to) => `진도 ${from}〜${to}`,
         scaleMin: (from) => `진도 ${from} 이상`,
@@ -606,6 +640,12 @@ export const ko: Messages = {
     },
   },
   map: {
+    // 地図の字は焼いた字形（日本語の地名と ASCII だけ）で描く。ハングルは字形に無いので、地方名は日本語の字のまま出す。
+    // （2026-11-12 ユーザー選択「日本語の字のまま (Recommended)」）
+    regionName: {
+      北海道: '北海道', 東北: '東北', 関東: '関東', 伊豆諸島: '伊豆諸島', 小笠原: '小笠原', 北陸: '北陸', 甲信: '甲信',
+      東海: '東海', 近畿: '近畿', 中国: '中国', 四国: '四国', 九州: '九州', 奄美: '奄美', 沖縄: '沖縄',
+    },
     layerName: {
       eewEpicenters: '긴급 지진 속보의 진원',
       quakeHypocenters: '지진의 진원',
@@ -742,7 +782,7 @@ export const ko: Messages = {
       location: '등록 지점과 지진계',
       share: '공유와 저장',
       about: '이 앱에 대하여',
-      dev: '개발・검증',
+      dev: '개발·검증',
     },
     dialog: {
       title: '설정',
@@ -786,7 +826,7 @@ export const ko: Messages = {
       unlimited: '무제한',
       seconds: (n: number) => `${n}초`,
       minutes: (n: number) => `${n}분`,
-      listSeparator: '・',
+      listSeparator: '·',
       preview: '▶ 미리 듣기',
     },
     rows: {
@@ -810,7 +850,7 @@ export const ko: Messages = {
       },
       testDelivery: {
         label: '시험보 수신(검증용)',
-        description: '시험보・훈련보도 수신합니다. 국제 지진해일 관련 정보의 통신 시험은 켜져 있을 때만 소리・알림・음성 읽기로 알립니다. 긴급 지진 속보의 배포 테스트는 연결 확인에만 쓰고 화면에는 표시하지 않습니다',
+        description: '시험보·훈련보도 수신합니다. 국제 지진해일 관련 정보의 통신 시험은 켜져 있을 때만 소리·알림·음성 읽기로 알립니다. 긴급 지진 속보의 배포 테스트는 연결 확인에만 쓰고 화면에는 표시하지 않습니다',
       },
       notifyEnabled: {
         label: '알림 표시',
@@ -818,11 +858,11 @@ export const ko: Messages = {
       },
       notifyQuietWhileOpen: {
         label: '앱을 열어 둔 동안에는 알리지 않음',
-        description: '앱이 화면에 나와 있는 동안에는 알림(푸시 알림 포함)을 보내지 않습니다. 화면 표시와 알림음・음성 읽기는 그대로입니다',
+        description: '앱이 화면에 나와 있는 동안에는 알림(푸시 알림 포함)을 보내지 않습니다. 화면 표시와 알림음·음성 읽기는 그대로입니다',
       },
       notifyQuake: {
         label: '지진 정보 알림',
-        description: '지진 정보・장주기 지진동・추계 진도 분포도・지진 횟수 정보를 받았을 때 알립니다',
+        description: '지진 정보·장주기 지진동·추계 진도 분포도·지진 횟수 정보를 받았을 때 알립니다',
       },
       notifyMinScale: {
         label: '알림 최저 진도',
@@ -835,15 +875,15 @@ export const ko: Messages = {
       },
       notifyEEW: {
         label: '긴급 지진 속보 알림',
-        description: '긴급 지진 속보가 나왔을 때와 경보・특별경보로 올라갔을 때 알립니다',
+        description: '긴급 지진 속보가 나왔을 때와 경보·특별경보로 올라갔을 때 알립니다',
       },
       notifyTsunami: {
         label: '지진해일 알림',
-        description: '지진해일 경보・주의보・예보가 발표되었을 때와 모두 해제되었을 때 알립니다',
+        description: '지진해일 경보·주의보·예보가 발표되었을 때와 모두 해제되었을 때 알립니다',
       },
       notifyNankai: {
-        label: '난카이 해곡・후발 지진 알림',
-        description: '난카이 해곡 지진 임시 정보・홋카이도・산리쿠 앞바다 후발 지진 주의 정보와 임시 해설 정보를 받았을 때 알립니다',
+        label: '난카이 해곡·후발 지진 알림',
+        description: '난카이 해곡 지진 임시 정보·홋카이도·산리쿠 앞바다 후발 지진 주의 정보와 임시 해설 정보를 받았을 때 알립니다',
       },
       notifyNankaiRoutine: {
         label: '정례 해설 정보 알림',
@@ -851,15 +891,15 @@ export const ko: Messages = {
       },
       notifyQuakeNotice: {
         label: '공지 알림',
-        description: '지진・지진해일 관련 알림을 받았을 때 알립니다',
+        description: '지진·지진해일 관련 알림을 받았을 때 알립니다',
       },
       notifyPrefectures: {
         label: '알림 지역',
-        description: '선택한 도도부현과 관련된 정보만 알립니다. 지진 정보는 진도를 관측한 도도부현, 긴급 지진 속보는 대상 지역, 지진해일은 예보구로 판단합니다. 선택하지 않으면 전국의 정보를 알립니다. 난카이 해곡・후발 지진・지진 횟수 등 지역이 없는 정보는 거르지 않습니다',
+        description: '선택한 도도부현과 관련된 정보만 알립니다. 지진 정보는 진도를 관측한 도도부현, 긴급 지진 속보는 대상 지역, 지진해일은 예보구로 판단합니다. 선택하지 않으면 전국의 정보를 알립니다. 난카이 해곡·후발 지진·지진 횟수 등 지역이 없는 정보는 거르지 않습니다',
       },
       notifyPermission: {
         label: '알림 권한',
-        description: '브라우저의 알림 권한을 확인・허용합니다',
+        description: '브라우저의 알림 권한을 확인·허용합니다',
       },
       testNotification: {
         label: '테스트 알림',
@@ -872,11 +912,11 @@ export const ko: Messages = {
       },
       sound: {
         label: '알림음',
-        description: '지진・긴급 지진 속보・지진해일 수신 시 소리를 울립니다',
+        description: '지진·긴급 지진 속보·지진해일 수신 시 소리를 울립니다',
       },
       tts: {
         label: '음성 읽기',
-        description: '지진・긴급 지진 속보・지진해일 정보를 음성으로 읽습니다',
+        description: '지진·긴급 지진 속보·지진해일 정보를 음성으로 읽습니다',
       },
       ttsVoice: {
         label: '읽기 음성',
@@ -888,12 +928,12 @@ export const ko: Messages = {
         description: '알림음과 음성 읽기에 공통인 음량입니다',
       },
       nankaiCommentaryAlerts: {
-        label: '해설 정보의 소리・음성 읽기',
+        label: '해설 정보의 소리·음성 읽기',
         description: '난카이 해곡 지진 관련 해설 정보의 알림음과 음성 읽기를 합니다. 이 정보는 평상시에도 매달 옵니다',
       },
       quakeNoticeAlerts: {
-        label: '공지의 소리・음성 읽기',
-        description: '지진・지진해일 관련 알림의 알림음과 음성 읽기를 합니다',
+        label: '공지의 소리·음성 읽기',
+        description: '지진·지진해일 관련 알림의 알림음과 음성 읽기를 합니다',
       },
       kyoshinDetectSpeech: {
         label: '흔들림 감지 음성 읽기',
@@ -946,7 +986,7 @@ export const ko: Messages = {
         option: (n: number) => `+${n}개 지역까지`,
       },
       ttsReadHypocenterDetail: {
-        label: '진원 깊이・규모',
+        label: '진원 깊이·규모',
         description: '「石川県能登地方、深さ10キロメートルを震源とするマグニチュード5.2の地震が発生しました」처럼 읽습니다. 끄면 진원의 지명만 읽습니다',
       },
       ttsUnreceivedDetail: {
@@ -958,7 +998,7 @@ export const ko: Messages = {
       },
       ttsMaxObservationPoints: {
         label: '지진해일 관측점 읽기 건수',
-        description: '지진해일 관측 정보에서 읽을 관측점 수입니다. 파고 갱신・지진해일 경보 상당의 관측・도달 확인・결측에서 각각 이 건수까지 읽고, 나머지는 「ほかN地点」처럼 건수로 전합니다',
+        description: '지진해일 관측 정보에서 읽을 관측점 수입니다. 파고 갱신·지진해일 경보 상당의 관측·도달 확인·결측에서 각각 이 건수까지 읽고, 나머지는 「ほかN地点」처럼 건수로 전합니다',
         option: (n: number) => `${n}개 지점`,
       },
       ttsReadEewLpgmClass: {
@@ -971,7 +1011,7 @@ export const ko: Messages = {
       },
       ttsReadTelegramText: {
         label: '기상청 발표문',
-        description: '전문에 덧붙은 본문・부가문(난카이 해곡 지진 임시 정보의 본문 등)을 읽습니다. 진도나 지진해일 읽기가 끝난 뒤에 읽으므로, 전문이 이어지는 동안에는 읽지 못할 수 있습니다',
+        description: '전문에 덧붙은 본문·부가문(난카이 해곡 지진 임시 정보의 본문 등)을 읽습니다. 진도나 지진해일 읽기가 끝난 뒤에 읽으므로, 전문이 이어지는 동안에는 읽지 못할 수 있습니다',
       },
       uiScale: {
         label: 'UI 배율',
@@ -989,7 +1029,7 @@ export const ko: Messages = {
       },
       quakeNoticeBanner: {
         label: '공지 표시',
-        description: '지진・지진해일 관련 알림을 지도 아래에 표시합니다',
+        description: '지진·지진해일 관련 알림을 지도 아래에 표시합니다',
       },
       showBathymetry: {
         label: '해저 지형 표시',
@@ -1005,11 +1045,11 @@ export const ko: Messages = {
       },
       showPlateBoundaries: {
         label: '판 경계선 표시',
-        description: '지진 정보・실시간・지진해일 정보 탭의 지도에 세계의 판 경계선을 표시합니다(PB2002 모델)',
+        description: '지진 정보·실시간·지진해일 정보 탭의 지도에 세계의 판 경계선을 표시합니다(PB2002 모델)',
       },
       showActiveFaults: {
         label: '활단층선 표시',
-        description: '지진 정보・실시간 탭의 지도에 전국의 활단층선을 표시합니다(산총연 활단층 데이터베이스)',
+        description: '지진 정보·실시간 탭의 지도에 전국의 활단층선을 표시합니다(산총연 활단층 데이터베이스)',
       },
       activeFaultOpacity: {
         label: '활단층선 농도',
@@ -1017,7 +1057,7 @@ export const ko: Messages = {
       },
       showQuakeHeatmap: {
         label: '지진 활동 히트맵 표시',
-        description: '지진 정보・실시간 탭의 지도에 지진 활동을 히트맵으로 표시합니다. 기간은 아래 칸이나 지도의 범례에서 바꿀 수 있습니다',
+        description: '지진 정보·실시간 탭의 지도에 지진 활동을 히트맵으로 표시합니다. 기간은 아래 칸이나 지도의 범례에서 바꿀 수 있습니다',
       },
       heatmapPeriod: {
         label: '히트맵 기간',
@@ -1025,7 +1065,7 @@ export const ko: Messages = {
       },
       showMapLegend: {
         label: '범례 표시',
-        description: '지도 오른쪽 아래에, 지금 지도에 쓰인 색의 의미(진도・지진해일 등급・진원 깊이 등)를 겹쳐 표시합니다. 제목을 탭하면 접을 수 있습니다',
+        description: '지도 오른쪽 아래에, 지금 지도에 쓰인 색의 의미(진도·지진해일 등급·진원 깊이 등)를 겹쳐 표시합니다. 제목을 탭하면 접을 수 있습니다',
       },
       defaultTab: {
         label: '기본 탭',
@@ -1041,12 +1081,12 @@ export const ko: Messages = {
       },
       idleRevertSec: {
         label: '자동 복귀 시간',
-        description: '조작・정보 갱신이 이 시간 동안 없으면 기본 탭으로 돌아갑니다',
+        description: '조작·정보 갱신이 이 시간 동안 없으면 기본 탭으로 돌아갑니다',
         off: '사용 안 함',
       },
       periodicReload: {
         label: '정기 자동 새로고침',
-        description: '매일 오전 5시에 화면을 다시 시작해 메모리를 확보합니다. 지진・지진해일・긴급 지진 속보 발표 중에는 미룹니다',
+        description: '매일 오전 5시에 화면을 다시 시작해 메모리를 확보합니다. 지진·지진해일·긴급 지진 속보 발표 중에는 미룹니다',
       },
       recordingMode: {
         label: '녹화 모드',
@@ -1054,7 +1094,7 @@ export const ko: Messages = {
       },
       actionChecklist: {
         label: '행동 체크리스트',
-        description: '강한 흔들림이 있을 때 취해야 할 행동과 챙길 물건을 화면 위쪽에 표시합니다. 긴급 지진 속보・실시간 진도・지진 정보 중 하나로 판정합니다',
+        description: '강한 흔들림이 있을 때 취해야 할 행동과 챙길 물건을 화면 위쪽에 표시합니다. 긴급 지진 속보·실시간 진도·지진 정보 중 하나로 판정합니다',
       },
       actionChecklistMinScale: {
         label: '표시할 최저 진도',
@@ -1116,7 +1156,7 @@ export const ko: Messages = {
       },
       usageStats: {
         label: '사용 현황 데이터 보내기',
-        description: '열어 본 탭・사용하는 기능・설정・기기 종류 등을 보냅니다. 이름・IP 주소・등록한 지점은 보내지 않습니다. 끄면 이 기기의 식별자도 지워집니다.',
+        description: '열어 본 탭·사용하는 기능·설정·기기 종류 등을 보냅니다. 이름·IP 주소·등록한 지점은 보내지 않습니다. 끄면 이 기기의 식별자도 지워집니다.',
       },
       serverClockOffset: {
         label: '서버 시각 오프셋',
@@ -1125,7 +1165,7 @@ export const ko: Messages = {
     },
     connection: {
       disconnected: '연결 끊김',
-      upstreamSince: (time: string) => `・${time}부터`,
+      upstreamSince: (time: string) => `·${time}부터`,
       upstreamDown: (since: string) => `연결 끊김(배포 서버와 DMDATA.JP의 연결이 끊김${since})`,
       viaRelay: '연결됨(배포 서버 경유)',
       viaApiKey: '연결됨(API 키)',
@@ -1142,11 +1182,11 @@ export const ko: Messages = {
       labels: {
         'eew.forecast': '긴급 지진(예보)',
         'eew.warning': '긴급 지진(경보)',
-        'telegram.earthquake': '지진・지진해일 관련',
+        'telegram.earthquake': '지진·지진해일 관련',
       },
-      separator: '・',
+      separator: '·',
     },
-    apiKeyInvalid: 'API 키에 쓸 수 없는 문자가 들어 있습니다. 반각 영숫자・기호만 입력하세요.',
+    apiKeyInvalid: 'API 키에 쓸 수 없는 문자가 들어 있습니다. 반각 영숫자·기호만 입력하세요.',
     signedKey: {
       remove: '지우기',
       relayRejected: '배포 서버가 이 키를 받아들이지 않았습니다',
@@ -1194,7 +1234,7 @@ export const ko: Messages = {
       unset: '미설정',
       getCurrent: '현재 위치 가져오기',
       clear: '지우기',
-      manual: '위도・경도로 입력',
+      manual: '위도·경도로 입력',
       latitude: '위도',
       longitude: '경도',
       apply: '이 지점으로 설정',
@@ -1204,8 +1244,8 @@ export const ko: Messages = {
       invalid: 'URL 형식이 올바르지 않음. http:// 또는 https://로 시작하게 입력하세요',
       checking: '확인 중…',
       noStations: '연결됨: 관측점 미설정',
-      notArrived: (stations: number) => `연결됨: 관측점 ${stations}・아직 수신 없음`,
-      ok: (stations: number, sensors: number) => `연결됨: 관측점 ${stations}・센서 ${sensors}`,
+      notArrived: (stations: number) => `연결됨: 관측점 ${stations}·아직 수신 없음`,
+      ok: (stations: number, sensors: number) => `연결됨: 관측점 ${stations}·센서 ${sensors}`,
       timeout: (seconds: number) => `응답 없음: ${seconds}초 기다린 뒤 중단함. 호스트가 실행 중인지 확인하세요`,
       mixedContent: '연결 불가: 이 페이지는 https이므로 http 호스트에는 연결할 수 없음. https:// URL을 입력하세요',
       offline: '연결 불가: 이 기기가 오프라인 상태. 네트워크에 연결하세요',
@@ -1260,7 +1300,7 @@ export const ko: Messages = {
         60: '1시간마다',
       },
       sounds: {
-        pips: '삐・삐・삐・띵',
+        pips: '삐·삐·삐·띵',
         pon: '띵',
         chime: '차임',
         none: '울리지 않음',
@@ -1287,9 +1327,9 @@ export const ko: Messages = {
         lpgm: '장주기 지진동 관측 정보',
         nankai: '난카이 해곡 지진 임시 정보',
         nankaiCommentary: '난카이 해곡 지진 관련 해설 정보',
-        kohatsu: '홋카이도・산리쿠 앞바다 후발 지진 주의 정보',
+        kohatsu: '홋카이도·산리쿠 앞바다 후발 지진 주의 정보',
         earthquakeCount: '지진 횟수 정보',
-        quakeNotice: '지진・지진해일 관련 알림',
+        quakeNotice: '지진·지진해일 관련 알림',
       },
       labels: {
         quakeForecast: '고정 부가문',
@@ -1318,16 +1358,16 @@ export const ko: Messages = {
         quakeVarComment: '기상청 이외의 기관이 운영하는 관측점(＊표시)에 대한 설명이나 「震源要素を訂正します。」 같은 정형문입니다. 예:「＊印は気象庁以外の震度観測点についての情報です。」',
         quakeFreeText: '그 전문에만 덧붙는 설명입니다. 내용은 보마다 바뀝니다. 예:「この地震とほぼ同時刻に別の地震が発生していますが、緊急作業中で震度を分離できないため、この情報で震度を取りまとめて発表しています。」',
         tsunamiBody: '지진해일이 언제 오고 언제까지 계속되는지에 대한 설명입니다. 지진해일 예보에서는 구역에 파고도 도달 시각도 붙지 않으므로 이 문장에만 쓰여 있습니다. 예:「これらの沿岸では今後２、３時間程度は若干の海面変動が継続する可能性が高いと考えられます。」',
-        tsunamiVarComment: '대피 안내, 만조 시각, 연안・앞바다 관측에 관한 정형문입니다. 대피 안내 자체는 이 설정과 관계없이 읽습니다. 예:「ただちに避難してください。」에 이어 대형 지진해일 경보・지진해일 경보・지진해일 주의보 각각의 행동이 쓰여 있습니다(약 600자)',
+        tsunamiVarComment: '대피 안내, 만조 시각, 연안·앞바다 관측에 관한 정형문입니다. 대피 안내 자체는 이 설정과 관계없이 읽습니다. 예:「ただちに避難してください。」에 이어 대형 지진해일 경보·지진해일 경보·지진해일 주의보 각각의 행동이 쓰여 있습니다(약 600자)',
         tsunamiFreeText: '그 전문에만 덧붙는 설명입니다. 예:「［予想される津波の高さの解説］」에 이어 10m 초과부터 1m까지 5단계의 피해가 쓰여 있습니다',
         lpgmForecast: '「この地震について、緊急地震速報を発表しています。」 같은 정형문입니다',
         lpgmVarComment: '기상청 이외의 기관이 운영하는 관측점(＊표시)에 대한 설명입니다. 예:「＊印は気象庁以外の長周期地震動観測点についての情報です。」',
         lpgmFreeText: '계급과 흔들림 크기의 대응표 등 그 전문의 보충입니다. 예:「各長周期地震動階級に対する簡易な現象表現」에 이어 「階級１やや大きな揺れ」부터 계급 4까지 나열되고, 자세한 관측 결과를 볼 수 있는 곳이 붙습니다',
-        nankaiSummary: '발표 내용을 한 문장으로 정리한 것입니다. 화면의 배너에 나오는 제목과 같은 문장입니다. 지진의 발생 시각・진원・규모에 이어 상정 진원 구역의 상황과 방재 대응 안내가 쓰여 있습니다',
+        nankaiSummary: '발표 내용을 한 문장으로 정리한 것입니다. 화면의 배너에 나오는 제목과 같은 문장입니다. 지진의 발생 시각·진원·규모에 이어 상정 진원 구역의 상황과 방재 대응 안내가 쓰여 있습니다',
         nankaiBody: '조사 결과와 평가 근거입니다. 실제 전문에서는 1000자를 넘기도 합니다',
         nankaiNextAdvisory: '다음 정보가 언제 나오는지에 대한 안내입니다. 예:「次回の情報発表は、２１時頃を予定しています。」',
         nankaiCommentarySummary: '발표 내용을 한 문장으로 정리한 것입니다. 화면의 배너에 나오는 제목과 같은 문장입니다. 예:「第１０９回南海トラフ沿いの地震に関する評価検討会で、南海トラフ周辺の地殻活動を評価しました。」',
-        nankaiCommentaryBody: '지각 활동의 관측 상황과 평가입니다. 실제 전문에서는 1600자를 넘기도 합니다. 지진 관측 상황・지각 변동 관측 상황・지각 활동 평가의 3개 절로 구성되며, 심부 저주파 지진이 일어난 구간 등을 날짜와 함께 듭니다',
+        nankaiCommentaryBody: '지각 활동의 관측 상황과 평가입니다. 실제 전문에서는 1600자를 넘기도 합니다. 지진 관측 상황·지각 변동 관측 상황·지각 활동 평가의 3개 절로 구성되며, 심부 저주파 지진이 일어난 구간 등을 날짜와 함께 듭니다',
         nankaiCommentaryNextAdvisory: '다음 정보가 언제 나오는지에 대한 안내입니다. 예:「次回の情報発表は、２２日１５時３０分頃を予定しています。」',
         kohatsuSummary: '발표 내용을 한 문장으로 정리한 것입니다. 화면의 배너에 나오는 제목과 같은 문장입니다. 지진의 발생과, 상정 진원 구역에서 대규모 지진의 가능성이 평상시보다 높아졌다는 내용이 쓰여 있습니다',
         kohatsuBody: '발표 이유와 취해야 할 방재 대응에 대한 설명입니다',
@@ -1344,14 +1384,14 @@ export const ko: Messages = {
         eewIssued: '긴급 지진 속보 발표 고지',
         lpgmClassTable: '장주기 지진동 계급 기준',
         tsunamiHeightLegend: '지진해일 높이 기준',
-        earthquakeInfoAppendix: '난카이 해곡・후발 지진 정보의 참고 정보',
+        earthquakeInfoAppendix: '난카이 해곡·후발 지진 정보의 참고 정보',
       },
       descriptions: {
         starMark: '기상청 이외의 기관이 운영하는 관측점(＊표시)에 대한 설명입니다. 예:「＊印は気象庁以外の震度観測点についての情報です。」(장주기 지진동 관측 정보에서는 「長周期地震動観測点」). 음성 읽기에서는 ＊가 소리로 나오지 않아 무엇과 대비하는지 전해지지 않습니다',
         eewIssued: '예:「この地震について、緊急地震速報を発表しています。」 긴급 지진 속보 자체는 화면과 소리로 알리므로 꺼도 놓치지 않습니다',
         lpgmClassTable: '계급과 흔들림 크기의 대응표와, 자세한 관측 결과를 볼 수 있는 곳입니다. 예:「各長周期地震動階級に対する簡易な現象表現」에 이어 「階級１やや大きな揺れ」부터 계급 4까지 나열됩니다. 장주기 지진동 관측 정보의 거의 모든 보에 들어갑니다',
         tsunamiHeightLegend: '예상되는 지진해일 높이와 피해의 대응표입니다. 예:「［予想される津波の高さの解説］」에 이어 10m 초과부터 1m까지 5단계의 피해가 쓰여 있습니다(307자. 읽으면 약 50초)',
-        earthquakeInfoAppendix: '난카이 해곡 지진 임시 정보・난카이 해곡 지진 관련 해설 정보・홋카이도・산리쿠 앞바다 후발 지진 주의 정보의 끝에 붙는, 정보의 종류와 발표 조건에 대한 설명입니다. 매번 거의 같은 문장입니다. 화면에서는 배너의 "이 종류의 정보에 대해"에서 열 수 있습니다',
+        earthquakeInfoAppendix: '난카이 해곡 지진 임시 정보·난카이 해곡 지진 관련 해설 정보·홋카이도·산리쿠 앞바다 후발 지진 주의 정보의 끝에 붙는, 정보의 종류와 발표 조건에 대한 설명입니다. 매번 거의 같은 문장입니다. 화면에서는 배너의 "이 종류의 정보에 대해"에서 열 수 있습니다',
       },
     },
     io: {
@@ -1376,7 +1416,7 @@ export const ko: Messages = {
         noKeys: '키가 들어 있지 않습니다',
       },
       keysLoaded: (forecastKey: boolean, arrivalToken: boolean) =>
-        `${[forecastKey ? '예보 키' : null, arrivalToken ? '도달 예측 키' : null].filter(Boolean).join('・')}을(를) 가져왔습니다(다른 설정은 그대로입니다)`,
+        `${[forecastKey ? '예보 키' : null, arrivalToken ? '도달 예측 키' : null].filter(Boolean).join('·')}을(를) 가져왔습니다(다른 설정은 그대로입니다)`,
     },
     shareCardFormats: {
       wide16x9: 'X(16:9)',
@@ -1408,7 +1448,7 @@ export const ko: Messages = {
       privacy: '개인정보 처리방침',
       licenses: '사용 소프트웨어 라이선스',
       quakeData: {
-        label: '지진・지진해일 데이터',
+        label: '지진·지진해일 데이터',
       },
       publicWave: {
         label: '공개 관측점 파형',
@@ -1416,6 +1456,12 @@ export const ko: Messages = {
       map: {
         label: '지도',
       },
+      paren: (text) => ` (${text})`,
+      jpNetwork: 'JP 관측망',
+      distributedBy: (name) => `${name} 배포`,
+      boundaries: '경계·해안선',
+      seafloor: '해저 지형',
+      plateBoundaries: '판 경계',
     },
     soundTest: {
       intensityTitle: (label: string) => `진도 ${label} 갱신음 미리 듣기`,
@@ -1423,7 +1469,7 @@ export const ko: Messages = {
       note: '누르면 각 알림음을 미리 들을 수 있습니다. 알림음을 꺼 두어도 울립니다',
       kyoshinCandidate: {
         label: '흔들림 감지(후보)',
-        description: '마림바 단음 F#5(확정 전 예고 알림・차분하게)',
+        description: '마림바 단음 F#5(확정 전 예고 알림·차분하게)',
       },
       kyoshin: {
         label: '흔들림 감지(첫 감지)',
@@ -1458,15 +1504,15 @@ export const ko: Messages = {
         description: '피아노 상승 3음 G#4→B4→E5',
       },
       earthquake: {
-        label: '지진 정보(진원・진도 / 각지의 진도)',
+        label: '지진 정보(진원·진도 / 각지의 진도)',
         description: '피아노 상승 4음 E4→G#4→B4→E5',
       },
       earthquakeInfo: {
-        label: '지진 정보(진원 정보・원지 지진)',
+        label: '지진 정보(진원 정보·원지 지진)',
         description: '피아노 2음 G4→B4',
       },
       earthquakeCancel: {
-        label: '지진 정보・장주기 지진동・지진 횟수 취소',
+        label: '지진 정보·장주기 지진동·지진 횟수 취소',
         description: '피아노 하강 3음 E5→B4→E4',
       },
       tsunamiForecast: {
@@ -1490,11 +1536,11 @@ export const ko: Messages = {
         description: '순음 2음 F#4→C#5(부드러운 알림)',
       },
       tsunamiCancel: {
-        label: '지진해일 해제・취소・만료',
+        label: '지진해일 해제·취소·만료',
         description: '순음 G4→C4 종지형(3가지 이유를 하나의 소리로 전함)',
       },
       specialInfo: {
-        label: '난카이 해곡 지진 임시 정보・홋카이도・산리쿠 앞바다 후발 지진 주의 정보',
+        label: '난카이 해곡 지진 임시 정보·홋카이도·산리쿠 앞바다 후발 지진 주의 정보',
         description: '순음 A4×2연타 → D5',
       },
       specialInfoCommentary: {
@@ -1506,11 +1552,11 @@ export const ko: Messages = {
         description: '순음 같은 음 3연속 C5(위의 두 가지와 달리 음정을 움직이지 않음)',
       },
       specialInfoCancel: {
-        label: '난카이 해곡・후발 지진 취소',
+        label: '난카이 해곡·후발 지진 취소',
         description: '순음 하강 3음 D5→A4→D4',
       },
       kyoshinUpdate: {
-        label: '흔들림 감지・진도 갱신',
+        label: '흔들림 감지·진도 갱신',
         description: '경고 비프음. 진도가 높을수록 음 수가 늘고 간격이 좁아짐. 진도를 탭하여 미리 듣기',
       },
       countdown: {
@@ -1520,7 +1566,7 @@ export const ko: Messages = {
     },
     test: {
       note: '동작 확인용입니다. 실제 데이터는 바뀌지 않습니다.',
-      note2: '긴급 지진 속보는 누를 때마다 다음 보가 도착하고, 10초 동안 누르지 않으면 최종보로 끝납니다(모두 2024-04-17 豊後水道 M6.6의 기상청 샘플 전문이 바탕입니다). 지진해일과 특별 정보는 90초 뒤에 해제・취소가 도착합니다.',
+      note2: '긴급 지진 속보는 누를 때마다 다음 보가 도착하고, 10초 동안 누르지 않으면 최종보로 끝납니다(모두 2024-04-17 豊後水道 M6.6의 기상청 샘플 전문이 바탕입니다). 지진해일과 특별 정보는 90초 뒤에 해제·취소가 도착합니다.',
       eewForecast: {
         label: '지진동 예보',
         description: '예보 상태로 이어지는 보. 누르면 예상 진도가 3 → 4로 올라감 – eewForecast 소리',
@@ -1528,7 +1574,7 @@ export const ko: Messages = {
       },
       eewStrongShaking: {
         label: '지진동 예보(매우 강한 흔들림 감지)',
-        description: '진원을 정하기 전에 강한 흔들림을 감지한 관측점만으로 나오는 제1보(최대 진도 5약). M・깊이・발생 시각을 내지 않고 기상청 본문을 진원 이름 아래에 표시 – eewForecast 소리',
+        description: '진원을 정하기 전에 강한 흔들림을 감지한 관측점만으로 나오는 제1보(최대 진도 5약). M·깊이·발생 시각을 내지 않고 기상청 본문을 진원 이름 아래에 표시 – eewForecast 소리',
         button: '강한 흔들림 감지 테스트',
       },
       eewAssumed: {
@@ -1563,12 +1609,12 @@ export const ko: Messages = {
       },
       eewRetraction: {
         label: '긴급 지진 속보(오보 취소)',
-        description: '경보까지 올라간 뒤 실제 전문의 취소가 도착 – eewCancel 소리(알림・음성 읽기 있음)',
+        description: '경보까지 올라간 뒤 실제 전문의 취소가 도착 – eewCancel 소리(알림·음성 읽기 있음)',
         button: '오보 취소 테스트',
       },
       eewLateRetraction: {
         label: '긴급 지진 속보(자동 해제 후 오보 취소)',
-        description: '최종보까지 보내고, 자동 해제로 화면에서 사라진 10초 뒤에 취소가 도착 – eewCancel 소리(알림・음성 읽기 있음)',
+        description: '최종보까지 보내고, 자동 해제로 화면에서 사라진 10초 뒤에 취소가 도착 – eewCancel 소리(알림·음성 읽기 있음)',
         button: '늦은 오보 취소 테스트',
       },
       earthquake: {
@@ -1578,7 +1624,7 @@ export const ko: Messages = {
       },
       unreceivedQuake: {
         label: '지진 정보(진도를 입수하지 못한 지점이 많은 보)',
-        description: '日向灘 M6.4 최대 진도 5강(실제 전문) – 진도를 입수하지 못한 지점이 60곳. 시정촌・구역・현의 행에 "일부 미수신" 표시가 붙고, 값 자체가 도착하지 않은 18개 시정촌은 "5약 이상"으로 표시됨',
+        description: '日向灘 M6.4 최대 진도 5강(실제 전문) – 진도를 입수하지 못한 지점이 60곳. 시정촌·구역·현의 행에 "일부 미수신" 표시가 붙고, 값 자체가 도착하지 않은 18개 시정촌은 "5약 이상"으로 표시됨',
         button: '미수신 테스트',
       },
       maxScaleOrAboveQuake: {
@@ -1587,13 +1633,13 @@ export const ko: Messages = {
         button: '5약 이상 테스트',
       },
       areaUnreceivedQuake: {
-        label: '지진 정보(구역 전체가 "5약 이상・미수신"인 보)',
+        label: '지진 정보(구역 전체가 "5약 이상·미수신"인 보)',
         description: '미수신 테스트의 한 구역을, 그 안의 시정촌이 모두 미수신인 형태로 바꾼 것(기상청 자료가 정한 형태이며 실제 전문 표본은 없음). 구역의 최대 진도가 실리지 않아도 목록과 음성 읽기에 남음',
         button: '구역 미수신 테스트',
       },
       foreignQuake: {
         label: '원지 지진',
-        description: '멕시코 치아파스주 연안 M7.4 깊이 불명(실데이터) – earthquakeInfo 소리 / 국내 진도 없음・일본에 지진해일 영향 없음',
+        description: '멕시코 치아파스주 연안 M7.4 깊이 불명(실데이터) – earthquakeInfo 소리 / 국내 진도 없음·일본에 지진해일 영향 없음',
         button: '원지 지진 테스트',
       },
       foreignQuakeHuge: {
@@ -1608,17 +1654,17 @@ export const ko: Messages = {
       },
       internationalTsunamiDomesticAndOnly: {
         label: '국내 지진과 영문만 있는 국제 지진해일 관련 정보',
-        description: '日向灘 M7.1(실데이터)의 진원・진도 정보와 같은 지진의 국제 지진해일 관련 정보(영문) – earthquakeInfo 소리 / 3초 뒤에 영문이 도착해 日向灘 지진 카드에 원문이 붙음 / 6초 뒤에 지진 정보가 없는 지진의 영문이 도착해 목록에 영문만 있는 카드(국제 지진해일 관련 정보)가 나옴 / 9초 뒤에 통신 시험 영문이 도착함("시험보 수신(검증용)"이 켜져 있을 때만 소리・알림・음성 읽기와 배너가 나옴. 꺼져 있으면 전문 로그에만 남음). 영문이 도착하면 earthquakeInfo 소리와 알림이 나오고 일본어로 요약을 읽음',
+        description: '日向灘 M7.1(실데이터)의 진원·진도 정보와 같은 지진의 국제 지진해일 관련 정보(영문) – earthquakeInfo 소리 / 3초 뒤에 영문이 도착해 日向灘 지진 카드에 원문이 붙음 / 6초 뒤에 지진 정보가 없는 지진의 영문이 도착해 목록에 영문만 있는 카드(국제 지진해일 관련 정보)가 나옴 / 9초 뒤에 통신 시험 영문이 도착함("시험보 수신(검증용)"이 켜져 있을 때만 소리·알림·음성 읽기와 배너가 나옴. 꺼져 있으면 전문 로그에만 남음). 영문이 도착하면 earthquakeInfo 소리와 알림이 나오고 일본어로 요약을 읽음',
         button: '영문만 테스트',
       },
       headlineOnlyCity: {
         label: '제목에만 있는 시정촌',
-        description: '2024-01-01 佐渡付近의 진원・진도 정보(실데이터)에서 輪島市가 제목에만 실린 형태 – earthquakeInfo 소리 / 진도 목록의 石川県能登 아래에 輪島市(진도 3)가 나열됨. 이 시정촌에는 관측점 행이 없음',
+        description: '2024-01-01 佐渡付近의 진원·진도 정보(실데이터)에서 輪島市가 제목에만 실린 형태 – earthquakeInfo 소리 / 진도 목록의 石川県能登 아래에 輪島市(진도 3)가 나열됨. 이 시정촌에는 관측점 행이 없음',
         button: '제목 시정촌 테스트',
       },
       noIntensityQuake: {
         label: '진도를 관측하지 않은 지진',
-        description: '2024-08-08 日向灘의 진원・진도 정보(실데이터)에서 진도 칸을 뺀 형태 – earthquakeInfo 소리 / 최저 진도 설정과 관계없이 "日向灘 Mj7.1(진도 1 이상 관측 없음)" 알림이 나옴',
+        description: '2024-08-08 日向灘의 진원·진도 정보(실데이터)에서 진도 칸을 뺀 형태 – earthquakeInfo 소리 / 최저 진도 설정과 관계없이 "日向灘 Mj7.1(진도 1 이상 관측 없음)" 알림이 나옴',
         button: '진도 없음 테스트',
       },
       quakeAmendment: {
@@ -1628,7 +1674,7 @@ export const ko: Messages = {
       },
       quakeReportSequence: {
         label: '종류가 앞뒤로 바뀌는 보',
-        description: '진도 속보 → 진원 정보 → 진도 속보 → 진원・진도 정보 → 그 후속보 → 진도 속보 → 그 후속보의 7통(앞의 4통은 2024년 노토반도 지진 전진과 같은 순서). 제목에 받은 종류가 나열되고, 진원・진도 정보로 속보 단계가 접힘. 1통째는 진도가 아직 다 모이지 않은 형태(최대 진도 5약)이고 3통째에 5강이 나오므로, 브라우저 알림을 켜 두었다면 "최대 진도 갱신" 알림이 나옴. 늦게 도착한 진도 속보로 카드가 움직이지 않는 것, 진도가 오르내린 행에 표시가 붙는 것도 여기서 볼 수 있음',
+        description: '진도 속보 → 진원 정보 → 진도 속보 → 진원·진도 정보 → 그 후속보 → 진도 속보 → 그 후속보의 7통(앞의 4통은 2024년 노토반도 지진 전진과 같은 순서). 제목에 받은 종류가 나열되고, 진원·진도 정보로 속보 단계가 접힘. 1통째는 진도가 아직 다 모이지 않은 형태(최대 진도 5약)이고 3통째에 5강이 나오므로, 브라우저 알림을 켜 두었다면 "최대 진도 갱신" 알림이 나옴. 늦게 도착한 진도 속보로 카드가 움직이지 않는 것, 진도가 오르내린 행에 표시가 붙는 것도 여기서 볼 수 있음',
         button: '종류 전환 테스트',
       },
       quakeCancel: {
@@ -1638,7 +1684,7 @@ export const ko: Messages = {
       },
       quakePartialCancel: {
         label: '지진 정보(일부 취소)',
-        description: '진도 속보와 진원・진도 정보를 내고, 진원・진도 정보 10초 뒤에 진도 속보만 취소함. 카드는 남고 제목 아래에 "진도 속보는 취소되었습니다"와 기상청 본문이 나옴',
+        description: '진도 속보와 진원·진도 정보를 내고, 진원·진도 정보 10초 뒤에 진도 속보만 취소함. 카드는 남고 제목 아래에 "진도 속보는 취소되었습니다"와 기상청 본문이 나옴',
         button: '일부 취소 테스트',
       },
       borrowFromTsunami: {
@@ -1648,12 +1694,12 @@ export const ko: Messages = {
       },
       magnitudeFromTsunami: {
         label: '지진해일 정보가 나중에 전하는 규모',
-        description: '진원・진도 정보(M7.4) → 지진해일 후속보(M7.6) → 진원・진도 정보 후속보(M7.6)(2024년 노토반도 지진 본진과 같은 순서). 지진해일 후속보가 지진 정보보다 새로운 규모를 전하면 카드의 규모도 M7.6이 되고, 행에 "지진해일 정보에서"라는 출처가 붙음. 다음 진원・진도 정보가 도착하면 출처 표시는 사라짐',
+        description: '진원·진도 정보(M7.4) → 지진해일 후속보(M7.6) → 진원·진도 정보 후속보(M7.6)(2024년 노토반도 지진 본진과 같은 순서). 지진해일 후속보가 지진 정보보다 새로운 규모를 전하면 카드의 규모도 M7.6이 되고, 행에 "지진해일 정보에서"라는 출처가 붙음. 다음 진원·진도 정보가 도착하면 출처 표시는 사라짐',
         button: '규모 갱신 테스트',
       },
       trainingQuake: {
         label: '훈련보',
-        description: '내용은 지진 테스트와 같지만(지진 정보와 장주기 지진동 관측 정보) 전문 헤더의 운용 종별(훈련)만 다름. 실제와 똑같이 화면・소리・음성 읽기로 보내고, 카드와 장주기 칸에 "훈련" 표시를 냄',
+        description: '내용은 지진 테스트와 같지만(지진 정보와 장주기 지진동 관측 정보) 전문 헤더의 운용 종별(훈련)만 다름. 실제와 똑같이 화면·소리·음성 읽기로 보내고, 카드와 장주기 칸에 "훈련" 표시를 냄',
         button: '훈련보 테스트',
       },
       tsunamiForecast: {
@@ -1682,7 +1728,7 @@ export const ko: Messages = {
         button: '만료 시각 테스트',
       },
       tsunamiGradeChange: {
-        label: '지진해일 경보・주의보(구역별로 등급이 바뀌는 후속보)',
+        label: '지진해일 경보·주의보(구역별로 등급이 바뀌는 후속보)',
         description: '지진해일 경보 → 石川県能登가 대형 지진해일 경보로 올라갔다가 이윽고 경보로 돌아오는 후속보(중간에 만조 시각 보를 끼움). 전체 등급이 바뀌지 않는 보에서는 구역별 "〇〇에서 상향" "〇〇에서 변경" 표시로만 변화를 알 수 있음',
         button: '구역 등급 변화 테스트',
       },
@@ -1692,7 +1738,7 @@ export const ko: Messages = {
         button: '원인 지진 추가 테스트',
       },
       tsunamiQuietReports: {
-        label: '지진해일 경보・주의보(변화가 작은 후속보)',
+        label: '지진해일 경보·주의보(변화가 작은 후속보)',
         description: '대형 지진해일 경보(2011년 도호쿠 지방 태평양 앞바다 지진 샘플 전문) → 10초 간격으로 후속보 16통. 등급도 파고 수치도 바뀌지 않는 보에서 알림음만 울리고 아무것도 읽지 않는 것을 확인함. 1통씩 釜石・大船渡・앞바다 값이 바뀌고, 값이 없는 관측점에 표시만 붙는 보도 있으며, 釜石가 결측으로 바뀌어 결측인 채 최대파 관측 시각만 진행되는 보도 있음',
         button: '작은 변화 후속보 테스트',
       },
@@ -1703,12 +1749,12 @@ export const ko: Messages = {
       },
       tsunamiInfoRetraction: {
         label: '지진해일 정보 취소(주의보는 계속)',
-        description: '지진해일 주의보 → 각지의 만조 시각・도달 예상 정보 → 그 정보만 취소. 사라지는 것은 그 정보가 전한 관측점뿐이고 주의보 구역은 남음. 음성 읽기는 취소된 사실만 전하고 소리는 울리지 않음',
+        description: '지진해일 주의보 → 각지의 만조 시각·도달 예상 정보 → 그 정보만 취소. 사라지는 것은 그 정보가 전한 관측점뿐이고 주의보 구역은 남음. 음성 읽기는 취소된 사실만 전하고 소리는 울리지 않음',
         button: '지진해일 정보 취소 테스트',
       },
       nankaiChecking: {
         label: '난카이 해곡 지진 임시 정보(조사 중)',
-        description: '배너 표시 + specialInfo 소리(배너 지우기 버튼 없음・다시 테스트하면 덮어씀)',
+        description: '배너 표시 + specialInfo 소리(배너 지우기 버튼 없음·다시 테스트하면 덮어씀)',
         button: '조사 중 테스트',
       },
       nankaiWatch: {
@@ -1728,7 +1774,7 @@ export const ko: Messages = {
       },
       nankaiCommentaryAdHoc: {
         label: '난카이 해곡 지진 관련 해설 정보(임시 해설)',
-        description: '배너 표시 + specialInfoCommentary 소리(닫기 버튼 있음・7일 후 자동 삭제)',
+        description: '배너 표시 + specialInfoCommentary 소리(닫기 버튼 있음·7일 후 자동 삭제)',
         button: '임시 해설 테스트',
       },
       nankaiCommentaryRetraction: {
@@ -1738,21 +1784,21 @@ export const ko: Messages = {
       },
       nankaiCommentaryRoutine: {
         label: '난카이 해곡 지진 관련 해설 정보(정례 해설)',
-        description: '평상시에 매달 오는 전문. 배너 표시 + specialInfoCommentary 소리(닫기 버튼 있음・7일 후 자동 삭제)',
+        description: '평상시에 매달 오는 전문. 배너 표시 + specialInfoCommentary 소리(닫기 버튼 있음·7일 후 자동 삭제)',
         button: '정례 해설 테스트',
       },
       activityInfo: {
         label: '지진 활동 상황 정보',
-        description: '전문 로그에 "건너뜀" 행이 1줄 나올 뿐. 카드・배너・소리는 나오지 않음(이 종류는 읽지 않고 전문 로그에 본문째 쌓음)',
+        description: '전문 로그에 "건너뜀" 행이 1줄 나올 뿐. 카드·배너·소리는 나오지 않음(이 종류는 읽지 않고 전문 로그에 본문째 쌓음)',
         button: '활동 상황 테스트',
       },
       kohatsu: {
-        label: '홋카이도・산리쿠 앞바다 후발 지진 주의 정보',
+        label: '홋카이도·산리쿠 앞바다 후발 지진 주의 정보',
         description: '배너 표시 + specialInfo 소리',
         button: '후발 지진 테스트',
       },
       kohatsuRetraction: {
-        label: '홋카이도・산리쿠 앞바다 후발 지진 주의 정보(취소)',
+        label: '홋카이도·산리쿠 앞바다 후발 지진 주의 정보(취소)',
         description: '후발 지진 주의 정보를 발표하고 같은 식별 정보의 취소를 보냄. 배너가 "취소" 표시로 바뀌어 10초 뒤 사라지고, 취소 소리가 울리며, 음성 읽기는 취소된 사실과 이유를 전함',
         button: '취소 테스트',
       },
@@ -1768,13 +1814,13 @@ export const ko: Messages = {
       },
       lpgmClassZero: {
         label: '장주기 지진동 관측 정보(계급 0)',
-        description: '계급 1 이상을 관측하지 않은 장주기 지진동 관측 정보를 보냅니다. 계급 1 이상의 보와 마찬가지로 소리・음성 읽기・알림이 있습니다',
+        description: '계급 1 이상을 관측하지 않은 장주기 지진동 관측 정보를 보냅니다. 계급 1 이상의 보와 마찬가지로 소리·음성 읽기·알림이 있습니다',
         button: '장주기 지진동(계급 0) 테스트',
       },
       lpgmCategories: {
-        label: '장주기 지진동 관측 정보(종류 1・3)',
-        description: '관측 정보 종류 1・3의 실제 전문(2024年1月1日 石川県能登地方・2024年8月8日 日向灘)을 보냅니다. 장주기 지진동 칸 아래에, 계급을 관측한 지역이 모두 진도 5약 이상이었음을 전하는 문장이 나옵니다',
-        button: '장주기 지진동(종류 1・3) 테스트',
+        label: '장주기 지진동 관측 정보(종류 1·3)',
+        description: '관측 정보 종류 1·3의 실제 전문(2024年1月1日 石川県能登地方・2024年8月8日 日向灘)을 보냅니다. 장주기 지진동 칸 아래에, 계급을 관측한 지역이 모두 진도 5약 이상이었음을 전하는 문장이 나옵니다',
+        button: '장주기 지진동(종류 1·3) 테스트',
       },
       lpgmClassZeroRegion: {
         label: '장주기 지진동 관측 정보(계급 0 지역 포함)',
@@ -1783,7 +1829,7 @@ export const ko: Messages = {
       },
       earthquakeCount: {
         label: '지진 횟수 정보(배너)',
-        description: '군발 시의 횟수 경과(21시간 동안 유감 1회)를 배너 표시 + earthquakeCount 소리・짧은 음성 읽기. 유감 이외는 「発表なし」로 오므로 표에는 「—」가 나열됨(닫기 버튼 있음・7일 후 자동 삭제)',
+        description: '군발 시의 횟수 경과(21시간 동안 유감 1회)를 배너 표시 + earthquakeCount 소리·짧은 음성 읽기. 유감 이외는 「発表なし」로 오므로 표에는 「—」가 나열됨(닫기 버튼 있음·7일 후 자동 삭제)',
         button: '지진 횟수 테스트',
       },
       earthquakeCountRetraction: {
@@ -1792,16 +1838,22 @@ export const ko: Messages = {
         button: '지진 횟수 취소 테스트',
       },
       quakeNotice: {
-        label: '지진・지진해일 관련 알림',
-        description: '관측점의 수신 중단 등 운용 연락. 배너 표시(소리와 음성 읽기는 "공지의 소리・음성 읽기"가 켜져 있을 때만・닫기 버튼 있음・7일 후 자동 삭제)',
+        label: '지진·지진해일 관련 알림',
+        description: '관측점의 수신 중단 등 운용 연락. 배너 표시(소리와 음성 읽기는 "공지의 소리·음성 읽기"가 켜져 있을 때만·닫기 버튼 있음·7일 후 자동 삭제)',
         button: '공지 테스트',
       },
     },
     replay: {
-      note: '지정한 날짜와 시각의 지진 정보・지진해일・긴급 지진 속보를 재생합니다(2020年11月18日 이후. 긴급 지진 속보만 2022年7月20日 이후). 실시간 진도는 최근 기간과 아래 지진에서만 재생할 수 있습니다.',
+      note: '지정한 날짜와 시각의 지진 정보·지진해일·긴급 지진 속보를 재생합니다(2020年11月18日 이후. 긴급 지진 속보만 2022年7月20日 이후). 실시간 진도는 최근 기간과 아래 지진에서만 재생할 수 있습니다.',
       archives: {
         label: '수록된 지진',
-        description: '여기서 재생하면 지진 정보・지진해일은 재현되지만 실시간 진도는 포함되지 않습니다. 필요하면 아래의 "K-NET 데이터 가져오기"에서 불러오세요.',
+        description: '여기서 재생하면 지진 정보·지진해일은 재현되지만 실시간 진도는 포함되지 않습니다. 필요하면 아래의 "K-NET 데이터 가져오기"에서 불러오세요.',
+        names: {
+          '2016-kumamoto': '2016년 구마모토 지진',
+          '2016-tottori': '2016년 돗토리현 중부 지진',
+          '2018-osaka': '2018년 오사카부 북부 지진',
+          '2018-iburi': '2018년 홋카이도 이부리 동부 지진',
+        },
       },
       play: '재생',
       start: {
@@ -1841,7 +1893,7 @@ export const ko: Messages = {
       count: (n: number) => `${n}건`,
       row: {
         label: '흔들림 감지 기록',
-        description: '흔들림 감지가 작동했을 때 그 전후 30초의 관측값・감지 내역・학습 상태를 기기 안에 남깁니다. 지진이 아닌데 감지했을 때 이 기록이 있으면 원인을 추적할 수 있습니다. 내보내기 전까지는 기기 밖으로 나가지 않습니다.',
+        description: '흔들림 감지가 작동했을 때 그 전후 30초의 관측값·감지 내역·학습 상태를 기기 안에 남깁니다. 지진이 아닌데 감지했을 때 이 기록이 있으면 원인을 추적할 수 있습니다. 내보내기 전까지는 기기 밖으로 나가지 않습니다.',
       },
     },
   },
@@ -1867,6 +1919,7 @@ export const ko: Messages = {
     more: (n) => `외 ${n}건`,
     noticeBadge: '알림',
     countBadge: '지진 횟수',
+    commentarySerial: { 臨時解説: '임시 해설', 定例解説: '정례 해설' },
     nankaiKind: {
       巨大地震警戒: '거대 지진 경계',
       巨大地震注意: '거대 지진 주의',
@@ -1985,8 +2038,172 @@ export const ko: Messages = {
       earthScope: 'EarthScope',
     },
     eewNotice:
-      '긴급 지진 속보는 지진 발생 직후의 추정 정보입니다. 오보이거나 진원・규모・예상 진도에 오차가 있을 수 있으며, 진원에 가까운 곳에서는 강한 흔들림보다 늦게 도착할 수 있습니다.',
+      '긴급 지진 속보는 지진 발생 직후의 추정 정보입니다. 오보이거나 진원·규모·예상 진도에 오차가 있을 수 있으며, 진원에 가까운 곳에서는 강한 흔들림보다 늦게 도착할 수 있습니다.',
     incomplete: '일부 지도 데이터를 읽어 들이는 중에 촬영되었습니다',
+  },
+  replayBanner: {
+    unreadable: '재생할 일시로 읽을 수 없습니다',
+    tooEarly: (year) => `${year}년 이전은 재생할 수 없습니다(어느 출처에도 데이터가 없습니다)`,
+    future: '미래의 시각은 재생할 수 없습니다',
+    mainFailed: (from, reason) => `본편(${from} 이후) 가져오기 실패: ${reason}`,
+    initialFailed: (reason) => `초기 상태(지난 24시간) 가져오기 실패: ${reason}`,
+    historyFailed: (reason) => `지진 카드의 이력을 복원하지 못했습니다(재생 시작 전의 지진이 목록에 나오지 않습니다. 재생은 계속됩니다): ${reason}`,
+    archiveFailed: (reason) => `${reason}(지진·지진해일 전문은 재생되지 않습니다. 실시간 진도의 재생은 계속됩니다)`,
+    prefetchLost: (from, reason) => `미리 읽기에 실패했습니다. ${from}부터의 1시간분은 재생되지 않습니다: ${reason}`,
+    prefetchRetrying: (from, reason) => `미리 읽기에 실패했습니다. ${from}부터의 1시간분을 다시 가져오는 중입니다: ${reason}`,
+    prefetchBlocks: (n) => `미리 읽기 ${n}구간`,
+    lossNotice: (parts) => `${parts.join('·')}을(를) 가져오지 못함(재생은 계속 중·자세한 내용은 콘솔)`,
+  },
+  waveChart: {
+    stale: '파형 끊김',
+    publicRefused: '공개 관측점 연결 수 상한',
+    composite: '합성',
+    sensorLane: '단독',
+    compositeStopped: '합성 끊김',
+    axes: ['동서', '남북', '상하'],
+    tallyGaps: (n) => `결측 ${n}`,
+    tallyRestarts: (n) => `재연결 ${n}`,
+    tallyDuplicates: (n) => `중복 ${n}`,
+    tallySeparator: ' / ',
+    collapse: '파형 접기',
+    expand: '파형 펼치기',
+    compressedNote: '세로축은 로그에 가까운 눈금으로 그립니다.',
+  },
+  updateMark: {
+    new: '최신 정보에서 처음 나온 값입니다',
+    raised: '최신 정보에서 올라갔습니다',
+    lowered: '최신 정보에서 내려갔습니다',
+    changed: '최신 정보에서 바뀌었습니다',
+  },
+  errorText: {
+    networkFailure: () => '연결할 수 없었습니다',
+    fetchFailed: () => '가져오기 실패',
+    fetchTimeout: (seconds, url) => `가져오기가 ${seconds}초 안에 끝나지 않았습니다: ${url}`,
+    apiKeyInvalid: () => 'API 키에 사용할 수 없는 문자가 포함되어 있습니다. 반각 영문자·숫자·기호만 입력하세요.',
+    apiKeyMissing: () => 'API 키가 설정되지 않았습니다. DM-D.S.S의 API 키를 설정하세요.',
+    relayTokenHttp: (status) => `중계의 토큰을 받지 못했습니다(HTTP ${status})`,
+    relayTokenUnreadable: () => '중계 토큰의 응답을 읽지 못했습니다',
+    relayTokenMalformed: () => '중계 토큰의 응답 형식이 예상과 다릅니다',
+    relayTokenShort: () => '중계 토큰의 유효 기간이 너무 짧습니다',
+    relayTokenNotReady: () => '내부 오류: 중계 토큰을 준비하기 전에 요청 헤더를 만들려고 했습니다',
+    archiveListHttp: (status) => `아카이브 목록을 가져오지 못했습니다: ${status}`,
+    archiveListNotOk: () => '아카이브 목록이 성공을 돌려주지 않았습니다',
+    archiveListCutOff: (maxPages, start, end, count) => `아카이브 목록이 도중에 끊겼습니다: 페이지 상한(${maxPages})에 도달 범위=${start}~${end} 건수=${count}`,
+    archiveAllFailed: (sources) => `아카이브를 가져오지 못했습니다: 출처 ${sources}건을 모두 읽지 못했습니다`,
+    sameDayRangeTooLong: (days, max, from, to) => `내부 오류: 당일 경로의 대상 기간이 너무 깁니다(${days}일 / 상한 ${max}일): ${from}〜${to}`,
+    localArchiveNoDay: (name) => `로컬 이력 아카이브 “${name}”에는 이날의 전문이 수록되어 있지 않습니다`,
+    localArchiveEnded: (name) => `로컬 이력 아카이브 “${name}”의 수록 범위 끝에 도달했습니다. 이후로는 재생할 수 없습니다`,
+    knetComponentFromName: (file) => `파일 이름에서 성분(NS/EW/UD)을 판정할 수 없습니다: "${file}"`,
+    knetScaleFactorFormat: (file, value) => `${file} 헤더: Scale Factor의 형식을 알 수 없습니다 "${value}"`,
+    knetScaleFactorDenominator: (file, value) => `${file} 헤더: Scale Factor의 분모가 올바르지 않습니다 "${value}"`,
+    knetSamplingFreq: (file, value) => `${file} 헤더: Sampling Freq를 해석할 수 없습니다 "${value}"`,
+    knetDateFormat: (file, value) => `${file} 헤더: 일시의 형식을 알 수 없습니다 "${value}"`,
+    knetTooShort: (file, headerLines) => `${file}: 헤더 행 수(${headerLines}행)에 못 미치는 데이터입니다`,
+    knetNoMemo: (file, line) => `${file}: ${line}행이 "Memo."로 시작하지 않습니다(헤더 행 수의 전제가 실제 파일과 맞지 않을 수 있습니다)`,
+    knetFieldMissing: (file, field) => `${file}: ${field}을(를) 찾을 수 없습니다`,
+    knetNonNumericToken: (file, token, line) => `${file}: 데이터 행에 숫자가 아닌 토큰이 있습니다 ("${token}", ${line}행)`,
+    knetNoData: (file) => `${file}: 데이터가 0건입니다`,
+    knetStepSec: () => '내부 오류: stepSec은 양의 정수(초)로 지정해야 합니다',
+    knetNoReadableStation: (count, items, more) => `파일 ${count}건의 해석에 실패해 읽은 관측점이 없습니다: ${items.join(' / ')}${more ? ' ...' : ''}`,
+    knetFileFailure: (file, reason) => `${file}: ${reason}`,
+    knetNoWaveFiles: () => 'ZIP 안에 NS/EW/UD 파형 파일이 하나도 없습니다',
+    knetMixedOrigin: (kinds) => `ZIP 안에 서로 다른 지진의 Origin Time이 섞여 있습니다(${kinds}종류). 여러 지진의 파일을 하나의 ZIP으로 묶지 않았는지 확인하세요`,
+    knetNoCompleteStation: (origin) => `origin=${origin}: 3성분이 갖춰진 관측점이 0건입니다`,
+    knetIncompleteRatio: (origin, percent) => `origin=${origin}: 3성분이 갖춰지지 않은 관측점이 ${percent}%에 이르렀습니다(성분·깊이 판정에 오류가 있을 수 있습니다)`,
+    knetTooManyExcluded: (origin, percent, incomplete, unreadable, uncomputable, examples) =>
+      `origin=${origin}: 제외한 관측점이 ${percent}%에 이르렀습니다(3성분 불완전 ${incomplete}점·읽을 수 없음 ${unreadable}점·진도 계산 불가 ${uncomputable}점). 예: ${examples.join(' / ')}`,
+    knetExcludedItem: (station, reason) => `${station} ${reason}`,
+    knetExcludedUnreadable: (reason) => `읽을 수 없음(${reason})`,
+    knetExcludedUncomputable: (reason) => `진도 계산 불가(${reason})`,
+    knetUncomputableReason: (hz, reason) => `초당 ${hz}회: ${reason}`,
+    knetNoIntensity: (origin) => `origin=${origin}: 유효한 계측 진도를 하나도 산출하지 못했습니다(모든 창의 데이터가 부족했습니다). 샘플링 주파수·스케일 팩터 등 산출 과정을 확인하세요`,
+    knetSampleRate: () => '내부 오류: sampleRateHz는 양수로 지정해야 합니다',
+    knetFilterDiverges: (hz, stage) => `초당 ${hz}회에서는 근사 필터의 ${stage}단이 발산합니다(샘플링 주파수가 너무 낮음)`,
+    knetDurationUnjudgeable: (seconds, hz) => `${seconds}초의 판정을 할 수 없습니다(초당 ${hz}회)`,
+    knetNonFiniteSample: (position) => `유한하지 않은 샘플이 섞여 있습니다: 위치 ${position}`,
+    knetStepSecPositive: () => '내부 오류: stepSec은 양수로 지정해야 합니다',
+    fftLengthMismatch: (n, m) => `내부 오류: 실수부와 허수부의 길이가 다릅니다: ${n}/${m}`,
+    fftNotPowerOfTwo: (n) => `내부 오류: 길이가 2의 거듭제곱이 아닙니다: ${n}`,
+  },
+  alertText: {
+    joinParts: (parts) => parts.join(' · '),
+    quakeTitle: '지진 정보',
+    quakeCancelTitle: '지진 정보 취소',
+    areaAndOthers: (name) => `${name} 외`,
+    scalePrompt: (area, scale) => (area === null ? `진도 속보 · 최대 진도 ${scale}` : `진도 속보 · ${area} · 최대 진도 ${scale}`),
+    hypocenter: (name, scale, magnitude) => `${name} · 최대 진도 ${scale} · ${magnitude}`,
+    maxScaleRaised: (body) => `최대 진도 갱신 · ${body}`,
+    noIntensity: (name, magnitude, noneObserved) => {
+      const base = name ? `${name} · ${magnitude}` : magnitude
+      return noneObserved ? `${base}(진도 1 이상 관측 없음)` : base
+    },
+    foreignQuake: (name, magnitude) => (name ? `원지 지진 · ${name} · ${magnitude}` : `원지 지진 · ${magnitude}`),
+    quakeCancelled: (body) => `${withTopic(body)} 취소되었습니다`,
+    eewWarningTitle: '긴급 지진 속보(경보)',
+    eewSpecialWarningTitle: '긴급 지진 속보(특별 경보)',
+    eewFinal: (title) => `${title}(최종보)`,
+    eewCancelTitle: '긴급 지진 속보 취소',
+    eewCancelled: (name) => (name ? `${name}의 긴급 지진 속보는 취소되었습니다` : '긴급 지진 속보는 취소되었습니다'),
+    eewKind: { warning: '긴급 지진 속보', forecast: '지진동 예보' },
+    maxScaleForecast: (scale) => `예상 최대 진도 ${scale}`,
+    lpgmForecast: (cls) => `예상 장주기 지진동 ${cls}`,
+    eewMore: (n) => `외 ${n}건`,
+    kyoshinDetected: '흔들림 감지 중',
+    kyoshinOtherPlace: '다른 지점에서 흔들림 감지',
+    kyoshinReonset: '같은 장소에서 다시 흔들림 감지',
+    kyoshinMax: (label) => `최대 실시간 진도 ${label}`,
+    nameSeparator: ', ',
+    tsunamiLifted: (areas) => `해제: ${areas}`,
+    tsunamiMoreAreas: (names, n) => `${names} 외 ${n}개 구역`,
+    tsunamiMorePoints: (names, n) => `${names} 외 ${n}개 지점`,
+    tsunamiLiftTitle: '지진해일 경보 등 해제',
+    tsunamiAllLifted: '지진해일 경보 등은 모두 해제되었습니다.',
+    tsunamiObservationTitle: '지진해일 관측 정보',
+    tsunamiInfoRetractTitle: '지진해일 정보 취소',
+    tsunamiInfo: '지진해일 정보',
+    tsunamiInfoRetracted: (name) => `${withTopic(name)} 취소되었습니다.`,
+    tsunamiRetractTitle: '지진해일 경보 등 취소',
+    tsunamiRetracted: '지진해일 경보 등은 잘못 발표되어 취소되었습니다.',
+    tsunamiExpireTitle: '지진해일 예보 실효',
+    tsunamiExpired: '지진해일 예보는 실효되었습니다.',
+    withStage: (name, stage) => `${name}(${stage})`,
+    lpgmFor: (name, infoName) => `${name}의 ${infoName}`,
+    lpgmMaxClass: (cls) => `최대 장주기 지진동 계급 ${cls}`,
+    estimatedIntensity: (at, name, isNew) => {
+      const quake = at ? `${at.hour}시 ${String(at.minute).padStart(2, '0')}분(JST)경 발생한 지진의 ` : ''
+      return `${quake}${name}${isNew ? '을(를) 수신했습니다' : '이(가) 갱신되었습니다'}`
+    },
+    internationalTsunami: (p) => {
+      const subject = [
+        p.when ? `${KO_JST(p.when)}(JST)경 발생한 지진` : '지진',
+        p.where,
+        p.depthKm !== null ? `깊이 ${p.depthKm}km` : '',
+        p.magnitude !== null ? `M${p.magnitude.toFixed(1)}` : '',
+      ].filter((s) => s !== '').join(', ')
+      return `${subject}: ${p.evaluation ?? `${p.name} 발표`}.`
+    },
+    internationalTsunamiEvaluation: {
+      oceanWide: '태평양의 넓은 범위에 피해를 줄 지진해일의 가능성이 있음',
+      regional: '진원에서 떨어진 지역까지 피해를 줄 지진해일의 가능성이 있음',
+      localNearEpicenter: '진원 부근에 피해를 줄 지진해일의 가능성이 있음',
+      verySmall: '피해를 줄 지진해일의 가능성은 매우 작음',
+      none: '지진해일의 가능성 없음',
+    },
+    internationalTsunamiCoordinate: (lat, lon, coordinate) => coordinate(Math.abs(lat).toFixed(1), Math.abs(lon).toFixed(1), lat < 0, lon < 0),
+    communicationsTest: '통신 시험입니다.',
+    titleTsunamiWarnings: '지진해일 경보·주의보 발표 중',
+    titleTsunamiForecast: '지진해일 예보 발표 중',
+    titleShakingDetected: '흔들림 감지',
+    titlePossibleShaking: '흔들림 가능성',
+    titleInEffect: (name) => `${name} 발표 중`,
+    titleLpgm: '장주기 지진동',
+    titleLpgmMaxClass: (cls) => `최대 계급 ${cls}`,
+    titleQuake: (name, scale) => `지진 정보 ${name} · 최대 진도 ${scale}`,
+    titleForeignQuake: (name, magnitude) => `원지 지진 ${name} ${magnitude}`,
+    titleReloadCountdown: (sec, periodic, app) => `${sec}초 후 ${periodic ? '다시 불러옵니다' : '업데이트합니다'} — ${app}`,
+    testTitle: '지진 정보 테스트',
+    testBody: '東京都内陸部(테스트) · 최대 진도 4 · M5.5',
+    permissionFirst: (button) => `먼저 “${button}”을(를) 누르세요.`,
   },
   formats: {
     intensity: { '-1': '불명', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5약', 50: '5강', 55: '6약', 60: '6강', 70: '7' },
@@ -2044,5 +2261,11 @@ export const ko: Messages = {
     monthDay: KO_DATES.monthDay,
     fullDate: KO_DATES.fullDate,
     calendarDate: KO_DATES.calendarDate,
+    paren: (text) => `(${text})`,
+    listSep: ', ',
+    spaceSep: () => ' ',
+    slash: ' / ',
+    slashSpaced: ' / ',
+    rangeSpaced: (from, to) => `${from} ~ ${to}`,
   },
 }

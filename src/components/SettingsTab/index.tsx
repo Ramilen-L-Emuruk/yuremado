@@ -31,6 +31,8 @@ import { DescriptionTip } from '../DescriptionTip'
 import { zipSync } from 'fflate'
 import { countRecords, listRecords, clearRecords, onRecordsChanged, hasStorageError } from '../../utils/detectionDiagnosticsDb'
 import { formatFileStamp } from '../../utils/formatters'
+import { historicalArchiveLabel } from '../../utils/historicalArchiveLabel'
+import { screenErrorMessage } from '../../utils/localizedError'
 import {
   arrivalTokenStatusLine, type ArrivalTokenStatus, type ArrivalTokenStatusTone,
 } from '../../utils/arrivalToken'
@@ -436,12 +438,15 @@ function DiagnosticLogRow() {
   )
 }
 
-/** 取り込めなかったファイルの理由の文。理由の分からない失敗は、投げられた文をそのまま出す */
-function kyoshinImportErrorText(e: KyoshinImportFileError, words: Messages['settings']['knet']): string {
+/**
+ * 取り込めなかったファイルの理由の文。そのほかの失敗は、鍵と引数を持てば言語の辞書で組み（→ `utils/localizedError.ts`）、
+ * 持たなければ投げられた文をそのまま出す
+ */
+function kyoshinImportErrorText(e: KyoshinImportFileError, words: Messages['settings']['knet'], errorWords: Messages['errorText']): string {
   switch (e.kind) {
     case 'noArchive': return words.noArchive(e.originTime.toLocaleString('ja-JP'))
     case 'saveFailed': return words.saveFailed
-    case 'other': return e.message
+    case 'other': return e.error instanceof Error ? screenErrorMessage(e.error, errorWords) : e.message
   }
 }
 
@@ -451,6 +456,7 @@ function kyoshinImportErrorText(e: KyoshinImportFileError, words: Messages['sett
  */
 function KyoshinImportRow({ historicalArchives }: { historicalArchives: HistoricalArchiveIndex }) {
   const w = useMessages().settings
+  const errorWords = useMessages().errorText
   const { summaries, importing, deletingArchiveId, errors, exclusions, deleteFailed, storageError, importFiles, deleteArchive } = useKyoshinImport(historicalArchives)
   const inputRef = useRef<HTMLInputElement>(null)
   const busy = importing || deletingArchiveId !== null
@@ -517,7 +523,7 @@ function KyoshinImportRow({ historicalArchives }: { historicalArchives: Historic
       {errors.length > 0 && (
         <div className="flex flex-col gap-0.5 items-end">
           {errors.map((e, i) => (
-            <span key={`${i}-${e.fileName}`} className="text-xs text-red-400 text-right break-all">{e.fileName}: {kyoshinImportErrorText(e, w.knet)}</span>
+            <span key={`${i}-${e.fileName}`} className="text-xs text-red-400 text-right break-all">{e.fileName}: {kyoshinImportErrorText(e, w.knet, errorWords)}</span>
           ))}
         </div>
       )}
@@ -780,7 +786,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
   /** 選べる声。VOICEVOX に繋がっていないときは空（声の行を出さない） */
   voicevoxSpeakers: readonly VoicevoxSpeaker[]
 }) {
-  const w = useMessages().settings
+  const { settings: w, formats: fw } = useMessages()
   const selectClass = 'bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white'
   const speech = settings.ttsEnabled
   return (
@@ -870,7 +876,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
                 onChange={e => onUpdate('timeSignalSpeakerId', e.target.value === '' ? null : Number(e.target.value))}>
                 <option value="">{w.timeSignal.sameAsSpeech}</option>
                 {voicevoxSpeakers.flatMap(spk =>
-                  spk.styles.map(st => <option key={st.id} value={st.id}>{spk.name}（{st.name}）</option>),
+                  spk.styles.map(st => <option key={st.id} value={st.id}>{spk.name}{fw.paren(st.name)}</option>),
                 )}
               </select>
             </Row>
@@ -957,6 +963,24 @@ function CreditRow({ label, items }: { label: string; items: readonly React.Reac
 }
 
 const CREDIT_LINK_CLASS = 'text-blue-400 hover:text-blue-300'
+
+/** 名前の位置の目印（辞書の文に名前の代わりに渡し、その位置へリンクを置く。文の中に現れない字） */
+const CREDIT_NAME_SLOT = '\u0000'
+
+/**
+ * 配信した施設（EarthScope）の出典。語順は言語ごとに辞書の `credits.distributedBy` が決め（日本語「配信 EarthScope」・
+ * 韓国語「EarthScope 배포」・中国語「由 EarthScope（NSF NGF）发布」）、名前の位置にリンクと括弧の添え書きを置く
+ */
+function DistributedByCredit({ sentence, paren }: { sentence: (name: string) => string; paren: string }) {
+  const [before, after = ''] = sentence(CREDIT_NAME_SLOT).split(CREDIT_NAME_SLOT)
+  return (
+    <>
+      {before}
+      <a href="https://www.earthscope.org/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>EarthScope</a>{paren}
+      {after}
+    </>
+  )
+}
 
 const SCALE_OPTIONS = [10, 20, 30, 40, 45, 50, 55, 60, 70] as const
 
@@ -1756,7 +1780,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   >
                     {voicevoxSpeakers.flatMap(spk =>
                       spk.styles.map(st => (
-                        <option key={st.id} value={st.id}>{spk.name}（{st.name}）</option>
+                        <option key={st.id} value={st.id}>{spk.name}{fw.paren(st.name)}</option>
                       ))
                     )}
                   </select>
@@ -2347,8 +2371,8 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             （2026-10-15 ユーザー承認）。EarthScope は運用者がライセンスを宣言していない網を CC BY 4.0 で配るので、
             運用者（気象庁）・配信した施設（EarthScope）・ライセンスの 3 つを挙げる（同 §2）。 */}
         <CreditRow label={w.credits.publicWave.label} items={[
-          <><a href="https://www.jma.go.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>気象庁</a>（JP 網）</>,
-          <>配信 <a href="https://www.earthscope.org/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>EarthScope</a>（NSF NGF）</>,
+          <><a href="https://www.jma.go.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>気象庁</a>{w.credits.paren(w.credits.jpNetwork)}</>,
+          <DistributedByCredit sentence={w.credits.distributedBy} paren={w.credits.paren('NSF NGF')} />,
           <a href="https://creativecommons.org/licenses/by/4.0/deed.ja" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>CC BY 4.0</a>,
         ]} />
         {/* 地図に描いているデータの出典。実体は各生成スクリプト・ローダーの冒頭コメント
@@ -2378,11 +2402,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             付けない）。**「」は元の資料名**——通称で呼んでいるものに付ける。
             PB2002 だけ用途が後ろへ回るのは、`PB2002 (Bird, 2003)` が割ってはならない引用の単位だから。 */}
         <CreditRow label={w.credits.map.label} items={[
-          '気象庁 予報区等 GIS データ（境界・海岸線）',
+          `気象庁 予報区等 GIS データ${w.credits.paren(w.credits.boundaries)}`,
           '気象庁 震源カタログ「地震月報」「震源リスト」',
-          'GEBCO・NOAA NCEI（海底地形）',
+          `GEBCO・NOAA NCEI${w.credits.paren(w.credits.seafloor)}`,
           '産総研 活断層データベース',
-          'PB2002 (Bird, 2003)（プレート境界）',
+          `PB2002 (Bird, 2003)${w.credits.paren(w.credits.plateBoundaries)}`,
         ]} />
         <Row label={w.rows.serverClockOffset.label} description={w.rows.serverClockOffset.description}>
           <ServerClockOffsetDisplay />
@@ -2762,8 +2786,8 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               {historicalArchives.map(a => (
                 <div key={a.id} className="flex items-center gap-2">
                   <DescriptionTip
-                    label={a.label}
-                    description={formatArchiveCoverage(a)}
+                    label={historicalArchiveLabel(a, w.replay.archives)}
+                    description={formatArchiveCoverage(a, fw)}
                   />
                   <button
                     onClick={() => onStartReplay(new Date(new Date(a.firstEventTime).getTime() - 60_000))}

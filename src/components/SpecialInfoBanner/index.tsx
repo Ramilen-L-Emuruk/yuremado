@@ -443,7 +443,8 @@ function OperationStatusBadge({ status }: { status?: TelegramOperationStatus }) 
  * 後発地震注意情報（VYSE60）は `@type` も `InfoKind` も「北海道・三陸沖後発地震注意情報」で、並べると同じ語が 2 回続く。
  */
 function InfoKindLine({ info }: { info: { earthquakeInfoType?: string; earthquakeInfoKind?: string } }) {
-  const text = [...new Set([info.earthquakeInfoType, info.earthquakeInfoKind].filter(Boolean))].join('／')
+  const slash = useMessages().formats.slash
+  const text = [...new Set([info.earthquakeInfoType, info.earthquakeInfoKind].filter(Boolean))].join(slash)
   if (!text) return null
   return <Marquee className="text-secondary text-(length:--ui-fs) leading-tight mt-0.5" text={text} testId="info-kind-line" />
 }
@@ -685,7 +686,8 @@ function CommentaryBanner({ list, speaking, readsAppendix, banners }: { list: re
   const si = useMessages().specialInfo
   const serialBadge = (commentary: JMANankaiCommentary) => (
     <span className="text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] shrink-0 bg-teal-500">
-      {commentary.serialName}
+      {/* 電文の値。辞書の表にある語だけ訳し、無い語は電文のまま出す（臨時情報の札と同じ） */}
+      {(Object.prototype.hasOwnProperty.call(si.commentarySerial, commentary.serialName) ? si.commentarySerial[commentary.serialName] : undefined) ?? commentary.serialName}
     </span>
   )
   return (

@@ -14,6 +14,8 @@ import {
 } from './labels'
 import { useMessages } from '../../i18n/I18nProvider'
 import { TELEGRAM_LOG_ERROR } from '../../utils/telegramLogErrorMark'
+import { telegramBodyNoteText } from '../../utils/telegramBodyNote'
+import type { TelegramLogMessages } from './labels'
 
 // 行には発信元の印を出さない。発信元が DMDATA の 1 つだけで、全行が同じ印になっていた
 // （2026-11-04 ユーザー選択「外す (Recommended)」。発信元が増えたら戻す）。
@@ -77,10 +79,12 @@ function isUndecodedBody(entry: TelegramLogEntry): boolean {
  * 2026-11-04 ユーザー選択「改行どおりに出す (Recommended)」）。ヘッダは電文の外側の情報なので、
  * 本文の前に JSON として置く。復号できなかった base64 も、そのまま見せてかまわない。
  */
-export function formatEntryForView(entry: TelegramLogEntry): string {
-  if (typeof entry.rawBody === 'string') {
+export function formatEntryForView(entry: TelegramLogEntry, tm: Pick<TelegramLogMessages, 'bodyNote'>): string {
+  // 二進電文の要約は、行が持つ鍵と値（`bodyNote`）からいまの言語で組む。欄の無い古い行は積んだときの文（`rawBody`）のまま
+  const body = entry.bodyNote !== undefined ? telegramBodyNoteText(entry.bodyNote, tm) : entry.rawBody
+  if (typeof body === 'string') {
     const head = entry.rawHead !== undefined ? `${JSON.stringify(entry.rawHead, null, 2)}\n\n` : ''
-    return head + entry.rawBody
+    return head + body
   }
   return JSON.stringify(buildDownloadPayload(entry), null, 2)
 }
@@ -206,11 +210,11 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
 
   const handleCopy = useCallback((entry: TelegramLogEntry) => {
-    navigator.clipboard.writeText(formatEntryForView(entry)).then(() => {
+    navigator.clipboard.writeText(formatEntryForView(entry, tm)).then(() => {
       setCopied(entry.id)
       setTimeout(() => setCopied(id => id === entry.id ? null : id), 1500)
     }).catch(() => {})
-  }, [])
+  }, [tm])
 
   const handleDownload = useCallback((entry: TelegramLogEntry) => {
     const download = formatEntryForDownload(entry)
@@ -461,7 +465,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                                 </button>
                               </div>
                               <pre className="font-mono text-secondary bg-black/30 rounded-sm p-2 overflow-x-auto max-h-[min(24rem,45dvh)] whitespace-pre-wrap break-all">
-                                {showControlChars(formatEntryForView(entry))}
+                                {showControlChars(formatEntryForView(entry, tm))}
                               </pre>
                             </>
                           )

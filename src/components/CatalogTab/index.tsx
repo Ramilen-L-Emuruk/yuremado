@@ -447,7 +447,7 @@ export const CatalogTab = memo(function CatalogTab({
           <span className="shrink-0">{cm.source}</span>
           <div className="flex flex-col @min-[520px]:items-end @min-[520px]:text-right">
             {index.source.split(' / ').map((s) => <span key={s}>{s}</span>)}
-            <span>（{index.license}）</span>
+            <span>{fw.paren(index.license)}</span>
           </div>
         </div>
       )}

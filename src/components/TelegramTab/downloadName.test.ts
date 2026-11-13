@@ -5,6 +5,8 @@ import { render, cleanup, act, fireEvent } from '@testing-library/react'
 import { TelegramTab, formatEntryForView, formatEntryForDownload, showControlChars } from './index'
 import type { TelegramLogEntry } from '../../types/earthquake'
 import { withTz } from '../../test-utils/withTz'
+import { ja } from '../../i18n/messages/ja'
+import { en } from '../../i18n/messages/en'
 
 // 電文ログのダウンロード名の時刻。UTC で作ると JST の端末では 9 時間ずれた名前が並び、
 // 画面に出ている受信時刻と突き合わせられない（診断ログ側と同じ穴）。
@@ -192,14 +194,14 @@ describe('電文ログの本文の見せ方・落とし方', () => {
 
   // 正: XML はエスケープせずそのまま見せる。改行が保たれること。
   it('XML の本文はエスケープせずに見せる', () => {
-    const text = formatEntryForView(xmlEntry(XML))
+    const text = formatEntryForView(xmlEntry(XML), ja.telegramLog)
     expect(text).toContain('<?xml version="1.0"')
     expect(text.split('\n').length).toBeGreaterThan(1)
   })
 
   // 正: ヘッダは電文の外側の情報なので、表示では XML の前に置く。
   it('ヘッダがあれば XML の前に JSON で置く', () => {
-    const text = formatEntryForView(xmlEntry(XML, { type: 'VXSE53' }))
+    const text = formatEntryForView(xmlEntry(XML, { type: 'VXSE53' }), ja.telegramLog)
     expect(text.indexOf('"type"')).toBeLessThan(text.indexOf('<?xml'))
   })
 
@@ -221,8 +223,8 @@ describe('電文ログの本文の見せ方・落とし方', () => {
   it('平文の電文は改行どおりに見せ、.txt で落とす', () => {
     const plain = 'WEPA60 RJTD 211247\r\nTSUNAMI BULLETIN NUMBER 001\r\n'
     const e = { ...xmlEntry(plain, { type: 'WEPA60' }), headType: 'WEPA60', kind: 'internationalTsunami' as const }
-    expect(formatEntryForView(e)).toContain('TSUNAMI BULLETIN NUMBER 001\r\n')
-    expect(formatEntryForView(e)).not.toContain('\\r\\n')
+    expect(formatEntryForView(e, ja.telegramLog)).toContain('TSUNAMI BULLETIN NUMBER 001\r\n')
+    expect(formatEntryForView(e, ja.telegramLog)).not.toContain('\\r\\n')
     expect(formatEntryForDownload(e)).toEqual({ text: plain, ext: 'txt' })
   })
 
@@ -231,7 +233,7 @@ describe('電文ログの本文の見せ方・落とし方', () => {
   it('画面に描くときだけ制御文字を図記号にし、コピーとダウンロードは生のまま', () => {
     const plain = 'WEPA60 RJTD 211247\r\n\tTSUNAMI BULLETIN NUMBER 001\r\n=\r\n\x03'
     const e = { ...xmlEntry(plain, { type: 'WEPA60' }), headType: 'WEPA60', kind: 'internationalTsunami' as const }
-    const view = formatEntryForView(e)
+    const view = formatEntryForView(e, ja.telegramLog)
     expect(showControlChars(view).endsWith('=\r\n␃')).toBe(true)
     expect(showControlChars(view)).toContain('211247\r\n\tTSUNAMI')
     expect(view.endsWith('=\r\n\x03')).toBe(true)
@@ -239,11 +241,23 @@ describe('電文ログの本文の見せ方・落とし方', () => {
     expect(showControlChars('a\x00b\x7f')).toBe('a␀b␡')
   })
 
+  // 正: 要約の鍵と値（`bodyNote`）を持つ行は、いまの言語の辞書で文にする。対照: 日本語の辞書なら本文の欄の文と同じ。
+  // 安全弁: 欄の無い古い行（下の 2 件のように要約の文だけを持つ行）は、その文のまま出す
+  it('二進の電文の要約は、行の鍵と値から言語の辞書で組む', () => {
+    const e = { ...xmlEntry('（BUFR 4 バイト・1 セル）'), headType: 'IXAC41', bodyNote: { kind: 'bufrCells' as const, bytes: 4, cells: 1 } }
+    expect(formatEntryForView(e, en.telegramLog)).toBe('(BUFR, 4 bytes, 1 cell)')
+    expect(formatEntryForView(e, ja.telegramLog)).toBe('（BUFR 4 バイト・1 セル）')
+    const waiting = { ...e, bodyNote: { kind: 'bufrFragmentWaiting' as const, bytes: 512 } }
+    expect(formatEntryForView(waiting, en.telegramLog)).toBe('(BUFR fragment, 512 bytes, waiting to join)')
+    const skipped = { ...e, bodyNote: { kind: 'bufrFragmentSkipped' as const } }
+    expect(formatEntryForView(skipped, en.telegramLog)).toBe('(BUFR fragment; body not loaded)')
+  })
+
   // 正: 推計震度分布図は、要約の文を見せ、結合した元の電文を .bin で落とす
   it('二進の電文を持つ行は .bin で落とす', () => {
     const bytes = new Uint8Array([0x42, 0x55, 0x46, 0x52])
     const e = { ...xmlEntry('（BUFR 4 バイト・1 セル）'), headType: 'IXAC41', rawBytes: bytes }
-    expect(formatEntryForView(e)).toBe('（BUFR 4 バイト・1 セル）')
+    expect(formatEntryForView(e, ja.telegramLog)).toBe('（BUFR 4 バイト・1 セル）')
     expect(formatEntryForDownload(e)).toEqual({ bytes, ext: 'bin' })
   })
 

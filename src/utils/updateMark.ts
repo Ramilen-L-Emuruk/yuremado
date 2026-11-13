@@ -41,7 +41,7 @@ export type UpdateStatus = 'new' | 'raised' | 'lowered' | 'changed'
  * 書き換わって追えないので、色が向きを持つ意味がある。
  *
  * **区別そのものは `UpdateStatus` が保っている**ので、色を分け直すことはいつでもできる。
- * 欄に添える言葉（{@link UPDATE_MARK_TITLE}）は向きまで言う。
+ * 欄に添える言葉（辞書の `updateMark`）は向きまで言う。
  */
 export const UPDATE_MARK_COLOR: Record<UpdateStatus, string> = {
   new: '#4ade80',
@@ -115,19 +115,11 @@ export type UpdateMark<F extends string> = {
   fields: ReadonlySet<F>
 }
 
-/**
- * 印の意味を言葉で言う（欄に添えるツールチップ）。
- *
- * **色だけを手掛かりにしない。** 色の違いを読み取れない利用者には、印は何も伝えない。
- * ただし**印は情報そのものではない** —— 値・行はどれも印なしで読める形で出ているので、
- * ここで補うのは「この報で動いた」という案内だけ。
- */
-export const UPDATE_MARK_TITLE: Record<UpdateStatus, string> = {
-  new: '最新の情報で初めて出た値です',
-  raised: '最新の情報で上がりました',
-  lowered: '最新の情報で下がりました',
-  changed: '最新の情報で変わりました',
-}
+// 印の意味を言葉で言う（欄に添えるツールチップ）。語は辞書の `updateMark`（→ `components/UpdateDot.tsx`）。
+//
+// **色だけを手掛かりにしない。** 色の違いを読み取れない利用者には、印は何も伝えない。
+// ただし**印は情報そのものではない** —— 値・行はどれも印なしで読める形で出ているので、
+// ここで補うのは「この報で動いた」という案内だけ。
 
 /**
  * 印が消えるまでの時間。**次の報が来ればそちらで置き換わる**ので、これは

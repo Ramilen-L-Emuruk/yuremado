@@ -1,9 +1,10 @@
 import type { Messages } from '../messages'
 import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
-import { intlDateWords } from '../intlDates'
+import { intlDateWords, intlJstMonthDayTime } from '../intlDates'
 
 /** 日付の書式。言語ごとに 1 回だけ作って使い回す（→ `i18n/intlDates.ts`） */
 const ZH_HANS_DATES = intlDateWords('zh-Hans')
+const ZH_HANS_JST = intlJstMonthDayTime('zh-Hans')
 
 const TSUNAMI_WORDS: TsunamiTermWords = {
   grade: { MajorWarning: '大海啸警报', Warning: '海啸警报', Watch: '海啸注意警报', Forecast: '海啸预报（略有海平面变化）' },
@@ -76,6 +77,19 @@ export const zhHans: Messages = {
     notClickable: (names) => `${names}无法响应点击`,
     nameList: (shown, rest) => (rest > 0 ? `${shown.join('、')} 等 ${rest} 项` : shown.join('、')),
     loadingData: '正在获取数据…',
+    dataNames: {
+      prefectures: '县界',
+      subregions: '区域边界',
+      'station-coords': '观测点位置',
+      'tsunami-zones': '海啸预报区',
+      'active-faults': '活断层',
+      'plate-boundaries': '板块边界',
+      'tsunami-obs-coords': '海啸观测点位置',
+      'public-stations': '公开观测点',
+    },
+    unknownData: '地图数据',
+    dataNameList: (names, rest) => (rest > 0 ? `${names.join('、')}等${rest}项` : names.join('、')),
+    dataLoadFailed: (subject, gaveUp) => `未能载入${subject}（${gaveUp ? '重新加载后将再次获取' : '正在重新获取'}）`,
     updatedAt: (time) => (time !== null ? `更新 ${time}` : '等待接收…'),
     seismoDisconnected: '地震计 未连接',
   },
@@ -117,6 +131,7 @@ export const zhHans: Messages = {
     observedAsOf: (t) => `截至 ${t} 的观测`,
     expires: (t) => `失效 ${t}`,
     estimatedArrival: (t) => `预计到达 ${t}`,
+    forecastHeight: (h) => `预测 ${h}`,
     estimatedArrivalAfter: (t) => `预计到达 ${t}`,
     highTide: (t) => `涨潮 ${t}`,
     maxWave: (t) => `最大波 ${t}`,
@@ -193,7 +208,7 @@ export const zhHans: Messages = {
       internationalTsunami: '国际海啸相关信息',
     },
     controlTitle: {
-      '津波警報・注意報・予報a': '海啸警报・注意警报・预报（a）',
+      '津波警報・注意報・予報a': '海啸警报、注意警报、预报（a）',
       '津波情報a': '海啸信息（a）',
       '沖合の津波観測に関する情報': '近海海啸观测信息',
       '緊急地震速報配信テスト': '紧急地震警报发送测试',
@@ -202,38 +217,47 @@ export const zhHans: Messages = {
       '緊急地震速報（地震動予報）': '紧急地震警报（地震动预报）',
       '震度速報': '烈度速报',
       '震源に関する情報': '震源信息',
-      '震源・震度に関する情報': '震源・烈度信息',
+      '震源・震度に関する情報': '震源、烈度信息',
       '地震の活動状況等に関する情報': '地震活动状况信息',
       '地震回数に関する情報': '地震次数信息',
       '顕著な地震の震源要素更新のお知らせ': '显著地震震源要素更新通知',
       '長周期地震動に関する観測情報': '长周期地震动观测信息',
       '南海トラフ地震臨時情報': '南海海槽地震临时信息',
       '南海トラフ地震関連解説情報': '南海海槽地震相关解说信息',
-      '北海道・三陸沖後発地震注意情報': '北海道・三陆近海后续地震注意信息',
-      '地震・津波に関するお知らせ': '地震・海啸相关通知',
+      '北海道・三陸沖後発地震注意情報': '北海道、三陆近海后续地震注意信息',
+      '地震・津波に関するお知らせ': '地震、海啸相关通知',
     },
     headType: {
       VXSE42: '紧急地震警报发送测试',
       VXSE43: '紧急地震警报（警报）',
-      VXSE44: '紧急地震警报（预报・旧格式）',
+      VXSE44: '紧急地震警报（预报、旧格式）',
       VXSE45: '紧急地震警报（地震动预报）',
       VXSE51: '烈度速报',
       VXSE52: '震源信息',
-      VXSE53: '震源・烈度',
+      VXSE53: '震源、烈度',
       VXSE60: '地震次数信息',
       VXSE61: '显著地震震源要素更新通知',
       VXSE62: '长周期地震动',
-      VTSE41: '海啸警报・注意警报',
+      VTSE41: '海啸警报、注意警报',
       VTSE51: '海啸观测信息',
       VTSE52: '近海海啸观测信息',
       VYSE50: '南海海槽地震临时信息',
       VYSE51: '南海海槽地震相关解说信息（临时解说）',
       VYSE52: '南海海槽地震相关解说信息（定期解说）',
-      VYSE60: '北海道・三陆近海后续地震注意信息',
-      VZSE40: '地震・海啸相关通知',
+      VYSE60: '北海道、三陆近海后续地震注意信息',
+      VZSE40: '地震、海啸相关通知',
       IXAC41: '推算烈度分布图绘图数据',
       IXAC40: '推算烈度分布图绘图数据（旧格式）',
       WEPA60: '国际海啸相关信息（英文）',
+    },
+    bodyNote: {
+      bufr: (bytes) => `（BUFR ${bytes} 字节）`,
+      bufrFragment: (bytes) => `（BUFR 片段 ${bytes} 字节）`,
+      bufrFragmentWaiting: (bytes) => `（BUFR 片段 ${bytes} 字节、等待合并）`,
+      bufrKind: (bytes, telegramKind) => `（BUFR ${bytes} 字节、电文种类 ${telegramKind}）`,
+      bufrCells: (bytes, cells) => `（BUFR ${bytes} 字节、${cells} 个网格）`,
+      bufrFragmentSkipped: '（BUFR 片段、不获取正文）',
+      bufrFile: (file) => `（BUFR ${file}）`,
     },
     errorMessage: {
       'body decode failed': '无法解码正文',
@@ -263,11 +287,11 @@ export const zhHans: Messages = {
     viewSection: '显示方式',
     period: '期间',
     periodHint: '要显示的期间。滑块按年移动，选择日期可从年中开始或结束。按日期指定的一端，在移动另一个滑块时保持不变',
-    periodValue: (from, to, _days, shownDays) => `${from} 〜 ${to}（${shownDays} 天）`,
+    periodValue: (from, to, _days, shownDays) => `${from} ～ ${to}（${shownDays} 天）`,
     periodEnds: ['开始', '结束'],
     startDate: '期间开始日期',
     endDate: '期间结束日期',
-    dateSeparator: '〜',
+    dateSeparator: '～',
     preliminaryFrom: (date) => `${date}以后为速报值`,
     telegramTailFrom: (date) => `${date}以后取自地震信息电文（不含无感地震）`,
     joinNotes: (notes) => notes.join('。'),
@@ -280,7 +304,7 @@ export const zhHans: Messages = {
     longitude: '经度',
     longitudeHint: '要显示的东西范围。将滑块移到端点即可取消该侧的限制',
     noLimit: '不限',
-    range: (min, max) => `${min} 〜 ${max}`,
+    range: (min, max) => `${min} ～ ${max}`,
     magnitudeAtLeast: (m) => `M ${m} 以上`,
     magnitudeAtMost: (m) => `M ${m} 以下`,
     depthAtLeast: (km) => `${km} km 以深`,
@@ -339,8 +363,8 @@ export const zhHans: Messages = {
     accuracyHint: [
       '按电文中的用语显示日本气象厅如何确定震源和震级。',
       'IPF法＝根据到达观测点的P波推定震源的方法（括号内为使用的观测点数）。',
-      'P相・全相＝计算震级时只使用了P波，还是也使用了后续的波。',
-      'EPOS・防灾科研系统＝确定震源的计算机系统的名称。',
+      'P相、全相＝计算震级时只使用了P波，还是也使用了后续的波。',
+      'EPOS、防灾科研系统＝确定震源的计算机系统的名称。',
       '〔观测网外〕〔观测网内〕＝地震发生在陆上观测网之外（主要是海域）还是之内（陆域）。',
     ].join('\n'),
     accuracyRow: { hypocenter: '震源', epicenter: '震中', epicenterIpf: '震中（IPF法）', depth: '深度', magnitude: 'M' },
@@ -363,7 +387,7 @@ export const zhHans: Messages = {
       8: 'P波／S波超过阈值或假定震源要素',
     },
     magnitudePoints: (n) => (n >= 5 ? '5点以上' : `${n}点`),
-    accuracyJoin: '・',
+    accuracyJoin: '、',
     hypocenterSettled: '震源和M此后不再变化',
     forecastChange: (direction, reason) => {
       const d = direction === 'changed' ? '预测已变化' : direction === 'up' ? '预测已增大' : '预测已减小'
@@ -391,24 +415,24 @@ export const zhHans: Messages = {
     detection: {
       tier: { confirmed: '检测', likely: '可能' },
       heading: '摇晃检测',
-      headingWide: (regions) => `摇晃检测（大范围・${regions}个地区）`,
+      headingWide: (regions) => `摇晃检测（大范围、${regions}个地区）`,
       maxRealtime: '最大实时烈度',
       pointCount: (n) => `${n}点`,
       strongest: (name) => `摇晃最强的地区：${name}`,
-      regionsSuffix: (regions) => ` ・ ${regions}个地区`,
+      regionsSuffix: (regions) => ` · ${regions}个地区`,
       reacting: (stations) => `${stations}个观测点有反应`,
       reactingBelowZero: (stations, scale) => `${stations}个观测点有${scale}的反应`,
       settled: '观测点的反应已平息',
       detailOpen: '判定明细',
       detailClose: '收起判定明细',
-      region: (index, name, tier) => `地区 ${index}${name ? `・${name}` : ''}（${tier}）`,
+      region: (index, name, tier) => `地区 ${index}${name ? `·${name}` : ''}（${tier}）`,
       intensityNote: '※与日本气象厅发布的烈度计算方法不同，不能简单比较。',
     },
     evidence: {
       sources: { stat: '平常时的波动', cluster: '摇晃的扩展', fast: '强烈摇晃的急剧上升', sparse: '观测点较少的地区' },
-      sourceSeparator: '・',
+      sourceSeparator: '、',
       footnote: '※“加入的观测点”与上面的观测点数计法不同',
-      confirmedAt: (stations, scale) => `${stations}点・烈度${scale}时确定`,
+      confirmedAt: (stations, scale) => `${stations}点、烈度${scale}时确定`,
       reactedBy: (sources) => `因${sources}而反应`,
       rowSources: '判定机制',
       rowMembers: '加入的观测点',
@@ -426,7 +450,7 @@ export const zhHans: Messages = {
     issueType: {
       '震度速報': '烈度速报',
       '震源情報': '震源信息',
-      '震源・震度情報': '震源・烈度信息',
+      '震源・震度情報': '震源、烈度信息',
       '各地の震度情報': '各地烈度信息',
       '顕著な地震の震源要素更新のお知らせ': '显著地震震源要素更新通知',
       '遠地地震': '远地地震信息',
@@ -476,12 +500,12 @@ export const zhHans: Messages = {
       class1: '观测到长周期地震动1级以上的地区，烈度均为5弱以上',
       class3: '观测到长周期地震动3级以上的地区，烈度均为5弱以上',
     },
-    lpgmCategoryRegions: (note, regions) => `${note}（${regions.join('・')}）`,
-    lpgmPeriodsHeading: '按周期（等级・摇晃大小）',
+    lpgmCategoryRegions: (note, regions) => `${note}（${regions.join('、')}）`,
+    lpgmPeriodsHeading: '按周期（等级、摇晃大小）',
     lpgmPeriodsNote: '周期越长，高层建筑摇晃越大',
     lpgmPeriod: (sec) => `${sec}秒`,
     lpgmPeriodUnknown: '周期不明',
-    lpgmDetailLink: '日本气象厅详细页面（波形・频谱）',
+    lpgmDetailLink: '日本气象厅详细页面（波形、频谱）',
     intlHeading: '国际海啸相关信息（英文）',
     intlTranslation: '日文译文',
     intlOriginal: '原文',
@@ -530,6 +554,13 @@ export const zhHans: Messages = {
       loadMore: '查看更多',
       fetching: '获取中…',
       throttled: (left) => `获取受限（还剩 ${left}）`,
+      lossSources: (n) => `${n}个来源`,
+      lossTelegrams: (n) => `${n}条电文`,
+      historyLoss: (parts) => `未能载入${parts.join('、')}（重新加载后将再次获取）`,
+      loadMoreFailed: '未能载入更多（请重试）',
+      reconnectGapLoss: '未能载入连接中断期间的电文（重新加载后将再次获取）',
+      fetchThrottled: '请求过多，获取受限中（将自动恢复）',
+      rateLimited: (parts) => `请求过多，获取受限中（${parts.join('、')}未获取）`,
       keyReentry: '要接收预报，请在设置中重新输入 API密钥（地址已变更，因此未沿用）',
       loadingBackTo: (day) => `正在读取至${day}…`,
       loadingSuffix: '（读取中）',
@@ -563,15 +594,18 @@ export const zhHans: Messages = {
       zoomOut: '缩小',
       fitLabel: '显示全部',
       fit: '全部',
-      groupName: { 海域: '海域', 遠方: '远方' },
+      groupName: {
+        海域: '海域', 遠方: '远方',
+        北海道: '北海道', 東北: '东北', 関東: '关东', 中部: '中部', 近畿: '近畿', 中国: '中国地区', 四国: '四国', 九州沖縄: '九州、冲绳',
+      },
       chip: {
-        scaleRange: (from, to) => `烈度${from}〜${to}`,
+        scaleRange: (from, to) => `烈度${from}～${to}`,
         scaleMin: (from) => `烈度${from}以上`,
         scaleMax: (to) => `烈度${to}以下`,
-        magnitudeRange: (from, to) => `M${from}〜${to}`,
+        magnitudeRange: (from, to) => `M${from}～${to}`,
         magnitudeMin: (from) => `M${from}以上`,
         magnitudeMax: (to) => `M${to}以下`,
-        depthRange: (from, to) => `深度${from}〜${to}km`,
+        depthRange: (from, to) => `深度${from}～${to}km`,
         depthMin: (from) => `深度${from}km以上`,
         depthMax: (to) => `深度${to}km以下`,
         picked: (label, n) => `${label}（${n}）`,
@@ -586,8 +620,8 @@ export const zhHans: Messages = {
     section: {
       depthUnknown: '深度不明',
       depthUnder30: '深度不足30km',
-      depth30to100: '深度30〜100km',
-      depth100to300: '深度100〜300km',
+      depth30to100: '深度30～100km',
+      depth100to300: '深度100～300km',
       depth300plus: '深度300km以上',
       scale: (label) => `烈度${label}`,
       scaleUnknown: '烈度不明',
@@ -596,6 +630,12 @@ export const zhHans: Messages = {
     },
   },
   map: {
+    // 地図の字は焼いた字形（日本語の地名と ASCII だけ）で描く。簡体字は字形に無いので、地方名は日本語の字のまま出す。
+    // （2026-11-12 ユーザー選択「日本語の字のまま (Recommended)」）
+    regionName: {
+      北海道: '北海道', 東北: '東北', 関東: '関東', 伊豆諸島: '伊豆諸島', 小笠原: '小笠原', 北陸: '北陸', 甲信: '甲信',
+      東海: '東海', 近畿: '近畿', 中国: '中国', 四国: '四国', 九州: '九州', 奄美: '奄美', 沖縄: '沖縄',
+    },
     layerName: {
       eewEpicenters: '紧急地震警报的震源',
       quakeHypocenters: '地震的震源',
@@ -672,7 +712,7 @@ export const zhHans: Messages = {
     },
     legend: {
       completeness: (year, magnitude) => `追溯到 ${year} 年时，记录完整的仅为震级 ${magnitude} 以上的地震。更小的地震会显得较少。`,
-      periodRange: (start, replay) => `期间 ${start} 〜 ${replay ? '回放时刻' : '现在'}`,
+      periodRange: (start, replay) => `期间 ${start} ～ ${replay ? '回放时刻' : '现在'}`,
       period: '期间',
       heatmapPeriod: {
         '7d': '7天', '30d': '30天', '90d': '90天', '1y': '1年', '2y': '2年', '5y': '5年', '10y': '10年', '20y': '20年', '50y': '50年', all: '1919年起',
@@ -690,7 +730,7 @@ export const zhHans: Messages = {
       eewForecast: '紧急地震警报的预测',
       lpgmClass: '长周期地震动等级',
       lpgmClassShort: '长周期等级',
-      nameSeparator: '・',
+      nameSeparator: '、',
       unreceivedTitle: '未获得烈度的地点',
       unreceived: '未收到',
       psWave: '紧急地震警报的预报圆',
@@ -710,7 +750,7 @@ export const zhHans: Messages = {
       activeFaults: '活断层',
       plateSubduction: '板块边界（俯冲带）',
       plateConvergent: '板块边界（汇聚）',
-      plateDivergent: '板块边界（扩张・裂谷）',
+      plateDivergent: '板块边界（扩张、裂谷）',
       plateTransform: '板块边界（转换断层）',
       lines: '线',
     },
@@ -732,7 +772,7 @@ export const zhHans: Messages = {
       location: '登记地点与地震仪',
       share: '分享与保存',
       about: '关于本应用',
-      dev: '开发・验证',
+      dev: '开发、验证',
     },
     dialog: {
       title: '设置',
@@ -776,7 +816,7 @@ export const zhHans: Messages = {
       unlimited: '无限制',
       seconds: (n: number) => `${n}秒`,
       minutes: (n: number) => `${n}分钟`,
-      listSeparator: '・',
+      listSeparator: '、',
       preview: '▶ 试听',
     },
     rows: {
@@ -800,7 +840,7 @@ export const zhHans: Messages = {
       },
       testDelivery: {
         label: '接收测试报（用于验证）',
-        description: '也接收测试报・演练报。国际海啸相关信息的通信测试仅在开启时以声音・通知・朗读告知。紧急地震警报的发送测试仅用于确认连接，不在画面上显示',
+        description: '也接收测试报、演练报。国际海啸相关信息的通信测试仅在开启时以声音、通知、朗读告知。紧急地震警报的发送测试仅用于确认连接，不在画面上显示',
       },
       notifyEnabled: {
         label: '显示通知',
@@ -812,7 +852,7 @@ export const zhHans: Messages = {
       },
       notifyQuake: {
         label: '地震信息通知',
-        description: '收到地震信息・长周期地震动・推算烈度分布图・地震次数信息时通知',
+        description: '收到地震信息、长周期地震动、推算烈度分布图、地震次数信息时通知',
       },
       notifyMinScale: {
         label: '通知的最低烈度',
@@ -825,15 +865,15 @@ export const zhHans: Messages = {
       },
       notifyEEW: {
         label: '紧急地震警报通知',
-        description: '发布紧急地震警报时，以及升级为警报・特别警报时通知',
+        description: '发布紧急地震警报时，以及升级为警报、特别警报时通知',
       },
       notifyTsunami: {
         label: '海啸通知',
-        description: '发布海啸警报・注意警报・预报时，以及全部解除时通知',
+        description: '发布海啸警报、注意警报、预报时，以及全部解除时通知',
       },
       notifyNankai: {
-        label: '南海海槽・后续地震通知',
-        description: '收到南海海槽地震临时信息・北海道・三陆近海后续地震注意信息以及临时解说信息时通知',
+        label: '南海海槽、后续地震通知',
+        description: '收到南海海槽地震临时信息、北海道、三陆近海后续地震注意信息以及临时解说信息时通知',
       },
       notifyNankaiRoutine: {
         label: '定期解说信息通知',
@@ -841,11 +881,11 @@ export const zhHans: Messages = {
       },
       notifyQuakeNotice: {
         label: '通知信息提醒',
-        description: '收到地震・海啸相关通知时提醒',
+        description: '收到地震、海啸相关通知时提醒',
       },
       notifyPrefectures: {
         label: '通知地区',
-        description: '仅通知与所选都道府县有关的信息。地震信息看观测到烈度的都道府县，紧急地震警报看对象地区，海啸看预报区。未选择时通知全国的信息。南海海槽・后续地震・地震次数等不带地区的信息不做筛选',
+        description: '仅通知与所选都道府县有关的信息。地震信息看观测到烈度的都道府县，紧急地震警报看对象地区，海啸看预报区。未选择时通知全国的信息。南海海槽、后续地震、地震次数等不带地区的信息不做筛选',
       },
       notifyPermission: {
         label: '通知权限',
@@ -862,11 +902,11 @@ export const zhHans: Messages = {
       },
       sound: {
         label: '提示音',
-        description: '收到地震・紧急地震警报・海啸时播放声音',
+        description: '收到地震、紧急地震警报、海啸时播放声音',
       },
       tts: {
         label: '朗读',
-        description: '朗读地震・紧急地震警报・海啸信息',
+        description: '朗读地震、紧急地震警报、海啸信息',
       },
       ttsVoice: {
         label: '朗读语音',
@@ -878,12 +918,12 @@ export const zhHans: Messages = {
         description: '提示音和朗读共用的音量',
       },
       nankaiCommentaryAlerts: {
-        label: '解说信息的声音・朗读',
+        label: '解说信息的声音、朗读',
         description: '对南海海槽地震相关解说信息播放提示音并朗读。此信息平时也会每月发布',
       },
       quakeNoticeAlerts: {
-        label: '通知信息的声音・朗读',
-        description: '对地震・海啸相关通知播放提示音并朗读',
+        label: '通知信息的声音、朗读',
+        description: '对地震、海啸相关通知播放提示音并朗读',
       },
       kyoshinDetectSpeech: {
         label: '摇晃检测的朗读',
@@ -936,7 +976,7 @@ export const zhHans: Messages = {
         option: (n: number) => `最多+${n}个地区`,
       },
       ttsReadHypocenterDetail: {
-        label: '震源深度・震级',
+        label: '震源深度、震级',
         description: '像「石川県能登地方、深さ10キロメートルを震源とするマグニチュード5.2の地震が発生しました」这样朗读。关闭后只朗读震源地名',
       },
       ttsUnreceivedDetail: {
@@ -948,7 +988,7 @@ export const zhHans: Messages = {
       },
       ttsMaxObservationPoints: {
         label: '海啸观测点的朗读数量',
-        description: '海啸观测信息中朗读的观测点数量。波高更新・观测到相当于海啸警报的海啸・确认到达・缺测，分别朗读到此数量，其余以「ほかN地点」告知件数',
+        description: '海啸观测信息中朗读的观测点数量。波高更新、观测到相当于海啸警报的海啸、确认到达、缺测，分别朗读到此数量，其余以「ほかN地点」告知件数',
         option: (n: number) => `${n}个地点`,
       },
       ttsReadEewLpgmClass: {
@@ -961,7 +1001,7 @@ export const zhHans: Messages = {
       },
       ttsReadTelegramText: {
         label: '日本气象厅的发布文',
-        description: '朗读电文附带的正文・附加文（南海海槽地震临时信息的正文等）。在烈度和海啸的朗读结束后才朗读，因此电文接连送达期间可能无法朗读',
+        description: '朗读电文附带的正文、附加文（南海海槽地震临时信息的正文等）。在烈度和海啸的朗读结束后才朗读，因此电文接连送达期间可能无法朗读',
       },
       uiScale: {
         label: 'UI 缩放',
@@ -979,7 +1019,7 @@ export const zhHans: Messages = {
       },
       quakeNoticeBanner: {
         label: '显示通知信息',
-        description: '在地图下方显示地震・海啸相关通知',
+        description: '在地图下方显示地震、海啸相关通知',
       },
       showBathymetry: {
         label: '显示海底地形',
@@ -995,11 +1035,11 @@ export const zhHans: Messages = {
       },
       showPlateBoundaries: {
         label: '显示板块边界线',
-        description: '在地震信息・实时・海啸信息标签页的地图上显示世界板块边界线（PB2002模型）',
+        description: '在地震信息、实时、海啸信息标签页的地图上显示世界板块边界线（PB2002模型）',
       },
       showActiveFaults: {
         label: '显示活断层线',
-        description: '在地震信息・实时标签页的地图上显示全国活断层线（产综研 活断层数据库）',
+        description: '在地震信息、实时标签页的地图上显示全国活断层线（产综研 活断层数据库）',
       },
       activeFaultOpacity: {
         label: '活断层线浓度',
@@ -1007,7 +1047,7 @@ export const zhHans: Messages = {
       },
       showQuakeHeatmap: {
         label: '显示地震活动热力图',
-        description: '在地震信息・实时标签页的地图上以热力图显示地震活动。期间可在下方栏或地图图例中更改',
+        description: '在地震信息、实时标签页的地图上以热力图显示地震活动。期间可在下方栏或地图图例中更改',
       },
       heatmapPeriod: {
         label: '热力图期间',
@@ -1015,7 +1055,7 @@ export const zhHans: Messages = {
       },
       showMapLegend: {
         label: '显示图例',
-        description: '在地图右下叠加当前地图所用颜色的含义（烈度・海啸等级・震源深度等）。点按标题可折叠',
+        description: '在地图右下叠加当前地图所用颜色的含义（烈度、海啸等级、震源深度等）。点按标题可折叠',
       },
       defaultTab: {
         label: '默认标签页',
@@ -1031,12 +1071,12 @@ export const zhHans: Messages = {
       },
       idleRevertSec: {
         label: '自动返回时间',
-        description: '在此时间内没有操作・信息更新时返回默认标签页',
+        description: '在此时间内没有操作、信息更新时返回默认标签页',
         off: '关闭',
       },
       periodicReload: {
         label: '定时自动重新加载',
-        description: '每天上午5点重新启动画面以释放内存。地震・海啸・紧急地震警报发布期间会推迟',
+        description: '每天上午5点重新启动画面以释放内存。地震、海啸、紧急地震警报发布期间会推迟',
       },
       recordingMode: {
         label: '录屏模式',
@@ -1044,7 +1084,7 @@ export const zhHans: Messages = {
       },
       actionChecklist: {
         label: '行动清单',
-        description: '强烈摇晃时，在画面上方显示应采取的行动和应携带的物品。根据紧急地震警报・实时烈度・地震信息中的任一项判定',
+        description: '强烈摇晃时，在画面上方显示应采取的行动和应携带的物品。根据紧急地震警报、实时烈度、地震信息中的任一项判定',
       },
       actionChecklistMinScale: {
         label: '显示的最低烈度',
@@ -1106,7 +1146,7 @@ export const zhHans: Messages = {
       },
       usageStats: {
         label: '发送使用情况数据',
-        description: '发送打开的标签页・使用的功能・设置・设备类型等。不发送姓名・IP 地址・登记的地点。关闭后，此设备的标识符也会删除。',
+        description: '发送打开的标签页、使用的功能、设置、设备类型等。不发送姓名、IP 地址、登记的地点。关闭后，此设备的标识符也会删除。',
       },
       serverClockOffset: {
         label: '服务器时刻偏差',
@@ -1115,7 +1155,7 @@ export const zhHans: Messages = {
     },
     connection: {
       disconnected: '断开',
-      upstreamSince: (time: string) => `・${time} 起`,
+      upstreamSince: (time: string) => `·${time} 起`,
       upstreamDown: (since: string) => `断开（分发服务器与 DMDATA.JP 断开中${since}）`,
       viaRelay: '已连接（经由分发服务器）',
       viaApiKey: '已连接（API密钥）',
@@ -1132,11 +1172,11 @@ export const zhHans: Messages = {
       labels: {
         'eew.forecast': '紧急地震（预报）',
         'eew.warning': '紧急地震（警报）',
-        'telegram.earthquake': '地震・海啸相关',
+        'telegram.earthquake': '地震、海啸相关',
       },
-      separator: '・',
+      separator: '、',
     },
-    apiKeyInvalid: 'API密钥中含有不能使用的字符。请只用半角英文数字・符号输入。',
+    apiKeyInvalid: 'API密钥中含有不能使用的字符。请只用半角英文数字、符号输入。',
     signedKey: {
       remove: '删除',
       relayRejected: '分发服务器未接受此密钥',
@@ -1184,7 +1224,7 @@ export const zhHans: Messages = {
       unset: '未设置',
       getCurrent: '获取当前位置',
       clear: '清除',
-      manual: '输入纬度・经度',
+      manual: '输入纬度、经度',
       latitude: '纬度',
       longitude: '经度',
       apply: '设为此地点',
@@ -1194,8 +1234,8 @@ export const zhHans: Messages = {
       invalid: 'URL格式不正确。请以 http:// 或 https:// 开头输入',
       checking: '检查中…',
       noStations: '已连接：未设置观测点',
-      notArrived: (stations: number) => `已连接：观测点 ${stations}・尚未收到`,
-      ok: (stations: number, sensors: number) => `已连接：观测点 ${stations}・传感器 ${sensors}`,
+      notArrived: (stations: number) => `已连接：观测点 ${stations}、尚未收到`,
+      ok: (stations: number, sensors: number) => `已连接：观测点 ${stations}、传感器 ${sensors}`,
       timeout: (seconds: number) => `无响应：等待 ${seconds} 秒后已中止。请确认主机是否已启动`,
       mixedContent: '无法连接：此页面为 https，无法连接 http 的主机。请输入 https:// 的URL',
       offline: '无法连接：此设备处于离线状态。请连接网络',
@@ -1250,7 +1290,7 @@ export const zhHans: Messages = {
         60: '每1小时',
       },
       sounds: {
-        pips: '嘀・嘀・嘀・嘟',
+        pips: '嘀、嘀、嘀、嘟',
         pon: '嘟',
         chime: '钟声',
         none: '不响铃',
@@ -1277,9 +1317,9 @@ export const zhHans: Messages = {
         lpgm: '长周期地震动观测信息',
         nankai: '南海海槽地震临时信息',
         nankaiCommentary: '南海海槽地震相关解说信息',
-        kohatsu: '北海道・三陆近海后续地震注意信息',
+        kohatsu: '北海道、三陆近海后续地震注意信息',
         earthquakeCount: '地震次数信息',
-        quakeNotice: '地震・海啸相关通知',
+        quakeNotice: '地震、海啸相关通知',
       },
       labels: {
         quakeForecast: '固定附加文',
@@ -1308,16 +1348,16 @@ export const zhHans: Messages = {
         quakeVarComment: '关于日本气象厅以外机构运营的观测点（＊标记）的说明，以及「震源要素を訂正します。」等固定文句。例：「＊印は気象庁以外の震度観測点についての情報です。」',
         quakeFreeText: '仅附在该电文上的说明。内容每报不同。例：「この地震とほぼ同時刻に別の地震が発生していますが、緊急作業中で震度を分離できないため、この情報で震度を取りまとめて発表しています。」',
         tsunamiBody: '关于海啸何时到来、持续到何时的说明。海啸预报中各区域不附波高和到达时刻，因此只写在这段文字里。例：「これらの沿岸では今後２、３時間程度は若干の海面変動が継続する可能性が高いと考えられます。」',
-        tsunamiVarComment: '关于撤离呼吁、涨潮时刻、沿岸・近海观测的固定文句。撤离呼吁本身无论此设置如何都会朗读。例：「ただちに避難してください。」之后，分别写有大海啸警报・海啸警报・海啸注意警报各自应采取的行动（约 600 字）',
+        tsunamiVarComment: '关于撤离呼吁、涨潮时刻、沿岸、近海观测的固定文句。撤离呼吁本身无论此设置如何都会朗读。例：「ただちに避難してください。」之后，分别写有大海啸警报、海啸警报、海啸注意警报各自应采取的行动（约 600 字）',
         tsunamiFreeText: '仅附在该电文上的说明。例：「［予想される津波の高さの解説］」之后，写有从超过10米到1米共 5 级的灾害',
         lpgmForecast: '「この地震について、緊急地震速報を発表しています。」这类固定文句',
         lpgmVarComment: '关于日本气象厅以外机构运营的观测点（＊标记）的说明。例：「＊印は気象庁以外の長周期地震動観測点についての情報です。」',
         lpgmFreeText: '等级与摇晃大小的对应表等，对该电文的补充。例：「各長周期地震動階級に対する簡易な現象表現」之后，列出从「階級１やや大きな揺れ」到等级4，并附有详细观测结果的参考位置',
-        nankaiSummary: '将发布内容归纳为一句话，与画面横幅上显示的标题相同。在地震的发生时刻・震源・震级之后，写有假定震源区的状况和防灾应对的呼吁',
+        nankaiSummary: '将发布内容归纳为一句话，与画面横幅上显示的标题相同。在地震的发生时刻、震源、震级之后，写有假定震源区的状况和防灾应对的呼吁',
         nankaiBody: '调查结果和评估依据。实际电文中有时超过 1000 字',
         nankaiNextAdvisory: '关于下一次信息何时发布的说明。例：「次回の情報発表は、２１時頃を予定しています。」',
         nankaiCommentarySummary: '将发布内容归纳为一句话，与画面横幅上显示的标题相同。例：「第１０９回南海トラフ沿いの地震に関する評価検討会で、南海トラフ周辺の地殻活動を評価しました。」',
-        nankaiCommentaryBody: '地壳活动的观测状况和评估。实际电文中有时超过 1600 字。分为地震观测状况・地壳变动观测状况・地壳活动评估 3 节，并附日期列出发生深部低频地震的区段等',
+        nankaiCommentaryBody: '地壳活动的观测状况和评估。实际电文中有时超过 1600 字。分为地震观测状况、地壳变动观测状况、地壳活动评估 3 节，并附日期列出发生深部低频地震的区段等',
         nankaiCommentaryNextAdvisory: '关于下一次信息何时发布的说明。例：「次回の情報発表は、２２日１５時３０分頃を予定しています。」',
         kohatsuSummary: '将发布内容归纳为一句话，与画面横幅上显示的标题相同。写有地震的发生，以及假定震源区发生大规模地震的可能性比平时升高',
         kohatsuBody: '发布理由及应采取的防灾应对的说明',
@@ -1334,14 +1374,14 @@ export const zhHans: Messages = {
         eewIssued: '紧急地震警报发布告知',
         lpgmClassTable: '长周期地震动等级的参考',
         tsunamiHeightLegend: '海啸高度的参考',
-        earthquakeInfoAppendix: '南海海槽・后续地震信息的参考信息',
+        earthquakeInfoAppendix: '南海海槽、后续地震信息的参考信息',
       },
       descriptions: {
         starMark: '关于日本气象厅以外机构运营的观测点（＊标记）的说明。例：「＊印は気象庁以外の震度観測点についての情報です。」（长周期地震动观测信息中为「長周期地震動観測点」）。朗读时＊不发音，因此听不出是在与什么对比',
         eewIssued: '例：「この地震について、緊急地震速報を発表しています。」紧急地震警报本身已通过画面和声音告知，关闭也不会错过',
         lpgmClassTable: '等级与摇晃大小的对应表，以及详细观测结果的参考位置。例：「各長周期地震動階級に対する簡易な現象表現」之后，列出从「階級１やや大きな揺れ」到等级4。长周期地震动观测信息几乎每报都有',
         tsunamiHeightLegend: '预计海啸高度与灾害的对应表。例：「［予想される津波の高さの解説］」之后，写有从超过10米到1米共 5 级的灾害（307 字。朗读约需 50 秒）',
-        earthquakeInfoAppendix: '附在南海海槽地震临时信息・同相关解说信息・北海道・三陆近海后续地震注意信息末尾的、关于信息种类和发布条件的说明。每报几乎相同。在画面上可通过横幅中的“关于此类信息”打开',
+        earthquakeInfoAppendix: '附在南海海槽地震临时信息、同相关解说信息、北海道、三陆近海后续地震注意信息末尾的、关于信息种类和发布条件的说明。每报几乎相同。在画面上可通过横幅中的“关于此类信息”打开',
       },
     },
     io: {
@@ -1366,7 +1406,7 @@ export const zhHans: Messages = {
         noKeys: '未包含密钥',
       },
       keysLoaded: (forecastKey: boolean, arrivalToken: boolean) =>
-        `已导入${[forecastKey ? '预报密钥' : null, arrivalToken ? '到达预测密钥' : null].filter(Boolean).join('・')}（其他设置保持不变）`,
+        `已导入${[forecastKey ? '预报密钥' : null, arrivalToken ? '到达预测密钥' : null].filter(Boolean).join('、')}（其他设置保持不变）`,
     },
     shareCardFormats: {
       wide16x9: 'X（16:9）',
@@ -1398,7 +1438,7 @@ export const zhHans: Messages = {
       privacy: '隐私政策',
       licenses: '所用软件的许可证',
       quakeData: {
-        label: '地震・海啸数据',
+        label: '地震、海啸数据',
       },
       publicWave: {
         label: '公开观测点的波形',
@@ -1406,6 +1446,12 @@ export const zhHans: Messages = {
       map: {
         label: '地图',
       },
+      paren: (text) => `（${text}）`,
+      jpNetwork: 'JP 台网',
+      distributedBy: (name) => `由 ${name}发布`,
+      boundaries: '边界、海岸线',
+      seafloor: '海底地形',
+      plateBoundaries: '板块边界',
     },
     soundTest: {
       intensityTitle: (label: string) => `试听烈度${label}的更新音`,
@@ -1413,7 +1459,7 @@ export const zhHans: Messages = {
       note: '点按可试听各提示音。即使关闭提示音也会响',
       kyoshinCandidate: {
         label: '摇晃检测（候选）',
-        description: '马林巴单音 F#5（确定前的预兆提示・低调）',
+        description: '马林巴单音 F#5（确定前的预兆提示、低调）',
       },
       kyoshin: {
         label: '摇晃检测（首次）',
@@ -1448,15 +1494,15 @@ export const zhHans: Messages = {
         description: '钢琴上升三音 G#4→B4→E5',
       },
       earthquake: {
-        label: '地震信息（震源・烈度 / 各地烈度）',
+        label: '地震信息（震源、烈度 / 各地烈度）',
         description: '钢琴上升四音 E4→G#4→B4→E5',
       },
       earthquakeInfo: {
-        label: '地震信息（震源信息・远地地震）',
+        label: '地震信息（震源信息、远地地震）',
         description: '钢琴双音 G4→B4',
       },
       earthquakeCancel: {
-        label: '地震信息・长周期地震动・地震次数的取消',
+        label: '地震信息、长周期地震动、地震次数的取消',
         description: '钢琴下降三音 E5→B4→E4',
       },
       tsunamiForecast: {
@@ -1480,11 +1526,11 @@ export const zhHans: Messages = {
         description: '纯音双音 F#4→C#5（平和的提示）',
       },
       tsunamiCancel: {
-        label: '海啸解除・取消・失效',
+        label: '海啸解除、取消、失效',
         description: '纯音 G4→C4 的终止式（用单一声音传达 3 种原因）',
       },
       specialInfo: {
-        label: '南海海槽地震临时信息・北海道・三陆近海后续地震注意信息',
+        label: '南海海槽地震临时信息、北海道、三陆近海后续地震注意信息',
         description: '纯音 A4×2连击 → D5',
       },
       specialInfoCommentary: {
@@ -1496,21 +1542,21 @@ export const zhHans: Messages = {
         description: '纯音同音三连 C5（与上面两者不同，音高不变）',
       },
       specialInfoCancel: {
-        label: '南海海槽・后续地震的取消',
+        label: '南海海槽、后续地震的取消',
         description: '纯音下降三音 D5→A4→D4',
       },
       kyoshinUpdate: {
-        label: '摇晃检测・烈度更新',
+        label: '摇晃检测、烈度更新',
         description: '警告哔声。烈度越高音数越多、间隔越短。点按烈度试听',
       },
       countdown: {
         label: 'S波到达倒计时',
-        description: '点按剩余秒数试听（秒数越少响得越快・越多。剩余 1 秒时叠加两个次低音和高音）',
+        description: '点按剩余秒数试听（秒数越少响得越快、越多。剩余 1 秒时叠加两个次低音和高音）',
       },
     },
     test: {
       note: '用于确认运行情况。不会更改实际数据。',
-      note2: '紧急地震警报每点按一次就会送达下一报，10 秒不点按则以最终报结束（均基于 2024-04-17 豊後水道 M6.6 的日本气象厅样本电文）。海啸和特别信息会在 90 秒后送达解除・取消。',
+      note2: '紧急地震警报每点按一次就会送达下一报，10 秒不点按则以最终报结束（均基于 2024-04-17 豊後水道 M6.6 的日本气象厅样本电文）。海啸和特别信息会在 90 秒后送达解除、取消。',
       eewForecast: {
         label: '地震动预报',
         description: '保持预报状态的报。点按后预测烈度由 3 → 4 上升 – eewForecast 提示音',
@@ -1518,7 +1564,7 @@ export const zhHans: Messages = {
       },
       eewStrongShaking: {
         label: '地震动预报（检测到非常强烈的摇晃）',
-        description: '在确定震源之前，仅凭检测到强烈摇晃的观测点发布的第1报（最大烈度5弱）。不显示M・深度・发生时刻，在震源名下方显示日本气象厅的正文 – eewForecast 提示音',
+        description: '在确定震源之前，仅凭检测到强烈摇晃的观测点发布的第1报（最大烈度5弱）。不显示M、深度、发生时刻，在震源名下方显示日本气象厅的正文 – eewForecast 提示音',
         button: '强烈摇晃检测测试',
       },
       eewAssumed: {
@@ -1553,22 +1599,22 @@ export const zhHans: Messages = {
       },
       eewRetraction: {
         label: '紧急地震警报（误报取消）',
-        description: '升级到警报后，收到实际电文的取消 – eewCancel 提示音（有通知・朗读）',
+        description: '升级到警报后，收到实际电文的取消 – eewCancel 提示音（有通知、朗读）',
         button: '误报取消测试',
       },
       eewLateRetraction: {
         label: '紧急地震警报（自动解除后的误报取消）',
-        description: '播放到最终报，因自动解除从画面消失 10 秒后收到取消 – eewCancel 提示音（有通知・朗读）',
+        description: '播放到最终报，因自动解除从画面消失 10 秒后收到取消 – eewCancel 提示音（有通知、朗读）',
         button: '延迟误报取消测试',
       },
       earthquake: {
         label: '地震信息',
-        description: '将2024年能登半岛地震・主震 M7.6 最大烈度7（实际数据）添加到列表和地图',
+        description: '将2024年能登半岛地震、主震 M7.6 最大烈度7（实际数据）添加到列表和地图',
         button: '地震测试',
       },
       unreceivedQuake: {
         label: '地震信息（未取得烈度的地点较多的报）',
-        description: '日向灘 M6.4 最大烈度5强（实际电文）– 未取得烈度的地点有 60 个。市町村・区域・县的行带有“部分未收到”标记，数值本身未送达的 18 个市町村显示为“5弱以上”',
+        description: '日向灘 M6.4 最大烈度5强（实际电文）– 未取得烈度的地点有 60 个。市町村、区域、县的行带有“部分未收到”标记，数值本身未送达的 18 个市町村显示为“5弱以上”',
         button: '未收到测试',
       },
       maxScaleOrAboveQuake: {
@@ -1577,13 +1623,13 @@ export const zhHans: Messages = {
         button: '5弱以上测试',
       },
       areaUnreceivedQuake: {
-        label: '地震信息（整个区域“5弱以上・未收到”的报）',
+        label: '地震信息（整个区域“5弱以上、未收到”的报）',
         description: '将未收到测试中的1个区域改组为其下属市町村全部未收到的形式（日本气象厅资料规定的形式，没有实际电文样本）。即使区域没有最大烈度，也会保留在列表和朗读中',
         button: '区域未收到测试',
       },
       foreignQuake: {
         label: '远地地震',
-        description: '墨西哥恰帕斯州沿岸 M7.4 深度不明（实际数据）– earthquakeInfo 提示音 / 无国内烈度・对日本无海啸影响',
+        description: '墨西哥恰帕斯州沿岸 M7.4 深度不明（实际数据）– earthquakeInfo 提示音 / 无国内烈度、对日本无海啸影响',
         button: '远地地震测试',
       },
       foreignQuakeHuge: {
@@ -1598,17 +1644,17 @@ export const zhHans: Messages = {
       },
       internationalTsunamiDomesticAndOnly: {
         label: '国内地震与仅有英文的国际海啸相关信息',
-        description: '日向灘 M7.1（实际数据）的震源・烈度信息，以及同一地震的国际海啸相关信息（英文） – earthquakeInfo 提示音 / 3 秒后英文送达，日向灘的地震卡片附上原文 / 6 秒后，没有地震信息的地震的英文送达，列表中出现仅有英文的卡片（国际海啸相关信息） / 9 秒后通信测试的英文送达（仅在“接收测试报（用于验证）”开启时出现声音・通知・朗读和横幅；关闭时只留在电文记录中）。英文送达时会发出 earthquakeInfo 提示音和通知，并用日语朗读摘要',
+        description: '日向灘 M7.1（实际数据）的震源、烈度信息，以及同一地震的国际海啸相关信息（英文） – earthquakeInfo 提示音 / 3 秒后英文送达，日向灘的地震卡片附上原文 / 6 秒后，没有地震信息的地震的英文送达，列表中出现仅有英文的卡片（国际海啸相关信息） / 9 秒后通信测试的英文送达（仅在“接收测试报（用于验证）”开启时出现声音、通知、朗读和横幅；关闭时只留在电文记录中）。英文送达时会发出 earthquakeInfo 提示音和通知，并用日语朗读摘要',
         button: '仅英文测试',
       },
       headlineOnlyCity: {
         label: '仅出现在标题中的市町村',
-        description: '2024-01-01 佐渡付近的震源・烈度信息（实际数据）中，輪島市仅出现在标题中的形式 – earthquakeInfo 提示音 / 烈度列表中石川県能登之下列出輪島市（烈度3）。该市町村没有观测点的行',
+        description: '2024-01-01 佐渡付近的震源、烈度信息（实际数据）中，輪島市仅出现在标题中的形式 – earthquakeInfo 提示音 / 烈度列表中石川県能登之下列出輪島市（烈度3）。该市町村没有观测点的行',
         button: '标题市町村测试',
       },
       noIntensityQuake: {
         label: '未观测到烈度的地震',
-        description: '2024-08-08 日向灘的震源・烈度信息（实际数据）去掉烈度栏的形式 – earthquakeInfo 提示音 / 无论最低烈度设置如何，都会发出「日向灘 Mj7.1（震度1以上の観測なし）」的通知',
+        description: '2024-08-08 日向灘的震源、烈度信息（实际数据）去掉烈度栏的形式 – earthquakeInfo 提示音 / 无论最低烈度设置如何，都会发出「日向灘 Mj7.1（震度1以上の観測なし）」的通知',
         button: '无烈度测试',
       },
       quakeAmendment: {
@@ -1618,7 +1664,7 @@ export const zhHans: Messages = {
       },
       quakeReportSequence: {
         label: '种类前后交替的报',
-        description: '烈度速报 → 震源信息 → 烈度速报 → 震源・烈度信息 → 其续报 → 烈度速报 → 其续报，共7份（前4份与2024年能登半岛地震前震的顺序相同）。标题中列出已收到的种类，到震源・烈度信息时折叠速报阶段。第1份是烈度尚未到齐的形式（最大烈度5弱），第3份出现5强，因此若已启用浏览器通知，会发出“最大烈度更新”的通知。在这里还可以确认迟到的烈度速报不会使卡片变动，以及烈度有升降的行会带上标记',
+        description: '烈度速报 → 震源信息 → 烈度速报 → 震源、烈度信息 → 其续报 → 烈度速报 → 其续报，共7份（前4份与2024年能登半岛地震前震的顺序相同）。标题中列出已收到的种类，到震源、烈度信息时折叠速报阶段。第1份是烈度尚未到齐的形式（最大烈度5弱），第3份出现5强，因此若已启用浏览器通知，会发出“最大烈度更新”的通知。在这里还可以确认迟到的烈度速报不会使卡片变动，以及烈度有升降的行会带上标记',
         button: '种类变化测试',
       },
       quakeCancel: {
@@ -1628,7 +1674,7 @@ export const zhHans: Messages = {
       },
       quakePartialCancel: {
         label: '地震信息（部分取消）',
-        description: '发布烈度速报和震源・烈度信息，在震源・烈度信息10秒后仅取消烈度速报。卡片保留，标题下方显示“烈度速报已取消”和日本气象厅的正文',
+        description: '发布烈度速报和震源、烈度信息，在震源、烈度信息10秒后仅取消烈度速报。卡片保留，标题下方显示“烈度速报已取消”和日本气象厅的正文',
         button: '部分取消测试',
       },
       borrowFromTsunami: {
@@ -1638,12 +1684,12 @@ export const zhHans: Messages = {
       },
       magnitudeFromTsunami: {
         label: '海啸后告知的震级',
-        description: '震源・烈度信息（M7.4）→ 海啸的续报（M7.6）→ 震源・烈度信息的续报（M7.6）（与2024年能登半岛地震主震的顺序相同）。海啸的续报告知比地震信息更新的震级时，卡片的震级也变为 M7.6，并在行上注明出处“来自海啸信息”。下一份震源・烈度信息送达后，出处标记消失',
+        description: '震源、烈度信息（M7.4）→ 海啸的续报（M7.6）→ 震源、烈度信息的续报（M7.6）（与2024年能登半岛地震主震的顺序相同）。海啸的续报告知比地震信息更新的震级时，卡片的震级也变为 M7.6，并在行上注明出处“来自海啸信息”。下一份震源、烈度信息送达后，出处标记消失',
         button: '震级更新测试',
       },
       trainingQuake: {
         label: '演练报',
-        description: '内容与地震测试相同（地震信息和长周期地震动观测信息），只有电文头的运用类别（演练）不同。与真实电文一样送到画面・声音・朗读，并在卡片和长周期栏中显示“演练报”标记',
+        description: '内容与地震测试相同（地震信息和长周期地震动观测信息），只有电文头的运用类别（演练）不同。与真实电文一样送到画面、声音、朗读，并在卡片和长周期栏中显示“演练报”标记',
         button: '演练报测试',
       },
       tsunamiForecast: {
@@ -1672,7 +1718,7 @@ export const zhHans: Messages = {
         button: '失效时刻测试',
       },
       tsunamiGradeChange: {
-        label: '海啸警报・注意警报（各区域等级变动的续报）',
+        label: '海啸警报、注意警报（各区域等级变动的续报）',
         description: '海啸警报 → 石川県能登升级为大海啸警报、随后又回到警报的续报（中间夹有涨潮时刻的报）。在整体等级不变的报中，只能通过各区域的“由〇〇升级”“由〇〇变更”标记看出变化',
         button: '区域等级变化测试',
       },
@@ -1682,7 +1728,7 @@ export const zhHans: Messages = {
         button: '成因地震追加测试',
       },
       tsunamiQuietReports: {
-        label: '海啸警报・注意警报（变化较小的续报）',
+        label: '海啸警报、注意警报（变化较小的续报）',
         description: '大海啸警报（2011年东北地方太平洋近海地震的样本电文）→ 每隔10秒发出16份续报。确认等级和波高数值都不变的报只响提示音、不朗读任何内容。其中有逐份改变釜石・大船渡・近海数值的报，有只给没有数值的观测点加标记的报，也有釜石转为缺测、在缺测状态下只有最大波观测时刻前进的报',
         button: '小变化续报测试',
       },
@@ -1693,12 +1739,12 @@ export const zhHans: Messages = {
       },
       tsunamiInfoRetraction: {
         label: '海啸信息的取消（注意警报继续）',
-        description: '海啸注意警报 → 各地涨潮时刻・到达预测的信息 → 仅取消该信息。消失的只有该信息带来的观测点，注意警报的区域保留。朗读只告知已取消的事实，不响提示音',
+        description: '海啸注意警报 → 各地涨潮时刻、到达预测的信息 → 仅取消该信息。消失的只有该信息带来的观测点，注意警报的区域保留。朗读只告知已取消的事实，不响提示音',
         button: '海啸信息取消测试',
       },
       nankaiChecking: {
         label: '南海海槽地震临时信息（调查中）',
-        description: '横幅显示 + specialInfo 提示音（无横幅关闭按钮・再次测试时覆盖）',
+        description: '横幅显示 + specialInfo 提示音（无横幅关闭按钮、再次测试时覆盖）',
         button: '调查中测试',
       },
       nankaiWatch: {
@@ -1718,8 +1764,8 @@ export const zhHans: Messages = {
       },
       nankaiCommentaryAdHoc: {
         label: '南海海槽地震相关解说信息（临时解说）',
-        description: '横幅显示 + specialInfoCommentary 提示音（有关闭按钮・7天后自动清除）',
-        button: '临时解说测试',
+        description: '横幅显示 + specialInfoCommentary 提示音（有关闭按钮、7天后自动清除）',
+button: '临时解说测试',
       },
       nankaiCommentaryRetraction: {
         label: '南海海槽地震相关解说信息（取消）',
@@ -1728,21 +1774,21 @@ export const zhHans: Messages = {
       },
       nankaiCommentaryRoutine: {
         label: '南海海槽地震相关解说信息（定期解说）',
-        description: '平时每月发布的电文。横幅显示 + specialInfoCommentary 提示音（有关闭按钮・7天后自动清除）',
+        description: '平时每月发布的电文。横幅显示 + specialInfoCommentary 提示音（有关闭按钮、7天后自动清除）',
         button: '定期解说测试',
       },
       activityInfo: {
         label: '地震活动状况信息',
-        description: '电文记录中只出现 1 行“已跳过”。不出现卡片・横幅・提示音（此类信息不解读，连同正文存入电文记录）',
+        description: '电文记录中只出现 1 行“已跳过”。不出现卡片、横幅、提示音（此类信息不解读，连同正文存入电文记录）',
         button: '活动状况测试',
       },
       kohatsu: {
-        label: '北海道・三陆近海后续地震注意信息',
+        label: '北海道、三陆近海后续地震注意信息',
         description: '横幅显示 + specialInfo 提示音',
         button: '后续地震测试',
       },
       kohatsuRetraction: {
-        label: '北海道・三陆近海后续地震注意信息（取消）',
+        label: '北海道、三陆近海后续地震注意信息（取消）',
         description: '发布后续地震注意信息，并发出相同识别信息的取消。横幅变为“取消”显示并在 10 秒后消失，响起取消提示音，朗读告知已取消的事实和理由',
         button: '取消测试',
       },
@@ -1758,13 +1804,13 @@ export const zhHans: Messages = {
       },
       lpgmClassZero: {
         label: '长周期地震动观测信息（等级0）',
-        description: '发送未观测到等级1以上的长周期地震动观测信息。与等级1以上的报一样，有声音・朗读・通知',
+        description: '发送未观测到等级1以上的长周期地震动观测信息。与等级1以上的报一样，有声音、朗读、通知',
         button: '长周期地震动（等级0）测试',
       },
       lpgmCategories: {
-        label: '长周期地震动观测信息（种类1・3）',
-        description: '发送观测信息种类1・3的实际电文（2024年1月1日 石川県能登地方・2024年8月8日 日向灘）。长周期地震动栏下方会出现一句话，说明观测到等级的地区烈度均为5弱以上',
-        button: '长周期地震动（种类1・3）测试',
+        label: '长周期地震动观测信息（种类1、3）',
+        description: '发送观测信息种类1、3的实际电文（2024年1月1日 石川県能登地方、2024年8月8日 日向灘）。长周期地震动栏下方会出现一句话，说明观测到等级的地区烈度均为5弱以上',
+        button: '长周期地震动（种类1、3）测试',
       },
       lpgmClassZeroRegion: {
         label: '长周期地震动观测信息（含等级0的地区）',
@@ -1773,7 +1819,7 @@ export const zhHans: Messages = {
       },
       earthquakeCount: {
         label: '地震次数信息（横幅）',
-        description: '以横幅显示群发地震时的次数变化（21小时内有感1次）+ earthquakeCount 提示音・简短朗读。有感以外以“未发布”送达，因此表中显示“—”（有关闭按钮・7天后自动清除）',
+        description: '以横幅显示群发地震时的次数变化（21小时内有感1次）+ earthquakeCount 提示音、简短朗读。有感以外以“未发布”送达，因此表中显示“—”（有关闭按钮、7天后自动清除）',
         button: '地震次数测试',
       },
       earthquakeCountRetraction: {
@@ -1782,16 +1828,22 @@ export const zhHans: Messages = {
         button: '地震次数 取消测试',
       },
       quakeNotice: {
-        label: '地震・海啸相关通知',
-        description: '观测点停止入电等运用联络。横幅显示（声音和朗读仅在“通知信息的声音・朗读”开启时・有关闭按钮・7天后自动清除）',
+        label: '地震、海啸相关通知',
+        description: '观测点停止入电等运用联络。横幅显示（声音和朗读仅在“通知信息的声音、朗读”开启时、有关闭按钮、7天后自动清除）',
         button: '通知信息测试',
       },
     },
     replay: {
-      note: '回放指定日期时间的地震信息・海啸・紧急地震警报（2020年11月18日以后。紧急地震警报仅限2022年7月20日以后）。实时烈度只能回放最近的期间和下方的地震。',
+      note: '回放指定日期时间的地震信息、海啸、紧急地震警报（2020年11月18日以后。紧急地震警报仅限2022年7月20日以后）。实时烈度只能回放最近的期间和下方的地震。',
       archives: {
         label: '已收录的地震',
-        description: '从这里回放会再现地震信息・海啸，但不包括实时烈度。如有需要，请从下方的“导入K-NET数据”读取。',
+        description: '从这里回放会再现地震信息、海啸，但不包括实时烈度。如有需要，请从下方的“导入K-NET数据”读取。',
+        names: {
+          '2016-kumamoto': '2016年熊本地震',
+          '2016-tottori': '2016年鸟取县中部地震',
+          '2018-osaka': '2018年大阪府北部地震',
+          '2018-iburi': '2018年北海道胆振东部地震',
+        },
       },
       play: '回放',
       start: {
@@ -1831,7 +1883,7 @@ export const zhHans: Messages = {
       count: (n: number) => `${n} 条`,
       row: {
         label: '摇晃检测记录',
-        description: '摇晃检测触发时，在设备内保存前后 30 秒的观测值・检测明细・学习状态。如果并非地震却被检测到，有这份记录就能追查原因。在导出之前不会离开设备。',
+        description: '摇晃检测触发时，在设备内保存前后 30 秒的观测值、检测明细、学习状态。如果并非地震却被检测到，有这份记录就能追查原因。在导出之前不会离开设备。',
       },
     },
   },
@@ -1857,6 +1909,7 @@ export const zhHans: Messages = {
     more: (n) => `另有 ${n} 条`,
     noticeBadge: '通知',
     countBadge: '地震次数',
+    commentarySerial: { 臨時解説: '临时解说', 定例解説: '定期解说' },
     nankaiKind: {
       巨大地震警戒: '巨大地震警戒',
       巨大地震注意: '巨大地震注意',
@@ -1902,12 +1955,12 @@ export const zhHans: Messages = {
     },
     source: { eew: '紧急地震警报', kyoshin: '实时烈度', quake: '地震信息' },
     basis: {
-      nationwide: (s) => `${s}・全国最大`,
-      eewNearDetected: (s, km) => `${s}・在登记地点 ${km} km 以内检测到`,
-      eewArea: (s) => `${s}・登记地点所在地区的预测`,
-      kyoshinNear: (s, km) => `${s}・登记地点 ${km} km 以内`,
-      nearArea: (s) => `${s}・登记地点所在地区`,
-      nearStations: (s, km) => `${s}・登记地点 ${km} km 以内的观测点`,
+      nationwide: (s) => `${s}·全国最大`,
+      eewNearDetected: (s, km) => `${s}·在登记地点 ${km} km 以内检测到`,
+      eewArea: (s) => `${s}·登记地点所在地区的预测`,
+      kyoshinNear: (s, km) => `${s}·登记地点 ${km} km 以内`,
+      nearArea: (s) => `${s}·登记地点所在地区`,
+      nearStations: (s, km) => `${s}·登记地点 ${km} km 以内的观测点`,
     },
     scale: (label) => `烈度${label}`,
     realtimePrefix: '实时',
@@ -1931,7 +1984,7 @@ export const zhHans: Messages = {
     kit: [
       { label: '避难用具', items: ['手电筒', '便携收音机', '备用电池', '头盔或防灾头巾'] },
       { label: '贵重物品', items: ['现金（包括公用电话用的10日元硬币）', '存折', '印章', '医保卡和驾照'] },
-      { label: '维持生命', items: ['饮用水（每人 500 ml×2〜3瓶）', '常用药', '急救用品'] },
+      { label: '维持生命', items: ['饮用水（每人 500 ml×2～3瓶）', '常用药', '急救用品'] },
       { label: '生活用品', items: ['手机充电器', '口罩', '毛巾', '湿巾'] },
     ],
     kitItemSeparator: '、',
@@ -1969,7 +2022,7 @@ export const zhHans: Messages = {
     },
     sourceNames: {
       jma: '日本气象厅',
-      bathymetry: 'GEBCO・NOAA NCEI（经由 Esri 瓦片服务）',
+      bathymetry: 'GEBCO、NOAA NCEI（经由 Esri 瓦片服务）',
       activeFaults: '产综研 活断层数据库',
       plateBoundaries: 'PB2002 (Bird, 2003)',
       earthScope: 'EarthScope',
@@ -1977,6 +2030,170 @@ export const zhHans: Messages = {
     eewNotice:
       '紧急地震警报是地震发生后立即发布的推测信息。可能出现误报，或震源、震级、预测烈度存在误差；在靠近震源的地方，可能来不及在强烈摇晃到来之前发出。',
     incomplete: '部分地图数据在截图时仍在加载中',
+  },
+  replayBanner: {
+    unreadable: '无法识别为回放日期时间',
+    tooEarly: (year) => `无法回放 ${year} 年以前（所有来源均无数据）`,
+    future: '无法回放未来的时间',
+    mainFailed: (from, reason) => `回放正文（${from} 以后）获取失败: ${reason}`,
+    initialFailed: (reason) => `初始状态（过去 24 小时）获取失败: ${reason}`,
+    historyFailed: (reason) => `无法恢复地震卡片的历史（回放开始前的地震不会显示在列表中。回放继续）: ${reason}`,
+    archiveFailed: (reason) => `${reason}（不回放地震、海啸电文。实时烈度继续回放）`,
+    prefetchLost: (from, reason) => `预读失败。${from} 起的 1 小时不会回放: ${reason}`,
+    prefetchRetrying: (from, reason) => `预读失败。正在重新获取 ${from} 起的 1 小时: ${reason}`,
+    prefetchBlocks: (n) => `预读${n}个区间`,
+    lossNotice: (parts) => `未能载入${parts.join('、')}（回放继续、详情见控制台）`,
+  },
+  waveChart: {
+    stale: '波形 中断',
+    publicRefused: '公开观测点 连接数已达上限',
+    composite: '合成',
+    sensorLane: '单独',
+    compositeStopped: '合成 中断',
+    axes: ['东西', '南北', '上下'],
+    tallyGaps: (n) => `缺测 ${n}`,
+    tallyRestarts: (n) => `重连 ${n}`,
+    tallyDuplicates: (n) => `重复 ${n}`,
+    tallySeparator: ' / ',
+    collapse: '收起波形',
+    expand: '展开波形',
+    compressedNote: '纵轴采用近似对数的刻度绘制。',
+  },
+  updateMark: {
+    new: '最新信息中首次出现的值',
+    raised: '最新信息中已上调',
+    lowered: '最新信息中已下调',
+    changed: '最新信息中已变更',
+  },
+  errorText: {
+    networkFailure: () => '无法连接',
+    fetchFailed: () => '获取失败',
+    fetchTimeout: (seconds, url) => `获取未在 ${seconds} 秒内完成: ${url}`,
+    apiKeyInvalid: () => 'API 密钥中含有不可使用的字符。请只输入半角英文字母、数字和符号。',
+    apiKeyMissing: () => '尚未设置 API 密钥。请设置 DM-D.S.S 的 API 密钥。',
+    relayTokenHttp: (status) => `未能获取中继的令牌（HTTP ${status}）`,
+    relayTokenUnreadable: () => '无法读取中继令牌的响应',
+    relayTokenMalformed: () => '中继令牌的响应格式与预期不符',
+    relayTokenShort: () => '中继令牌的有效期太短',
+    relayTokenNotReady: () => '内部错误: 在准备好中继令牌之前尝试生成请求头',
+    archiveListHttp: (status) => `未能获取存档列表: ${status}`,
+    archiveListNotOk: () => '存档列表未返回成功',
+    archiveListCutOff: (maxPages, start, end, count) => `存档列表中途被截断: 已达页数上限（${maxPages}） 范围=${start}~${end} 件数=${count}`,
+    archiveAllFailed: (sources) => `未能获取存档: ${sources} 个来源全部无法读取`,
+    sameDayRangeTooLong: (days, max, from, to) => `内部错误: 当日路径的对象期间过长（${days} 天 / 上限 ${max} 天）: ${from}～${to}`,
+    localArchiveNoDay: (name) => `本地历史存档“${name}”未收录这一天的电文`,
+    localArchiveEnded: (name) => `本地历史存档“${name}”已到达收录范围的终点。之后无法回放`,
+    knetComponentFromName: (file) => `无法从文件名判断分量(NS/EW/UD): "${file}"`,
+    knetScaleFactorFormat: (file, value) => `${file} 文件头: Scale Factor 的格式不明 "${value}"`,
+    knetScaleFactorDenominator: (file, value) => `${file} 文件头: Scale Factor 的分母无效 "${value}"`,
+    knetSamplingFreq: (file, value) => `${file} 文件头: 无法解析 Sampling Freq "${value}"`,
+    knetDateFormat: (file, value) => `${file} 文件头: 日期时间的格式不明 "${value}"`,
+    knetTooShort: (file, headerLines) => `${file}: 数据不足文件头的行数（${headerLines} 行）`,
+    knetNoMemo: (file, line) => `${file}: 第 ${line} 行不是以 "Memo." 开头（文件头行数的假设可能与实际文件不符）`,
+    knetFieldMissing: (file, field) => `${file}: 找不到 ${field}`,
+    knetNonNumericToken: (file, token, line) => `${file}: 数据行中有非数值的标记 ("${token}", 第 ${line} 行)`,
+    knetNoData: (file) => `${file}: 没有数据`,
+    knetStepSec: () => '内部错误: stepSec 必须是正整数（秒）',
+    knetNoReadableStation: (count, items, more) => `${count} 个文件解析失败，没有可读取的观测点: ${items.join(' / ')}${more ? ' ...' : ''}`,
+    knetFileFailure: (file, reason) => `${file}: ${reason}`,
+    knetNoWaveFiles: () => 'ZIP 中没有找到任何 NS/EW/UD 波形文件',
+    knetMixedOrigin: (kinds) => `ZIP 中混有不同地震的 Origin Time（${kinds} 种）。请确认是否把多个地震的文件放进了同一个 ZIP`,
+    knetNoCompleteStation: (origin) => `origin=${origin}: 没有三个分量齐全的观测点`,
+    knetIncompleteRatio: (origin, percent) => `origin=${origin}: 分量不齐的观测点达到 ${percent}%（分量、深度的判定可能有误）`,
+    knetTooManyExcluded: (origin, percent, incomplete, unreadable, uncomputable, examples) =>
+      `origin=${origin}: 排除的观测点达到 ${percent}%（分量不齐 ${incomplete} 个、无法读取 ${unreadable} 个、无法计算烈度 ${uncomputable} 个）。例: ${examples.join(' / ')}`,
+    knetExcludedItem: (station, reason) => `${station} ${reason}`,
+    knetExcludedUnreadable: (reason) => `无法读取（${reason}）`,
+    knetExcludedUncomputable: (reason) => `无法计算烈度（${reason}）`,
+    knetUncomputableReason: (hz, reason) => `每秒 ${hz} 次: ${reason}`,
+    knetNoIntensity: (origin) => `origin=${origin}: 一个有效的计测烈度也未能算出（所有窗口的数据都不足）。请检查采样频率、比例因子等计算步骤`,
+    knetSampleRate: () => '内部错误: sampleRateHz 必须是正数',
+    knetFilterDiverges: (hz, stage) => `每秒 ${hz} 次时，近似滤波器的第 ${stage} 级发散（采样频率过低）`,
+    knetDurationUnjudgeable: (seconds, hz) => `无法判定 ${seconds} 秒的持续时间（每秒 ${hz} 次）`,
+    knetNonFiniteSample: (position) => `混有非有限的样本: 位置 ${position}`,
+    knetStepSecPositive: () => '内部错误: stepSec 必须是正数',
+    fftLengthMismatch: (n, m) => `内部错误: 实部与虚部的长度不同: ${n}/${m}`,
+    fftNotPowerOfTwo: (n) => `内部错误: 长度不是 2 的幂: ${n}`,
+  },
+  alertText: {
+    joinParts: (parts) => parts.join(' '),
+    quakeTitle: '地震信息',
+    quakeCancelTitle: '地震信息 取消',
+    areaAndOthers: (name) => `${name}等`,
+    scalePrompt: (area, scale) => (area === null ? `烈度速报 最大烈度${scale}` : `烈度速报 ${area} 最大烈度${scale}`),
+    hypocenter: (name, scale, magnitude) => `${name} 最大烈度${scale} ${magnitude}`,
+    maxScaleRaised: (body) => `最大烈度更新 ${body}`,
+    noIntensity: (name, magnitude, noneObserved) => {
+      const base = name ? `${name} ${magnitude}` : magnitude
+      return noneObserved ? `${base}（未观测到烈度1以上）` : base
+    },
+    foreignQuake: (name, magnitude) => (name ? `远地地震 ${name} ${magnitude}` : `远地地震 ${magnitude}`),
+    quakeCancelled: (body) => `${body} 已取消`,
+    eewWarningTitle: '紧急地震警报 警报',
+    eewSpecialWarningTitle: '紧急地震警报 特别警报',
+    eewFinal: (title) => `${title}（最终报）`,
+    eewCancelTitle: '紧急地震警报 取消',
+    eewCancelled: (name) => (name ? `${name} 的紧急地震警报已取消` : '紧急地震警报已取消'),
+    eewKind: { warning: '紧急地震警报', forecast: '地震动预报' },
+    maxScaleForecast: (scale) => `预测最大烈度${scale}`,
+    lpgmForecast: (cls) => `预测长周期地震动${cls}`,
+    eewMore: (n) => `另有${n}条`,
+    kyoshinDetected: '检测到摇晃',
+    kyoshinOtherPlace: '在其他地点检测到摇晃',
+    kyoshinReonset: '在同一地点再次检测到摇晃',
+    kyoshinMax: (label) => `最大实时烈度 ${label}`,
+    nameSeparator: '、',
+    tsunamiLifted: (areas) => `解除：${areas}`,
+    tsunamiMoreAreas: (names, n) => `${names} 另有 ${n} 个区域`,
+    tsunamiMorePoints: (names, n) => `${names} 另有 ${n} 个地点`,
+    tsunamiLiftTitle: '海啸警报等已解除',
+    tsunamiAllLifted: '海啸警报等已全部解除。',
+    tsunamiObservationTitle: '海啸观测信息',
+    tsunamiInfoRetractTitle: '海啸信息取消',
+    tsunamiInfo: '海啸信息',
+    tsunamiInfoRetracted: (name) => `${name}已取消。`,
+    tsunamiRetractTitle: '海啸警报等取消',
+    tsunamiRetracted: '海啸警报等因误发而已取消。',
+    tsunamiExpireTitle: '海啸预报失效',
+    tsunamiExpired: '海啸预报已失效。',
+    withStage: (name, stage) => `${name}（${stage}）`,
+    lpgmFor: (name, infoName) => `${name}的${infoName}`,
+    lpgmMaxClass: (cls) => `最大长周期地震动等级${cls}`,
+    estimatedIntensity: (at, name, isNew) => {
+      const quake = at ? `${at.hour}时${String(at.minute).padStart(2, '0')}分（JST）左右发生的地震的` : ''
+      return isNew ? `已收到${quake}${name}` : `${quake}${name}已更新`
+    },
+    internationalTsunami: (p) => {
+      const subject = [
+        p.when ? `${ZH_HANS_JST(p.when)}（JST）左右发生的地震` : '地震',
+        p.where,
+        p.depthKm !== null ? `深度 ${p.depthKm} 公里` : '',
+        p.magnitude !== null ? `M${p.magnitude.toFixed(1)}` : '',
+      ].filter((s) => s !== '').join('，')
+      return `${subject}：${p.evaluation ?? `已发布${p.name}`}。`
+    },
+    internationalTsunamiEvaluation: {
+      oceanWide: '可能发生对太平洋大范围造成灾害的海啸',
+      regional: '可能发生对远离震源的地区造成灾害的海啸',
+      localNearEpicenter: '可能发生对震源附近造成灾害的海啸',
+      verySmall: '发生致灾海啸的可能性非常小',
+      none: '无海啸可能',
+    },
+    internationalTsunamiCoordinate: (lat, lon, coordinate) => coordinate(Math.abs(lat).toFixed(1), Math.abs(lon).toFixed(1), lat < 0, lon < 0),
+    communicationsTest: '通信测试。',
+    titleTsunamiWarnings: '海啸警报、注意警报 发布中',
+    titleTsunamiForecast: '海啸预报 发布中',
+    titleShakingDetected: '摇晃检测',
+    titlePossibleShaking: '可能有摇晃',
+    titleInEffect: (name) => `${name} 发布中`,
+    titleLpgm: '长周期地震动',
+    titleLpgmMaxClass: (cls) => `最大等级${cls}`,
+    titleQuake: (name, scale) => `地震信息 ${name} 最大烈度${scale}`,
+    titleForeignQuake: (name, magnitude) => `远地地震 ${name} ${magnitude}`,
+    titleReloadCountdown: (sec, periodic, app) => `${sec}秒后${periodic ? '重新加载' : '更新'} — ${app}`,
+    testTitle: '地震信息测试',
+    testBody: '東京都内陸部（测试） 最大烈度4 M5.5',
+    permissionFirst: (button) => `请先按“${button}”。`,
   },
   formats: {
     intensity: { '-1': '不明', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5弱', 50: '5强', 55: '6弱', 60: '6强', 70: '7' },
@@ -2025,7 +2242,7 @@ export const zhHans: Messages = {
       訂正: '更正（内容不明）',
       震度のみ訂正: '更正烈度',
       震源を訂正: '更正震源',
-      '震度・震源を訂正': '更正烈度・震源',
+      '震度・震源を訂正': '更正烈度、震源',
     },
     nonJmaStation: '由日本气象厅以外的机构运营的观测点',
     tsunamiObsLegend: { m3: '3m以上', m1: '1m以上', m02: '0.2m以上', under02: '不足0.2m' },
@@ -2034,5 +2251,11 @@ export const zhHans: Messages = {
     monthDay: ZH_HANS_DATES.monthDay,
     fullDate: ZH_HANS_DATES.fullDate,
     calendarDate: ZH_HANS_DATES.calendarDate,
+    paren: (text) => `（${text}）`,
+    listSep: '、',
+    spaceSep: () => '　',
+    slash: '／',
+    slashSpaced: ' ／ ',
+    rangeSpaced: (from, to) => `${from} ～ ${to}`,
   },
 }

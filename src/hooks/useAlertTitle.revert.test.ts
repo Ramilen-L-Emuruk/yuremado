@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useAlertTitle, titleResetMs, joinTitleParts, TSUNAMI_ACTIVE_TITLE } from './useAlertTitle'
 import type { EEWAlert } from '../types/earthquake'
+import { ja } from '../i18n/messages/ja'
 
 function setup(idleRevertSec: number, temporary = false) {
   const activeEEWsRef = { current: new Map<string, EEWAlert>() }
@@ -141,9 +142,9 @@ describe('extendTitle', () => {
 
 describe('joinTitleParts', () => {
   it('正: 空の部品を詰め、空白を二重に残さない（震央地名が空の緊急地震速報）', () => {
-    expect(joinTitleParts('緊急地震速報', '', '最大震度5弱予想', '')).toBe('緊急地震速報 最大震度5弱予想')
+    expect(joinTitleParts(ja, '緊急地震速報', '', '最大震度5弱予想', '')).toBe('緊急地震速報 最大震度5弱予想')
   })
   it('対照: 部品が揃えば空白 1 つで繋ぐ', () => {
-    expect(joinTitleParts('緊急地震速報', '三陸沖', '最大震度5弱予想', '他1件')).toBe('緊急地震速報 三陸沖 最大震度5弱予想 他1件')
+    expect(joinTitleParts(ja, '緊急地震速報', '三陸沖', '最大震度5弱予想', '他1件')).toBe('緊急地震速報 三陸沖 最大震度5弱予想 他1件')
   })
 })

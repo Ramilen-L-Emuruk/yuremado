@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { HistoricalArchiveIndex } from '../types/historicalArchive'
 import { findCoveringArchiveSync } from '../services/localArchiveReplay'
+import { historicalArchiveLabel } from '../utils/historicalArchiveLabel'
+import { useMessages } from '../i18n/I18nProvider'
 import { buildEventResultFromZip, parseJstTimestamp } from '../utils/knet/buildEventResultFromZip'
 import { STEP_SEC_DEFAULT } from '../utils/knet/intensityCommon'
 import { countImportedEvents, deleteImportedEvents, hasImportStorageError, onImportsChanged, saveImportedEvent } from '../utils/kyoshinImportDb'
@@ -22,7 +24,11 @@ export type KyoshinImportFileError =
   | { fileName: string; kind: 'noArchive'; originTime: Date }
   /** 端末へ保存できなかった */
   | { fileName: string; kind: 'saveFailed' }
-  | { fileName: string; kind: 'other'; message: string }
+  /**
+   * それ以外の失敗。`message` は日本語の文、`error` は投げられたもの（鍵と引数を持てば、画面は言語の辞書で組み直す。
+   * → `utils/localizedError.ts` の `screenErrorMessage`）
+   */
+  | { fileName: string; kind: 'other'; message: string; error: unknown }
 
 /** 取り込めたが、読めない観測点を外したファイル。 */
 export interface KyoshinImportExclusion {
@@ -77,11 +83,13 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
     return onImportsChanged(refresh)
   }, [refresh])
 
+  // 地震の名前は画面の言語で出す（→ `utils/historicalArchiveLabel.ts`）
+  const archiveWords = useMessages().settings.replay.archives
   const summaries = useMemo<KyoshinImportSummary[]>(
     () => historicalArchives
-      .map((a) => ({ archiveId: a.id, label: a.label, eventCount: counts[a.id] ?? 0 }))
+      .map((a) => ({ archiveId: a.id, label: historicalArchiveLabel(a, archiveWords), eventCount: counts[a.id] ?? 0 }))
       .filter((s) => s.eventCount > 0),
-    [historicalArchives, counts],
+    [historicalArchives, counts, archiveWords],
   )
 
   const importFiles = useCallback(async (files: FileList) => {
@@ -109,7 +117,7 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
           // 保存まで済んだものだけ知らせる（失敗したファイルはエラーの側に出る）
           if (excludedStations > 0) fileExclusions.push({ fileName: file.name, excludedStations })
         } catch (err) {
-          fileErrors.push({ fileName: file.name, kind: 'other', message: err instanceof Error ? err.message : String(err) })
+          fileErrors.push({ fileName: file.name, kind: 'other', message: err instanceof Error ? err.message : String(err), error: err })
         }
       }
       setErrors(fileErrors)

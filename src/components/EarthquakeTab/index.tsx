@@ -12,6 +12,7 @@ import {
 import { serverNow } from '../../utils/clock'
 import { addDays, missingRanges, periodDayRange, type DayRange, type HistoryDaysState } from '../../utils/historyDays'
 import { log } from '../../utils/logger'
+import { fetchFailureReason } from '../../utils/fetchFailure'
 import { extractQuakeEventId, quakeEventKey } from '../../utils/quakeMerge'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
@@ -24,8 +25,8 @@ import { quakeCardScrollTarget, type LpgmSectionFocus, QUAKE_CARD_KEY_ATTR } fro
 import { useFollowScroll } from '../../hooks/useFollowScroll'
 import { growFrom, ROW_INSERT_MS, CARD_RESIZE_ANIMATION_ID } from './quakeMotion'
 import {
-  type TelegramLoss, formatHistoryLossNotice, HISTORY_LOAD_MORE_FAILED_NOTICE, RECONNECT_GAP_LOSS_NOTICE,
-  formatRateLimitedNotice, FETCH_THROTTLED_NOTICE,
+  type TelegramLoss, formatHistoryLossNotice, historyLoadMoreFailedNotice, reconnectGapLossNotice,
+  formatRateLimitedNotice, fetchThrottledNotice,
 } from '../../utils/telegramLoss'
 
 interface Props {
@@ -81,7 +82,8 @@ interface Props {
    * 「もっと見る」が取得制限で待たされている間、ボタンに残り時間を出すか（→ `LoadMoreButton`）。
    */
   watchLoadMoreThrottle: boolean
-  error: string | null
+  /** 履歴の取得の失敗。文にするのはここ（描く時点の言語。→ `fetchFailureReason`） */
+  error: { readonly cause: unknown } | null
   /**
    * 履歴取得で確定した損失。**カードが 1 件も無いときも出す** —— 出さないと
    * 「7 日のうち 6 日が落ちて 0 件」が「まったく静かな期間だった」と同じ画になる。
@@ -210,9 +212,12 @@ interface Notice { text: string; tone: NoticeTone; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyDays, onLoadPeriod, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyDays, onLoadPeriod, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error: loadError, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   const words = useMessages().quake
   const formats = useMessages().formats
+  const errorWords = useMessages().errorText
+  // 取得の失敗の理由は、描く時点の言語の文にする
+  const error = loadError === null ? null : fetchFailureReason(loadError.cause, errorWords)
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
@@ -340,10 +345,10 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   // **待っているだけの告知は最後・青で出す。** 上の 4 つは「何かが欠けた・失敗した」だが、
   // これは欠けていない（枠が空けばそのまま取りに行く）。
   const notices: Notice[] = [
-    formatHistoryLossNotice(historyLoss),
-    formatRateLimitedNotice(historyLoss),
-    loadMoreFailed ? HISTORY_LOAD_MORE_FAILED_NOTICE : null,
-    reconnectGapLoss ? RECONNECT_GAP_LOSS_NOTICE : null,
+    formatHistoryLossNotice(historyLoss, words.list),
+    formatRateLimitedNotice(historyLoss, words.list),
+    loadMoreFailed ? historyLoadMoreFailedNotice(words.list) : null,
+    reconnectGapLoss ? reconnectGapLossNotice(words.list) : null,
   ].filter((t): t is string => t !== null).map(text => ({ text, tone: 'loss' as const }))
   // **取得に失敗しても、カードがあれば一覧は残す**（2026-10-21 ユーザー承認「直す (Recommended)」。
   // カードがあれば一覧を残し、失敗は既存の帯で。文言は足さない）。起動時の履歴より先に、または失敗の後に
@@ -357,7 +362,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   }
   // 再生の知らせは先頭に置く（再生中は、ここに出る欠けが画面の中身そのものを左右する）
   if (replayError !== null) notices.unshift({ text: replayError, tone: 'replay' })
-  if (fetchThrottled) notices.push({ text: FETCH_THROTTLED_NOTICE, tone: 'info' })
+  if (fetchThrottled) notices.push({ text: fetchThrottledNotice(words.list), tone: 'info' })
   // 鍵の入れ直しの案内は欠けではないので青。閉じられる（2026-10-31 ユーザー選択の説明「［×］で閉じる」）
   const keyReentryNotice: Notice | null = onDismissKeyReentry === null
     ? null
@@ -396,7 +401,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="text-center">
             <p className="text-red-400 text-sm mb-2">{words.list.loadFailed}</p>
-            <p className="text-secondary text-xs">{error}</p>
+            {error.trim() !== '' && <p className="text-secondary text-xs">{error}</p>}
           </div>
         </div>
       </div>
