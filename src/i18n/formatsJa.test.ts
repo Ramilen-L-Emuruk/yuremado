@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CorrectType, DomesticTsunami, DomesticTsunamiCode } from '../types/earthquake'
 import { ja } from './messages/ja'
+import { JA_COUNT_HEADLINE_WORDS } from '../utils/earthquakeCountSummary'
 import { en } from './messages/en'
 import { es } from './messages/es'
 import { ko } from './messages/ko'
@@ -173,5 +174,16 @@ describe('規模の条件の日本語の写しは、辞書と同じ字面', () =
     for (const raw of ['Ｍ不明', 'Ｍ８を超える巨大地震']) {
       expect(magnitudeConditionText(raw, ja.formats)).toBe(formatMagnitudeCondition(raw))
     }
+  })
+})
+
+// 段 9b: 地震回数の帯の見出しは、通知・プッシュ通知（中継へ写す）が日本語の写しで組む。画面は辞書で組む
+describe('地震回数の見出しの日本語の写しは、辞書と同じ字面', () => {
+  const since = { monthDay: '8/24', hour: '15' }
+  it('回数・有感・両方・区間の初めなし・種別名', () => {
+    for (const [s, n, f] of [[since, '5', '1'], [since, null, '1'], [since, '1,234', null], [null, '5', '1']] as const) {
+      expect(JA_COUNT_HEADLINE_WORDS.countHeadline(s, n, f)).toBe(ja.specialInfo.countHeadline(s, n, f))
+    }
+    expect(JA_COUNT_HEADLINE_WORDS.countHeadlineNone).toBe(ja.specialInfo.countHeadlineNone)
   })
 })

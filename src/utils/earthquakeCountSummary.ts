@@ -56,18 +56,43 @@ export function pickEarthquakeCountSummaryItem(count: JMAEarthquakeCount): JMAEa
  * 防御のつもりで分岐を置くと、次に触る人へ「取消も描ける」という誤った保証を与える。
  */
 export function earthquakeCountHeadline(count: JMAEarthquakeCount): string {
+  return earthquakeCountHeadlineText(count, JA_COUNT_HEADLINE_WORDS)
+}
+
+/** 見出しの語（辞書の `specialInfo` の一部）。 */
+export interface EarthquakeCountHeadlineWords {
+  /** `since` は区間の初め（日本時間の「月/日」と時）、`count`・`felt` は桁を区切った回数（発表なしは null。両方 null では呼ばない） */
+  countHeadline: (since: { monthDay: string; hour: string } | null, count: string | null, felt: string | null) => string
+  countHeadlineNone: string
+}
+
+/**
+ * 日本語の見出しの語。通知・プッシュ通知の本文（`specialInfoNotification.ts`・`specialInfoPush.ts`。中継へ写す）は
+ * 日本語のまま組むので、辞書を読まずにここに持つ。**辞書の日本語（`ja.specialInfo`）と同じ字面であることは
+ * `i18n/formatsJa.test.ts` が突き合わせる。**
+ */
+export const JA_COUNT_HEADLINE_WORDS: EarthquakeCountHeadlineWords = {
+  countHeadline: (since, count, felt) => {
+    const s = since ? `${since.monthDay} ${since.hour}時から ` : ''
+    if (count === null) return `${s}有感 ${felt}回`
+    if (felt === null) return `${s}${count}回`
+    return `${s}${count}回（うち有感 ${felt}回）`
+  },
+  countHeadlineNone: '地震回数に関する情報',
+}
+
+/** {@link earthquakeCountHeadline} の語を渡す形（画面の帯は、いま出している言語の辞書を渡す）。 */
+export function earthquakeCountHeadlineText(count: JMAEarthquakeCount, w: EarthquakeCountHeadlineWords): string {
   const total = pickEarthquakeCountSummaryItem(count)
-  if (!total) return '地震回数に関する情報'
+  if (!total) return w.countHeadlineNone
   const { number, feltNumber } = total
-  if (number === null && feltNumber === null) return '地震回数に関する情報'
+  if (number === null && feltNumber === null) return w.countHeadlineNone
   // 日本時間で読む。端末の時間帯で読むと、中継（UTC で動く）が送るプッシュ通知と画面の帯で時刻がずれる
   const start = new Date(new Date(total.startTime).getTime() + 9 * 60 * 60 * 1000)
   const since = Number.isFinite(start.getTime())
-    ? `${start.getUTCMonth() + 1}/${start.getUTCDate()} ${String(start.getUTCHours()).padStart(2, '0')}時から `
-    : ''
-  if (number === null) return `${since}有感 ${formatCount(feltNumber)}回`
-  if (feltNumber === null) return `${since}${formatCount(number)}回`
-  return `${since}${formatCount(number)}回（うち有感 ${formatCount(feltNumber)}回）`
+    ? { monthDay: `${start.getUTCMonth() + 1}/${start.getUTCDate()}`, hour: String(start.getUTCHours()).padStart(2, '0') }
+    : null
+  return w.countHeadline(since, number === null ? null : formatCount(number), feltNumber === null ? null : formatCount(feltNumber))
 }
 
 /** 回数を桁区切りで出す。**発表なし（`null`）は「—」**（開いた表のセルと同じ）。 */

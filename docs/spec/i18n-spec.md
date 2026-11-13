@@ -257,6 +257,25 @@
 - **津波の観測の「第1波 〜」の行**（2026-11-11 ユーザー選択「この訳でよい (Recommended)」）: 英語 Initial wave・ポルトガル語 Primeira onda・スペイン語 Primera ola・韓国語 제1파。中国語は気象庁の多言語辞書の「第１波到達時刻」（簡体「首波到达时间」・繁体「首波到達時間」）に合わせて簡体・繁体とも「首波」（同日ユーザー選択「首波（辞書の語） (Recommended)」）
 - **震源カタログの最大震度の欄の、震度ではない記号**（F・X・L・S・M・R。日本語は有感・付近有感・局発地震・小局発地震・やや顕著地震・顕著地震。2026-11-11 ユーザー選択「この訳でよい (Recommended)」）: 英語 Felt・Felt nearby・Local earthquake・Small local earthquake・Moderately notable earthquake・Notable earthquake。ほかの 5 言語は英語と同じ意味で作った語（`map.popup.catalogOther`）
 
+### 帯・行動チェックリスト・共有カードの語（段 9b）
+
+範囲は 2026-11-11 にユーザーが選んだ。特別情報の帯（南海トラフ臨時情報・後発地震注意情報・解説情報・お知らせ・地震回数・国際津波関連情報と取消の表示。`components/SpecialInfoBanner`）は、どの段にも入っていなかったので 9b に足した（「9b に足す (Recommended)」）。通知・ウィンドウの題名の規模の条件（`useLiveEventHandler.ts` の `magnitudeTitlePart`）は段 10 で扱う（「段 10 へ移す (Recommended)」）。
+
+英語の訳は、同じ日に 4 つに分けて選んだ（速報・津波の帯／特別情報の帯／行動チェックリスト／共有カード。4 つとも「この案でよい (Recommended)」）。ほかの 5 言語は英語と同じ意味をそれぞれの言語で書いた。いまの値は辞書（`alertDock`・`specialInfo`・`actionChecklist`・`shareImage`）が正。
+
+- 語の出どころ:
+  - 気象庁の多言語辞書の語: 「エレベーターを使わない」（Do not use elevators）
+  - 気象庁の英語資料の語: 南海トラフ地震臨時情報の札の巨大地震警戒 `Megathrust Earthquake Alert`・巨大地震注意 `Megathrust Earthquake Attention`
+  - 既に決めた語の流用: 前の段で辞書に入れた語（リアルタイムタブ・津波タブ・電文ログ・段 9 の共有の語）をそのまま引く
+  - 作った語: 上を除く帯の名目・行動チェックリストの 7 項目と持ち出すもの・出典の名前・共有カードの見出しの語と注意文・南海トラフの札の調査中／調査終了
+- 速報・津波の帯の「ただちに津波来襲と予測」は、日本語では名目「到達予想」に電文の文を添え、ほかの言語では名目を付けずに津波タブの札と同じ語（`Arriving soon`）を出す
+- 地震回数の帯の見出しは、英語・ポルトガル語・スペイン語でも回数に単位を付ける（`23 earthquakes (12 felt)`・1 回は単数。2026-11-11 ユーザー選択「全部の形に単位を付ける (Recommended)」）
+- 速報の帯の「主要動」は、中国語で「主要震动」「主要震動」（「主震」と読まれないため。2026-11-11 ユーザー選択「主要震动に直す (Recommended)」）
+- 電文のまま出すもの: 県名・区域名・観測点名・震源名、特別情報の帯の見出し文・本文・号数、地震回数の表の区間の語（「１時間地震回数」など）
+- 特別情報の帯の発表時刻と地震回数の表の期間は数字の形（`2026/11/11 14:00:00`・`9/10 15:00`）なので、どの言語もそのまま出す
+- 地震回数の帯の見出しは、通知・プッシュ通知（中継へ写す）が使う日本語の写し（`utils/earthquakeCountSummary.ts` の `JA_COUNT_HEADLINE_WORDS`）を残し、辞書の日本語と同じ字面であることを `formatsJa.test.ts` が突き合わせる
+- 共有カードは、画像と共有先へ渡す本文を同じ言語（画面の言語）で組む（画像と本文で違うことを言わない作り。→ [`share-card-spec.md`](share-card-spec.md) §6）
+
 ## 5. 移す順と、移さないもの
 
 移す順は、画面ごとに文言の少ない順（2026-11-10 ユーザー選択「画面ごと・小さい順」）。
@@ -272,7 +291,7 @@
 | 7 | 地図（吹き出し・凡例・地図の隅の名前・地図を作れないときの表示・地図に重ねる自作地震計の札。震度の札・長周期の階級名・書式・津波の高さの語は段 9） | 済み |
 | 8 | 設定の窓（`utils/settingsIo.ts`・`utils/arrivalToken.ts`・`services/dmdataClassifications.ts`・`hooks/useKyoshinImport.ts` の画面の語と、地震タブの鍵の入れ直しの案内を含む。震度の札の語と日付の書式は段 9） | 済み |
 | 9 | 共有の書式（`utils/formatters.ts`）・震度の札（`utils/intensity.ts`・`utils/lpgm.ts`）・日付と時刻・津波の高さの語 | 済み |
-| 9b | 速報・津波の帯（`components/AlertDock`・`utils/alertDock.ts`）・行動チェックリスト（`components/ActionChecklist`）・共有カードの画像の文（`utils/shareCardContent.ts`）。段 9 の後に足した段（2026-11-11 ユーザー選択「段 9 の後に段を足す (Recommended)」） | まだ |
+| 9b | 速報・津波の帯（`components/AlertDock`・`utils/alertDock.ts`）・行動チェックリスト（`components/ActionChecklist`）・共有カードの画像の文（`utils/shareCardContent.ts`）。特別情報の帯（`components/SpecialInfoBanner`）も含む。段 9 の後に足した段（2026-11-11 ユーザー選択「段 9 の後に段を足す (Recommended)」・特別情報の帯は同日「9b に足す (Recommended)」） | 済み |
 | 10 | 画面の外で組む文（通知・ウィンドウの題名・地図の隅の取得失敗の文 `utils/mapDataStatusText.ts` など） | まだ |
 
 段 9 の語（「地震発現時刻」の名前など）はいくつもの画面が使うので、段 2 の範囲から外した（2026-11-10 ユーザー選択「タブと津波の借り物まで (Recommended)」）。ウィンドウの題名（取消・解除の題名など）も段 10 までは日本語のままなので、日本語以外では画面とウィンドウの題名の言語が違う。

@@ -1959,6 +1959,197 @@ export const ja = {
     },
   },
   /**
+   * どのタブからでも見える速報・津波の帯（`components/AlertDock`・`utils/alertDock.ts`。段 9b）。
+   * 区分名・訓練の札・震度と長周期の札・高さの語は、リアルタイムタブ・津波タブ・共有の書式の語を使う。県名・区域名・観測点名は電文のまま
+   */
+  alertDock: {
+    /** 右上の更新時刻（押すとそのタブへ移る印「›」を添える） */
+    updated: (time: string) => `更新 ${time} ›`,
+    maxWave: '最大波',
+    firstWave: '第1波到達',
+    moreAreas: (n: number) => `ほか ${n} 区域`,
+    homePoint: '登録地点',
+    forecastHeight: '予想の高さ',
+    estimatedArrival: '到達予想',
+    /**
+     * 「ただちに津波来襲と予測」の区域の到達。`labelled` は名目（`estimatedArrival`）を添えるか。日本語は名目「到達予想」に
+     * 電文の文を添える（津波タブの区域の行と同じ）。ほかの言語は名目を付けず、津波タブの札と同じ語を出す。
+     * `as boolean` は型を `true` に狭めないため（ほかの言語が `false` を入れる）
+     */
+    immediateArrival: { labelled: true as boolean, text: 'ただちに津波来襲と予測' },
+    hypocenter: '震源',
+    /** 警報の都道府県の残りの数 */
+    more: (n: number) => `ほか ${n}`,
+    forecast: '予想',
+    mainShaking: '主要動',
+    seconds: (sec: number) => `${sec}秒`,
+  },
+  /**
+   * 画面の下端の特別情報の帯（`components/SpecialInfoBanner`。南海トラフ臨時情報・後発地震注意情報・解説情報・お知らせ・地震回数・
+   * 国際津波関連情報と取消の表示。段 9b）。電文の見出し・本文・号数・地震回数の表の区間の語は電文のまま。日時は数字の形なのでどの言語もそのまま
+   */
+  specialInfo: {
+    issued: (time: string) => `発表: ${time}`,
+    nextAdvisory: '次の情報',
+    appendix: (open: boolean) => `この種類の情報について${open ? '（閉じる）' : '（開く）'}`,
+    more: (n: number) => `ほか ${n} 件`,
+    noticeBadge: 'お知らせ',
+    countBadge: '地震回数',
+    /** 南海トラフ地震臨時情報の札（電文の `InfoSerial/Name`）。表に無い語は電文のまま出す */
+    nankaiKind: { 巨大地震警戒: '巨大地震警戒', 巨大地震注意: '巨大地震注意', 調査中: '調査中', 調査終了: '調査終了' } as Record<string, string>,
+    internationalTsunami: '国際津波関連情報',
+    internationalTsunamiTest: '国際津波関連情報 通信試験',
+    /** 帯の右端の ×（積まれている全件を閉じる）の読み上げ名 */
+    closeAll: {
+      nankai: '臨時情報を閉じる',
+      kohatsu: '後発地震注意情報を閉じる',
+      nankaiCommentary: '解説情報を閉じる',
+      quakeNotice: 'お知らせを閉じる',
+      earthquakeCount: '地震回数を閉じる',
+      internationalTsunami: '国際津波関連情報を閉じる',
+    },
+    /** 開いた一覧の行の ×（1 件だけ閉じる）の読み上げ名 */
+    closeOne: {
+      kohatsu: 'この後発地震注意情報を閉じる',
+      nankaiCommentary: 'この解説情報を閉じる',
+      quakeNotice: 'このお知らせを閉じる',
+      earthquakeCount: 'この地震回数の情報を閉じる',
+      internationalTsunami: 'この国際津波関連情報を閉じる',
+    },
+    /** 取消の表示。`name` は報の名前（電文ログの題名の語） */
+    cancelTitle: (name: string) => `${name} 取消`,
+    cancelText: (name: string) => `${name}は取り消されました`,
+    cancelClose: (name: string) => `${name}の取消の表示を閉じる`,
+    /**
+     * 地震回数の帯の見出し（`utils/earthquakeCountSummary.ts`）。`since` は区間の初め（日本時間の「月/日」と時）、
+     * `count`・`felt` は桁を区切った回数（発表なしは null）。両方 null では呼ばない
+     */
+    countHeadline: (since: { monthDay: string; hour: string } | null, count: string | null, felt: string | null) => {
+      const s = since ? `${since.monthDay} ${since.hour}時から ` : ''
+      if (count === null) return `${s}有感 ${felt}回`
+      if (felt === null) return `${s}${count}回`
+      return `${s}${count}回（うち有感 ${felt}回）`
+    },
+    countHeadlineNone: '地震回数に関する情報',
+    countTable: { interval: '区間', period: '期間', count: '回数', felt: 'うち有感' },
+    countPeriodUnknown: '期間不明',
+    countFeltNote: '「うち有感」は震度1以上を観測した地震の数',
+  },
+  /** 地震の直後に地図の上に出す行動チェックリスト（`components/ActionChecklist`。段 9b） */
+  actionChecklist: {
+    /** 見出し。速報だけ、登録地点の周りで判定したとき（`scoped`）と全国で判定したとき（`global`）で言い分ける */
+    headline: {
+      eew: { scoped: '強い揺れが来ます', global: '強い揺れが予想されています' },
+      kyoshin: { scoped: '強い揺れを観測しています', global: '強い揺れを観測しています' },
+      quake: { scoped: '強い揺れがありました', global: '強い揺れがありました' },
+    },
+    /** 見出しの下の 1 行の、どの経路の値か */
+    source: { eew: '緊急地震速報', kyoshin: 'リアルタイム震度', quake: '地震情報' },
+    /** 見出しの下の 1 行の、どの範囲の値か。`s` は経路の名前、`km` は登録地点の周りの半径 */
+    basis: {
+      nationwide: (s: string) => `${s}・全国の最大`,
+      eewNearDetected: (s: string, km: number) => `${s}・登録地点から ${km}km 以内で検知`,
+      eewArea: (s: string) => `${s}・登録地点の地域の予想`,
+      kyoshinNear: (s: string, km: number) => `${s}・登録地点から ${km}km 以内`,
+      nearArea: (s: string) => `${s}・登録地点の地域`,
+      nearStations: (s: string, km: number) => `${s}・登録地点から ${km}km 以内の観測点`,
+    },
+    /** 震度の札（「震度5弱」）。リアルタイム震度は上に小さく `realtimePrefix` を乗せる */
+    scale: (label: string) => `震度${label}`,
+    realtimePrefix: 'リアルタイム',
+    /** 札を 1 行で言う形（ボタンの読み上げ名） */
+    realtimeScale: (label: string) => `リアルタイム震度${label}`,
+    openLabel: (scale: string) => `${scale}の行動チェックリストを開く`,
+    button: '行動チェック',
+    close: 'チェックリストを閉じる',
+    collapse: '閉じる',
+    showAll: (n: number) => `続きを見る（全 ${n} 項目）`,
+    /** 揺れた直後の行動（並び順のまま番号を振る。畳んだ状態は先頭の 3 つ） */
+    actions: [
+      { text: '身の安全を確保する', detail: '丈夫な机の下など、物が落ちてこない・倒れてこない・移動してこない場所へ' },
+      { text: '火の元を確認する', detail: 'ガスの元栓を閉め、ストーブを切る。地震後の火災はガス機器・暖房器具が原因になりやすい' },
+      { text: '靴を履く', detail: '床にガラスの破片が散っている。室内でも裸足で歩かない' },
+      { text: '出口を確保する', detail: 'ドアや窓を開ける。建物がゆがむと閉じ込められる' },
+      { text: '余震に備える', detail: '大きな地震のあとは続けて揺れることがある。倒れやすい物から離れる' },
+      { text: 'エレベーターを使わない', detail: '停止して閉じ込められる。乗っている場合は全階のボタンを押して最初に止まった階で降りる' },
+      { text: '避難するならブレーカーを落とす', detail: '電気が復旧したときの通電火災を防ぐ。ガスの元栓も閉める' },
+    ],
+    kitHeading: '避難するとき持ち出すもの',
+    kitNote: '両手が空くリュックにまとめ、軽くコンパクトに。持病の薬・杖・乳幼児用品など、必要なものは各自で足してください。',
+    /** 持ち出すもの（消防庁「非常用持出品チェックシート」の分類） */
+    kit: [
+      { label: '避難用具', items: ['懐中電灯', '携帯ラジオ', '予備の乾電池', 'ヘルメット・防災ずきん'] },
+      { label: '貴重品', items: ['現金（公衆電話用の10円玉も）', '預金通帳', '印鑑', '保険証・免許証'] },
+      { label: '生命維持', items: ['飲料水（1人 500ml×2〜3本）', '常備薬', '救急用品'] },
+      { label: '生活用品', items: ['携帯電話の充電器', 'マスク', 'タオル', 'ウェットティッシュ'] },
+    ],
+    kitItemSeparator: '・',
+    sourcesLabel: '出典:',
+    /** 出典の名前。並びは `utils/actionChecklist.ts` の `CHECKLIST_SOURCE_URLS` と同じ */
+    sources: ['東京消防庁「地震 その時10のポイント」', '消防庁「非常用持出品チェックシート」'],
+    sourceSeparator: '／',
+    followOfficial: '。実際の避難は気象庁・自治体の指示に従ってください。',
+  },
+  /**
+   * 共有カードの画像に焼く文と、共有先へ渡す本文（`utils/shareCardContent.ts`・`utils/shareCard.ts`。段 9b）。
+   * 震度・長周期の札・時刻の名前・規模の条件は共有の書式の語を使う
+   */
+  shareImage: {
+    quakeTitle: '地震情報',
+    tsunamiTitle: '津波情報',
+    realtimeTitle: 'リアルタイム震度',
+    maxIntensity: (label: string) => `最大震度 ${label}`,
+    detected: '揺れ検知',
+    possible: '揺れの可能性',
+    maxRealtime: (label: string) => `最大リアルタイム震度 ${label}`,
+    /** 規模の条件も数値も無いときの規模 */
+    magnitudeUnknown: 'M不明',
+    depth: (text: string) => `深さ ${text}`,
+    depthUnknown: '深さ 不明',
+    areas: (n: number) => `${n} 区域`,
+    issued: (time: string) => `${time} 発表`,
+    serial: (n: string) => `第${n}報`,
+    unknownHypocenter: '震源調査中',
+    maxForecast: (label: string) => `予想最大震度 ${label}`,
+    lpgmForecast: (label: string) => `予想長周期地震動 ${label}`,
+    /** 見出しの項目を並べる（読点より軽く見せる全角の空きで区切る） */
+    joinParts: (parts: readonly string[]) => parts.join('　'),
+    /** 名前と値の組（「地震発現時刻 2026/11/11 12:00」） */
+    labeled: (label: string, value: string) => `${label} ${value}`,
+    /** 見出しの 1 項目に時刻を添える（同じ文の別の地震を見分けるとき） */
+    withTime: (text: string, time: string) => `${text}（${time}）`,
+    /** 警報（特別警報を含む）の見出し */
+    eewTitle: '緊急地震速報',
+    /** 出典の行。`asIs` は配信をそのまま描くもの、`derived` は加工して描くもの */
+    attribution: (asIs: readonly string[], derived: readonly string[]) => {
+      const segments: string[] = []
+      if (asIs.length > 0) segments.push(asIs.join('、'))
+      if (derived.length > 0) segments.push(`${derived.join('、')} を加工して作成`)
+      return `出典: ${segments.join('／')}`
+    },
+    /** 出典の名前（`utils/shareCard.ts` の `AttributionSourceId`。どれを挙げるかの決まりはそちら） */
+    sourceNames: {
+      jma: '気象庁',
+      /**
+       * 海底地形。**配信元のサービスが求める帰属表示をそのまま採る**——ArcGIS Online のサービスメタデータ（`?f=json` の
+       * `copyrightText`）は「General Bathymetric Chart of the Oceans (GEBCO); NOAA National Centers for Environmental
+       * Information (NCEI)」と定めており、GEBCO だけでは足りない
+       */
+      bathymetry: 'GEBCO・NOAA NCEI（Esri のタイルサービス経由）',
+      activeFaults: '産総研 活断層データベース',
+      plateBoundaries: 'PB2002 (Bird, 2003)',
+      earthScope: 'EarthScope',
+    },
+    /**
+     * 緊急地震速報を含むカードに足す注意文。気象庁・DM-D.S.S が利用者へ示すべきとしている注意事項を、画像 1 枚に収まる長さで
+     * まとめたもの。**「震源に近い場所では間に合わないことがある」を落とさないこと**——精度の話だけを残すと、速報が届く前に
+     * 揺れが来る場合があるという、行動に直結する留保が伝わらない
+     */
+    eewNotice:
+      '緊急地震速報は地震発生直後の推定情報です。誤報や震源・規模・予想震度の誤差を伴うことがあり、震源に近い場所では強い揺れに間に合わないことがあります。',
+    incomplete: '一部の地図データは読み込み中に撮影されました',
+  },
+  /**
    * いくつもの画面が使う書式の語（段 9）。震度・長周期の札・深さ・規模・緯度経度・津波の区分・訂正の種類・日付。
    * 読み上げと通知の文面は日本語のまま組むので、そちらはこの日本語の節を直に渡す（`JA_MESSAGES.formats`）。
    */

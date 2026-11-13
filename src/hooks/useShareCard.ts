@@ -1,3 +1,4 @@
+import { useMessages } from '../i18n/I18nProvider'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MapHandle } from '../components/Map/mapTypes'
 import { captureMapImage } from '../components/Map/gl/captureMap'
@@ -52,6 +53,10 @@ export function useShareCard(
   const contentRef = useRef(content)
   const formatRef = useRef(format)
   formatRef.current = format
+  // 画像と本文の語（いま出している言語の辞書）。撮るときの言語で組むので ref 越しに読む（share を作り直さない）
+  const messages = useMessages()
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
   useEffect(() => {
     contentRef.current = content
   }, [content])
@@ -76,7 +81,7 @@ export function useShareCard(
         try {
           // **見出しと出典を先に決める。** 出典の行数で地図に割ける高さが変わるため、撮影の
           // 寸法はここが確定してからでないと出せない（`shareCardMapHeight`）。
-          const built = buildShareCardContent(contentRef.current, currentAppUrl())
+          const built = buildShareCardContent(contentRef.current, currentAppUrl(), messagesRef.current)
           const format = formatRef.current
           const capture = await captureMapImage(handle.map, {
             width: format.width,
@@ -85,7 +90,10 @@ export function useShareCard(
             height: shareCardMapHeight(format, shareCardNoticeLines(built.notices, format), shareCardSubtitleLines(built.header.subtitle, format)),
             drawOverlay: handle.drawExtras,
           })
-          const blob = await composeShareCard({ capture, header: built.header, notices: built.notices, format, legend: legendRef.current })
+          const blob = await composeShareCard({
+            capture, header: built.header, notices: built.notices, format, legend: legendRef.current,
+            incompleteNotice: messagesRef.current.shareImage.incomplete,
+          })
           // 保存名の時刻は**書き出した時刻**なので壁時計で採る（アプリ時計 `serverNow` ではない）。
           // 電文ログ・診断ログのダウンロードも同じで、データ自身の時刻を名前にするときだけ
           // そのデータの時刻を渡す（`components/TelegramTab` / `components/SettingsTab`）。

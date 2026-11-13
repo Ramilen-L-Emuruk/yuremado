@@ -1,23 +1,21 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
-import { canPresentLpgmClass, computeDisplayEEWLevel, eewDisplaySerial, eewKindLabel, eewMaxLpgmClassInfo, eewMaxScale, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, statesEewLpgmClassZero } from './eew'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTime, formatQuakeDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasHypocenterFacts } from './formatters'
-import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
+import { canPresentLpgmClass, computeDisplayEEWLevel, eewDisplaySerial, eewMaxLpgmClassInfo, eewMaxScale, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, statesEewLpgmClassZero } from './eew'
+import { depthText, formatDateTime, formatQuakeDateTime, formatTimeMin, formatMagnitude, hasDepth, hasHypocenterFacts, magnitudeConditionText, magnitudeWithConditionText } from './formatters'
+import { getIntensityColor, intensityLabelWithApproxAbove, intensityLabelWithOrAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
-import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
+import { attributionLine, type AttributionSourceId, type ShareCardHeader } from './shareCard'
 import { isTsunamiForecastOnly, sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
 import { shownTsunamiSources } from './tsunamiSourceLinks'
 import { hasKnownEpicenter } from './geo'
-import { kyoshinDetectionScaleLabel } from './kyoshinIntensity'
-import { getLpgmClassLabelWithApproxAbove } from './lpgm'
+import { kyoshinDetectionScaleText } from './kyoshinIntensity'
+import { lpgmClassLabelWithApproxAbove } from './lpgm'
+import type { Messages } from '../i18n/messages'
 
 // 共有カードの見出しと出典行を、いま地図が見せているものから組み立てる。
 //
 // 画面の状態に触れない純粋な関数として置いてある。撮影（captureMap.ts）と合成（shareCard.ts）は
 // 地図とキャンバスに依存するが、「何を書くか」の判断はそのどちらにも依存しないため。
-
-/** 見出しの各項目を並べるときの区切り。全角の空きで、読点より軽く見せる。 */
-const SUBTITLE_SEPARATOR = '　'
 
 export interface ShareCardContentInput {
   mode: MapMode
@@ -53,7 +51,7 @@ export interface ShareCardContent {
 }
 
 /**
- * 見出し・出典行を組み立てる。
+ * 見出し・出典行を組み立てる。語は `m`（いま出している言語の辞書）から引く（画像と共有の本文は画面と同じ言語で出す）。
  *
  * 注意文の要否は**モードで決めない**。緊急地震速報の予報円と震源は、地図のモードに関わらず
  * 描かれる（`JapanMapGL` の `PsWaveGL` / `EewEpicentersGL` はどのモードでも表示する）。
@@ -73,43 +71,44 @@ export function buildShareCardContent(
     kyoshinDetection,
   }: ShareCardContentInput,
   appUrl: string,
+  m: Messages,
 ): ShareCardContent {
   const liveEews = eews.filter((e) => !e.cancelled && !e.expired)
   // **描いていないものを出典に挙げない**——読み手が画像の中に探しても見つからない。逆に
   // 描いているのに挙げないのは帰属表示の欠落になる。判定は表示の設定とモードの両方を見る。
   //
   // 気象庁のデータ（境界線・区域・電文）はどのモードでも必ず写るので条件を持たない。
-  const derived: string[] = [ATTRIBUTION_SOURCES.jma]
-  const asIs: string[] = []
-  if (showBathymetry) asIs.push(ATTRIBUTION_SOURCES.bathymetry)
+  const derived: AttributionSourceId[] = ['jma']
+  const asIs: AttributionSourceId[] = []
+  if (showBathymetry) asIs.push('bathymetry')
   // 活断層は地震／リアルタイム震度／震源カタログモードで、プレート境界はそれに津波モードを加えて描かれる（`JapanMapGL` の
   // `showOverlayLines`・`showPlateLines`。**式をここと揃える**）。設定が入りでも、描かないモードの画像には写らない。
   // 震源カタログモードも描いているのに挙げていなかった（PB2002 は帰属表示が利用条件。2026-10-24 ユーザー選択「一緒に直す
   // (Recommended)」）。プレート境界を津波モードでも描くのは 2026-10-22 ユーザー選択「プレート境界だけ出す (Recommended)」。
   const showsOverlayLines = mode === 'quake' || mode === 'kyoshin' || mode === 'catalog'
   const showsPlateBoundaryLines = showsOverlayLines || mode === 'tsunami'
-  if (showsOverlayLines && showActiveFaults) derived.push(ATTRIBUTION_SOURCES.activeFaults)
-  if (showsPlateBoundaryLines && showPlateBoundaries) derived.push(ATTRIBUTION_SOURCES.plateBoundaries)
+  if (showsOverlayLines && showActiveFaults) derived.push('activeFaults')
+  if (showsPlateBoundaryLines && showPlateBoundaries) derived.push('plateBoundaries')
   // 公開観測点の印（位置と番号）。座標は EarthScope の観測点の目録から作った表で、加工の側に入る
   // （`docs/public-waveform-design.md` §0。CC BY 4.0 の「変更を加えた旨」もこの句が担う）。
-  if (showPublicStations) derived.push(ATTRIBUTION_SOURCES.earthScope)
-  const notices = [attributionLine({ derived, asIs })]
-  if (liveEews.length > 0) notices.unshift(EEW_NOTICE)
+  if (showPublicStations) derived.push('earthScope')
+  const notices = [attributionLine({ derived, asIs }, m.shareImage)]
+  if (liveEews.length > 0) notices.unshift(m.shareImage.eewNotice)
 
   const base =
-    mode === 'tsunami' ? tsunamiContent(tsunamis, tsunamiSourceQuakes) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection) : quakeContent(quake)
-  return { ...base, notices, shareText: buildShareText(base.header, appUrl) }
+    mode === 'tsunami' ? tsunamiContent(tsunamis, tsunamiSourceQuakes, m) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection, m) : quakeContent(quake, m)
+  return { ...base, notices, shareText: buildShareText(base.header, appUrl, m) }
 }
 
 /**
  * 共有先の本文を組み立てる。**材料は見出しと同じ**——画像と本文で違うことを述べないため。
  *
- * **注意文は入れない。** 緊急地震速報の注意文（EEW_NOTICE）は画像へ焼いてあり、本文と画像は
+ * **注意文は入れない。** 緊急地震速報の注意文（辞書の `shareImage.eewNotice`）は画像へ焼いてあり、本文と画像は
  * 共有シートで一緒に渡る。本文にも重ねると X の全角 140 字にほぼ届き、震源名が長ければ超える
  * ——利用者が削ることになり、削られた結果として注意文そのものが落ちうる。
  */
-function buildShareText(header: ShareCardHeader, appUrl: string): string {
-  const lines = [[header.title, header.subtitle].filter(Boolean).join(SUBTITLE_SEPARATOR)]
+function buildShareText(header: ShareCardHeader, appUrl: string, m: Messages): string {
+  const lines = [m.shareImage.joinParts([header.title, header.subtitle].filter((t): t is string => !!t))]
   if (header.meta) lines.push(header.meta)
   lines.push(appUrl)
   return lines.join('\n')
@@ -123,18 +122,18 @@ type ContentWithoutNotices = Omit<ShareCardContent, 'notices' | 'shareText'>
  * 「規模が判らない」のかが画像から読めない。整形は画面と同じ部品で、説明が無いときの「不明」だけを「M不明」へ置く
  * （「M」を付けないと、何が不明なのか読めない）。「Ｍ８を超える巨大地震」のような説明はそのまま出す。
  */
-function shareMagnitudeText(magnitude: number, condition: string | undefined, magnitudeType: string | undefined): string {
-  const text = formatMagnitudeWithCondition(magnitude, condition, magnitudeType)
-  return text === '不明' ? 'M不明' : text
+function shareMagnitudeText(magnitude: number, condition: string | undefined, magnitudeType: string | undefined, m: Messages): string {
+  const text = magnitudeWithConditionText(magnitude, condition, magnitudeType, m.formats)
+  return text === m.formats.unknown ? m.shareImage.magnitudeUnknown : text
 }
 
 /** 共有カードに焼く深さ。判らなければ「深さ 不明」（規模と同じ理由で落とさない）。 */
-function shareDepthText(depth: number | undefined, depthAtLeast: boolean | undefined): string {
-  return depth !== undefined && hasDepth(depth) ? `深さ ${formatDepth(depth, depthAtLeast === true)}` : '深さ 不明'
+function shareDepthText(depth: number | undefined, depthAtLeast: boolean | undefined, m: Messages): string {
+  return depth !== undefined && hasDepth(depth) ? m.shareImage.depth(depthText(depth, depthAtLeast === true, m.formats)) : m.shareImage.depthUnknown
 }
 
-function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
-  if (!quake) return { header: { title: '地震情報' }, filenameLabel: 'quake' }
+function quakeContent(quake: JMAQuake | null, m: Messages): ContentWithoutNotices {
+  if (!quake) return { header: { title: m.shareImage.quakeTitle }, filenameLabel: 'quake' }
   const { hypocenter, maxScale, time } = quake.earthquake
   // 震度を伝えない電文（震源情報など）は maxScale がセンチネル（-1）で届く。
   // 「最大震度 不明」と書くくらいなら見出しを種別名に落とす。
@@ -145,8 +144,8 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   // まだ伝えていない。**位置だけが判らない電文（震源要素不明）では足す** —— 判っている規模・深さを位置と一緒に伏せない
   // （判定は地震カードと同じ `hasHypocenterFacts`）。
   if (hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude) || hasHypocenterFacts(hypocenter)) {
-    parts.push(shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType))
-    parts.push(shareDepthText(hypocenter.depth, hypocenter.depthAtLeast))
+    parts.push(shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType, m))
+    parts.push(shareDepthText(hypocenter.depth, hypocenter.depthAtLeast, m))
   }
   // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「地震発現時刻 null」のような
   // 壊れた文字列を焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
@@ -159,17 +158,17 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
       // 未入電なら「以上」を付ける。**画像は訂正できない**ので、下限だけが確定した値を
       // 断定形で焼き付けない（仮定震源要素で規模を出さないのと同じ理由。→ share-card-spec.md）。
       title: knownScale
-        ? `最大震度 ${getIntensityLabelWithOrAbove(maxScale, isMaxScaleUnreceived(maxScale, quake.points))}`
-        : '地震情報',
+        ? m.shareImage.maxIntensity(intensityLabelWithOrAbove(maxScale, isMaxScaleUnreceived(maxScale, quake.points), m.formats))
+        : m.shareImage.quakeTitle,
       titleColor: knownScale ? getIntensityColor(maxScale) : undefined,
-      subtitle: parts.join(SUBTITLE_SEPARATOR),
-      meta: timeText ? `${QUAKE_ARRIVAL_TIME_LABEL} ${timeText}` : undefined,
+      subtitle: m.shareImage.joinParts(parts),
+      meta: timeText ? m.shareImage.labeled(m.formats.arrivalTime, timeText) : undefined,
     },
     filenameLabel: 'quake',
   }
 }
 
-function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[]): ContentWithoutNotices {
+function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[], m: Messages): ContentWithoutNotices {
   // **解除表示中（`cancelledAt`）も外す。** 等級の判定（`tsunamiOverallGrade`・`isTsunamiForecastOnly`）は
   // どちらも外すので、ここで残すと見出しは発表中の津波、区域数・震源・時刻は解除された津波、と出どころが割れる。
   const live = tsunamis.filter((t) => !t.cancelled && !t.cancelledAt)
@@ -177,11 +176,11 @@ function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[]): Co
   // 予報を数えないので、それだけで決めると予報の画像は「津波情報」の一語になり、震源も区域も載らない。
   // 等級の読めない区域が混じれば予報と言い切らず（`isTsunamiForecastOnly`）、従来どおり「津波情報」に落とす。
   const grade = tsunamiOverallGrade(live) ?? (isTsunamiForecastOnly(live) ? 'Forecast' : null)
-  if (!grade) return { header: { title: '津波情報' }, filenameLabel: 'tsunami' }
+  if (!grade) return { header: { title: m.shareImage.tsunamiTitle }, filenameLabel: 'tsunami' }
   // **見出しの文字色は付けない**（既定の白。2026-10-21 ユーザー選択「おすすめで」）。`formatTsunamiGrade` の
   // `color` は等級の地の色（`bg`）に載せる文字の色で、注意報では黒になる —— 暗い見出し帯の上では読めない。
   // 地の色を文字色にすると、大津波警報の紫がこの帯の上でコントラスト比 2.5 ほどしか取れない。
-  const { text } = formatTsunamiGrade(grade)
+  const text = m.tsunami.grade[grade]
   const areaCount = new Set(live.flatMap((t) => t.areas.map((a) => a.name))).size
   // 原因地震が複数あれば（EventID に番号が足された津波）全件を「／」で並べる。長いと折り返す
   // （2026-10-15 ユーザー承認「全件を並べる」。2026-10-19 ユーザー選択「全件を並べる（今の形） (推奨)」で維持）。同じ地震を複数の報が運ぶので、震源名・規模・地震発現時刻の組で重ねる。
@@ -196,13 +195,13 @@ function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[]): Co
     // （2026-10-29 ユーザー承認「吹き出しと共有カードも (Recommended)」）。揃えないと、同じ地震が地震の共有カードでは
     // `Mj`、津波の共有カードでは `M` と割れる。
     const magnitudeText = source.magnitude != null
-      ? `　${formatMagnitude(source.magnitude, source.magnitudeType)}`
+      ? formatMagnitude(source.magnitude, source.magnitudeType)
       // 地震側と同じ述語を通す。素通しにすると同じ電文由来の同じ事実が、地震の共有カードでは
       // 半角・津波の共有カードでは全角、と表記が割れる。どちらも無ければ「M不明」（地震・EEW と揃える）
-      : `　${source.magnitudeCondition ? formatMagnitudeCondition(source.magnitudeCondition) : 'M不明'}`
+      : (source.magnitudeCondition ? magnitudeConditionText(source.magnitudeCondition, m.formats) : m.shareImage.magnitudeUnknown)
     // **深さも焼く**（2026-10-23 ユーザー選択「どちらも出す (Recommended)」。全期間で 439 件中 266 件が深さを持つ）。
     // 判らなければ「深さ 不明」（地震・EEW と揃える）。
-    const text = `${source.hypocenterName}${magnitudeText}　${shareDepthText(source.depth, source.depthAtLeast)}`
+    const text = m.shareImage.joinParts([source.hypocenterName, magnitudeText, shareDepthText(source.depth, source.depthAtLeast, m)])
     const time = sourceEarthquakeTime(source)
     // 時刻は瞬間で比べる（同じ時刻でも表記が報ごとに違いうる）。
     const ms = time ? Date.parse(time) : NaN
@@ -217,31 +216,31 @@ function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[]): Co
   const sourceTexts = sourceEntries.map(({ text, time }) => {
     if (sourceEntries.filter((e) => e.text === text).length < 2) return text
     const hm = time ? formatTimeMin(time) : null
-    return hm ? `${text}（${QUAKE_ARRIVAL_TIME_LABEL} ${hm}）` : text
+    return hm ? m.shareImage.withTime(text, m.shareImage.labeled(m.formats.arrivalTime, hm)) : text
   })
   const parts: string[] = []
   if (sourceTexts.length > 0) parts.push(sourceTexts.join(' ／ '))
-  if (areaCount > 0) parts.push(`${areaCount} 区域`)
+  if (areaCount > 0) parts.push(m.shareImage.areas(areaCount))
   const issued = live[0]?.issue.time ?? live[0]?.time
   // 日時として読めない発表時刻は、時刻を持たない電文と同じく欄ごと落とす。
   const issuedText = issued ? formatDateTime(issued) : null
   return {
     header: {
       title: text,
-      subtitle: parts.join(SUBTITLE_SEPARATOR),
-      meta: issuedText ? `${issuedText} 発表` : undefined,
+      subtitle: m.shareImage.joinParts(parts),
+      meta: issuedText ? m.shareImage.issued(issuedText) : undefined,
     },
     filenameLabel: 'tsunami',
   }
 }
 
-function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['kyoshinDetection']): ContentWithoutNotices {
+function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['kyoshinDetection'], m: Messages): ContentWithoutNotices {
   const eew = pickMostSevereEew(liveEews)
-  if (!eew) return detectionContent(detection)
+  if (!eew) return detectionContent(detection, m)
   // **複数の緊急地震速報が発表中なら、副見出しに全件を並べる**（2026-10-23 ユーザー選択「全件を並べる」。全期間で同時発表の組
   // 108・200 地震。並べ方は 2026-10-24 ユーザー選択「副見出しで折り返す (Recommended)」）。見出しの区分・色と右上の報番号・
   // 発生時刻は最も深刻な 1 件のまま。並びは深刻な順（見出しの 1 件が先頭）。
-  const subtitle = sortEewsBySeverity(liveEews).map(eewSubtitle).join(' ／ ')
+  const subtitle = sortEewsBySeverity(liveEews).map(e => eewSubtitle(e, m)).join(' ／ ')
   const info = eewMaxScaleInfo(eew)
   const knownScale = isValidIntensityScale(info.scale) && info.scale >= 0
   const serial = eewDisplaySerial(eew)
@@ -256,16 +255,17 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
   // 発現時刻が空なら欄を落とす（Yahoo hypoInfo の報は配信しない。整形も呼ばない＝上と同じ理由）
   const arrivalText = eew.earthquake.arrivalTime ? formatDateTime(eew.earthquake.arrivalTime) : null
   const metaParts = [
-    serial ? `第${serial}報` : '',
-    originText ? `地震発生時刻 ${originText}` : '',
-    arrivalText ? `地震発現時刻 ${arrivalText}` : '',
+    serial ? m.shareImage.serial(String(serial)) : '',
+    originText ? m.shareImage.labeled(m.formats.originTime, originText) : '',
+    arrivalText ? m.shareImage.labeled(m.formats.arrivalTime, arrivalText) : '',
   ].filter(Boolean)
   return {
     header: {
-      title: eewKindLabel(computeDisplayEEWLevel(eew)),
+      // 警報（特別警報を含む）は「緊急地震速報」、予報級は「地震動予報」
+      title: computeDisplayEEWLevel(eew) >= 1 ? m.shareImage.eewTitle : m.realtime.eewKind.forecast,
       titleColor: knownScale ? getIntensityColor(info.scale) : undefined,
       subtitle,
-      meta: metaParts.length > 0 ? metaParts.join('　') : undefined,
+      meta: metaParts.length > 0 ? m.shareImage.joinParts(metaParts) : undefined,
     },
     filenameLabel: 'eew',
   }
@@ -278,13 +278,13 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
  * 呼び名「最大リアルタイム震度」は通知・検知カードと同じ（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」。段の名前は `kyoshinDetectionScaleLabel`）。震度0 未満は「0未満」と焼く（焼くことは 2026-10-29 ユーザー選択
  * 「「0以下」を焼く (Recommended)」、呼び名は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」。測った値で、不明ではない）。欠測なら副見出しは出さない（通知は「?」を出すが、画像は訂正できないので焼かない）。
  */
-function detectionContent(detection: ShareCardContentInput['kyoshinDetection']): ContentWithoutNotices {
-  if (!detection) return { header: { title: 'リアルタイム震度' }, filenameLabel: 'realtime' }
-  const label = kyoshinDetectionScaleLabel(detection.maxIndex)
+function detectionContent(detection: ShareCardContentInput['kyoshinDetection'], m: Messages): ContentWithoutNotices {
+  if (!detection) return { header: { title: m.shareImage.realtimeTitle }, filenameLabel: 'realtime' }
+  const label = kyoshinDetectionScaleText(detection.maxIndex, m.formats)
   return {
     header: {
-      title: detection.state === 'confirmed' ? '揺れ検知' : '揺れの可能性',
-      subtitle: label ? `最大リアルタイム震度 ${label}` : undefined,
+      title: detection.state === 'confirmed' ? m.shareImage.detected : m.shareImage.possible,
+      subtitle: label ? m.shareImage.maxRealtime(label) : undefined,
     },
     filenameLabel: 'realtime',
   }
@@ -300,30 +300,30 @@ function detectionContent(detection: ShareCardContentInput['kyoshinDetection']):
  * **`condition` を参照する箇所は eew-spec.md §5 に列挙する決まり。足したらそちらも更新すること。**
  * **深さも焼く**（2026-10-23 ユーザー選択「どちらも出す (Recommended)」。全期間 45,079 報すべてが深さを持つ）。
  */
-function eewSubtitle(eew: EEWAlert): string {
+function eewSubtitle(eew: EEWAlert, m: Messages): string {
   const { hypocenter } = eew.earthquake
   const info = eewMaxScaleInfo(eew)
   const knownScale = isValidIntensityScale(info.scale) && info.scale >= 0
   // 震央地名が空の報は、画面のカード・地図の吹き出しと同じ「震源調査中」を名前の位置に置く
   // （2026-10-22 ユーザー承認「「震源調査中」を入れる」）
-  const parts = [hypocenter.name || '震源調査中']
+  const parts = [hypocenter.name || m.shareImage.unknownHypocenter]
   if (!isProvisionalHypocenter(eew)) {
     // 数値が無くても「Ｍ８を超える巨大地震」は落とさない（地震情報の共有カードと同じ。2026-10-22 ユーザー承認
     // 「吹き出しと共有カードも揃える (Recommended)」）。不明なら「M不明」
-    parts.push(shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType))
-    parts.push(shareDepthText(hypocenter.depth, hypocenter.depthAtLeast))
+    parts.push(shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType, m))
+    parts.push(shareDepthText(hypocenter.depth, hypocenter.depthAtLeast, m))
   }
-  if (knownScale) parts.push(`予想最大震度 ${getIntensityLabelWithApproxAbove(info.scale, info.orAbove)}`)
+  if (knownScale) parts.push(m.shareImage.maxForecast(intensityLabelWithApproxAbove(info.scale, info.orAbove, m.formats)))
   // 最大予想震度 0 の報は、カードと同じ「予想最大震度 0」を焼く。予想長周期階級も、カードに出す報ではカードと同じ語で焼く
   // （1〜4・「程度以上」と、電文が階級 0 と言い切った報の「階級0」。2026-10-30 ユーザー選択「0 も階級も焼く (Recommended)」）
-  else if (isEewScaleZeroForecast(eew)) parts.push('予想最大震度 0')
+  else if (isEewScaleZeroForecast(eew)) parts.push(m.shareImage.maxForecast('0'))
   const lpgm = eewMaxLpgmClassInfo(eew)
   if (canPresentLpgmClass(info.scale, lpgm.cls)) {
-    parts.push(`予想長周期地震動 ${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}`)
+    parts.push(m.shareImage.lpgmForecast(lpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over, m.formats)))
   } else if (statesEewLpgmClassZero(eew, info.scale, lpgm.cls, true)) {
-    parts.push(`予想長周期地震動 ${getLpgmClassLabelWithApproxAbove(0, false)}`)
+    parts.push(m.shareImage.lpgmForecast(lpgmClassLabelWithApproxAbove(0, false, m.formats)))
   }
-  return parts.join(SUBTITLE_SEPARATOR)
+  return m.shareImage.joinParts(parts)
 }
 
 /** 深刻な順に並べる（区分 → 予想最大震度。同じなら受け取った順）。見出しの 1 件（`pickMostSevereEew`）が先頭に来る。 */

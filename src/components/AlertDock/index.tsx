@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useMessages } from '../../i18n/I18nProvider'
 import type { DockChip, EewDockItem, TsunamiDockItem } from '../../utils/alertDock'
 
 /**
@@ -9,7 +10,7 @@ import type { DockChip, EewDockItem, TsunamiDockItem } from '../../utils/alertDo
  * 「H 境目の線あり (Recommended)」）。区分は左の太い帯の色で示す（地震タブの開いたカードの左の帯と同じ作り）。
  *
  * 今いるタブの項目は呼び出し側で外す（速報はリアルタイムタブ、津波は津波タブ）。押すとそのタブへ移る。
- * 値の組み立ては `utils/alertDock.ts`。
+ * 値の組み立ては `utils/alertDock.ts`。名目の語は辞書（`alertDock`）から引く。
  */
 interface Props {
   eews: readonly EewDockItem[]
@@ -58,6 +59,7 @@ function Row({ accent, title, titleColor, status, chips, updated, onClick, body,
   body: { narrow: boolean; wide: boolean }
   children: React.ReactNode
 }) {
+  const w = useMessages().alertDock
   return (
     <button
       type="button"
@@ -75,7 +77,7 @@ function Row({ accent, title, titleColor, status, chips, updated, onClick, body,
           {status && <StatusChip text={status} />}
           {chips.length > 0 && <span className="inline-flex items-center gap-1 whitespace-nowrap">{chips.map(c => <Chip key={c.text} chip={c} />)}</span>}
         </span>
-        {updated && <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] leading-[18px] text-secondary">更新 {updated} ›</span>}
+        {updated && <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] leading-[18px] text-secondary">{w.updated(updated)}</span>}
       </span>
       <span className={`flex-col gap-[3px] ${body.narrow ? 'flex' : 'hidden'} ${body.wide ? 'side:flex' : 'side:hidden'}`}>{children}</span>
     </button>
@@ -93,6 +95,8 @@ function HomeBlock({ children }: { children: React.ReactNode }) {
 }
 
 function AlertDockInner({ eews, tsunami, onOpen }: Props) {
+  const m = useMessages()
+  const w = m.alertDock
   if (eews.length === 0 && !tsunami) return null
   return (
     <div className="flex shrink-0 flex-col gap-px border-t-2 bg-[#2a2d38] side:border-t-0 side:border-b-2" style={{ borderColor: '#4b5263' }}>
@@ -103,22 +107,22 @@ function AlertDockInner({ eews, tsunami, onOpen }: Props) {
           {(tsunami.observed || tsunami.firstWave) && (
             // 観測の最大波と第 1 波の到達は広い画面だけ（2026-11-09 ユーザー発言「津波増やしすぎてゴチャゴチャ」）
             <Line className="hidden side:flex">
-              {tsunami.observed && <Unit><span className={LABEL}>最大波</span><span className={VALUE}>{tsunami.observed.value}</span><span className={LABEL}>（{tsunami.observed.station}）</span></Unit>}
-              {tsunami.firstWave && <Unit><span className={LABEL}>第1波到達</span><span className={VALUE}>{tsunami.firstWave.first}</span>{tsunami.firstWave.rest > 0 && <span className={LABEL}>ほか {tsunami.firstWave.rest} 区域</span>}</Unit>}
+              {tsunami.observed && <Unit><span className={LABEL}>{w.maxWave}</span><span className={VALUE}>{tsunami.observed.value}</span><span className={LABEL}>（{tsunami.observed.station}）</span></Unit>}
+              {tsunami.firstWave && <Unit><span className={LABEL}>{w.firstWave}</span><span className={VALUE}>{tsunami.firstWave.first}</span>{tsunami.firstWave.rest > 0 && <span className={LABEL}>{w.moreAreas(tsunami.firstWave.rest)}</span>}</Unit>}
             </Line>
           )}
           {tsunami.home && (
             <Line>
               <HomeBlock>
                 <Unit>
-                  <span className={LABEL}>登録地点</span><span className={VALUE}>{tsunami.home.zone}</span>
+                  <span className={LABEL}>{w.homePoint}</span><span className={VALUE}>{tsunami.home.zone}</span>
                   <Chip chip={tsunami.home.grade} />
-                  {tsunami.home.height && <><span className={LABEL}>予想の高さ</span><Chip chip={tsunami.home.height} /></>}
+                  {tsunami.home.height && <><span className={LABEL}>{w.forecastHeight}</span><Chip chip={tsunami.home.height} /></>}
                 </Unit>
                 {(tsunami.home.arrival || tsunami.home.rest > 0) && (
                   <Unit>
                     {tsunami.home.arrival && <>{tsunami.home.arrival.label && <span className={LABEL}>{tsunami.home.arrival.label}</span>}<span className={VALUE}>{tsunami.home.arrival.text}</span></>}
-                    {tsunami.home.rest > 0 && <span className={`${LABEL} ml-1`}>ほか {tsunami.home.rest} 区域</span>}
+                    {tsunami.home.rest > 0 && <span className={`${LABEL} ml-1`}>{w.moreAreas(tsunami.home.rest)}</span>}
                   </Unit>
                 )}
               </HomeBlock>
@@ -132,7 +136,7 @@ function AlertDockInner({ eews, tsunami, onOpen }: Props) {
           body={{ narrow: e.hypocenter !== null || e.home !== null, wide: e.hypocenter !== null || e.home !== null || (i === 0 && e.warning !== null) }}>
           {e.hypocenter && (
             <Line>
-              <Unit><span className={LABEL}>震源</span><span className={VALUE}>{e.hypocenter.name}</span></Unit>
+              <Unit><span className={LABEL}>{w.hypocenter}</span><span className={VALUE}>{e.hypocenter.name}</span></Unit>
               {e.hypocenter.magnitude && <Bar color={e.hypocenter.magnitude.color} text={e.hypocenter.magnitude.text} />}
               {e.hypocenter.depth && <Bar color={e.hypocenter.depth.color} text={e.hypocenter.depth.text} />}
             </Line>
@@ -141,9 +145,9 @@ function AlertDockInner({ eews, tsunami, onOpen }: Props) {
             // 警報の都道府県は広い画面だけ。区切りと名目は速報カードの「警報:」の行と同じ（RealtimeTab）
             <Line className="hidden side:flex">
               <Unit>
-                <span className="text-[11.5px] font-bold text-red-300">警報:</span>
-                <span className="text-[12.5px] text-white">{e.warning.shown.join(' / ')}</span>
-                {e.warning.rest > 0 && <span className={LABEL}>ほか {e.warning.rest}</span>}
+                <span className="text-[11.5px] font-bold text-red-300">{m.realtime.warningPrefs}</span>
+                <span className="text-[12.5px] text-white">{e.warning.shown.join(m.realtime.prefSeparator)}</span>
+                {e.warning.rest > 0 && <span className={LABEL}>{w.more(e.warning.rest)}</span>}
               </Unit>
             </Line>
           )}
@@ -151,11 +155,11 @@ function AlertDockInner({ eews, tsunami, onOpen }: Props) {
             <Line>
               <HomeBlock>
                 <Unit>
-                  <span className={LABEL}>登録地点</span><span className={VALUE}>{e.home.area}</span>
-                  {e.home.chip && <><span className={LABEL}>予想</span><Chip chip={e.home.chip} /></>}
+                  <span className={LABEL}>{w.homePoint}</span><span className={VALUE}>{e.home.area}</span>
+                  {e.home.chip && <><span className={LABEL}>{w.forecast}</span><Chip chip={e.home.chip} /></>}
                 </Unit>
                 {/* 秒数は等幅の数字にして、1 秒ごとの幅の揺れで段が折り返し直さないようにする */}
-                <Unit><span className={LABEL}>主要動</span><span className={`${VALUE} tabular-nums`}>{e.home.shake}</span></Unit>
+                <Unit><span className={LABEL}>{w.mainShaking}</span><span className={`${VALUE} tabular-nums`}>{e.home.shake}</span></Unit>
               </HomeBlock>
             </Line>
           )}

@@ -20,16 +20,16 @@ import {
   isProvisionalHypocenter,
 } from './eew'
 import { isEewWarningKindCode } from './eewKind'
-import { getDepthColor, getEewAreaIntensityLabel, getIntensityColor, getIntensityLabel, getMagnitudeColor } from './intensity'
-import { getLpgmClassColor, getLpgmClassLabelWithApproxAbove } from './lpgm'
+import { depthText, magnitudeWithConditionText, formatTime, formatTimeMin, hasMagnitude } from './formatters'
+import { getDepthColor, getEewAreaIntensityLabel, getIntensityColor, getMagnitudeColor, intensityLabelWithApproxAbove } from './intensity'
+import { getLpgmClassColor, lpgmShortLabel } from './lpgm'
 import { readableTextColor } from './contrast'
-import { formatDepth, formatMagnitudeWithCondition, formatTime, formatTimeMin, hasMagnitude } from './formatters'
-import { ARRIVAL_CONDITION_BADGE, GRADES_IN_CARD_ORDER, arrivalConditionBadge, TSUNAMI_GRADE_NAME, hasForecastHeight, overSuffixedHeight } from './tsunami'
+import { GRADES_IN_CARD_ORDER, arrivalConditionBadge, arrivalConditionKey, hasForecastHeight, overSuffixedHeight } from './tsunami'
 import { getGradeStyle } from './tsunamiGradeStyle'
 import { hasKnownEpicenter, haversineKm, pointInRings, type LatLng } from './geo'
 import { SUBREGION_NEAREST_KM } from './subregions'
 import { log } from './logger'
-import { ja } from '../i18n/messages/ja'
+import type { Messages } from '../i18n/messages'
 
 /** 色を塗った値の札（「6強程度以上」「長周期2」「巨大」）。 */
 export interface DockChip { text: string; bg: string; fg: string }
@@ -129,40 +129,44 @@ function warnOnce(key: string, message: string): void {
  * 主要動の到達の語。速報カードの到達の枠と同じ語（「到達済み」・秒数・「到達時間を推定中…」）。
  * 到達予測の出ていない地域は段ごと出さないので null。
  */
-function shakeText(arrival: SWaveArrival, key: string): string | null {
+function shakeText(arrival: SWaveArrival, key: string, m: Messages): string | null {
   const row = arrival.rows.find(r => r.key === key)
   if (!row || row.noForecast) return null
-  if (row.arrived) return '到達済み'
-  if (row.etaSec !== null) return `${row.etaSec}秒`
-  return '到達時間を推定中…'
+  if (row.arrived) return m.realtime.arrived
+  if (row.etaSec !== null) return m.alertDock.seconds(row.etaSec)
+  return m.realtime.countdown.estimating
 }
 
-export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArrival | null): EewDockItem[] {
+/**
+ * 速報の帯の項目。語は `m`（いま出している言語の辞書）から引く。
+ */
+export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArrival | null, m: Messages): EewDockItem[] {
   const sorted = [...eews].filter(e => !e.cancelled && !e.cancelledAt).sort(compareEewNewestFirst)
   return sorted.map((eew, index) => {
     const level = computeDisplayEEWLevel(eew)
-    const title = level === 2 ? '緊急地震速報（特別警報）' : level === 1 ? '緊急地震速報（警報）' : '地震動予報'
+    const title = level === 2 ? m.realtime.eewKind.special : level === 1 ? m.realtime.eewKind.warning : m.realtime.eewKind.forecast
     const titleColor = level === 2 ? '#fca5a5' : level === 1 ? '#f87171' : '#fcd34d'
     const accent = level === 2 ? '#7f1d1d' : level === 1 ? '#b91c1c' : '#d97706'
     const chips: DockChip[] = []
     const { scale, orAbove } = eewMaxScaleInfo(eew)
-    if (scale > 0) chips.push(intensityChip(scale, `${getIntensityLabel(scale)}${orAbove ? '程度以上' : ''}`))
+    if (scale > 0) chips.push(intensityChip(scale, intensityLabelWithApproxAbove(scale, orAbove, m.formats)))
     const { cls, over } = eewMaxLpgmClassInfo(eew)
     if (canPresentLpgmClass(scale, cls)) {
       const bg = getLpgmClassColor(cls)
-      chips.push({ text: getLpgmClassLabelWithApproxAbove(cls, over).replace('階級', '長周期'), bg, fg: readableTextColor(bg) })
+      const label = lpgmShortLabel(cls, m.formats)
+      chips.push({ text: over ? m.formats.approxAbove(label) : label, bg, fg: readableTextColor(bg) })
     }
     const h = eew.earthquake.hypocenter
     const provisional = isProvisionalHypocenter(eew)
     const hypocenter = h.name || hasKnownEpicenter(h.latitude, h.longitude)
       ? {
-        name: h.name ? (provisional ? `${h.name}（震源未確定）` : h.name) : '',
+        name: h.name ? (provisional ? `${h.name}${m.realtime.provisional}` : h.name) : '',
         // 仮定震源要素のときは規模・深さが仮の値なので出さない（速報カードと同じ）
         magnitude: provisional ? null : {
-          text: formatMagnitudeWithCondition(h.magnitude, h.magnitudeCondition, h.magnitudeType),
+          text: magnitudeWithConditionText(h.magnitude, h.magnitudeCondition, h.magnitudeType, m.formats),
           color: hasMagnitude(h.magnitude) ? getMagnitudeColor(h.magnitude) : '#6b7280',
         },
-        depth: provisional ? null : { text: formatDepth(h.depth, h.depthAtLeast === true), color: getDepthColor(h.depth) },
+        depth: provisional ? null : { text: depthText(h.depth, h.depthAtLeast === true, m.formats), color: getDepthColor(h.depth) },
       }
       : null
     const areas = eewAreas(eew)
@@ -176,12 +180,12 @@ export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArriv
     let home: EewDockItem['home'] = null
     if (index === 0 && arrival && arrival.source === 'telegram' && arrival.areaName) {
       const key = eewEventKey(eew)
-      const shake = shakeText(arrival, key)
+      const shake = shakeText(arrival, key, m)
       const area = areas.find(a => a.name === arrival.areaName)
       if (shake && area) {
         home = {
           area: arrival.areaName,
-          chip: area.scaleTo > 0 ? intensityChip(area.scaleTo, getEewAreaIntensityLabel(area.scaleFrom, area.scaleTo, area.scaleToOrAbove === true, ja.formats)) : null,
+          chip: area.scaleTo > 0 ? intensityChip(area.scaleTo, getEewAreaIntensityLabel(area.scaleFrom, area.scaleTo, area.scaleToOrAbove === true, m.formats)) : null,
           shake,
         }
       }
@@ -190,7 +194,7 @@ export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArriv
       kind: 'eew' as const,
       key: eewEventKey(eew),
       title, titleColor, accent,
-      status: eew.operationStatus ? `${eew.operationStatus}報` : null,
+      status: eew.operationStatus ? m.realtime.operation[eew.operationStatus] : null,
       chips,
       updated: eewUpdated(eew),
       hypocenter,
@@ -215,10 +219,16 @@ function gradeChip(grade: TsunamiArea['grade'], text: string): DockChip {
  * 登録地点の区域の到達。時刻があれば「到達予想 23:30」、「ただちに津波来襲と予測」は電文の文を「到達予想」に添える
  * （津波タブの区域の行と同じ）。到達を確認・到達中と推測の区域は、津波タブの札と同じ語（「第1波到達」「到達中」）を名目なしで出す。
  */
-function homeArrival(area: TsunamiArea, arrivalHm: string | null): { label: string | null; text: string } | null {
-  if (arrivalHm) return { label: '到達予想', text: arrivalHm }
+function homeArrival(area: TsunamiArea, arrivalHm: string | null, m: Messages): { label: string | null; text: string } | null {
+  if (arrivalHm) return { label: m.alertDock.estimatedArrival, text: arrivalHm }
   const condition = area.firstHeight?.condition
-  if (condition === 'ただちに津波来襲と予測' || (!condition && area.immediate)) return { label: '到達予想', text: 'ただちに津波来襲と予測' }
+  if (condition === 'ただちに津波来襲と予測' || (!condition && area.immediate)) {
+    const { labelled, text } = m.alertDock.immediateArrival
+    return { label: labelled ? m.alertDock.estimatedArrival : null, text }
+  }
+  const key = arrivalConditionKey(condition)
+  if (key) return { label: null, text: m.tsunami.arrivalCondition[key] }
+  // 表に無い語は電文の語のまま出す（津波タブの札と同じ。記録は `arrivalConditionBadge` が残す）
   const badge = arrivalConditionBadge(condition)
   return badge ? { label: null, text: badge } : null
 }
@@ -243,6 +253,7 @@ export function buildTsunamiDockItem(
   tsunamis: readonly JMATsunami[],
   homePrefCode: string | null,
   zonePrefectures: Readonly<Record<string, readonly string[]>>,
+  m: Messages,
 ): TsunamiDockItem | null {
   const live = tsunamis.filter(t => !t.cancelled && !t.cancelledAt)
   const latest = live[live.length - 1]
@@ -264,11 +275,8 @@ export function buildTsunamiDockItem(
     if (bv === undefined) return best
     return av > bv ? a : best
   }, null)
-  // 「第１波の到達を確認」の判定は、津波タブの札と同じ表（`ARRIVAL_CONDITION_BADGE`）を引く
-  const firstWaveAreas = areas.filter(a => {
-    const c = a.firstHeight?.condition
-    return c !== undefined && Object.prototype.hasOwnProperty.call(ARRIVAL_CONDITION_BADGE, c) && ARRIVAL_CONDITION_BADGE[c] === '第1波到達'
-  })
+  // 「第１波の到達を確認」の判定は、津波タブの札と同じ表（`arrivalConditionKey`）を引く
+  const firstWaveAreas = areas.filter(a => arrivalConditionKey(a.firstHeight?.condition) === 'firstArrived')
   const observations = live.flatMap(t => t.observations ?? [])
   const obs = highestObservation(observations)
 
@@ -284,9 +292,9 @@ export function buildTsunamiDockItem(
       const arrivalHm = hm(heaviest.firstHeight?.arrivalTime)
       home = {
         zone: heaviest.name,
-        grade: gradeChip(heaviest.grade, TSUNAMI_GRADE_NAME[heaviest.grade]),
-        height: hasForecastHeight(heaviest) ? gradeChip(heaviest.grade, heaviest.maxHeight!.description) : null,
-        arrival: homeArrival(heaviest, arrivalHm),
+        grade: gradeChip(heaviest.grade, m.tsunami.grade[heaviest.grade]),
+        height: hasForecastHeight(heaviest) ? gradeChip(heaviest.grade, m.tsunami.height(heaviest.maxHeight!.description, false)) : null,
+        arrival: homeArrival(heaviest, arrivalHm, m),
         rest: new Set(mine.map(a => a.name)).size - 1,
       }
     }
@@ -295,13 +303,13 @@ export function buildTsunamiDockItem(
   return {
     kind: 'tsunami',
     key: latest.eventId ?? latest.id,
-    title: TSUNAMI_GRADE_NAME[top.grade],
+    title: m.tsunami.grade[top.grade],
     titleColor: style.headerColor,
     accent: style.cardBorder,
-    status: latest.operationStatus ? `${latest.operationStatus}報` : null,
-    chip: topHeight ? gradeChip(top.grade, topHeight.maxHeight!.description) : null,
+    status: latest.operationStatus ? m.realtime.operation[latest.operationStatus] : null,
+    chip: topHeight ? gradeChip(top.grade, m.tsunami.height(topHeight.maxHeight!.description, false)) : null,
     updated: hm(latest.time),
-    observed: obs ? { value: overSuffixedHeight(obs.height!, ja.tsunami), station: obs.name } : null,
+    observed: obs ? { value: overSuffixedHeight(obs.height!, m.tsunami), station: obs.name } : null,
     firstWave: firstWaveAreas.length > 0 ? { first: firstWaveAreas[0].name, rest: new Set(firstWaveAreas.map(a => a.name)).size - 1 } : null,
     home,
   }

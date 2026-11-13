@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 // 対象のモジュールは頭で読む。テストの中で初めて読むと、全件並列のときに読み込みの待ちが 1 件目の時間に乗って時間切れになる
 import { QUAKE_PERIOD_HOURS } from '../utils/quakeListView'
 import { DIRECTIONS_16 } from '../utils/estimatedIntensity'
+import { CHECKLIST_SOURCE_URLS } from '../utils/actionChecklist'
 import { DEFAULT_LOCALE, isLocale, JA_MESSAGES, LOCALES, loadMessages, localeTag, type Messages } from './messages'
 
 // 日本語以外の辞書を先に一度読んでおく。`loadMessages` は `import()` で読むので、初回の変換の待ちが
@@ -74,6 +75,46 @@ describe('言語の表', () => {
     const ids = LOCALES.map((l) => l.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const { id } of LOCALES) expect(localeTag(id)).not.toBe('')
+  })
+})
+
+describe('速報・津波の帯の語', () => {
+  it('「ただちに津波来襲と予測」は、名目を付けない言語では津波タブの札（まもなく到達）と同じ語', async () => {
+    for (const { id } of LOCALES) {
+      const m = await loadMessages(id)
+      if (id === 'ja') continue
+      expect(m.alertDock.immediateArrival.labelled, id).toBe(false)
+      expect(m.alertDock.immediateArrival.text, id).toBe(m.tsunami.arrivalCondition.imminent)
+    }
+    // 対照: 日本語は名目を付け、電文の文をそのまま出す
+    expect(JA_MESSAGES.alertDock.immediateArrival).toEqual({ labelled: true, text: 'ただちに津波来襲と予測' })
+  })
+})
+
+describe('地震回数の見出し', () => {
+  it('英語・ポルトガル語・スペイン語は回数に単位を付け、1 回だけ単数にする', async () => {
+    const en = await loadMessages('en')
+    expect(en.specialInfo.countHeadline({ monthDay: '11/11', hour: '14' }, '23', '12')).toBe('Since 11/11 14:00: 23 earthquakes (12 felt)')
+    expect(en.specialInfo.countHeadline(null, '23', null)).toBe('23 earthquakes')
+    expect(en.specialInfo.countHeadline(null, '1', null)).toBe('1 earthquake')
+    expect(en.specialInfo.countHeadline(null, null, '12')).toBe('12 felt')
+    const es = await loadMessages('es')
+    expect(es.specialInfo.countHeadline(null, '1', null)).toBe('1 terremoto')
+    const pt = await loadMessages('pt-BR')
+    expect(pt.specialInfo.countHeadline(null, '23', '12')).toBe('23 terremotos (12 sentidos)')
+    expect(pt.specialInfo.countHeadline(null, '1', '1')).toBe('1 terremoto (1 sentido)')
+    expect(es.specialInfo.countHeadline(null, null, '1')).toBe('1 sentido')
+    // 安全弁: 日本語は前と同じ字面
+    expect(JA_MESSAGES.specialInfo.countHeadline(null, '23', '12')).toBe('23回（うち有感 12回）')
+  })
+})
+
+describe('行動チェックリストの語', () => {
+  it('出典の名前は、どの言語もリンク先と同じ数（添字で対にするので、ずれると別の出典に別の URL が付く）', async () => {
+    for (const { id } of LOCALES) {
+      const m = await loadMessages(id)
+      expect(m.actionChecklist.sources.length, id).toBe(CHECKLIST_SOURCE_URLS.length)
+    }
   })
 })
 

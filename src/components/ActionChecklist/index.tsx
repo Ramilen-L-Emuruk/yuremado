@@ -15,13 +15,10 @@ import { useEffect, useRef, useState } from 'react'
 import { log } from '../../utils/logger'
 import { Marquee } from '../Marquee'
 import { DisclosureCaret, Reveal } from '../EarthquakeTab/quakeMotion'
-import {
-  IMMEDIATE_ACTIONS,
-  EMERGENCY_KIT,
-  CHECKLIST_SOURCES,
-  COLLAPSED_ACTION_COUNT,
-} from '../../utils/actionChecklist'
-import { getIntensityLabel } from '../../utils/intensity'
+import { CHECKLIST_SOURCE_URLS, COLLAPSED_ACTION_COUNT } from '../../utils/actionChecklist'
+import { intensityLabel } from '../../utils/intensity'
+import { useMessages } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
 import type { ChecklistScope } from '../../utils/actionChecklistTrigger'
 import { NEARBY_RADIUS_KM } from '../../utils/nearbyStations'
 
@@ -65,42 +62,30 @@ interface Props {
  * だけの状態で使うと嘘になる。一方「観測しています」「ありました」は場所を主張しない事実の
  * 記述なので、地点が無くてもそのまま成り立つ。
  */
-const HEADLINE: Record<ChecklistReason, { scoped: string; global: string }> = {
-  eew: { scoped: '強い揺れが来ます', global: '強い揺れが予想されています' },
-  kyoshin: { scoped: '強い揺れを観測しています', global: '強い揺れを観測しています' },
-  quake: { scoped: '強い揺れがありました', global: '強い揺れがありました' },
-}
-
 /**
  * 帯の見出し。**判定に実際に使った範囲で言い分ける** —— 登録地点の周りで判定したとき（`near`・`nearArea`・`nearDetected`）だけ
  * 場所を主張する言い方にし、全国基準へ倒れたとき・地点が無いとき（`nationwide`）は場所を主張しない言い方にする。
  */
-export function checklistHeadline(reason: ChecklistReason, scope: ChecklistScope): string {
-  return scope !== 'nationwide' ? HEADLINE[reason].scoped : HEADLINE[reason].global
+export function checklistHeadline(reason: ChecklistReason, scope: ChecklistScope, w: Messages['actionChecklist']): string {
+  return scope !== 'nationwide' ? w.headline[reason].scoped : w.headline[reason].global
 }
 
 /**
  * 見出しの下に添える 1 行。どの経路の・どの範囲の値で出したかを短く言う
  * （2026-10-25 ユーザー選択「この文面で直す (Recommended)」）。
  */
-const SOURCE_LABEL: Record<ChecklistReason, string> = {
-  eew: '緊急地震速報',
-  kyoshin: 'リアルタイム震度',
-  quake: '地震情報',
-}
-
-export function checklistBasisText(reason: ChecklistReason, scope: ChecklistScope): string {
-  const source = SOURCE_LABEL[reason]
-  if (scope === 'nationwide') return `${source}・全国の最大`
+export function checklistBasisText(reason: ChecklistReason, scope: ChecklistScope, w: Messages['actionChecklist']): string {
+  const source = w.source[reason]
+  if (scope === 'nationwide') return w.basis.nationwide(source)
   if (reason === 'eew') {
     return scope === 'nearDetected'
-      ? `${source}・登録地点から ${NEARBY_RADIUS_KM}km 以内で検知`
-      : `${source}・登録地点の地域の予想`
+      ? w.basis.eewNearDetected(source, NEARBY_RADIUS_KM)
+      : w.basis.eewArea(source)
   }
-  if (reason === 'kyoshin') return `${source}・登録地点から ${NEARBY_RADIUS_KM}km 以内`
+  if (reason === 'kyoshin') return w.basis.kyoshinNear(source, NEARBY_RADIUS_KM)
   // 区域の点（震度速報など）で判定したときは、円ではなく区域名の一致で引いている（2026-10-25 選択「観測点と区域で分ける」）
-  if (scope === 'nearArea') return `${source}・登録地点の地域`
-  return `${source}・登録地点から ${NEARBY_RADIUS_KM}km 以内の観測点`
+  if (scope === 'nearArea') return w.basis.nearArea(source)
+  return w.basis.nearStations(source, NEARBY_RADIUS_KM)
 }
 
 /**
@@ -195,35 +180,43 @@ export function checklistTopPadding(topInset: number, areaHeight: number | null,
  * 名前は横に伸ばさず上へ小さく乗せる。「リアルタイム震度5弱」を 1 行で書くと帯と畳んだボタンが
  * 間延びして地図を覆う。緊急地震速報は予想値・地震情報は発表値なので、そちらは「震度○」のまま。
  */
-function ScaleText({ reason, label }: { reason: ChecklistReason; label: string }) {
-  if (reason !== 'kyoshin') return <>震度{label}</>
+function ScaleText({ reason, label, w }: { reason: ChecklistReason; label: string; w: Messages['actionChecklist'] }) {
+  if (reason !== 'kyoshin') return <>{w.scale(label)}</>
   return (
     <>
-      <span className="block text-[0.65em] leading-tight opacity-90">リアルタイム</span>
-      震度{label}
+      <span className="block text-[0.65em] leading-tight opacity-90">{w.realtimePrefix}</span>
+      {w.scale(label)}
     </>
   )
 }
 
-/** 読み上げ・`aria-label` 用の文字列。表示（`ScaleText`）と同じ内容を 1 行で言う。 */
-function scaleAriaText(reason: ChecklistReason, label: string): string {
-  return reason === 'kyoshin' ? `リアルタイム震度${label}` : `震度${label}`
+/**
+ * 震度の表示に、その言語で一番長い札の幅を確保する。
+ *
+ * 札の長さは言語と階級で変わる（「震度7」と「震度6弱」、英語なら `Intensity 7` と `Intensity 6 Upper`）。
+ * 成り行きの幅にすると、揺れが強まって階級が上がるたびに帯とボタンの幅が動く。**強震モニタ経路では毎秒
+ * 変わりうる**ので、全階級の札を同じ位置（グリッドの 1 マス）に重ねて置き、見えないものも幅だけは取らせる（一番長い札の幅になる。
+ * 2026-11-11 ユーザー選択「一番長い札に合わせる (Recommended)」）。
+ *
+ * 下限の 4em は「震度5弱」の 4 文字ぶん。上に乗る「リアルタイム」（0.65em × 6 文字 = 約 3.9em）もこれに収まる。
+ * 日本語の札は数字が半角なので 4em より短く、日本語ではこの下限が幅を決める。`em` はフォントサイズ基準なので
+ * UI 倍率にも追従する。
+ */
+function ScaleBox({ reason, label, w, labels }: { reason: ChecklistReason; label: string; w: Messages['actionChecklist']; labels: readonly string[] }) {
+  return (
+    <span className="inline-grid text-center min-w-[4em]">
+      <span className="col-start-1 row-start-1"><ScaleText reason={reason} label={label} w={w} /></span>
+      {labels.map((l) => (
+        <span key={l} className="col-start-1 row-start-1 invisible" aria-hidden="true"><ScaleText reason={reason} label={l} w={w} /></span>
+      ))}
+    </span>
+  )
 }
 
-/**
- * 震度の表示に確保する幅（「震度5弱」の 4 文字ぶん）。
- *
- * 震度ラベルは階級によって 1〜2 文字で揺れる（「7」と「6弱」）。成り行きの幅にすると、揺れが
- * 強まって階級が上がるたびに帯とボタンの幅が動く。**強震モニタ経路では毎秒変わりうる**ので、
- * 常に最大幅を確保して動かないようにする。`em` はフォントサイズ基準なので UI 倍率にも追従する。
- *
- * 上に乗る「リアルタイム」は 0.65em × 6 文字 = 約 3.9em なので、この幅に収まる。
- *
- * バッジ側は `box-sizing: border-box` で左右のパディング（`px-1.5` = 0.75rem）も幅に含まれるため、
- * その分を足す。
- */
-const SCALE_WIDTH_BADGE = 'text-center min-w-[calc(4em+0.75rem)]'
-const SCALE_WIDTH_PLAIN = 'inline-block text-center min-w-[4em]'
+/** 読み上げ・`aria-label` 用の文字列。表示（`ScaleText`）と同じ内容を 1 行で言う。 */
+function scaleAriaText(reason: ChecklistReason, label: string, w: Messages['actionChecklist']): string {
+  return reason === 'kyoshin' ? w.realtimeScale(label) : w.scale(label)
+}
 
 function CloseIcon() {
   return (
@@ -252,9 +245,12 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
     if (focusOnOpen && !collapsed) closeRef.current?.focus()
   }, [focusOnOpen, collapsed])
 
-  const shown = open ? IMMEDIATE_ACTIONS : IMMEDIATE_ACTIONS.slice(0, COLLAPSED_ACTION_COUNT)
+  const m = useMessages()
+  const w = m.actionChecklist
+  const shown = open ? w.actions : w.actions.slice(0, COLLAPSED_ACTION_COUNT)
   // 未入電の地震は地震カードと同じく「5弱以上」と書く（実際は 5強以上だった可能性がある）
-  const label = `${getIntensityLabel(scale)}${unreceived ? '以上' : ''}`
+  const scaleLabels = Object.entries(m.formats.intensity).filter(([k]) => k !== '-1').map(([, v]) => v)
+  const label = unreceived ? m.formats.orAbove(intensityLabel(scale, m.formats)) : intensityLabel(scale, m.formats)
 
   // 畳んだ状態。**消さずにボタンを残す** —— 余震のたびに帯が出直すのは邪魔だが、読み返したく
   // なることはある。震度を添えるのは、畳んでいる間に届いた揺れの大きさが分かるようにするため。
@@ -264,11 +260,11 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
         <button
           className="ui-text-scope pointer-events-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-950/90 border border-red-400/80 shadow-[0_3px_8px_rgba(0,0,0,.55)] text-white hover:bg-red-900/90"
           onClick={onRestore}
-          aria-label={`${scaleAriaText(reason, label)}の行動チェックリストを開く`}
+          aria-label={w.openLabel(scaleAriaText(reason, label, w))}
         >
           <ChecklistIcon />
           <span className="text-(length:--ui-fs) font-bold whitespace-nowrap">
-            <span className={SCALE_WIDTH_PLAIN}><ScaleText reason={reason} label={label} /></span> 行動チェック
+            <ScaleBox reason={reason} label={label} w={w} labels={scaleLabels} /> {w.button}
           </span>
         </button>
       </div>
@@ -286,17 +282,17 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
         <div className="px-3 py-2 flex items-start gap-2">
           {/* 判定の根拠は見出しの下に 1 行だけ。仕組みの説明は設定の窓の「出す最低震度」の項目に置いてある。 */}
           <div className="min-w-0 flex-1 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
-            <span className={`text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] bg-red-500 shrink-0 ${SCALE_WIDTH_BADGE}`}>
-              <ScaleText reason={reason} label={label} />
+            <span className="text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] bg-red-500 shrink-0">
+              <ScaleBox reason={reason} label={label} w={w} labels={scaleLabels} />
             </span>
-            <Marquee className="min-w-0 flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={checklistHeadline(reason, scope)} />
-            <Marquee className="basis-full text-secondary text-(length:--ui-fs) leading-tight" text={checklistBasisText(reason, scope)} />
+            <Marquee className="min-w-0 flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={checklistHeadline(reason, scope, w)} />
+            <Marquee className="basis-full text-secondary text-(length:--ui-fs) leading-tight" text={checklistBasisText(reason, scope, w)} />
           </div>
           <button
             ref={closeRef}
             className="text-secondary hover:text-white p-1 -m-1 shrink-0"
             onClick={onDismiss}
-            aria-label="チェックリストを閉じる"
+            aria-label={w.close}
           >
             <CloseIcon />
           </button>
@@ -320,7 +316,7 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
           className="w-full px-3 py-1.5 flex items-center justify-center gap-1 text-secondary hover:text-white text-(length:--ui-fs)"
           onClick={() => setOpen(v => !v)}
         >
-          {open ? '閉じる' : `続きを見る（全 ${IMMEDIATE_ACTIONS.length} 項目）`}
+          {open ? w.collapse : w.showAll(w.actions.length)}
           <span className="shrink-0 text-secondary"><DisclosureCaret open={open} /></span>
         </button>
 
@@ -330,34 +326,31 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
               className="w-full py-1.5 flex items-center justify-between gap-2 text-left border-t border-red-400/40"
               onClick={() => setKitOpen(v => !v)}
             >
-              <span className="text-white text-(length:--ui-f) font-bold">避難するとき持ち出すもの</span>
+              <span className="text-white text-(length:--ui-f) font-bold">{w.kitHeading}</span>
               <span className="shrink-0 text-secondary"><DisclosureCaret open={kitOpen} /></span>
             </button>
             <Reveal open={kitOpen}>{() => (
               <div className="space-y-1.5 pb-1">
-                <p className="text-secondary text-(length:--ui-fs) leading-relaxed">
-                  両手が空くリュックにまとめ、軽くコンパクトに。持病の薬・杖・乳幼児用品など、
-                  必要なものは各自で足してください。
-                </p>
-                {EMERGENCY_KIT.map(group => (
+                <p className="text-secondary text-(length:--ui-fs) leading-relaxed">{w.kitNote}</p>
+                {w.kit.map(group => (
                   <div key={group.label}>
                     <p className="text-red-300 text-(length:--ui-fs) font-bold">{group.label}</p>
-                    <p className="text-white text-(length:--ui-fs) leading-relaxed">{group.items.join('・')}</p>
+                    <p className="text-white text-(length:--ui-fs) leading-relaxed">{group.items.join(w.kitItemSeparator)}</p>
                   </div>
                 ))}
               </div>
             )}</Reveal>
             <p className="text-secondary text-(length:--ui-fs) leading-relaxed border-t border-red-400/40 pt-1.5 mt-1">
-              出典:{' '}
-              {CHECKLIST_SOURCES.map((s, i) => (
-                <span key={s.url}>
-                  {i > 0 && '／'}
-                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-secondary">
-                    {s.label}
+              {w.sourcesLabel}{' '}
+              {w.sources.map((label, i) => (
+                <span key={CHECKLIST_SOURCE_URLS[i]}>
+                  {i > 0 && w.sourceSeparator}
+                  <a href={CHECKLIST_SOURCE_URLS[i]} target="_blank" rel="noopener noreferrer" className="underline hover:text-secondary">
+                    {label}
                   </a>
                 </span>
               ))}
-              。実際の避難は気象庁・自治体の指示に従ってください。
+              {w.followOfficial}
             </p>
           </div>
         )}</Reveal>
