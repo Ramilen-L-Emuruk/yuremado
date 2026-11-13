@@ -7,6 +7,9 @@ import type { QuakeHoldBackReason } from '../../utils/quakeMerge'
 import type { JmaCommentKind } from '../../utils/jmaCommentGroups'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
 import type { QuakeFilterKind, QuakeSortKey } from '../../utils/quakeListView'
+import type { MapLayerName } from '../../utils/renderHealth'
+import type { PlateBoundaryClass } from '../../utils/plateBoundaries'
+import type { HeatmapPeriod } from '../../utils/quakeHeatmap'
 
 /** 等級ごとの避難の呼びかけ（気象庁の付加文が採れなかったときに出す。読み上げも同じ文を読む → `utils/tsunami.ts` の `fallbackEvacuationAction`）。 */
 const TSUNAMI_EVACUATION: Record<Exclude<TsunamiGrade, 'Unknown'>, string> = {
@@ -697,6 +700,151 @@ export const ja = {
       scaleUnknown: '震度不明',
       magnitude: (m: number) => `M${m}`,
       magnitudeUnknown: 'M不明',
+    },
+  },
+  /**
+   * 地図（吹き出し・凡例・描けなかったものの名前・地図を作れないときの表示・自作地震計の札）。
+   * 震度の札・長周期の階級名・時刻と規模と深さの書式・津波の高さの語は共有の書式なので、ここでは持たない
+   * （値は書式を済ませた文字列で受ける）。
+   */
+  map: {
+    /** 地図の隅の「〜を描けず」「〜はクリックに応じず」に入る名前（`utils/renderHealth.ts` が鍵で持つ） */
+    layerName: {
+      eewEpicenters: '緊急地震速報の震源',
+      quakeHypocenters: '地震の震源',
+      tsunamiSource: '津波の原因地震の震源',
+      catalog: '震源カタログ',
+      psWave: '緊急地震速報の予報円',
+      estimatedIntensity: '推計震度分布図',
+      subThreshold: '弱い揺れの観測点',
+      dayNight: '昼夜の境目',
+    } satisfies Record<MapLayerName, string>,
+    /** 地図を作れなかったとき（WebGL2 が使えないなど）に地図の場所へ出す文 */
+    unavailable: {
+      title: '地図を表示できません',
+      reason: 'お使いの環境が地図の描画に対応していない可能性があります（WebGL2 非対応・ハードウェアアクセラレーション無効など）',
+      rest: '地図以外の機能はこのまま利用できます。',
+    },
+    popup: {
+      region: '一次細分区域',
+      regionRepresentative: '一次細分区域（代表点）',
+      activeFault: '活断層（産総研 活断層データベース）',
+      /** プレート境界。`cls` は分類の名前（分類が読めなければ null） */
+      plateBoundary: (cls: string | null) => (cls ? `プレート境界（${cls}・PB2002モデル）` : 'プレート境界（PB2002モデル）'),
+      plateClass: {
+        SUB: '沈み込み帯',
+        OCB: '海洋の収束境界',
+        CCB: '大陸の収束境界',
+        OSR: '海洋の拡大軸',
+        CRB: '大陸のリフト',
+        OTF: '海洋のトランスフォーム断層',
+        CTF: '大陸のトランスフォーム断層',
+      } satisfies Record<PlateBoundaryClass, string>,
+      eewKind: { warning: '警報', forecast: '地震動予報' },
+      eewFinal: '最終報',
+      eewSerial: (serial: string) => `第${serial}報`,
+      unknownHypocenter: '震源調査中',
+      /** 規模と深さの行。どちらも書式を済ませた値 */
+      magnitudeDepth: (magnitude: string, depth: string) => `${magnitude} / 深さ ${depth}`,
+      maxForecastIntensity: (scale: string) => `予想最大震度 ${scale}`,
+      forecastIntensity: (scale: string) => `予想震度 ${scale}`,
+      strongShaking: '非常に強い揺れを検知（震源未確定）',
+      strongShakingNote: '地名は揺れを検知した観測点の位置です',
+      assumedHypocenter: '仮定震源要素（震源未確定）',
+      assumedHypocenterNote: '地名は最初に揺れを検知した観測点の位置です',
+      eewEnded: 'この緊急地震速報は終了しました',
+      mainShakingArrived: '主要動 到達済み',
+      mainShakingIn: (sec: number) => `主要動の到達まで 約${sec}秒`,
+      /** `cls` は階級名（「階級3」。共有の書式） */
+      forecastLpgm: (cls: string) => `予想 長周期地震動${cls}`,
+      lpgm: (cls: string) => `長周期地震動${cls}`,
+      /** 区域の塗りの吹き出しの 2 行目。`intensity` は震度の札（無ければ null） */
+      lpgmRegion: (cls: string, intensity: string | null) => `長周期地震動 ${cls}${intensity !== null ? `　震度 ${intensity}` : ''}`,
+      intensity: (scale: string) => `震度 ${scale}`,
+      maxIntensity: (scale: string) => `最大震度 ${scale}`,
+      /** 長周期の観測点の揺れの大きさ（絶対速度応答スペクトル）。`value` は小数 1 桁の値 */
+      maxShaking: (value: string) => `揺れの大きさ 最大 ${value} cm/s`,
+      morePrefectures: (n: number) => `ほか ${n} 都道府県`,
+      moreMunicipalities: (n: number) => `ほか ${n} 市町村`,
+      moreStations: (n: number) => `ほか ${n} 観測点`,
+      someUnreceived: '未入電あり',
+      unreceivedNote: '気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）',
+      code: (code: string) => `コード ${code}`,
+      distance: (km: number) => `震源から約 ${km}km`,
+      depth: (depth: string) => `深さ ${depth}`,
+      depthUnknown: '深さ不明',
+      magnitudeUnknown: 'M 不明',
+      preliminary: '速報値',
+      telegram: '地震情報の電文',
+      externalHypocenter: '気象庁以外の機関の震源',
+      epicenterUnknown: '震源地不明',
+      nearbyCount: (n: number) => `この付近 ${n.toLocaleString('ja-JP')} 件`,
+      nearbyTitle: (n: number) => `この付近の地震 ${n.toLocaleString('ja-JP')} 件`,
+      largest: '最大',
+      latest: (time: string) => `最新 ${time}`,
+      arrivalConfirmed: '到達を確認',
+      maxHeightObserving: '最大波高は観測中',
+      /** `height` は書式を済ませた波高（共有の書式） */
+      maxWaveSoFar: (height: string) => `これまでの最大波 ${height}`,
+      tsunamiMissing: '欠測（観測データが得られていません）',
+      /** 海岸線の等級（凡例と海岸線の吹き出し） */
+      tsunamiGrade: { MajorWarning: '大津波警報', Warning: '津波警報', Watch: '津波注意報', Forecast: '津波予報', Unknown: '津波予報' } satisfies Record<TsunamiGrade, string>,
+    },
+    legend: {
+      /** 密度の欄の、観測網の疎な時代の注記（カタログタブの `catalog.completeness` と同じ意味） */
+      completeness: (year: number, magnitude: string) => `${year} 年まで遡ると、記録が揃うのは M ${magnitude} 以上です。それより小さい地震は少なく見えます。`,
+      /** 密度の期間の行。`start` は書式を済ませた始まりの日付、`replay` は再生中か */
+      periodRange: (start: string, replay: boolean) => `期間 ${start} 〜 ${replay ? '再生時刻' : 'いま'}`,
+      /** 密度の期間のつまみ（読み上げの名前） */
+      period: '期間',
+      heatmapPeriod: {
+        '7d': '7日', '30d': '30日', '90d': '90日', '1y': '1年', '2y': '2年', '5y': '5年', '10y': '10年', '20y': '20年', '50y': '50年', all: '1919年から',
+      } satisfies Record<HeatmapPeriod, string>,
+      catalog: {
+        depth: { title: '震源の深さ', short: '深さ' },
+        magnitude: { title: 'マグニチュード', short: 'M' },
+        time: { title: '発生年', short: '発生年' },
+      } satisfies Record<CatalogColorBy, { title: string; short: string }>,
+      externalHypocenter: '気象庁以外の機関の震源',
+      depthUnknown: '深さ不明',
+      magnitudeUnknown: 'M 不明',
+      intensity: '震度',
+      realtimeIntensity: 'リアルタイム震度',
+      eewForecast: '緊急地震速報の予想',
+      lpgmClass: '長周期地震動階級',
+      lpgmClassShort: '長周期階級',
+      /** 見出しに名前を並べるときの区切り */
+      nameSeparator: '・',
+      unreceivedTitle: '震度を入手していない地点',
+      unreceived: '未入電',
+      psWave: '緊急地震速報の予報円',
+      psWaveShort: '予報円',
+      pWave: 'P波',
+      sWave: 'S波',
+      tsunami: '津波',
+      tsunamiObsHeight: '観測した津波の高さ',
+      tsunamiObsHeightShort: '観測波高',
+      arrivalConfirmed: '到達確認',
+      missing: '欠測',
+      tideStations: '潮位観測点',
+      tideStationsShort: '観測点',
+      density: '地震活動の密度',
+      few: '少',
+      many: '多',
+      activeFaults: '活断層',
+      plateSubduction: 'プレート境界（沈み込み帯）',
+      plateConvergent: 'プレート境界（収束）',
+      plateDivergent: 'プレート境界（拡大・リフト）',
+      plateTransform: 'プレート境界（トランスフォーム断層）',
+      lines: '線',
+    },
+    /** 地図に重ねる自作地震計の行の、震度の出どころの札 */
+    seismo: {
+      waveOnly: '波形のみ',
+      unseen: '未着',
+      singleUnverified: '単独（裏付けなし）',
+      maxOfSensors: (n: number) => `単独 ${n}本の最大`,
+      sensors: (n: number) => `単独 ${n}本`,
     },
   },
 } as const

@@ -1,6 +1,6 @@
 import type { CustomLayerInterface, Map as MapLibreMap } from 'maplibre-gl'
 import { log } from '../../../utils/logger'
-import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../../utils/renderHealth'
 import type { MapLayerId } from './layerOrder'
 import { applyProjectionUniforms, createProjectionProgramCache } from './projectionProgram'
 import { guardRender } from './guardRender'
@@ -714,7 +714,7 @@ export interface DepthPointLayer extends CustomLayerInterface {
   pick(x: number, y: number, forClick?: boolean): DepthPickResult
 }
 
-export function createDepthPointLayer(id: MapLayerId, map: MapLibreMap, label: string): DepthPointLayer {
+export function createDepthPointLayer(id: MapLayerId, map: MapLibreMap, label: MapLayerName): DepthPointLayer {
   // 表示・判定・柄の 3 プログラム。**投影が切り替わると中身が作り直される**ため、
   // ロケーションはフレームごとにキャッシュから引く（gl/projectionProgram.ts）。
   const displayCache = createProjectionProgramCache({

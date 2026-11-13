@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { log } from '../utils/logger'
 import { JA_MESSAGES, loadMessages, localeTag, type Locale, type Messages } from './messages'
 
@@ -48,6 +48,19 @@ export function I18nProvider({ locale, children }: { locale: Locale; children: R
 /** いまの言語の辞書。 */
 export function useMessages(): Messages {
   return useContext(I18nContext).messages
+}
+
+/**
+ * いまの言語の辞書を持つ参照。**地図の吹き出しのように、一度だけ登録して後から呼ばれる組み立てに渡す**
+ * （辞書が変わるたびに登録し直さずに、呼ばれた時点の言語で組める）。参照そのものは描き直しても変わらない。
+ */
+export function useMessagesRef(): { readonly current: Messages } {
+  const messages = useMessages()
+  const ref = useRef(messages)
+  useLayoutEffect(() => {
+    ref.current = messages
+  }, [messages])
+  return ref
 }
 
 /** いま画面に出している辞書の言語。 */

@@ -11,6 +11,9 @@ import { escapeHtml, popupCodeLineHtml } from './gl/popupHtml'
 import { tsunamiAreaPopupLines } from '../../utils/tsunami'
 import { createTsunamiBlink, TSUNAMI_LINE_OPACITY_ON, type TsunamiBlink } from './gl/tsunamiBlink'
 import { registerCaptureHold } from './gl/captureMap'
+import { useMessagesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { TsunamiGrade } from '../../types/earthquake'
 
 // 津波予報区の海岸線を等級ごとに色分けして描画する MapLibre 版（Leaflet の tsunami-lines 相当）。
 // 等級1件=MultiLineString feature 1件にまとめ、色・太さを feature プロパティに前計算して
@@ -39,7 +42,8 @@ export function buildTsunamiLinesFC(lines: TsunamiLine[], iconScale: number): Fe
       // 吹き出しの補足の行（予想波高・到達予想。→ `tsunamiAreaPopupLines`）。地物の属性は平らな値しか持てないので、
       // 改行で繋いで持たせ、吹き出しを組むときに割る。
       properties: {
-        color: style.color, width: style.weight * iconScale, label: style.label, name: line.name,
+        // 等級は鍵のまま持たせ、吹き出しを組むときに辞書の語へ直す（言語が変わっても地物を組み直さずに済む）
+        color: style.color, width: style.weight * iconScale, grade: line.grade, name: line.name,
         details: tsunamiAreaPopupLines(line.area).join('\n'),
         code: line.area.code,
       },
@@ -53,19 +57,28 @@ export function buildTsunamiLinesFC(lines: TsunamiLine[], iconScale: number): Fe
  * 海岸線の吹き出し。区域名・等級に、予想波高と到達予想の行を足す（2026-10-21 ユーザー選択「波高と到達予想も出す
  * (Recommended)」）。海岸線は全タブで描くので、地震・リアルタイムタブの吹き出しも同じ中身になる。
  */
-export function tsunamiLinePopupHtml(name: string, label: string, details: readonly string[], code: string | undefined): string {
+export function tsunamiLinePopupHtml(name: string, label: string, details: readonly string[], code: string | undefined, m: Messages): string {
   return (
     `<div class="text-sm"><div class="font-bold">${escapeHtml(name)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${escapeHtml(label)}</div>` +
     details.map(d => `<div class="text-xs" style="color:#e5e7eb">${escapeHtml(d)}</div>`).join('') +
-    popupCodeLineHtml(code) +
+    popupCodeLineHtml(code, m) +
     `</div>`
   )
+}
+
+/** 地物の属性の等級を札の語へ。読めない値は「津波予報」の語へ落とす（属性が欠けた地物でも吹き出しは出す）。 */
+export function tsunamiGradeLabel(grade: unknown, m: Messages): string {
+  const labels = m.map.popup.tsunamiGrade
+  return typeof grade === 'string' && Object.prototype.hasOwnProperty.call(labels, grade)
+    ? labels[grade as TsunamiGrade]
+    : labels.Forecast
 }
 
 export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
   const map = useMapGL()
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
   const blinkRef = useRef<TsunamiBlink | null>(null)
   const addedRef = useRef(false)
   // 点滅を作る effect（依存は map だけ）から、作った時点の visible を読むための ref。
@@ -97,9 +110,10 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
       tolPx: HIT_TOL_PX,
       buildClickHtml: (f) => tsunamiLinePopupHtml(
         String(f.properties?.name ?? ''),
-        String(f.properties?.label ?? '津波予報'),
+        tsunamiGradeLabel(f.properties?.grade, mRef.current),
         String(f.properties?.details ?? '').split('\n').filter(Boolean),
         f.properties?.code === undefined ? undefined : String(f.properties.code),
+        mRef.current,
       ),
     })
     // 点滅（Leaflet の tsunami-blink CSS を再現）: 2.5s 周期で前 8 割は不透明・残り 2 割は消灯の

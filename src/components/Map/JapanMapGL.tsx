@@ -66,6 +66,7 @@ import { syncEewFirstSeen } from './gl/eewFirstSeen'
 import { applyFrontSortKeys, bearingChangedEnough } from './gl/screenDepth'
 import { installNoopCameraUpdateSkip } from './gl/skipNoopCameraUpdate'
 import type { MapLegendSources, LegendKey } from '../MapLegend/legendBlocks'
+import { useMessages } from '../../i18n/I18nProvider'
 
 // MapLibre GL JS 版の地図コンポーネント（Leaflet 版 JapanMap と同一 Props）。
 // MapLibre 移行計画 docs/webgl-migration-implementation-plan.md のフェーズ順に、
@@ -154,6 +155,7 @@ export function JapanMapGL({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const [map, setMap] = useState<maplibregl.Map | null>(null)
+  const messages = useMessages()
   // 地図そのものを作れなかった。地図の代わりに、その旨を出すために持つ。
   const [mapUnavailable, setMapUnavailable] = useState(false)
   // 地図の生成 effect は依存配列が空（地図は 1 度だけ作る）。コールバックを直接読むと、
@@ -349,8 +351,8 @@ export function JapanMapGL({
     if (mode !== 'quake' || !distributionMode) return null
     const atPosition = stationMarkers.filter((p) => p.position[0] === position[0] && p.position[1] === position[1])
     const m = (stationName !== null ? atPosition.find((p) => p.addr === stationName) : undefined) ?? atPosition[0]
-    return m ? quakePointClickHtml(m, epicenter) : null
-  }, [mode, distributionMode, stationMarkers, epicenter])
+    return m ? quakePointClickHtml(m, epicenter, messages) : null
+  }, [mode, distributionMode, stationMarkers, epicenter, messages])
   const overlapSignature = useMemo(() => {
     const parts = [
       aggregateByRegion ? regionAggregates.map((r) => r.name).join(',') : '',
@@ -647,13 +649,13 @@ export function JapanMapGL({
       {mapUnavailable && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0a0c10] p-6 text-center">
           <div className="max-w-md">
-            <p className="text-base font-bold text-slate-200">地図を表示できません</p>
+            <p className="text-base font-bold text-slate-200">{messages.map.unavailable.title}</p>
             {/* 日本語の本文は途中で改行しない。JSX の改行は空白 1 個として描かれ、
                 括弧の手前に不自然な空きができる。 */}
             <p className="mt-2 text-sm text-slate-400">
-              お使いの環境が地図の描画に対応していない可能性があります（WebGL2 非対応・ハードウェアアクセラレーション無効など）
+              {messages.map.unavailable.reason}
             </p>
-            <p className="mt-2 text-sm text-slate-400">地図以外の機能はこのまま利用できます。</p>
+            <p className="mt-2 text-sm text-slate-400">{messages.map.unavailable.rest}</p>
           </div>
         </div>
       )}

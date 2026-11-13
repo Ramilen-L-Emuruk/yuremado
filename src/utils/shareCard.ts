@@ -2,7 +2,7 @@ import type { MapCaptureResult } from '../components/Map/gl/captureMap'
 import { log } from './logger'
 import { readableTextColor } from './contrast'
 import { countUsage } from '../services/usageStats'
-import { heatmapPeriodText, type LegendBlock, type LegendChip } from '../components/MapLegend/legendBlocks'
+import type { LegendBlock, LegendChip } from '../components/MapLegend/legendBlocks'
 
 // 共有カードの合成と書き出し。地図の撮影は components/Map/gl/captureMap.ts の担当で、
 // ここは「撮れた地図に見出しと出典を足して 1 枚の画像にする」ところだけを持つ。
@@ -414,19 +414,37 @@ function legendPeriodLines(ctx: CanvasRenderingContext2D, block: LegendBlock, ma
   const period = block.heatmapPeriod
   if (!period) return []
   ctx.font = `400 13px ${FONT_STACK}`
-  const out: { text: string; note: boolean }[] = [{ text: heatmapPeriodText(period), note: false }]
+  const out: { text: string; note: boolean }[] = [{ text: period.text, note: false }]
   if (period.note) {
-    let line = ''
-    for (const ch of period.note) {
-      if (line !== '' && ctx.measureText(line + ch).width > maxWidth) {
-        out.push({ text: line, note: true })
-        line = ''
-      }
-      line += ch
+    for (const text of wrapNoteLines((t) => ctx.measureText(t).width, period.note, maxWidth)) {
+      out.push({ text, note: true })
     }
-    if (line !== '') out.push({ text: line, note: true })
   }
   return out
+}
+
+/** かな・漢字を含む文か（語を空白で区切らない文。日本語・中国語）。 */
+const CJK_CHAR = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/
+/** 空白で区切った語（語の後ろの空白を含む）。 */
+const WORD_TOKEN = /\S+\s*|\s+/g
+
+/**
+ * 凡例の注記を枠の幅で折る。かな・漢字の文（日本語・中国語）は 1 文字ずつ詰めて折り、
+ * 語を空白で区切る言語（英語・韓国語など）は語の境で折る（語の途中で切らない）。
+ */
+export function wrapNoteLines(measure: (text: string) => number, text: string, maxWidth: number): string[] {
+  if (!CJK_CHAR.test(text)) return wrapAtSeparators(measure, text, maxWidth, WORD_TOKEN)
+  const lines: string[] = []
+  let line = ''
+  for (const ch of text) {
+    if (line !== '' && measure(line + ch) > maxWidth) {
+      lines.push(line)
+      line = ''
+    }
+    line += ch
+  }
+  if (line !== '') lines.push(line)
+  return lines
 }
 
 /** 色の升目 1 つの幅。文字の幅に合わせて伸ばす。 */

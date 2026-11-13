@@ -10,6 +10,7 @@ import {
   SHARE_CARD_FORMATS,
   SUBTITLE_MAX_LINES,
   shareOrDownloadImage,
+  wrapNoteLines,
 } from './shareCard'
 
 // 地図に割ける高さは「カード全体 − 見出し帯 − 出典帯」で決まり、撮影側（useShareCard）と
@@ -265,6 +266,32 @@ describe('layoutNoticeLines', () => {
     expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).length).toBe(2)
     expect(layoutNoticeLines(wide, [EEW_NOTICE], 1600 - 72).length).toBe(1)
     expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).join('')).toBe(EEW_NOTICE)
+  })
+})
+
+// 凡例の完全性の注記は言語ごとに訳した文が入る。日本語・中国語は 1 文字ずつ詰め、空白で語を区切る言語は語の境で折る。
+describe('wrapNoteLines', () => {
+  const measure = (t: string) => [...t].length
+
+  it('正: 英語の文は語の途中で切らない', () => {
+    const text = 'Going back to 2000, the record is complete only for M 3.0 and above.'
+    const lines = wrapNoteLines(measure, text, 20)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines.join(' ')).toBe(text)
+    for (const l of lines) expect(measure(l)).toBeLessThanOrEqual(20)
+  })
+
+  it('対照: 日本語の文は今までどおり 1 文字ずつ詰める（空白でも切らない）', () => {
+    const text = '2000 年まで遡ると、記録が揃うのは M 3.0 以上です。'
+    const lines = wrapNoteLines(measure, text, 10)
+    expect(lines.join('')).toBe(text)
+    for (const l of lines.slice(0, -1)) expect(measure(l)).toBe(10)
+  })
+
+  it('安全弁: 幅を超える 1 語は文字で割って、文を落とさない', () => {
+    const lines = wrapNoteLines(measure, 'abcdefghijklmnop qr', 5)
+    expect(lines.join('').replace(/ /g, '')).toBe('abcdefghijklmnopqr')
+    for (const l of lines) expect(measure(l)).toBeLessThanOrEqual(5)
   })
 })
 

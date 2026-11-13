@@ -2378,13 +2378,14 @@ export function App() {
             period: settings.heatmapPeriod,
             startLabel: formatHeatmapDate(heatWindowStartMs),
             replay: replayTimeOffset !== null,
-            note: heatmapCompletenessNote(heatCompleteness),
+            note: heatmapCompletenessNote(heatCompleteness, messages),
+            text: messages.map.legend.periodRange(formatHeatmapDate(heatWindowStartMs), replayTimeOffset !== null),
           },
-    [heatWindowStartMs, settings.heatmapPeriod, replayTimeOffset, heatCompleteness],
+    [heatWindowStartMs, settings.heatmapPeriod, replayTimeOffset, heatCompleteness, messages],
   )
   const legendBlocks = useMemo(
-    () => withHeatmapPeriod(buildLegendBlocks(legendSources), heatLegendPeriod),
-    [legendSources, heatLegendPeriod],
+    () => withHeatmapPeriod(buildLegendBlocks(legendSources, messages), heatLegendPeriod),
+    [legendSources, heatLegendPeriod, messages],
   )
   const changeHeatmapPeriod = useCallback((period: HeatmapPeriod) => {
     updateSetting('heatmapPeriod', period)

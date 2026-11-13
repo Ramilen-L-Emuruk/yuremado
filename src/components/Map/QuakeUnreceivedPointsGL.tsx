@@ -10,6 +10,8 @@ import { haversineKm } from '../../utils/geo'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
+import { useMessagesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
 import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, UNRECEIVED_ICON_ID, UNRECEIVED_COLOR, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
@@ -109,7 +111,7 @@ function hoverHtml(f: MapGeoJSONFeature): string {
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
   const pref = String(f.properties?.pref ?? '')
   const region = String(f.properties?.region ?? '')
   const distanceKm = Number(f.properties?.distanceKm ?? -1)
@@ -124,15 +126,15 @@ function clickHtml(f: MapGeoJSONFeature): string {
     (sub ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(sub)}</div>` : '') +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
       `${badgeHtml(UNRECEIVED_BADGE_LABEL, UNRECEIVED_COLOR)}` +
-      `<span style="color:#cbd5e1">震度 ${escapeHtml(UNRECEIVED_BADGE_LABEL)}</span></div>` +
+      `<span style="color:#cbd5e1">${m.map.popup.intensity(escapeHtml(UNRECEIVED_BADGE_LABEL))}</span></div>` +
     // **推定したのは気象庁**であることを書く。このアプリは自前で計算した値にも「推定」を
     // 使っており（リアルタイムタブの到達時間）、主語が無いと「アプリが推定した値」と取り違えられる。
     `<div style="margin-top:4px;font-size:11px;color:#9ca3af">` +
-      `気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）</div>` +
+      `${m.map.popup.unreceivedNote}</div>` +
     (distanceKm >= 0
-      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">震源から約 ${distanceKm}km</div>`
+      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${m.map.popup.distance(distanceKm)}</div>`
       : '') +
-    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
     `</div>`
   )
 }
@@ -141,6 +143,7 @@ export function QuakeUnreceivedPointsGL({ markers, iconScale, visible, epicenter
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
 
   useEffect(() => {
     if (!map) return
@@ -165,7 +168,7 @@ export function QuakeUnreceivedPointsGL({ markers, iconScale, visible, epicenter
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
       buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildClickHtml: (f) => clickHtml(f, mRef.current),
     })
     addedRef.current = true
     return () => {

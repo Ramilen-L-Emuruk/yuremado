@@ -4,6 +4,7 @@ import type { ActiveFaultSegment } from '../../utils/activeFaults'
 import { segmentsToMultiLineFC } from './gl/geojson'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { twoLinePopupHtml } from './gl/popupHtml'
+import { useMessagesRef } from '../../i18n/I18nProvider'
 import { addOrderedLayer } from './gl/layerOrder'
 import { detailMinZoom } from './gl/zoomLevels'
 import { bindDynamicZoomRange, clampMinZoom } from './gl/viewSpan'
@@ -40,6 +41,7 @@ interface Props {
 export function ActiveFaultsGL({ activeFaults, visible, opacity }: Props) {
   const map = useMapGL()
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
 
   // データ到着で一度だけ source + layer を構築。
   useEffect(() => {
@@ -77,7 +79,7 @@ export function ActiveFaultsGL({ activeFaults, visible, opacity }: Props) {
       priority: 'line',
       tolPx: HIT_TOL_PX,
       buildClickHtml: (f) =>
-        twoLinePopupHtml(String(f.properties?.name ?? ''), '活断層（産総研 活断層データベース）'),
+        twoLinePopupHtml(String(f.properties?.name ?? ''), mRef.current.map.popup.activeFault),
     })
     return () => {
       unbindZoomRange()

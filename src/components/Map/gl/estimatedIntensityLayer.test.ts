@@ -25,7 +25,7 @@ vi.mock('./projectionProgram', () => ({
 // モックを張ってから読む（`vi.mock` は巻き上げられるが、対象モジュールの評価は import 時）。
 const { makeEstimatedIntensityLayer } = await import('./estimatedIntensityLayer')
 
-const LABEL = '推計震度分布図'
+const LABEL = 'estimatedIntensity'
 
 const GRADES: JMAEstimatedIntensityGrade[] = [
   { scale: 4, modifier: 'none', lower: 35, upper: 44 },

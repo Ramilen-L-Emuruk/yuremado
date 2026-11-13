@@ -12,6 +12,8 @@ import { whenIdle } from './gl/whenIdle'
 import { isMapStyleGone } from './gl/mapStyleGone'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
+import { useMessagesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
 import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, intensityIconId, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
@@ -85,8 +87,8 @@ function popupProperties(m: IntensityMarker, epicenter: LatLng | null) {
  * 震度分布モードのあいだは点を描かないので、一覧の行から押した観測点の吹き出しはこれで出す
  * （`JapanMapGL` → `FocusTargetGL`）。
  */
-export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null): string {
-  return clickHtml({ properties: popupProperties(m, epicenter) } as unknown as MapGeoJSONFeature)
+export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null, messages: Messages): string {
+  return clickHtml({ properties: popupProperties(m, epicenter) } as unknown as MapGeoJSONFeature, messages)
 }
 
 /**
@@ -110,7 +112,7 @@ function hoverHtml(f: MapGeoJSONFeature): string {
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
   const scale = Number(f.properties?.scale ?? -1)
   const pref = String(f.properties?.pref ?? '')
   const region = String(f.properties?.region ?? '')
@@ -124,15 +126,15 @@ function clickHtml(f: MapGeoJSONFeature): string {
 
   // 観測点は「都道府県 / 所属一次細分区域」、区域代表点は区分そのものを添える。
   const sub = isArea
-    ? [pref, '一次細分区域（代表点）'].filter(Boolean).join(' / ')
+    ? [pref, m.map.popup.regionRepresentative].filter(Boolean).join(' / ')
     : [pref, region].filter(Boolean).join(' / ')
 
   const rows = [
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
       `${badgeHtml(getIntensityLabel(scale), getIntensityColor(scale))}` +
-      `<span style="color:#cbd5e1">震度 ${escapeHtml(getIntensityLabel(scale))}</span></div>`,
+      `<span style="color:#cbd5e1">${m.map.popup.intensity(escapeHtml(getIntensityLabel(scale)))}</span></div>`,
     distanceKm >= 0
-      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">震源から約 ${distanceKm}km</div>`
+      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${m.map.popup.distance(distanceKm)}</div>`
       : '',
   ].join('')
 
@@ -143,7 +145,7 @@ function clickHtml(f: MapGeoJSONFeature): string {
       `>${escapeHtml(quakePointPopupTitle(f))}</div>` +
     (sub ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(sub)}</div>` : '') +
     rows +
-    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
     `</div>`
   )
 }
@@ -152,6 +154,7 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
 
   useEffect(() => {
     if (!map) return
@@ -178,7 +181,7 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
       buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildClickHtml: (f) => clickHtml(f, mRef.current),
     })
     addedRef.current = true
     return () => {

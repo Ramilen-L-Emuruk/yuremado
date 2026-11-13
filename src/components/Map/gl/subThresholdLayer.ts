@@ -3,7 +3,7 @@ import type { OrderedCustomLayer } from './layerOrder'
 import { applyProjectionUniforms, createProjectionProgramCache } from './projectionProgram'
 import { SHINDO0_COLOR } from '../../../utils/measuredIntensity'
 import { guardRender } from './guardRender'
-import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure } from '../../../utils/renderHealth'
+import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure, type MapLayerName } from '../../../utils/renderHealth'
 import { log } from '../../../utils/logger'
 import { MISSING_HOLD_OPACITY } from '../../../utils/kyoshinMissingHold'
 
@@ -45,7 +45,7 @@ const BASE_RADIUS = 2.5
 const MAX_UINT16_POINTS = 65535
 // レイヤー ID と、描画の不調を知らせるときの表示名（`utils/renderHealth.ts`）。
 const LYR = 'kyoshin-subthreshold'
-const LABEL = '弱い揺れの観測点'
+const LABEL: MapLayerName = 'subThreshold'
 
 // **id と表示名は 1 箇所に置く。** 載せる側（`KyoshinSubThresholdGL.tsx`）も不調の記録に同じ値が
 // 要るので、あちらで文字列を書き直すと片方だけ古くなる（以前は id のリテラルが二重にあった）。

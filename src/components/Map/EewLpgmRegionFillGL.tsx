@@ -8,6 +8,8 @@ import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
+import { useMessagesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
 
 // 選択された EEW の地域別予想長周期地震動階級を区域塗りで表示する MapLibre 版
 // （Leaflet の eew-lpgm-region-fill 相当）。fill-opacity 0.5・枠 weight2。区域中心マーカーは持たない。
@@ -50,14 +52,14 @@ function hoverHtml(f: MapGeoJSONFeature): string {
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
   const lgInt = Number(f.properties?.maxLgInt ?? 0)
   return (
     `<div style="min-width:160px">` +
     `<div style="font-weight:700;font-size:13px">${escapeHtml(String(f.properties?.name ?? ''))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
-    `<span style="color:#cbd5e1">予想 長周期地震動${escapeHtml(getLpgmClassLabel(lgInt))}</span></div>` +
+    `<span style="color:#cbd5e1">${m.map.popup.forecastLpgm(escapeHtml(getLpgmClassLabel(lgInt)))}</span></div>` +
     `</div>`
   )
 }
@@ -66,6 +68,7 @@ export function EewLpgmRegionFillGL({ regionAggregates, visible }: Props) {
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
 
   useEffect(() => {
     if (!map) return
@@ -90,7 +93,7 @@ export function EewLpgmRegionFillGL({ regionAggregates, visible }: Props) {
       tolPx: HIT_TOL_PX,
       rankKey: 'maxLgInt',
       buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildClickHtml: (f) => clickHtml(f, mRef.current),
     })
     addedRef.current = true
     return () => {

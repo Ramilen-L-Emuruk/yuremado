@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+// 対象のモジュールは頭で読む。テストの中で初めて読むと、全件並列のときに読み込みの待ちが 1 件目の時間に乗って時間切れになる
+import { QUAKE_PERIOD_HOURS } from '../utils/quakeListView'
+import { DIRECTIONS_16 } from '../utils/estimatedIntensity'
 import { DEFAULT_LOCALE, isLocale, JA_MESSAGES, LOCALES, loadMessages, localeTag, type Messages } from './messages'
 
 // 日本語以外の辞書を先に一度読んでおく。`loadMessages` は `import()` で読むので、初回の変換の待ちが
@@ -76,7 +79,6 @@ describe('言語の表', () => {
 
 describe('地震タブの語', () => {
   it('期間の選択肢の時間すべてに、どの言語も札を持つ（時間を足して辞書を忘れると「N時間」に落ちる）', async () => {
-    const { QUAKE_PERIOD_HOURS } = await import('../utils/quakeListView')
     for (const { id } of LOCALES) {
       const m = await loadMessages(id)
       const missing = QUAKE_PERIOD_HOURS.filter(({ hours }) => !(String(hours) in m.quake.filter.periodHours)).map(({ hours }) => hours)
@@ -85,7 +87,6 @@ describe('地震タブの語', () => {
   })
 
   it('推計の注記の照合に使う 16 方位の表は、日本語の辞書の 16 方位と同じ並び・同じ語', async () => {
-    const { DIRECTIONS_16 } = await import('../utils/estimatedIntensity')
     expect([...DIRECTIONS_16]).toEqual([...JA_MESSAGES.quake.direction16])
   })
 

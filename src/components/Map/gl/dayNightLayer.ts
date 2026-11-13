@@ -4,7 +4,7 @@ import { applyProjectionUniforms, createProjectionProgramCache } from './project
 import { buildDayNightGrid, FLOATS_PER_VERTEX } from './dayNightGrid'
 import { shadingDepthGlsl } from '../../../utils/solarShading'
 import { guardRender } from './guardRender'
-import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure } from '../../../utils/renderHealth'
+import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure, type MapLayerName } from '../../../utils/renderHealth'
 import { log } from '../../../utils/logger'
 
 // 夜の側を 1 枚の面として描く MapLibre カスタムレイヤー。
@@ -28,7 +28,7 @@ import { log } from '../../../utils/logger'
  */
 export const DAY_NIGHT_LAYER_ID = 'day-night'
 /** 描画の不調を知らせるときの表示名（`utils/renderHealth.ts`）。 */
-export const DAY_NIGHT_LAYER_LABEL = '昼夜の境目'
+export const DAY_NIGHT_LAYER_LABEL: MapLayerName = 'dayNight'
 const LYR = DAY_NIGHT_LAYER_ID
 const LABEL = DAY_NIGHT_LAYER_LABEL
 

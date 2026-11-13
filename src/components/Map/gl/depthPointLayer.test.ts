@@ -507,7 +507,7 @@ describe('createDepthPointLayer の載せ直し', () => {
   function setup() {
     const triggerRepaint = vi.fn()
     const map = { triggerRepaint } as unknown as maplibregl.Map
-    const layer = createDepthPointLayer('eew-epicenters', map, '緊急地震速報の震源')
+    const layer = createDepthPointLayer('eew-epicenters', map, 'eewEpicenters')
     return { layer, triggerRepaint, gl: fakeGl() }
   }
 

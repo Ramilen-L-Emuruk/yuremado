@@ -58,7 +58,7 @@ describe('guardRender', () => {
   // 対照: 正常なレイヤーには何も足さないこと。
   it('投げなければ何も記録しない', () => {
     const inner = vi.fn()
-    guardRender('lyr', '予報円', inner)(GL, ARGS)
+    guardRender('lyr', 'psWave', inner)(GL, ARGS)
     expect(inner).toHaveBeenCalledTimes(1)
     expect(getRenderHealth().broken).toEqual([])
     expect(guardLogCount()).toBe(0)
@@ -67,21 +67,21 @@ describe('guardRender', () => {
   // 正: 例外を呼び出し元へ漏らさないこと。**漏らすと MapLibre の描画ループが止まり、
   // 後ろのレイヤーが丸ごと描かれない。**
   it('例外を呼び出し元へ伝えず、画面に出す記録へ振り替える', () => {
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       throw new Error('boom')
     })
     expect(() => guarded(GL, ARGS)).not.toThrow()
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
     expect(guardLogCount()).toBe(1)
   })
 
   it('直ったら画面の記録を取り下げる', () => {
     let explode = true
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       if (explode) throw new Error('boom')
     })
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
     explode = false
     guarded(GL, ARGS)
     expect(getRenderHealth().broken).toEqual([])
@@ -91,26 +91,26 @@ describe('guardRender', () => {
   // `depthPointLayer` はシェーダーのリンク失敗を自分で報告するが、例外は投げずに return する。
   // ここから見れば「成功」なので、無条件に取り下げる作りだと利用者への警告が毎フレーム消える。
   it('レイヤー自身が出した報告は、成功しても取り下げない', () => {
-    const guarded = guardRender('lyr', '震源カタログ', () => {
+    const guarded = guardRender('lyr', 'catalog', () => {
       // 例外は投げない。レイヤーが自分で不調を申告している状態。
-      reportRenderFailure('lyr', '震源カタログ', 'draw')
+      reportRenderFailure('lyr', 'catalog', 'draw')
     })
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['震源カタログ'])
+    expect(getRenderHealth().broken).toEqual(['catalog'])
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['震源カタログ'])
+    expect(getRenderHealth().broken).toEqual(['catalog'])
   })
 
   // 安全弁: 毎フレーム呼ばれる経路なので、記録は間引くこと。素通しにすると 60fps で同じ行が流れ、
   // 他の記録が読めなくなる。
   it('投げ続けても記録は間引く', () => {
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       throw new Error('boom')
     })
     for (let i = 0; i < 100; i++) guarded(GL, ARGS)
     expect(guardLogCount()).toBe(1)
     // 画面の記録のほうは出たままであること（間引きは記録だけの話）。
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
   })
 })
 
@@ -122,7 +122,7 @@ describe('guardRender — 例外で抜けたときの GL 状態', () => {
   // 画面が壊れるかどうかはここでは測っていない（モックに MapLibre 側の後処理は無い）。
   it('途中で投げても描き先を元へ戻す', () => {
     const { gl, state } = makeFakeGl()
-    const guarded = guardRender('lyr', '弱い揺れの観測点', (g) => {
+    const guarded = guardRender('lyr', 'subThreshold', (g) => {
       // オフスクリーンへ切り替えた直後に落ちる、という形を作る。
       g.bindFramebuffer(g.FRAMEBUFFER, 'offscreen' as unknown as WebGLFramebuffer)
       throw new Error('boom')
@@ -136,7 +136,7 @@ describe('guardRender — 例外で抜けたときの GL 状態', () => {
   // 将来ガードの対象が増えたときのための備え）。
   it('途中で投げても切り抜きと合成を解く', () => {
     const { gl, state } = makeFakeGl()
-    const guarded = guardRender('lyr', '震源カタログ', (g) => {
+    const guarded = guardRender('lyr', 'catalog', (g) => {
       g.enable(g.SCISSOR_TEST)
       g.enable(g.BLEND)
       throw new Error('boom')
@@ -151,7 +151,7 @@ describe('guardRender — 例外で抜けたときの GL 状態', () => {
   // ここで横から書き換えると、そのレイヤーが意図して残した設定を壊す。
   it('正常に終わったら GL 状態に触らない', () => {
     const { gl, state } = makeFakeGl()
-    const guarded = guardRender('lyr', '予報円', (g) => {
+    const guarded = guardRender('lyr', 'psWave', (g) => {
       g.enable(g.BLEND)
       g.bindFramebuffer(g.FRAMEBUFFER, 'layer-choice' as unknown as WebGLFramebuffer)
     })
@@ -164,12 +164,12 @@ describe('guardRender — 例外で抜けたときの GL 状態', () => {
   it('復元が投げても例外を漏らさず記録は残す', () => {
     const { gl } = makeFakeGl()
     const broken = { ...gl, bindFramebuffer: () => { throw new Error('context lost') } } as unknown as WebGL2RenderingContext
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       throw new Error('boom')
     })
     expect(() => guarded(broken, ARGS)).not.toThrow()
     expect(guardLogCount()).toBe(1)
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
   })
 })
 
@@ -182,7 +182,7 @@ describe('guardRender — 記録の間引き', () => {
     nowSpy.mockImplementation(() => t)
 
     let n = 0
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       n++
       throw new Error(n % 2 === 0 ? '原因 A' : '原因 B')
     })
@@ -197,7 +197,7 @@ describe('guardRender — 記録の間引き', () => {
   // 入っていると、内容ごとの間引きはどれも「初めて見るもの」として素通りし、60fps で流れる。
   it('内容が違っても立て続けには出さない', () => {
     let n = 0
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       throw new Error(`原因 ${n++}`)
     })
     for (let i = 0; i < 60; i++) guarded(GL, ARGS)
@@ -205,7 +205,7 @@ describe('guardRender — 記録の間引き', () => {
   })
 
   it('同じ原因が続けば間引く', () => {
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       throw new Error('同じ原因')
     })
     for (let i = 0; i < 50; i++) guarded(GL, ARGS)
@@ -219,7 +219,7 @@ describe('guardRender — 記録の間引き', () => {
     nowSpy.mockImplementation(() => t)
 
     let n = 0
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       throw new Error(`原因 ${n++}`)
     })
     for (let i = 0; i < 100; i++) {
@@ -238,27 +238,27 @@ describe('guardRender — レイヤー自身の報告との住み分け', () => 
   // その成功を見て**他人の報告まで消してしまう**。報告の鍵を分けることで防いでいる。
   it('例外の後にレイヤーが自己申告しても、その報告は残る', () => {
     let explode = true
-    const guarded = guardRender('lyr', '震源カタログ', () => {
+    const guarded = guardRender('lyr', 'catalog', () => {
       if (explode) throw new Error('boom')
       // 例外は投げず、レイヤーが自分で不調を申告する（シェーダーのリンク失敗など）。
-      reportRenderFailure('lyr', '震源カタログ', 'draw')
+      reportRenderFailure('lyr', 'catalog', 'draw')
     })
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['震源カタログ'])
+    expect(getRenderHealth().broken).toEqual(['catalog'])
 
     explode = false
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['震源カタログ'])
+    expect(getRenderHealth().broken).toEqual(['catalog'])
   })
 
   // 対照: レイヤーが黙っているなら、例外が直った時点で消えること（消えないほうの誤りも防ぐ）。
   it('レイヤーが何も言っていなければ、直った時点で消える', () => {
     let explode = true
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       if (explode) throw new Error('boom')
     })
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
 
     explode = false
     guarded(GL, ARGS)
@@ -267,12 +267,12 @@ describe('guardRender — レイヤー自身の報告との住み分け', () => 
 
   // 安全弁: 両方が同時に報告していても、利用者に同じ名前を 2 つ並べないこと。
   it('レイヤーと例外が同時に報告しても名前は 1 つにまとまる', () => {
-    const guarded = guardRender('lyr', '震源カタログ', () => {
-      reportRenderFailure('lyr', '震源カタログ', 'draw')
+    const guarded = guardRender('lyr', 'catalog', () => {
+      reportRenderFailure('lyr', 'catalog', 'draw')
       throw new Error('boom')
     })
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['震源カタログ'])
+    expect(getRenderHealth().broken).toEqual(['catalog'])
   })
 })
 
@@ -282,11 +282,11 @@ describe('guardRender — レイヤーを外したとき', () => {
   //（`render()` はもう呼ばれないので、ガードの側に取り下げる機会が無い）。
   // 各レイヤーの `onRemove` が呼ぶ 1 行で、レイヤー自身の申告と一緒に消える仕掛け。
   it('レイヤーの ID でまとめて後始末すると、ガードが残した記録も消える', () => {
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       throw new Error('boom')
     })
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
 
     clearRenderFailuresFor('lyr')
     expect(getRenderHealth().broken).toEqual([])
@@ -298,15 +298,15 @@ describe('guardRender — レイヤーを外したとき', () => {
   // だから「直った・隠した」で取り下げるときは 1 件だけ消す（`utils/renderHealth.ts`）。
   it('レイヤー自身の取り下げでは、ガードが残した記録を巻き込まない', () => {
     let explode = true
-    const guarded = guardRender('lyr', '予報円', () => {
+    const guarded = guardRender('lyr', 'psWave', () => {
       if (explode) throw new Error('boom')
     })
     guarded(GL, ARGS)
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
 
     // レイヤーが自分の申告を取り下げても、ガードの記録は残る。
     clearRenderFailure('lyr', 'draw')
-    expect(getRenderHealth().broken).toEqual(['予報円'])
+    expect(getRenderHealth().broken).toEqual(['psWave'])
 
     // **巻き込まれていないからこそ、例外が止まったフレームで自分で取り下げられる。**
     // 外から消されていると、ガードは「報告済み」を覚えたまま消えたことに気づけず、
