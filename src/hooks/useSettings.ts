@@ -159,7 +159,7 @@ export interface AppSettings extends QuakeListSettings {
   forecastKey: string
   dmdataApiKey: string             // DMDATA.JP APIキー（空文字 = 未設定。未設定なら中継から受ける）
   /**
-   * 鍵の入れ直しの案内を出すか（→ `utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）。古い URL の橋渡しのページが、
+   * 鍵の入れ直しの案内を出すか（→ 辞書の `quake.list.keyReentry`）。古い URL の橋渡しのページが、
    * 前の設定に鍵があったときだけ立てて渡す。鍵を入れるか、地震タブの帯を［×］で閉じると下ろす
    */
   dmdataKeyReentryNotice: boolean

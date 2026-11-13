@@ -32,6 +32,7 @@ import {
   type DmdataClassification,
   RELAY_CLASSIFICATIONS,
 } from './dmdataClassifications'
+import { ja } from '../i18n/messages/ja'
 
 // 種別の集合は `dmdataTelegramPayload.ts` が単一情報源。ここで定義し直すと、種別を足したとき
 // ライブ側とリプレイ側が食い違う（同じ電文が経路によって出たり出なかったりする）。
@@ -350,7 +351,7 @@ async function fetchTicketUrl(
     // 鍵を作れる人は自分の購入区分を把握している、という判断。
     if (result.excluded.length > 0) {
       log.info('[DMDSS] 受けられない区分を外して接続します', {
-        受信する区分: classificationLabel(result.classifications),
+        受信する区分: classificationLabel(result.classifications, ja.settings.classifications),
         外した区分: result.excluded,
       })
     }

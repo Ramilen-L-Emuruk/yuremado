@@ -14,10 +14,15 @@ export interface KyoshinImportSummary {
   eventCount: number
 }
 
-export interface KyoshinImportFileError {
-  fileName: string
-  message: string
-}
+/**
+ * 取り込めなかったファイル。画面の文は理由（`kind`）から辞書で組む。理由の分からない失敗だけ、投げられた文（`message`）をそのまま出す。
+ */
+export type KyoshinImportFileError =
+  /** 対応する収録済みの地震が無い。`originTime` は ZIP の発生時刻 */
+  | { fileName: string; kind: 'noArchive'; originTime: Date }
+  /** 端末へ保存できなかった */
+  | { fileName: string; kind: 'saveFailed' }
+  | { fileName: string; kind: 'other'; message: string }
 
 /** 取り込めたが、読めない観測点を外したファイル。 */
 export interface KyoshinImportExclusion {
@@ -37,8 +42,8 @@ export interface UseKyoshinImportResult {
   errors: KyoshinImportFileError[]
   /** 直近の`importFiles`呼び出しで、観測点を外して取り込んだファイル。外さずに済んだファイルは含めない。 */
   exclusions: KyoshinImportExclusion[]
-  /** 直近の`deleteArchive`呼び出しが失敗した場合のメッセージ。成功時・未実行時はnull。 */
-  deleteError: string | null
+  /** 直近の`deleteArchive`呼び出しが失敗したか。成功時・未実行時はfalse。 */
+  deleteFailed: boolean
   /**
    * 保存先に一度でも異常があったか。`summaries`は読み取り失敗時に0件へ丸めるため、
    * 「インポート済みデータが本当に無い」のか「保存先を読めていないだけ」なのかを、これで見分ける。
@@ -54,7 +59,7 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
   const [deletingArchiveId, setDeletingArchiveId] = useState<string | null>(null)
   const [errors, setErrors] = useState<KyoshinImportFileError[]>([])
   const [exclusions, setExclusions] = useState<KyoshinImportExclusion[]>([])
-  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleteFailed, setDeleteFailed] = useState(false)
   const [storageError, setStorageError] = useState(false)
 
   const refresh = useCallback(() => {
@@ -94,15 +99,17 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
           const originTime = parseJstTimestamp(event.originTimeJst)
           const meta = findCoveringArchiveSync(historicalArchives, originTime, new Date(originTime.getTime() + 1))
           if (!meta) {
-            throw new Error(`この地震（${originTime.toLocaleString('ja-JP')}）に対応するデータが見つかりません`)
+            fileErrors.push({ fileName: file.name, kind: 'noArchive', originTime })
+            continue
           }
           if (!(await saveImportedEvent(meta.id, event))) {
-            throw new Error('保存に失敗しました（この端末では保存機能が使えない可能性があります）')
+            fileErrors.push({ fileName: file.name, kind: 'saveFailed' })
+            continue
           }
           // 保存まで済んだものだけ知らせる（失敗したファイルはエラーの側に出る）
           if (excludedStations > 0) fileExclusions.push({ fileName: file.name, excludedStations })
         } catch (err) {
-          fileErrors.push({ fileName: file.name, message: err instanceof Error ? err.message : String(err) })
+          fileErrors.push({ fileName: file.name, kind: 'other', message: err instanceof Error ? err.message : String(err) })
         }
       }
       setErrors(fileErrors)
@@ -114,15 +121,15 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
 
   const deleteArchive = useCallback(async (archiveId: string) => {
     setDeletingArchiveId(archiveId)
-    setDeleteError(null)
+    setDeleteFailed(false)
     try {
       if (!(await deleteImportedEvents(archiveId))) {
-        setDeleteError('削除に失敗しました（この端末では保存機能が使えない可能性があります）')
+        setDeleteFailed(true)
       }
     } finally {
       setDeletingArchiveId(null)
     }
   }, [])
 
-  return { summaries, importing, deletingArchiveId, errors, exclusions, deleteError, storageError, importFiles, deleteArchive }
+  return { summaries, importing, deletingArchiveId, errors, exclusions, deleteFailed, storageError, importFiles, deleteArchive }
 }

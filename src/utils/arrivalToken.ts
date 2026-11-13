@@ -14,6 +14,10 @@
 import { serverNow } from './clock'
 import { formatDateTimeMin } from './formatters'
 import { log } from './logger'
+import type { Messages } from '../i18n/messages'
+
+/** 予報キー・到達予想キーの状態の文（辞書の `settings.signedKey`） */
+export type SignedKeyWords = Messages['settings']['signedKey']
 
 /**
  * 署名の検証に使う公開鍵（SPKI DER の base64）。
@@ -109,20 +113,16 @@ const isDateRepresentableMs = (ms: number): boolean =>
  * 語は設定の窓の見出し（「到達予想キー」）に合わせて「キー」で書く。「トークン」「署名」は
  * 実装の語で、受け取って貼るだけの利用者には通じない。未入力は出す文が無いので null を返す。
  */
-export function arrivalTokenProblemMessage(problem: ArrivalTokenProblem): string | null {
+export function arrivalTokenProblemMessage(problem: ArrivalTokenProblem, words: SignedKeyWords): string | null {
   switch (problem) {
     case 'empty':
       return null
     case 'malformed':
-      return 'キーの形が違います。渡された文字列をそのまま貼ってください'
     case 'signature':
-      return 'このアプリでは使えないキーです。配布元へ問い合わせてください'
     case 'no-expiry':
-      return 'キーに有効期限がありません。発行し直してもらってください'
     case 'expired':
-      return '有効期限が切れています。発行し直してもらってください'
     case 'error':
-      return 'キーを検証できませんでした'
+      return words.problems[problem]
     default: {
       // **理由を足したら文も足す。** ここで型が合わなくなるので、書き忘れたまま通らない。
       const exhaustive: never = problem
@@ -151,9 +151,9 @@ export interface ArrivalTokenStatusLine {
  * **未入力では何も出さない** —— 触っていない利用者に「使えません」と読める表示を置かない
  * （入力欄の `未設定` が既にそれを伝えている）。
  */
-export function arrivalTokenStatusLine(status: ArrivalTokenStatus): ArrivalTokenStatusLine | null {
+export function arrivalTokenStatusLine(status: ArrivalTokenStatus, words: SignedKeyWords): ArrivalTokenStatusLine | null {
   if (status.problem === 'empty') return null
-  if (status.checking) return { tone: 'checking', text: '確認中' }
+  if (status.checking) return { tone: 'checking', text: words.checking }
   // 期限は `expMs` から組む。日時の整形は `formatters.ts` を通し、読めなければ期限を省く。
   //
   // **`Date` へ渡す前に範囲を見る**（`isDateRepresentableMs`）—— 範囲外の値の `toISOString()` は
@@ -164,14 +164,14 @@ export function arrivalTokenStatusLine(status: ArrivalTokenStatus): ArrivalToken
     status.expMs === null || !isDateRepresentableMs(status.expMs)
       ? null
       : formatDateTimeMin(new Date(status.expMs).toISOString())
-  if (status.valid) return { tone: 'valid', text: at ? `有効（${at} まで）` : '有効' }
+  if (status.valid) return { tone: 'valid', text: at ? words.validUntil(at) : words.valid }
   // **ここへは来ない** —— `problem` が null になるのは「通った」か「検証中」で、どちらも上で
   // 返している。型のうえで残る枝なので、何も出さない側へ倒す（`valid` が門なので影響しない）。
   if (status.problem === null) return null
-  const message = arrivalTokenProblemMessage(status.problem)
+  const message = arrivalTokenProblemMessage(status.problem, words)
   if (message === null) return null
   // 失効だけは「いつ切れたか」を添える —— 再発行を頼むかどうかの判断が付く。
-  const prefix = status.problem === 'expired' && at ? `${at} に` : ''
+  const prefix = status.problem === 'expired' && at ? words.expiredAt(at) : ''
   return { tone: 'problem', text: `${prefix}${message}` }
 }
 

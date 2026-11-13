@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { ja } from '../i18n/messages/ja'
 import { describe, it, expect, beforeAll } from 'vitest'
 import {
   verifyArrivalToken, verifyArrivalTokenWithKeyForTest, arrivalTokenProblemMessage,
@@ -150,13 +151,13 @@ describe('verifyArrivalTokenWithKeyForTest', () => {
 describe('arrivalTokenProblemMessage', () => {
   it('未入力だけは文を持たない（対照）', () => {
     // 触っていない利用者の画面に「使えません」と読める表示を出さないための印。
-    expect(arrivalTokenProblemMessage('empty')).toBe(null)
+    expect(arrivalTokenProblemMessage('empty', ja.settings.signedKey)).toBe(null)
   })
 
   it.each<ArrivalTokenProblem>(['malformed', 'signature', 'no-expiry', 'expired', 'error'])(
     '理由ごとに異なる文を返す: %s',
     (problem) => {
-      const message = arrivalTokenProblemMessage(problem)
+      const message = arrivalTokenProblemMessage(problem, ja.settings.signedKey)
       expect(message).not.toBe(null)
       expect(message).not.toBe('')
       // **実装の語を画面へ出さない。** 受け取って貼るだけの利用者には通じない
@@ -168,7 +169,7 @@ describe('arrivalTokenProblemMessage', () => {
   it('理由ごとに文が重複しない（安全弁）', () => {
     // 1 つの「無効です」へ畳むと、期限切れと鍵違いで次の行動が変わることが伝わらない。
     const messages = (['malformed', 'signature', 'no-expiry', 'expired', 'error'] as const)
-      .map(arrivalTokenProblemMessage)
+      .map((p) => arrivalTokenProblemMessage(p, ja.settings.signedKey))
     expect(new Set(messages).size).toBe(messages.length)
   })
 })
@@ -185,27 +186,27 @@ describe('arrivalTokenStatusLine', () => {
 
   it('未入力では何も出さない（対照）', () => {
     // 触っていない利用者の画面に「使えません」と読める表示を置かない。
-    expect(arrivalTokenStatusLine(status({ problem: 'empty' }))).toBe(null)
+    expect(arrivalTokenStatusLine(status({ problem: 'empty' }), ja.settings.signedKey)).toBe(null)
   })
 
   it('検証が済むまでは「確認中」で、赤くはしない（正）', () => {
     // 失敗と同じ見た目にすると、貼った直後に「使えないキー」と読める表示が一瞬出る。
-    expect(arrivalTokenStatusLine(status({ checking: true }))).toEqual({
+    expect(arrivalTokenStatusLine(status({ checking: true }), ja.settings.signedKey)).toEqual({
       tone: 'checking', text: '確認中',
     })
   })
 
   it('通ったら期限まで添える（正）', () => {
-    const line = arrivalTokenStatusLine(status({ valid: true, expMs: AT_MS }))
+    const line = arrivalTokenStatusLine(status({ valid: true, expMs: AT_MS }), ja.settings.signedKey)
     expect(line?.tone).toBe('valid')
     expect(line?.text).toBe(`有効（${at()} まで）`)
   })
 
   it('期限を組めなければ「有効」だけにする（安全弁）', () => {
     // 期限が読めないことは門の判断ではないので、通ったこと自体は伝える。
-    expect(arrivalTokenStatusLine(status({ valid: true, expMs: null }))?.text).toBe('有効')
+    expect(arrivalTokenStatusLine(status({ valid: true, expMs: null }), ja.settings.signedKey)?.text).toBe('有効')
     // 非有限値の `toISOString()` は例外を投げる。描画ごと落とさない。
-    expect(arrivalTokenStatusLine(status({ valid: true, expMs: Number.POSITIVE_INFINITY }))?.text)
+    expect(arrivalTokenStatusLine(status({ valid: true, expMs: Number.POSITIVE_INFINITY }), ja.settings.signedKey)?.text)
       .toBe('有効')
   })
 
@@ -215,9 +216,9 @@ describe('arrivalTokenStatusLine', () => {
     // 入力欄もその中にあるので画面から復旧できない）。
     const OVER = 8_640_000_000_000_001
     expect(() => new Date(OVER).toISOString()).toThrow(RangeError)
-    expect(arrivalTokenStatusLine(status({ valid: true, expMs: OVER }))?.text).toBe('有効')
-    expect(arrivalTokenStatusLine(status({ problem: 'expired', expMs: OVER }))?.text)
-      .toBe(arrivalTokenProblemMessage('expired'))
+    expect(arrivalTokenStatusLine(status({ valid: true, expMs: OVER }), ja.settings.signedKey)?.text).toBe('有効')
+    expect(arrivalTokenStatusLine(status({ problem: 'expired', expMs: OVER }), ja.settings.signedKey)?.text)
+      .toBe(arrivalTokenProblemMessage('expired', ja.settings.signedKey))
   })
 
   it('範囲の境目（`Date` が表せる上限そのもの）は期限を出す（対照）', () => {
@@ -225,29 +226,29 @@ describe('arrivalTokenStatusLine', () => {
     const EDGE = 8_640_000_000_000_000
     const at = formatDateTimeMin(new Date(EDGE).toISOString())
     expect(at).not.toBe(null)
-    expect(arrivalTokenStatusLine(status({ valid: true, expMs: EDGE }))?.text)
+    expect(arrivalTokenStatusLine(status({ valid: true, expMs: EDGE }), ja.settings.signedKey)?.text)
       .toBe(`有効（${at} まで）`)
   })
 
   it('失効だけは「いつ切れたか」を添える（正）', () => {
-    const line = arrivalTokenStatusLine(status({ problem: 'expired', expMs: AT_MS }))
+    const line = arrivalTokenStatusLine(status({ problem: 'expired', expMs: AT_MS }), ja.settings.signedKey)
     expect(line?.tone).toBe('problem')
-    expect(line?.text).toBe(`${at()} に${arrivalTokenProblemMessage('expired')}`)
+    expect(line?.text).toBe(`${at()} に${arrivalTokenProblemMessage('expired', ja.settings.signedKey)}`)
   })
 
   it('失効以外は時刻を添えない（対照）', () => {
     // 時刻を無条件に前置きすると、鍵違いを「その時刻に何かが起きた」と読ませる。
-    const line = arrivalTokenStatusLine(status({ problem: 'signature', expMs: AT_MS }))
-    expect(line?.text).toBe(arrivalTokenProblemMessage('signature'))
+    const line = arrivalTokenStatusLine(status({ problem: 'signature', expMs: AT_MS }), ja.settings.signedKey)
+    expect(line?.text).toBe(arrivalTokenProblemMessage('signature', ja.settings.signedKey))
   })
 
   it.each<ArrivalTokenProblem>(['malformed', 'signature', 'no-expiry', 'expired', 'error'])(
     '理由の文は `arrivalTokenProblemMessage` から採る: %s',
     (problem) => {
-      const line = arrivalTokenStatusLine(status({ problem }))
+      const line = arrivalTokenStatusLine(status({ problem }), ja.settings.signedKey)
       // 枠を赤くするかはこの `tone` が決める（設定の窓は同じ答えを 2 度使う）。
       expect(line?.tone).toBe('problem')
-      const message = arrivalTokenProblemMessage(problem)
+      const message = arrivalTokenProblemMessage(problem, ja.settings.signedKey)
       if (message === null) throw new Error(`${problem} には文があるはず`)
       expect(line?.text).toContain(message)
     },

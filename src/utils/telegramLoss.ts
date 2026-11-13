@@ -384,10 +384,3 @@ export function formatRateLimitedNotice(loss: TelegramLoss): string | null {
   if (parts.length === 0) return null
   return `リクエスト過多のため、取得制限中（${parts.join('・')}が未取得）`
 }
-
-/**
- * 鍵の入れ直しの案内（地震タブの青い帯と、設定のキー欄の下）。古い URL の橋渡しのページから来て、前の設定に鍵があった端末にだけ出す
- * （橋渡しは鍵を渡さない。docs/relay-server-design.md §0 の「橋渡しのページは鍵を渡さない」行）。
- * 文面は 2026-10-31 ユーザー選択「地震タブの帯＋設定のキー欄 (Recommended)」。鍵を入れるか、帯の［×］で消えるまで出す。
- */
-export const KEY_REENTRY_NOTICE = '予報を受けるには、設定で API キーを入れ直してください（アドレスが変わったため引き継いでいません）'

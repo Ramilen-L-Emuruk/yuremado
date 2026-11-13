@@ -25,7 +25,7 @@ import { useFollowScroll } from '../../hooks/useFollowScroll'
 import { growFrom, ROW_INSERT_MS, CARD_RESIZE_ANIMATION_ID } from './quakeMotion'
 import {
   type TelegramLoss, formatHistoryLossNotice, HISTORY_LOAD_MORE_FAILED_NOTICE, RECONNECT_GAP_LOSS_NOTICE,
-  formatRateLimitedNotice, FETCH_THROTTLED_NOTICE, KEY_REENTRY_NOTICE,
+  formatRateLimitedNotice, FETCH_THROTTLED_NOTICE,
 } from '../../utils/telegramLoss'
 
 interface Props {
@@ -98,7 +98,7 @@ interface Props {
    */
   fetchThrottled: boolean
   /**
-   * 鍵の入れ直しの案内を閉じる。案内を出さないときは null（→ `utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）
+   * 鍵の入れ直しの案内を閉じる。案内を出さないときは null（→ 辞書の `quake.list.keyReentry`）
    */
   onDismissKeyReentry: (() => void) | null
   lpgmByEventId: ReadonlyMap<string, JMALpgm>
@@ -360,7 +360,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   // 鍵の入れ直しの案内は欠けではないので青。閉じられる（2026-10-31 ユーザー選択の説明「［×］で閉じる」）
   const keyReentryNotice: Notice | null = onDismissKeyReentry === null
     ? null
-    : { text: KEY_REENTRY_NOTICE, tone: 'info', onClose: onDismissKeyReentry }
+    : { text: words.list.keyReentry, tone: 'info', onClose: onDismissKeyReentry }
   if (keyReentryNotice !== null) notices.push(keyReentryNotice)
   // **1 件も無いときだけ読み込み中の画面にする。**
   // 履歴は日ごとにアーカイブを読むので、全件が揃うのは数秒後になる
