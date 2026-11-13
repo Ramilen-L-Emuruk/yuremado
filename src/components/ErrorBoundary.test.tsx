@@ -6,7 +6,8 @@
 // 中の例外はこの境界に届かないので、そちらは別の仕組みの担当（ErrorBoundary.tsx の冒頭を見ること）。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { muteConsoleError } from '../test-utils/muteConsoleError'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { act, render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { settleI18n } from '../test-utils/settleI18n'
 import { ErrorBoundary } from './ErrorBoundary'
 import { I18nProvider } from '../i18n/I18nProvider'
 import { loadMessages } from '../i18n/messages'
@@ -169,13 +170,16 @@ describe('ErrorBoundary', () => {
   // （2026-11-12 ユーザー選択「選んだ言語で出す (Recommended)」）
   it('根が落ちたときの表示も、配り役が出している言語で出す', async () => {
     const en = await loadMessages('en')
-    render(
-      <I18nProvider locale="en" preloaded={en}>
-        <ErrorBoundary variant="root">
-          <Bomb explode />
-        </ErrorBoundary>
-      </I18nProvider>,
-    )
+    await act(async () => {
+      render(
+        <I18nProvider locale="en" preloaded={en}>
+          <ErrorBoundary variant="root">
+            <Bomb explode />
+          </ErrorBoundary>
+        </I18nProvider>,
+      )
+      await settleI18n('en')
+    })
     expect(screen.getByText(en.errorScreen.rootTitle)).toBeTruthy()
     expect(screen.getByRole('button', { name: en.errorScreen.reload })).toBeTruthy()
     expect(screen.queryByText('画面を表示できなくなりました')).toBeNull()

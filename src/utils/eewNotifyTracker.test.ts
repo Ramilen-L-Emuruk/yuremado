@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { EEWAlert } from '../types/earthquake'
 import { JA_MESSAGES } from '../i18n/messages'
 import { en } from '../i18n/messages/en'
+import { JA_PLACE_NAMES } from '../i18n/placeNames'
 import { acceptEewReport, ACTIVE_EEW_WINDOW_MS, type EndedEew } from './eew'
 import {
   decideEewReportEntry, decideEewCancelEntry, endEewOnExpiry, mergeEndedEew, stepEewAnnounce,
@@ -220,20 +221,20 @@ describe('通知の文面', () => {
   it('発表は区分で見出しを決め、tag は地震の鍵から作る', () => {
     const warn = report(1, { severity: 'Warning', forecastMaxScale: 45 })
     const step = stepEewAnnounce(warn, false, { level: undefined, baseline: undefined })
-    expect(eewAnnounceNotice('ev1', warn, step.forecast, JA_MESSAGES)).toEqual({
+    expect(eewAnnounceNotice('ev1', warn, step.forecast, JA_MESSAGES, JA_PLACE_NAMES)).toEqual({
       title: '緊急地震速報 警報', body: '石川県能登地方 M6.0 最大震度5弱予想', tag: 'eew-ev1', open: { tab: 'realtime' },
     })
     const fc = report(1)
-    expect(eewAnnounceNotice('ev1', fc, stepEewAnnounce(fc, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES).title).toBe('地震動予報')
+    expect(eewAnnounceNotice('ev1', fc, stepEewAnnounce(fc, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES, JA_PLACE_NAMES).title).toBe('地震動予報')
   })
 
   it('特別警報だった地震は、続報で下がっても見出しを特別警報のまま出す', () => {
     const e = report(2, { severity: 'Warning', forecastMaxScale: 45, everSpecialWarning: true })
-    expect(eewAnnounceNotice('ev1', e, stepEewAnnounce(e, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES).title).toBe('緊急地震速報 特別警報')
+    expect(eewAnnounceNotice('ev1', e, stepEewAnnounce(e, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES, JA_PLACE_NAMES).title).toBe('緊急地震速報 特別警報')
   })
 
   it('取消は取消の tag で出す', () => {
-    expect(eewCancelNotice('ev1', '石川県能登地方', JA_MESSAGES).tag).toBe('eew-cancel-ev1')
+    expect(eewCancelNotice('ev1', '石川県能登地方', JA_MESSAGES, JA_PLACE_NAMES).tag).toBe('eew-cancel-ev1')
   })
 })
 
@@ -242,20 +243,20 @@ describe('通知の文面', () => {
 describe('続報の鳴らさない差し替え', () => {
   it('正: 最終報は見出しに「（最終報）」を添え、字面が変われば差し替える', () => {
     const first = report(1, { severity: 'Warning', forecastMaxScale: 45 })
-    const firstNotice = eewAnnounceNotice('ev1', first, stepEewAnnounce(first, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES)
+    const firstNotice = eewAnnounceNotice('ev1', first, stepEewAnnounce(first, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES, JA_PLACE_NAMES)
     const last = { ...report(2, { severity: 'Warning', forecastMaxScale: 45 }), isFinal: true }
-    const lastNotice = eewAnnounceNotice('ev1', last, stepEewAnnounce(last, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES)
+    const lastNotice = eewAnnounceNotice('ev1', last, stepEewAnnounce(last, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES, JA_PLACE_NAMES)
     expect(lastNotice.title).toBe('緊急地震速報 警報（最終報）')
     expect(eewQuietReplaceNotice(lastNotice, firstNotice)).toBe(lastNotice)
   })
   it('対照: 字面の同じ続報は差し替えない', () => {
     const r = report(1, { severity: 'Warning', forecastMaxScale: 45 })
-    const n = eewAnnounceNotice('ev1', r, stepEewAnnounce(r, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES)
+    const n = eewAnnounceNotice('ev1', r, stepEewAnnounce(r, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES, JA_PLACE_NAMES)
     expect(eewQuietReplaceNotice(n, { title: n.title, body: n.body })).toBeNull()
   })
   it('安全弁: 通知していない地震は差し替えない', () => {
     const r = report(1, { severity: 'Warning', forecastMaxScale: 45 })
-    expect(eewQuietReplaceNotice(eewAnnounceNotice('ev1', r, stepEewAnnounce(r, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES), undefined)).toBeNull()
+    expect(eewQuietReplaceNotice(eewAnnounceNotice('ev1', r, stepEewAnnounce(r, false, { level: undefined, baseline: undefined }).forecast, JA_MESSAGES, JA_PLACE_NAMES), undefined)).toBeNull()
   })
 })
 
@@ -264,16 +265,16 @@ describe('英語の通知の文', () => {
   const forecastOf = (e: EEWAlert) => stepEewAnnounce(e, false, { level: undefined, baseline: undefined }).forecast
   it('見出しの区分・最終報・予想・取消', () => {
     const warn = report(1, { severity: 'Warning', forecastMaxScale: 45 })
-    expect(eewAnnounceNotice('ev1', warn, forecastOf(warn), en)).toMatchObject({
+    expect(eewAnnounceNotice('ev1', warn, forecastOf(warn), en, JA_PLACE_NAMES)).toMatchObject({
       title: 'Earthquake Early Warning (Warning)', body: `石川県能登地方 · M6.0 · Max intensity ${en.formats.intensity['45']} forecast`,
     })
     const special = report(2, { severity: 'Warning', forecastMaxScale: 45, everSpecialWarning: true, isFinal: true })
-    expect(eewAnnounceNotice('ev1', special, forecastOf(special), en).title).toBe('Earthquake Early Warning (Emergency Warning) (final)')
+    expect(eewAnnounceNotice('ev1', special, forecastOf(special), en, JA_PLACE_NAMES).title).toBe('Earthquake Early Warning (Emergency Warning) (final)')
     const fc = report(1)
-    expect(eewAnnounceNotice('ev1', fc, forecastOf(fc), en).title).toBe('Ground motion forecast')
-    expect(eewCancelNotice('ev1', '石川県能登地方', en)).toMatchObject({
+    expect(eewAnnounceNotice('ev1', fc, forecastOf(fc), en, JA_PLACE_NAMES).title).toBe('Ground motion forecast')
+    expect(eewCancelNotice('ev1', '石川県能登地方', en, JA_PLACE_NAMES)).toMatchObject({
       title: 'Earthquake Early Warning cancelled', body: 'The Earthquake Early Warning for 石川県能登地方 has been cancelled',
     })
-    expect(eewCancelNotice('ev1', undefined, en).body).toBe('The Earthquake Early Warning has been cancelled')
+    expect(eewCancelNotice('ev1', undefined, en, JA_PLACE_NAMES).body).toBe('The Earthquake Early Warning has been cancelled')
   })
 })

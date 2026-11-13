@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { log } from '../utils/logger'
 import { JA_MESSAGES, loadMessages, localeTag, type Locale, type Messages } from './messages'
+import { getCachedPlaceNames, JA_PLACE_NAMES, loadPlaceNames, placeNameLookup, type PlaceNameLookup } from './placeNames'
 
 interface I18nValue {
   /** いま画面に出している辞書の言語（選んだ言語の読み込みが済むまでは、その前の言語）。 */
@@ -18,6 +19,24 @@ const SetLocaleContext = createContext<(locale: Locale) => void>(() => {})
 
 /** 選んだのに辞書を読めず、日本語で出している言語（読めていれば null）。設定の窓の言語の行が知らせを出すのに使う */
 const LoadFailedContext = createContext<Locale | null>(null)
+
+/** 地名の訳の引き方。辞書と別の文脈に置く（表は辞書の後から届くので、届いたときに地名を出す部品だけを起こす） */
+const PlaceNamesContext = createContext<PlaceNameLookup>(JA_PLACE_NAMES)
+
+/** 言語の地名の表が手元にあれば、その引き方を返す（日本語と、まだ読めていない言語は名前をそのまま返す） */
+function cachedLookup(locale: Locale): PlaceNameLookup {
+  if (locale === 'ja') return JA_PLACE_NAMES
+  const table = getCachedPlaceNames(locale)
+  if (!table) return JA_PLACE_NAMES
+  // 同じ表からは同じ引き方を返す（言語を切り替え直すたびに参照が変わり、地名を出す部品を起こさない）
+  let lookup = lookupByTable.get(table)
+  if (!lookup) {
+    lookup = placeNameLookup(table)
+    lookupByTable.set(table, lookup)
+  }
+  return lookup
+}
+const lookupByTable = new WeakMap<object, PlaceNameLookup>()
 
 /**
  * 画面の言語を配る。求められた言語の辞書を読み、読めたら差し替える。読めるまでは前の言語のまま出し、
@@ -82,10 +101,47 @@ export function I18nProvider({ locale, preloaded, children }: { locale: Locale; 
     document.documentElement.lang = localeTag(value.locale)
   }, [value.locale])
 
+  // 地名の表は、いま出している辞書の言語に合わせて読む。読めるまで・読めなかったときは日本語の名前で出す
+  // （画面の文言は訳したまま、地名だけ日本語になる。地名を空にはしない）
+  const [placeNames, setPlaceNames] = useState<{ locale: Locale; lookup: PlaceNameLookup }>(() => ({ locale: value.locale, lookup: cachedLookup(value.locale) }))
+  // 地名の表を読めなかった言語。回線が戻ったら読み直す（辞書の読み直しと同じ扱い）
+  const [placeNamesFailed, setPlaceNamesFailed] = useState<Locale | null>(null)
+  useEffect(() => {
+    const locale = value.locale
+    const lookup = cachedLookup(locale)
+    setPlaceNames((prev) => (prev.locale === locale && prev.lookup === lookup ? prev : { locale, lookup }))
+    if (locale === 'ja' || lookup !== JA_PLACE_NAMES || placeNamesFailed === locale) return
+    let cancelled = false
+    loadPlaceNames(locale).then(
+      () => { if (!cancelled) setPlaceNames({ locale, lookup: cachedLookup(locale) }) },
+      (err) => {
+        log.error(`[i18n] 言語「${locale}」の地名の表を読めず、地名は日本語で出す`, err)
+        if (!cancelled) setPlaceNamesFailed(locale)
+      },
+    )
+    return () => { cancelled = true }
+  }, [value.locale, placeNamesFailed])
+
+  useEffect(() => {
+    if (placeNamesFailed === null) return
+    // 言語を選び直したら、読めなかった言語の印を外す（次にその言語へ戻ったときにまた読む）
+    if (placeNamesFailed !== value.locale) { setPlaceNamesFailed(null); return }
+    const retry = () => {
+      log.info(`[i18n] 回線が戻ったので言語「${placeNamesFailed}」の地名の表を読み直す`)
+      setPlaceNamesFailed(null)
+    }
+    window.addEventListener('online', retry)
+    return () => window.removeEventListener('online', retry)
+  }, [placeNamesFailed, value.locale])
+
   return (
     <SetLocaleContext.Provider value={setLocale}>
       <LoadFailedContext.Provider value={failedLocale !== null && failedLocale === requested ? failedLocale : null}>
-        <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
+        <I18nContext.Provider value={value}>
+          {/* 言語を切り替えた最初の描画では state がまだ前の言語なので、手元の表から今の言語の引き方を出す
+              （辞書と地名の言語を 1 回の描画もずらさない） */}
+          <PlaceNamesContext.Provider value={placeNames.locale === value.locale ? placeNames.lookup : cachedLookup(value.locale)}>{children}</PlaceNamesContext.Provider>
+        </I18nContext.Provider>
       </LoadFailedContext.Provider>
     </SetLocaleContext.Provider>
   )
@@ -106,6 +162,24 @@ export function useMessagesRef(): { readonly current: Messages } {
   useLayoutEffect(() => {
     ref.current = messages
   }, [messages])
+  return ref
+}
+
+/**
+ * 地名の訳の引き方（`placeNames('epi', '石狩地方北部')`）。訳が無い・日本語の画面なら名前をそのまま返す。
+ * **表示の直前でだけ使う**（座標・塗り・絞り込み・読み上げには日本語の名前を渡す）
+ */
+export function usePlaceNames(): PlaceNameLookup {
+  return useContext(PlaceNamesContext)
+}
+
+/** 地名の訳の引き方を持つ参照。地図の吹き出しのように、一度だけ登録して後から呼ばれる組み立てに渡す */
+export function usePlaceNamesRef(): { readonly current: PlaceNameLookup } {
+  const lookup = usePlaceNames()
+  const ref = useRef(lookup)
+  useLayoutEffect(() => {
+    ref.current = lookup
+  }, [lookup])
   return ref
 }
 

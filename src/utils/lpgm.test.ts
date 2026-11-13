@@ -3,6 +3,7 @@ import { isValidLpgmClass, isObservedLpgmClass, getLpgmClassLabel, getLpgmClassC
 import type { JMALpgm, LpgmPoint, LpgmRegion } from '../types/earthquake'
 import { LPGM_ICON_BASE_RADIUS } from '../components/Map/gl/lpgmIcons'
 import { ja } from '../i18n/messages/ja'
+import { JA_PLACE_NAMES, PLACE_NAME_KINDS, placeNameLookup } from '../i18n/placeNames'
 
 describe('isValidLpgmClass', () => {
   it('階級 1〜4 を受け入れる', () => {
@@ -139,19 +140,27 @@ describe('見出し文の地域名', () => {
   })
 
   it('正: 種類 2・4 の一文に括弧で添える', () => {
-    expect(lpgmCategoryNoteWithRegions(4, NOTO_LPGM_HEADLINE, ja.quake)).toBe('震度が小さくても高層階が大きく揺れた地域があります（長野県中部）')
+    expect(lpgmCategoryNoteWithRegions(4, NOTO_LPGM_HEADLINE, ja.quake, JA_PLACE_NAMES)).toBe('震度が小さくても高層階が大きく揺れた地域があります（長野県中部）')
+  })
+
+  it('正: 添える地域名は細分区域の訳で出す（表に無い名前は日本語のまま）', () => {
+    const lookup = placeNameLookup({
+      ...Object.fromEntries(PLACE_NAME_KINDS.map(k => [k, {}])),
+      area: { 長野県中部: 'Central Nagano Prefecture' },
+    } as unknown as Parameters<typeof placeNameLookup>[0])
+    expect(lpgmCategoryNoteWithRegions(4, NOTO_LPGM_HEADLINE, ja.quake, lookup)).toBe('震度が小さくても高層階が大きく揺れた地域があります（Central Nagano Prefecture）')
   })
 
   it('対照: 地域を並べない見出し文・種類 1・3 には添えない', () => {
     const plain = '０１日１６時５６分ころの地震により、長周期地震動階級２を観測した地域があります。'
     expect(lpgmHeadlineRegions(plain)).toEqual([])
-    expect(lpgmCategoryNoteWithRegions(2, plain, ja.quake)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
-    expect(lpgmCategoryNoteWithRegions(3, NOTO_LPGM_HEADLINE, ja.quake)).toBe(lpgmCategoryNote(3, ja.quake))
+    expect(lpgmCategoryNoteWithRegions(2, plain, ja.quake, JA_PLACE_NAMES)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
+    expect(lpgmCategoryNoteWithRegions(3, NOTO_LPGM_HEADLINE, ja.quake, JA_PLACE_NAMES)).toBe(lpgmCategoryNote(3, ja.quake))
   })
 
   it('安全弁: 見出し文が無い・種類が無いときは何も足さない', () => {
     expect(lpgmHeadlineRegions(undefined)).toEqual([])
-    expect(lpgmCategoryNoteWithRegions(undefined, NOTO_LPGM_HEADLINE, ja.quake)).toBe('')
+    expect(lpgmCategoryNoteWithRegions(undefined, NOTO_LPGM_HEADLINE, ja.quake, JA_PLACE_NAMES)).toBe('')
   })
 })
 

@@ -9,6 +9,7 @@ import {
   DIMMED_TEXT_OPACITY,
   LABEL_TEXT_OPACITY_EXPR,
   computeLabelPlacements,
+  estimateHalfExtent,
   labelTextOffsetExpr,
   type LabelOverlapTarget,
 } from './labelOverlap'
@@ -397,5 +398,23 @@ describe('スタイル式', () => {
       1,
     ])
     expect(DIMMED_TEXT_OPACITY).toBeGreaterThan(0)
+  })
+})
+
+describe('estimateHalfExtent（訳したラベルの幅と折り返し）', () => {
+  it('正: 10em を超える英字の名前は、行の長さをそろえて折り返した幅と行数で見積もる', () => {
+    // 'Eastern Region · Fuji Five Lakes, Yamanashi Prefecture' は 54 字＝32.4em → 4 行・1 行 8.1em
+    const { halfW, halfH } = estimateHalfExtent('Eastern Region · Fuji Five Lakes, Yamanashi Prefecture', 10)
+    expect(halfW).toBeCloseTo((32.4 / 4) * 10 / 2, 5)
+    expect(halfH).toBeCloseTo((4 * 10 * 1.3) / 2, 5)
+  })
+
+  it('対照: 日本語の短い名前は今までどおり 1 字 1em・1 行', () => {
+    expect(estimateHalfExtent('石川県能登', 10)).toEqual({ halfW: 25, halfH: 6.5 })
+  })
+
+  it('安全弁: ちょうど 10em の名前は折り返さない（境目で行を増やさない）', () => {
+    const { halfH } = estimateHalfExtent('あいうえおかきくけこ', 10)
+    expect(halfH).toBeCloseTo(6.5, 5)
   })
 })

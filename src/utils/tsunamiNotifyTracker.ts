@@ -1,4 +1,5 @@
 import type { JMATsunami, TsunamiArea, TsunamiGrade, TsunamiObservation } from '../types/earthquake'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 import {
   GRADE_PRIORITY, tsunamiLiftedAreas, tsunamiMaxGrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation,
   isTsunamiExpired, mergeTsunamiObservations, isObservationMissing, firstWaveSpokenKey, changedObservationFields,
@@ -268,9 +269,9 @@ export function tsunamiObservationMarks(
  * 発表のたびに同じ「発表」の通知が重なる。区域が空の報を弾くのは、見出しを等級から・本文を区域名から作るため。
  * 区域はカードの材料から取る（電文順で切ると、カードの先頭に並ぶ深刻な区域が通知から落ちる）。
  */
-export function tsunamiIssueNotificationFor(event: JMATsunami, basis: TsunamiCardOrderBasis, m: TsunamiNotificationWords): TsunamiNotification | null {
+export function tsunamiIssueNotificationFor(event: JMATsunami, basis: TsunamiCardOrderBasis, m: TsunamiNotificationWords, place: PlaceNameLookup): TsunamiNotification | null {
   if (event.cancelled || !isTsunamiGradeReport(event) || isTsunamiObservationOnly(event)) return null
-  return tsunamiIssueNotification(event, basis, m)
+  return tsunamiIssueNotification(event, basis, m, place)
 }
 
 /**
@@ -282,11 +283,12 @@ export function tsunamiObservationNotificationFor(
   marks: Pick<TsunamiObservationMarks, 'entries'>,
   basis: TsunamiCardOrderBasis,
   m: TsunamiNotificationWords,
+  place: PlaceNameLookup,
 ): TsunamiNotification | null {
   if (event.cancelled || isTsunamiGradeReport(event) || marks.entries.length === 0) return null
   const markedNames = new Set(marks.entries.map(([name]) => name))
   const marked = sortObservationsForCardDisplay(basis.observations, basis.areas, basis.liftedAreas).filter(o => markedNames.has(o.name))
-  return marked.length > 0 ? tsunamiObservationNotification(event, marked, m) : null
+  return marked.length > 0 ? tsunamiObservationNotification(event, marked, m, place) : null
 }
 
 /**

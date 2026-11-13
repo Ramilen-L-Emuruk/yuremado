@@ -8,8 +8,9 @@ import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // 選択された EEW の地域別予想長周期地震動階級を区域塗りで表示する MapLibre 版
 // （Leaflet の eew-lpgm-region-fill 相当）。fill-opacity 0.5・枠 weight2。区域中心マーカーは持たない。
@@ -43,20 +44,20 @@ function buildFC(regions: EewLpgmRegionAggregate[]): FeatureCollection<Polygon> 
   return { type: 'FeatureCollection', features }
 }
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+function hoverHtml(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.maxLgInt ?? 0)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
-    `<span style="font-weight:600">${escapeHtml(String(f.properties?.name ?? ''))}</span></div>`
+    `<span style="font-weight:600">${escapeHtml(place('area', String(f.properties?.name ?? '')))}</span></div>`
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.maxLgInt ?? 0)
   return (
     `<div style="min-width:160px">` +
-    `<div style="font-weight:700;font-size:13px">${escapeHtml(String(f.properties?.name ?? ''))}</div>` +
+    `<div style="font-weight:700;font-size:13px">${escapeHtml(place('area', String(f.properties?.name ?? '')))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
     `<span style="color:#cbd5e1">${m.map.popup.forecastLpgm(escapeHtml(lpgmClassLabel(lgInt, m.formats)))}</span></div>` +
@@ -69,6 +70,7 @@ export function EewLpgmRegionFillGL({ regionAggregates, visible }: Props) {
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -92,8 +94,8 @@ export function EewLpgmRegionFillGL({ regionAggregates, visible }: Props) {
       priority: 'fill',
       tolPx: HIT_TOL_PX,
       rankKey: 'maxLgInt',
-      buildHoverHtml: hoverHtml,
-      buildClickHtml: (f) => clickHtml(f, mRef.current),
+      buildHoverHtml: (f) => hoverHtml(f, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

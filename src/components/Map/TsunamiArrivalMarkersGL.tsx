@@ -8,7 +8,8 @@ import {
 import { BADGE_SHADOW_BLUR, BADGE_SHADOW_COLOR } from './gl/tsunamiObsBar'
 import { observationFirstWaveText } from '../../utils/tsunami'
 import { popupCodeLineHtml } from './gl/popupHtml'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import type { Messages } from '../../i18n/messages'
 import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
@@ -24,13 +25,13 @@ import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiM
 // 見た目は丸バッジの家族（震度観測点・揺れ検知点）に合わせてある。形・色・不透明度を選んだ理由は
 // `gl/tsunamiArrivalMarker.ts` の冒頭。
 
-export function arrivalTooltipHtml(marker: TsunamiArrivalMarker, m: Messages): string {
+export function arrivalTooltipHtml(marker: TsunamiArrivalMarker, m: Messages, place: PlaceNameLookup): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   // 第1波の行は観測棒・欠測の吹き出しと同じ形（「第1波 05:12 押し波」。→ `observationFirstWaveText`）。
   // 時刻を出せないときは「到達を確認」へ落とす —— 到達したこと自体は確定しているので、そこは伝える。
   const arrival = esc(observationFirstWaveText(marker, m.tsunami) || m.map.popup.arrivalConfirmed)
   return (
-    `<div class="text-sm"><div class="font-bold">${esc(marker.name)}</div>` +
+    `<div class="text-sm"><div class="font-bold">${esc(place('tsunamiStation', marker.name))}</div>` +
     `<div class="text-xs" style="color:#e5e7eb">${arrival}</div>` +
     `<div class="text-xs" style="color:${ARRIVAL_COLOR}">${m.map.popup.maxHeightObserving}</div>` +
     popupCodeLineHtml(marker.code, m) +
@@ -90,6 +91,7 @@ export function TsunamiArrivalMarkersGL({ markers, iconScale }: Props) {
   const entriesRef = useRef<Map<string, MarkerEntry>>(new Map())
   // 吹き出しの中身は印を差分で更新するときに組むので、言語が変わったら同じ差分更新で組み直す（印は作り直さない）
   const messages = useMessages()
+  const place = usePlaceNames()
 
   useEffect(() => {
     if (!map) return
@@ -101,7 +103,7 @@ export function TsunamiArrivalMarkersGL({ markers, iconScale }: Props) {
       if (existing) {
         updateMarkerEl(existing.el, m, iconScale)
         existing.data = m
-        existing.popup.setHTML(arrivalTooltipHtml(m, messages)).setOffset(popupOffset(iconScale))
+        existing.popup.setHTML(arrivalTooltipHtml(m, messages, place)).setOffset(popupOffset(iconScale))
         continue
       }
       const el = buildArrivalMarkerEl(m, iconScale)
@@ -112,7 +114,7 @@ export function TsunamiArrivalMarkersGL({ markers, iconScale }: Props) {
         closeButton: false,
         closeOnClick: false,
         offset: popupOffset(iconScale),
-      }).setHTML(arrivalTooltipHtml(m, messages))
+      }).setHTML(arrivalTooltipHtml(m, messages, place))
       const entry: MarkerEntry = { marker, popup, el, data: m, opener: null as unknown as TsunamiMarkerPopup }
       entry.opener = attachTsunamiMarkerPopup(map, el, popup, m.name, 'arrival', () => [entry.data.lng, entry.data.lat])
       entries.set(m.name, entry)
@@ -124,7 +126,7 @@ export function TsunamiArrivalMarkersGL({ markers, iconScale }: Props) {
       entry.marker.remove()
       entries.delete(name)
     }
-  }, [map, markers, iconScale, messages])
+  }, [map, markers, iconScale, messages, place])
 
   // アンマウント時に全マーカーを後始末する。
   useEffect(() => {

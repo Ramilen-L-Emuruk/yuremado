@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
-import { useMessages, useMessagesRef } from './i18n/I18nProvider'
+import { useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
 import { useApplyLocaleSetting } from './i18n/useApplyLocaleSetting'
 import { historicalArchiveLabel } from './utils/historicalArchiveLabel'
 import { JA_MESSAGES } from './i18n/messages'
@@ -219,8 +219,12 @@ export function App() {
   const { settings, updateSetting, updateSettings, replaceSettings, adoptExternalSetting } = useSettings()
   // 各画面が落ちたときの表示に出す画面の名前（ナビのボタン名と同じ辞書の語）
   const messages = useMessages()
+  // 帯に載せる地名を表示する言語へ訳す表（日本語のときはそのまま返す）
+  const placeNames = usePlaceNames()
   // 後から呼ばれる組み立て（地震情報の通知の待ち行列）が、呼ばれた時点の言語の辞書を読むための参照
   const messagesRef = useMessagesRef()
+  // 同じく、通知の本文の地名を呼ばれた時点の言語で訳すための参照
+  const placeNamesRef = usePlaceNamesRef()
   const tabNames = messages.nav
   // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
   useApplyLocaleSetting(settings.locale)
@@ -1890,6 +1894,7 @@ export function App() {
           notifyMinScale: notifyMinScaleRef.current,
           areaPrefIndex: index,
           m: messagesRef.current,
+          place: placeNamesRef.current,
           show: showQuakeNotification,
         }).catch((err: unknown) => {
           log.error(`[notify] 地震の通知を出せず（${card.eventKey ?? card.id}・最大震度 ${card.earthquake.maxScale}）`, err)
@@ -2884,12 +2889,12 @@ export function App() {
     if (home && prefectureShapes && homePrefCode === null) log.warn('[帯] 登録地点の座標がどの都道府県にも入らず 5 km 以内にも無いので、津波の帯に登録地点の段を出さない')
   }, [home, prefectureShapes, homePrefCode])
   const dockEews = useMemo(
-    () => (activeTab === 'realtime' ? [] : buildEewDockItems(eewListNoCancelled, swaveArrival, messages)),
-    [activeTab, eewListNoCancelled, swaveArrival, messages],
+    () => (activeTab === 'realtime' ? [] : buildEewDockItems(eewListNoCancelled, swaveArrival, messages, placeNames)),
+    [activeTab, eewListNoCancelled, swaveArrival, messages, placeNames],
   )
   const dockTsunami = useMemo(
-    () => (activeTab === 'tsunami' ? null : buildTsunamiDockItem(tsunamis, homePrefCode, TSUNAMI_ZONE_PREFECTURES, messages)),
-    [activeTab, tsunamis, homePrefCode, messages],
+    () => (activeTab === 'tsunami' ? null : buildTsunamiDockItem(tsunamis, homePrefCode, TSUNAMI_ZONE_PREFECTURES, messages, placeNames)),
+    [activeTab, tsunamis, homePrefCode, messages, placeNames],
   )
   // 登録地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。

@@ -10,8 +10,9 @@ import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // EEW 対象地域の予想最大震度を区域塗りで表示する MapLibre 版（Leaflet の eew-region-fill 相当）。
 // 警報域（種別コードで判定。→ `isEewWarningKindCode`）は fillOpacity 0.55・枠 weight2 で強調、予報域は 0.3・weight1。
@@ -81,12 +82,12 @@ function scaleLabelOf(f: MapGeoJSONFeature, m: Messages): string {
   )
 }
 
-function hoverHtml(f: MapGeoJSONFeature, m: Messages): string {
+function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? 0)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${badgeHtml(scaleLabelOf(f, m), getIntensityColor(scale))}` +
-    `<span style="font-weight:600">${escapeHtml(String(f.properties?.name ?? ''))}</span></div>`
+    `<span style="font-weight:600">${escapeHtml(regionName(f, place))}</span></div>`
   )
 }
 
@@ -115,7 +116,12 @@ function arrivalRowHtml(f: MapGeoJSONFeature, m: Messages): string {
   return `<div style="margin-top:4px;font-size:12px;font-weight:700;color:${color}">${text}</div>`
 }
 
-function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
+/** 区域名（緊急地震速報の区域は地震情報の一次細分区域と同じ名前の集まりなので、区域の表で訳す） */
+function regionName(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  return place('area', String(f.properties?.name ?? ''))
+}
+
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? 0)
   const isWarning = Boolean(f.properties?.isWarning)
   // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。表示も実態に合わせる
@@ -123,7 +129,7 @@ function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
   const kindColor = isWarning ? '#f87171' : '#fbbf24'
   return (
     `<div style="min-width:160px">` +
-    `<div style="font-weight:700;font-size:13px">${escapeHtml(String(f.properties?.name ?? ''))}</div>` +
+    `<div style="font-weight:700;font-size:13px">${escapeHtml(regionName(f, place))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${badgeHtml(scaleLabelOf(f, m), getIntensityColor(scale))}` +
     `<span style="color:#cbd5e1">${m.map.popup.forecastIntensity(escapeHtml(scaleLabelOf(f, m)))}</span>` +
@@ -138,6 +144,7 @@ export function EewRegionFillGL({ areaFills, visible }: Props) {
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -161,8 +168,8 @@ export function EewRegionFillGL({ areaFills, visible }: Props) {
       priority: 'fill',
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
-      buildHoverHtml: (f) => hoverHtml(f, mRef.current),
-      buildClickHtml: (f) => clickHtml(f, mRef.current),
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
       refreshMs: REFRESH_MS,
     })
     addedRef.current = true

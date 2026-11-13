@@ -13,6 +13,7 @@ import { missingTooltipHtml } from './TsunamiMissingMarkersGL'
 import { tsunamiLinePopupHtml } from './TsunamiLinesGL'
 import { buildSourcePoints, sourcePopupHtml } from './TsunamiSourceEpicentersGL'
 import { JA_MESSAGES } from '../../i18n/messages'
+import { JA_PLACE_NAMES } from '../../i18n/placeNames'
 import { attachTsunamiMarkerPopup, openTsunamiMarkerPopup, closeTsunamiMarkerPopups } from './gl/tsunamiMarkerPopup'
 import { observationFirstWaveText, tsunamiAreaPopupLines, tsunamiAreaPopupParts } from '../../utils/tsunami'
 import { tsunamiDetailsOf, buildTsunamiLinesFC } from './TsunamiLinesGL'
@@ -38,17 +39,17 @@ describe('観測点の印の吹き出しの中身', () => {
   const base = { name: '輪島港', code: undefined, lat: 37.4, lng: 136.9, barPx: 40, color: '#ff0000', blinking: false }
   // 正（2026-10-21 ユーザー選択「時刻と第1波も出す (Recommended)」・形は 2026-10-24 ユーザー選択「この形で揃える」）
   it('正: 観測棒の吹き出しに最大波の観測時刻と第1波を出す', () => {
-    const html = obsBarTooltipHtml({ ...base, height: { value: 1.2, description: '1.2m' }, maxHeightDateTime: '2026-04-20T05:40:00', arrivalTime: '2026-04-20T05:12:00', initial: '押し' }, JA_MESSAGES)
+    const html = obsBarTooltipHtml({ ...base, height: { value: 1.2, description: '1.2m' }, maxHeightDateTime: '2026-04-20T05:40:00', arrivalTime: '2026-04-20T05:12:00', initial: '押し' }, JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain('1.2m')
     expect(html).toContain('最大波 05:40')
     expect(html).toContain('第1波 05:12 押し波')
   })
   it('正: 到達確認・欠測の吹き出しも同じ形の第1波を出す', () => {
-    expect(arrivalTooltipHtml({ name: '珠洲', code: undefined, lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '引き', blinking: false }, JA_MESSAGES)).toContain('第1波 05:12 引き波')
-    expect(missingTooltipHtml({ name: '富山', code: undefined, lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '押し', blinking: false }, JA_MESSAGES)).toContain('第1波 05:12 押し波')
+    expect(arrivalTooltipHtml({ name: '珠洲', code: undefined, lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '引き', blinking: false }, JA_MESSAGES, JA_PLACE_NAMES)).toContain('第1波 05:12 引き波')
+    expect(missingTooltipHtml({ name: '富山', code: undefined, lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '押し', blinking: false }, JA_MESSAGES, JA_PLACE_NAMES)).toContain('第1波 05:12 押し波')
   })
   it('安全弁: 時刻が無い到達確認は「到達を確認」と言う（到達そのものは確定している）', () => {
-    expect(arrivalTooltipHtml({ name: '珠洲', code: undefined, lat: 0, lng: 0, blinking: false }, JA_MESSAGES)).toContain('到達を確認')
+    expect(arrivalTooltipHtml({ name: '珠洲', code: undefined, lat: 0, lng: 0, blinking: false }, JA_MESSAGES, JA_PLACE_NAMES)).toContain('到達を確認')
   })
 })
 
@@ -94,18 +95,18 @@ describe('津波の原因地震の震源', () => {
   })
   // 正（2026-10-24 ユーザー選択「この形で (Recommended)」）
   it('正: 吹き出しは震源名／「M7.6　深さ 10km」／「地震発現時刻 16:10」', () => {
-    const html = sourcePopupHtml({ hypocenterName: '石川県能登地方', magnitude: 7.6, depth: 10, arrivalTime: '2026-04-20T16:10:00' }, JA_MESSAGES)
+    const html = sourcePopupHtml({ hypocenterName: '石川県能登地方', magnitude: 7.6, depth: 10, arrivalTime: '2026-04-20T16:10:00' }, JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain('石川県能登地方')
     expect(html).toContain('M7.6　深さ 10km')
     expect(html).toContain('地震発現時刻 16:10')
   })
   // 規模の記号は電文の種別（2026-10-29 ユーザー承認「吹き出しと共有カードも (Recommended)」）。
   it('正: 種別 Mj の規模は「Mj7.6」、遠地の M は「M8.0」と電文のまま出す', () => {
-    expect(sourcePopupHtml({ hypocenterName: 'X', magnitude: 7.6, magnitudeType: 'Mj' }, JA_MESSAGES)).toContain('Mj7.6')
-    expect(sourcePopupHtml({ hypocenterName: 'X', magnitude: 8, magnitudeType: 'M' }, JA_MESSAGES)).toContain('M8.0')
+    expect(sourcePopupHtml({ hypocenterName: 'X', magnitude: 7.6, magnitudeType: 'Mj' }, JA_MESSAGES, JA_PLACE_NAMES)).toContain('Mj7.6')
+    expect(sourcePopupHtml({ hypocenterName: 'X', magnitude: 8, magnitudeType: 'M' }, JA_MESSAGES, JA_PLACE_NAMES)).toContain('M8.0')
   })
   it('安全弁: 規模が数値で無ければ種別があっても説明を出す（「Mj不明」にしない）', () => {
-    const html = sourcePopupHtml({ hypocenterName: 'X', magnitudeType: 'Mj', magnitudeCondition: 'Ｍ８を超える巨大地震' }, JA_MESSAGES)
+    const html = sourcePopupHtml({ hypocenterName: 'X', magnitudeType: 'Mj', magnitudeCondition: 'Ｍ８を超える巨大地震' }, JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain('M8を超える巨大地震')
     expect(html).not.toContain('Mj')
   })

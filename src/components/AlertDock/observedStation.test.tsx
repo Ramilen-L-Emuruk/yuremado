@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { act, render } from '@testing-library/react'
 import { AlertDock } from './index'
 import { I18nProvider } from '../../i18n/I18nProvider'
-import { loadMessages } from '../../i18n/messages'
+import { settleI18n } from '../../test-utils/settleI18n'
 import type { TsunamiDockItem } from '../../utils/alertDock'
 
 // 英語の辞書を先に一度読んでおく。初回の変換の待ちをテスト本体に載せないため
@@ -34,8 +34,7 @@ describe('下の帯の観測点名の括弧', () => {
     let view!: ReturnType<typeof render>
     await act(async () => {
       view = render(<I18nProvider locale="en"><AlertDock eews={[]} tsunami={tsunami} onOpen={() => {}} /></I18nProvider>)
-      await loadMessages('en')
-      await new Promise((r) => setTimeout(r, 0))
+      await settleI18n('en')
     })
     expect(view.container.textContent).toContain('(石巻市鮎川)')
     expect(view.container.textContent).not.toContain('（')

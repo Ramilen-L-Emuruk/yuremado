@@ -9,6 +9,8 @@
  */
 import type { EEWAlert, JMATsunami, TsunamiArea, TsunamiObservation } from '../types/earthquake'
 import type { SWaveArrival } from '../hooks/useSWaveCountdown'
+import type { PlaceNameLookup } from '../i18n/placeNames'
+import { eewPrefDisplayName } from '../data/eewPrefectureCodes'
 import {
   canPresentLpgmClass,
   compareEewNewestFirst,
@@ -139,8 +141,9 @@ function shakeText(arrival: SWaveArrival, key: string, m: Messages): string | nu
 
 /**
  * 速報の帯の項目。語は `m`（いま出している言語の辞書）から引く。
+ * 地名（震央・府県予報区・細分区域）は表示する言語へ訳して載せる（`place`）。突き合わせは訳す前の日本語の名前で行う。
  */
-export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArrival | null, m: Messages): EewDockItem[] {
+export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArrival | null, m: Messages, place: PlaceNameLookup): EewDockItem[] {
   const sorted = [...eews].filter(e => !e.cancelled && !e.cancelledAt).sort(compareEewNewestFirst)
   return sorted.map((eew, index) => {
     const level = computeDisplayEEWLevel(eew)
@@ -160,7 +163,7 @@ export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArriv
     const provisional = isProvisionalHypocenter(eew)
     const hypocenter = h.name || hasKnownEpicenter(h.latitude, h.longitude)
       ? {
-        name: h.name ? (provisional ? `${h.name}${m.realtime.provisional}` : h.name) : '',
+        name: h.name ? (provisional ? `${place('epi', h.name)}${m.realtime.provisional}` : place('epi', h.name)) : '',
         // 仮定震源要素のときは規模・深さが仮の値なので出さない（速報カードと同じ）
         magnitude: provisional ? null : {
           text: magnitudeWithConditionText(h.magnitude, h.magnitudeCondition, h.magnitudeType, m.formats),
@@ -172,7 +175,7 @@ export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArriv
     const areas = eewAreas(eew)
     const warnPrefs = [...new Set(areas.filter(a => a.pref && isEewWarningKindCode(a.kindCode)).map(a => a.pref))]
     const warning = warnPrefs.length > 0
-      ? { shown: warnPrefs.slice(0, MAX_SHOWN_WARNING_PREFS), rest: Math.max(0, warnPrefs.length - MAX_SHOWN_WARNING_PREFS) }
+      ? { shown: warnPrefs.slice(0, MAX_SHOWN_WARNING_PREFS).map(p => eewPrefDisplayName(p, place)), rest: Math.max(0, warnPrefs.length - MAX_SHOWN_WARNING_PREFS) }
       : null
     // 登録地点の段は一番新しい 1 件だけ。震源の段はどの件にも出す（2026-11-10 ユーザー選択「全件 2 行に改める (Recommended)」）。
     // 区域の値は区域名と一緒に出す —— 自前計算（地点の値）を区域名で書くと、地点の値が区域の値として読まれる
@@ -184,7 +187,7 @@ export function buildEewDockItems(eews: readonly EEWAlert[], arrival: SWaveArriv
       const area = areas.find(a => a.name === arrival.areaName)
       if (shake && area) {
         home = {
-          area: arrival.areaName,
+          area: place('area', arrival.areaName),
           chip: area.scaleTo > 0 ? intensityChip(area.scaleTo, getEewAreaIntensityLabel(area.scaleFrom, area.scaleTo, area.scaleToOrAbove === true, m.formats)) : null,
           shake,
         }
@@ -254,6 +257,7 @@ export function buildTsunamiDockItem(
   homePrefCode: string | null,
   zonePrefectures: Readonly<Record<string, readonly string[]>>,
   m: Messages,
+  place: PlaceNameLookup,
 ): TsunamiDockItem | null {
   const live = tsunamis.filter(t => !t.cancelled && !t.cancelledAt)
   const latest = live[live.length - 1]
@@ -291,7 +295,7 @@ export function buildTsunamiDockItem(
       const heaviest = mine.reduce((a, b) => (gradeRank(b.grade) < gradeRank(a.grade) ? b : a))
       const arrivalHm = hm(heaviest.firstHeight?.arrivalTime)
       home = {
-        zone: heaviest.name,
+        zone: place('tsunamiArea', heaviest.name),
         grade: gradeChip(heaviest.grade, m.tsunami.grade[heaviest.grade]),
         height: hasForecastHeight(heaviest) ? gradeChip(heaviest.grade, m.tsunami.height(heaviest.maxHeight!.description, false)) : null,
         arrival: homeArrival(heaviest, arrivalHm, m),
@@ -309,8 +313,8 @@ export function buildTsunamiDockItem(
     status: latest.operationStatus ? m.realtime.operation[latest.operationStatus] : null,
     chip: topHeight ? gradeChip(top.grade, m.tsunami.height(topHeight.maxHeight!.description, false)) : null,
     updated: hm(latest.time),
-    observed: obs ? { value: overSuffixedHeight(obs.height!, m.tsunami), station: obs.name } : null,
-    firstWave: firstWaveAreas.length > 0 ? { first: firstWaveAreas[0].name, rest: new Set(firstWaveAreas.map(a => a.name)).size - 1 } : null,
+    observed: obs ? { value: overSuffixedHeight(obs.height!, m.tsunami), station: place('tsunamiStation', obs.name) } : null,
+    firstWave: firstWaveAreas.length > 0 ? { first: place('tsunamiArea', firstWaveAreas[0].name), rest: new Set(firstWaveAreas.map(a => a.name)).size - 1 } : null,
     home,
   }
 }

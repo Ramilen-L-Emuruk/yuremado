@@ -7,7 +7,7 @@ import { linkTsunamiSources, shownTsunamiSource } from '../../utils/tsunamiSourc
 import { getGradeStyle, type GradeStyle } from '../../utils/tsunamiGradeStyle'
 import { groupAreasForCardDisplay, splitAreasByKindName, tsunamiLiftedAreas, matchesArea, observationBadgeKeys, observationHeight, observationArrivalUnknown, observationMaxHeightTime, estimationBadgeKeys, estimationHeight, GRADES_IN_CARD_ORDER, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, tideStationKey, arrivalConditionBadge, arrivalConditionKey, type ObsUpdateMark, type ObsUpdateField, type TsunamiValueMarks, type EstimationUpdateField } from '../../utils/tsunami'
 import { TSUNAMI_MISSING_COLOR as MISSING_COLOR } from '../../utils/tsunamiStyle'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
 import { UPDATE_MARK_COLOR, type UpdateMark } from '../../utils/updateMark'
 import { mapChunksToRefs, planFollowScroll, followViewHasRoom, hasFollowContext, type FollowRect, type SpeechFollowSession, type SpeechRef } from '../../utils/ttsFollow'
@@ -208,6 +208,7 @@ function SourceEarthquakeLine({ eq, link }: {
   link: React.ReactNode
 }) {
   const { tsunami: tm, formats: fw } = useMessages()
+  const place = usePlaceNames()
   const quakeTime = sourceEarthquakeTime(eq)
   // 日時として読めなければ句ごと落とす（→ `formatters.ts` の `readDateTime`）。震源名・規模・
   // 深さが並ぶ行の付随情報なので、「地震発現時刻」の語だけが残るより出さないほうがよい。
@@ -226,7 +227,7 @@ function SourceEarthquakeLine({ eq, link }: {
   // 値のかたまりの途中では折り返さず、入らなければかたまりごと次の行へ送る。
   return (
     <div data-source-line="" className="flex flex-wrap items-baseline gap-x-3.5 gap-y-0.5" style={{ marginBottom: 4 }}>
-      <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 4px)' }}>{eq.hypocenterName}</span>
+      <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 4px)' }}>{place('epi', eq.hypocenterName)}</span>
       {magnitude && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{magnitude}</span>}
       {depth && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{depth}</span>}
       {/* 地震の時刻は `sourceEarthquakeTime` を通す（**発現時刻を先に採る**）。発生時刻を出すと、
@@ -289,6 +290,7 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
   onActivate?: () => void
 }) {
   const spaceSep = useMessages().formats.spaceSep()
+  const place = usePlaceNames()
   return (
     <div
       ref={rowRef}
@@ -302,7 +304,7 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
     >
       <div className="min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={nameWeight === 'bold' ? 'font-bold' : 'font-semibold'} style={{ fontSize: 'var(--qk-f)', color: nameColor }}>{name}</span>
+          <span className={nameWeight === 'bold' ? 'font-bold' : 'font-semibold'} style={{ fontSize: 'var(--qk-f)', color: nameColor }}>{place('tsunamiStation', name)}</span>
           {chips}
         </div>
         {timeParts.length > 0 && (
@@ -367,6 +369,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
   // 延べ 3,874 区域＝到達状況のある 5,288 区域の約 7 割がこの形）。以前は実測行で代わると見て出さず、語を本文へ
   // 戻していた。
   const tm = useMessages().tsunami
+  const place = usePlaceNames()
   const arrivalBadgeLabel = arrivalConditionLabel(area.firstHeight?.condition, tm)
   // 時刻が日時として読めないときは、時刻そのものが無い電文と同じ扱いにする（「到達予想 」とラベルだけ残さない）。
   const areaArrivalHm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
@@ -448,7 +451,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
               },
             } : {})}
           >
-            {area.name}
+            {place('tsunamiArea', area.name)}
           </span>
           {arrivalText && (
             <span className="block mt-0.5" style={{ fontSize: 'var(--qk-fs)', color: style.arrivalColor }}>
@@ -777,6 +780,7 @@ function TsunamiCancelledCard({ areas, observations, onObservationClick, canFocu
  */
 function TsunamiCancelledRow({ area, style, onAreaFocus, isChanged, isTop, registerRow, registerSpeechRow }: { area: TsunamiArea; style: GradeStyle; onAreaFocus?: (name: string) => (() => void) | undefined; isChanged: boolean; isTop: boolean; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void }) {
   const tm = useMessages().tsunami
+  const place = usePlaceNames()
   // **解除された区域名も押すと地図が寄る**（2026-10-21 ユーザー選択「押すと寄る (Recommended)」。海岸線は描かず
   // 場所だけ寄せる —— 地図は解除された区域の海岸線を描かない）。押せるのは境界を引ける区域だけ（等級カードの行と同じ）。
   const areaFocus = onAreaFocus?.(area.name)
@@ -800,7 +804,7 @@ function TsunamiCancelledRow({ area, style, onAreaFocus, isChanged, isTop, regis
               },
             } : {})}
           >
-            {area.name}
+            {place('tsunamiArea', area.name)}
           </span>
           {/* 等級の呼び名は読み上げと共有する（`TSUNAMI_GRADE_NAME`）。**前回の等級を読めない区域は「解除」とだけ
               出す**（2026-10-21 ユーザー選択「「解除」とだけ出す」。全期間 19,906 区域で 0 件）。 */}
@@ -1887,6 +1891,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
  */
 function EstimationRow({ est, mark }: { est: TsunamiEstimation; mark: UpdateMark<EstimationUpdateField> | undefined }) {
   const tm = useMessages().tsunami
+  const place = usePlaceNames()
   const heightInfo = estimationHeight(est)
   const heightText = heightInfo === null ? '' : heightInfo.kind === 'height' ? tm.height(heightInfo.description, false) : tm.estimating
   const markColor = mark ? UPDATE_MARK_COLOR[mark.status] : undefined
@@ -1900,7 +1905,7 @@ function EstimationRow({ est, mark }: { est: TsunamiEstimation; mark: UpdateMark
       style={{ borderLeft: `3px solid ${markColor ?? 'transparent'}` }}>
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2 flex-wrap min-w-0">
-          <span className="text-white text-[0.9375rem] truncate">{est.name}</span>
+          <span className="text-white text-[0.9375rem] truncate">{place('tsunamiArea', est.name)}</span>
           {estimationBadgeKeys(est).map(key => (
             <span key={key} className="text-xs font-bold px-1.5 py-0.5 rounded-sm"
               style={{ background: 'rgba(29,78,216,0.3)', color: '#93c5fd' }}>

@@ -7,6 +7,7 @@ import { act, render, screen } from '@testing-library/react'
 import { I18nProvider, useLocale, useLocaleLoadFailed, useMessages } from './I18nProvider'
 import { loadMessages, type Locale } from './messages'
 import { muteConsoleError } from '../test-utils/muteConsoleError'
+import { settleI18n } from '../test-utils/settleI18n'
 
 vi.mock('./messages/ko', () => { throw new Error('読み込みの失敗を作る') })
 
@@ -21,10 +22,10 @@ function FailedProbe() {
   return <span data-testid="failed">{useLocaleLoadFailed() ?? 'none'}</span>
 }
 
-async function settle(locale: Locale) {
-  await loadMessages(locale).catch(() => {})
-  await new Promise((r) => setTimeout(r, 0))
-}
+/** 辞書の読み込みの失敗の記録（地名の表の失敗の記録は別に数える。英語の地名の表はこの環境では読めない） */
+const isDictError = (s: string) => s.includes('[i18n]') && s.includes('の辞書を読めず')
+
+const settle = settleI18n
 
 describe('I18nProvider の読み込みの失敗', () => {
   it('英語を出した後に韓国語を読めなければ、英語のまま残さず日本語へ戻す', async () => {
@@ -38,7 +39,7 @@ describe('I18nProvider の読み込みの失敗', () => {
       expect(document.documentElement.lang).toBe('ja')
       // 日本語へ戻したことで効果が走り直しても、読めなかった言語を読み直さない（記録も 1 回だけ）
       await act(async () => { await settle('ko') })
-      const i18nErrors = muted.mock.calls.filter((args) => args.some((a) => typeof a === 'string' && a.includes('[i18n]')))
+      const i18nErrors = muted.mock.calls.filter((args) => args.some((a) => typeof a === 'string' && isDictError(a)))
       expect(i18nErrors).toHaveLength(1)
     } finally {
       muted.mockRestore()
@@ -49,7 +50,7 @@ describe('I18nProvider の読み込みの失敗', () => {
     const muted = muteConsoleError()
     try {
       await act(async () => { render(<I18nProvider locale="ko"><Probe /><FailedProbe /></I18nProvider>); await settle('ko') })
-      const errorsOf = () => muted.mock.calls.filter((args) => args.some((a) => typeof a === 'string' && a.includes('[i18n]'))).length
+      const errorsOf = () => muted.mock.calls.filter((args) => args.some((a) => typeof a === 'string' && isDictError(a))).length
       expect(errorsOf()).toBe(1)
       await act(async () => { window.dispatchEvent(new Event('online')); await settle('ko') })
       expect(errorsOf()).toBe(2)

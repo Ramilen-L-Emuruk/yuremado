@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { POPUP_STATION_LIMIT, regionStationRowsHtml } from './LpgmRegionFillGL'
 import { JA_MESSAGES } from '../../i18n/messages'
+import { JA_PLACE_NAMES } from '../../i18n/placeNames'
 import type { LpgmStationRow } from '../../utils/lpgm'
 
 const station = (name: string, lgInt: number, extra: Partial<LpgmStationRow> = {}): LpgmStationRow =>
@@ -12,7 +13,7 @@ const station = (name: string, lgInt: number, extra: Partial<LpgmStationRow> = {
 
 describe('regionStationRowsHtml', () => {
   it('正: 観測点名・階級・震度を、渡した順に並べる', () => {
-    const html = regionStationRowsHtml([station('志賀町香能', 4, { int: 70 }), station('輪島市門前町走出', 3, { int: 60 })], JA_MESSAGES)
+    const html = regionStationRowsHtml([station('志賀町香能', 4, { int: 70 }), station('輪島市門前町走出', 3, { int: 60 })], JA_MESSAGES, JA_PLACE_NAMES)
     expect(html.indexOf('志賀町香能')).toBeLessThan(html.indexOf('輪島市門前町走出'))
     expect(html).toContain('震度 7')
     expect(html).toContain('震度 6強')
@@ -21,19 +22,19 @@ describe('regionStationRowsHtml', () => {
 
   it('正: 上限を超えた分は「ほか N 観測点」にまとめる', () => {
     const many = Array.from({ length: POPUP_STATION_LIMIT + 2 }, (_, i) => station(`観測点${i}`, 1))
-    const html = regionStationRowsHtml(many, JA_MESSAGES)
+    const html = regionStationRowsHtml(many, JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain(`観測点${POPUP_STATION_LIMIT - 1}`)
     expect(html).not.toContain(`観測点${POPUP_STATION_LIMIT}<`)
     expect(html).toContain('ほか 2 観測点')
   })
 
   it('安全弁: 気象庁以外の観測点には印（＊）を付け、震度の無い観測点は震度を書かない', () => {
-    const html = regionStationRowsHtml([station('普代村銅屋', 2, { nonJma: true })], JA_MESSAGES)
+    const html = regionStationRowsHtml([station('普代村銅屋', 2, { nonJma: true })], JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain('普代村銅屋＊')
     expect(html).not.toContain('震度')
   })
 
   it('対照: 観測点が無い区域は何も足さない（区域名と階級の 2 行のまま）', () => {
-    expect(regionStationRowsHtml([], JA_MESSAGES)).toBe('')
+    expect(regionStationRowsHtml([], JA_MESSAGES, JA_PLACE_NAMES)).toBe('')
   })
 })

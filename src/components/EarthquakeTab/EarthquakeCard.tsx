@@ -54,7 +54,7 @@ import { InternationalTsunamiText } from './InternationalTsunamiText'
 import { DisclosureCaret, Reveal, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
 import { quakeReportTimeline, formatTimelineTime } from '../../utils/quakeReportTimeline'
 import { quakeHistoryEntries, type QuakeHistoryEntry, type QuakeHistoryInputs } from '../../utils/quakeReportHistory'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
 import { ja } from '../../i18n/messages/ja'
 import type { QuakeWords } from '../../utils/quakeListView'
 import type { Messages } from '../../i18n/messages'
@@ -848,6 +848,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const q = useMessages().quake
   const f = useMessages().formats
   const alertWords = useMessages().alertText
+  // 地名の訳（表示の直前だけ。行の鍵・寄り先の引き当て・印の鍵には日本語の名前を使う）
+  const place = usePlaceNames()
   // 報の一覧で前の報を押している間は、その報の時点のカードを出す（→ `historyQuake`）
   const quake = historyQuake ?? latestQuake
   /** このカードの地震を指す鍵。**親へ返すときに使う。** */
@@ -943,7 +945,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   // 座標を読めないことがあり（`readHypocenterAreaDetail` が座標を落とす経路）、座標で決めると
   // 読み上げ・共有カード・タイトルは震央地名を言うのにカードだけ「震源調査中」になる。
   // 緯度・経度の行だけは座標の有無で出す。
-  const epicenterLabel = hypocenter.name || q.unknownHypocenter
+  const epicenterLabel = hypocenter.name ? place('epi', hypocenter.name) : q.unknownHypocenter
   // 規模・深さは位置と別に判定する（→ `hasHypocenterFacts`）
   const hasFacts = hasHypocenterFacts(hypocenter)
   // 津波電文から借りた値の印と、その説明（→ `utils/borrowFromTsunami.ts`）。
@@ -983,7 +985,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   // **最大階級 0 の報でも階級 1 以上と同じ型で出す**（2026-10-30 ユーザー選択「階級 1 以上と同じ型
   // (Recommended)」・#1201）。種類が付いていれば一文を出し、付いていなければ空になる。
   // 見出し文が地域名を並べていれば括弧で添える（→ `lpgmCategoryNoteWithRegions`）。
-  const categoryNote = lpgm ? lpgmCategoryNoteWithRegions(lpgm.category, lpgm.headline, q) : ''
+  const categoryNote = lpgm ? lpgmCategoryNoteWithRegions(lpgm.category, lpgm.headline, q, place) : ''
   /** 補足の見出しを出すか（判定は読み上げ側の診断と共有する → `canOpenLpgmNotes`）。 */
   const hasLpgmNotes = canOpenLpgmNotes(lpgm)
   const lpgmComments = useMemo(() => isSelected
@@ -1911,7 +1913,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                           分からないことは、地点名を落とす理由にならない。 */}
                       {group.pref && (
                         <div className="text-[0.75rem] roomy:text-[0.875rem] font-bold text-white">
-                          {group.pref}
+                          {place('pref', group.pref)}
                         </div>
                       )}
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[0.8125rem] roomy:text-[1rem] text-white">
@@ -1938,7 +1940,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                                 className: 'cursor-pointer hover:underline',
                               } : {})}
                             >
-                              {withNonJmaMark(name, nonJma)}
+                              {withNonJmaMark(place(isArea ? 'area' : 'station', name), nonJma)}
                             </span>
                           )
                         })}
@@ -1957,7 +1959,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             const stationRow = (st: IntensityStationRow, depth: 1 | 2 | 3, pref: string) => (
               <IntensityRow
                 key={st.name}
-                label={st.name}
+                label={place('station', st.name)}
                 scale={st.scale}
                 unreceived={st.unreceived}
                 unreceivedIsOwn={st.unreceived}
@@ -1977,7 +1979,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             const regionTree = (region: IntensityRegionRow, depth: 0 | 1, pref: string) => (
               <Fragment key={region.name}>
                 <IntensityRow
-                  label={region.name}
+                  label={place('area', region.name)}
                   scale={region.scale}
                   unreceived={region.unreceived}
                   hasUnreceived={region.hasUnreceived}
@@ -1993,7 +1995,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                     {region.cities.map(city => (
                       <div key={city.name}>
                         <IntensityRow
-                          label={city.name}
+                          label={place('city', city.name)}
                           scale={city.scale}
                           unreceived={city.unreceived}
                           unreceivedIsOwn={city.unreceived}
@@ -2025,7 +2027,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                     {row.kind === 'area' ? regionTree(row, 0, '') : (
                       <>
                         <IntensityRow
-                          label={row.pref}
+                          label={place('pref', row.pref)}
                           scale={row.scale}
                           unreceived={row.unreceived}
                           hasUnreceived={row.hasUnreceived}
@@ -2047,7 +2049,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                             {row.cities.map(city => (
                               <IntensityRow
                                 key={`city:${city.name}`}
-                                label={city.name}
+                                label={place('city', city.name)}
                                 scale={city.scale}
                                 unreceived={city.unreceived}
                                 unreceivedIsOwn={city.unreceived}
@@ -2146,7 +2148,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                 return (
                   <Fragment key={st.name}>
                     <LpgmRow
-                      label={st.name}
+                      label={place('station', st.name)}
                       lgInt={st.lgInt}
                       int={st.int}
                       nonJma={st.nonJma}
@@ -2170,7 +2172,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                     return (
                     <div key={topKey}>
                       <LpgmRow
-                        label={prefRow.name}
+                        label={place(prefRow.kind === 'pref' ? 'pref' : 'area', prefRow.name)}
                         lgInt={prefRow.maxLgInt}
                         int={prefRow.maxInt}
                         mark={lpgmRowMark(rowMarkKey.pref(prefRow.name), [
@@ -2187,7 +2189,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                           {prefRow.areas.map(area => (
                             <div key={area.name}>
                               <LpgmRow
-                                label={area.name}
+                                label={place('area', area.name)}
                                 lgInt={area.maxLgInt}
                                 int={area.maxInt}
                                 mark={lpgmRowMark(rowMarkKey.area(area.name), area.stations.map(st => rowMarkKey.station(st.name)))}

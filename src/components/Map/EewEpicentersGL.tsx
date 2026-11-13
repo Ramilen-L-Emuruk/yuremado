@@ -10,8 +10,9 @@ import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer, type DepthPointShape } from './gl/depthPointLayer'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
 import { log } from '../../utils/logger'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 
 // EEW（緊急地震速報）の震源（×印・点滅）。全モードで表示し、リアルタイム震度モード以外は
@@ -148,7 +149,7 @@ interface Props {
   fullOpacity: boolean
 }
 
-export function buildPopupHtml(ep: EewEpicenter, m: Messages): string {
+export function buildPopupHtml(ep: EewEpicenter, m: Messages, place: PlaceNameLookup): string {
   const t = m.map.popup
   const isWarning = ep.severity === 'Warning'
   const kindColor = isWarning ? '#f87171' : '#fbbf24'
@@ -167,7 +168,7 @@ export function buildPopupHtml(ep: EewEpicenter, m: Messages): string {
     `<div style="min-width:170px">` +
     `<div style="display:flex;align-items:baseline;gap:8px">` +
     // 震央地名が空の報はカードと同じ「震源調査中」を出す（見出しが空のまま番号だけ並ばないように）
-    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name || t.unknownHypocenter)}</span>` +
+    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name ? place('epi', ep.name) : t.unknownHypocenter)}</span>` +
     (serialText ? `<span style="font-size:11px;color:#94a3b8">${serialText}</span>` : '') +
     `</div>` +
     // EEW-6: 仮定震源要素（震源未確定）は M・深さが未確定なので数値を隠す。
@@ -217,6 +218,7 @@ export function EewEpicentersGL({ epicenters, iconScale, fullOpacity }: Props) {
   // 別の震源の内容を出す穴になる（いまは呼び直しが無いので到達しないだけ）。
   const byIdRef = useRef<Map<string, EewEpicenter>>(new Map())
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -275,7 +277,7 @@ export function EewEpicentersGL({ epicenters, iconScale, fullOpacity }: Props) {
           // 引けないのは、吹き出しを開いたまま EEW が失効したときだけ。空を返すと閉じるボタン
           // だけの箱が残るので、消えたことを言う。
           return ep
-            ? buildPopupHtml(ep, mRef.current)
+            ? buildPopupHtml(ep, mRef.current, placeRef.current)
             : `<div style="font-size:12px;color:#94a3b8">${mRef.current.map.popup.eewEnded}</div>`
         },
       })

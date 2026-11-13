@@ -14,8 +14,9 @@ import type { PrefIntensity } from '../../hooks/useQuakeLayerData'
 import { UNRECEIVED_COLOR } from './gl/intensityIcons'
 import { popupCodeHtml } from './gl/popupHtml'
 import type { LatLng } from '../../utils/stationCoords'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // 地震モードの震源（× 印）を、**深さを持つ点**として地下へ描く。
 //
@@ -60,7 +61,7 @@ const POPUP_PREF_LIMIT = 6
  * export はテスト向け（実行時はこのファイルの中からしか呼ばない）。**「未入電あり」の印が
  * 出るかは画面でしか分からない** —— 深さ方向に描く点なので、クリックで開くのが難しい。
  */
-export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[], m: Messages): string {
+export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[], m: Messages, place: PlaceNameLookup): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const hc = quake.earthquake.hypocenter
   const omitted = prefIntensities.length - POPUP_PREF_LIMIT
@@ -83,7 +84,7 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
         // （観測値の 1 文字ラベルの見え方は従来どおり）。
         `<span style="display:inline-block;min-width:20px;padding:0 3px;text-align:center;font-weight:700;border-radius:3px;` +
         `color:${readableTextColor(color)};font-size:10px;background:${color}">${esc(label)}</span>` +
-        `<span style="color:#cbd5e1">${esc(pref)}</span>${mark}</div>`
+        `<span style="color:#cbd5e1">${esc(place('pref', pref))}</span>${mark}</div>`
       )
     })
     .join('') +
@@ -92,7 +93,7 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
       : '')
   return (
     `<div class="text-sm" style="min-width:160px">` +
-    `<div class="font-bold" style="margin-bottom:4px">${esc(hc.name)}</div>` +
+    `<div class="font-bold" style="margin-bottom:4px">${esc(place('epi', hc.name))}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${m.map.popup.magnitudeDepth(
       esc(magnitudeWithConditionText(hc.magnitude, hc.magnitudeCondition, hc.magnitudeType, m.formats)),
       esc(depthText(hc.depth, hc.depthAtLeast === true, m.formats)),
@@ -112,6 +113,7 @@ export function HypocenterDepthGL({ quake, epicenter, prefIntensities, iconScale
   const contentRef = useRef({ quake, prefIntensities, epicenter })
   contentRef.current = { quake, prefIntensities, epicenter }
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -163,7 +165,7 @@ export function HypocenterDepthGL({ quake, epicenter, prefIntensities, iconScale
             properties: {},
           } as unknown as MapGeoJSONFeature
         },
-        buildClickHtml: () => buildPopupHtml(contentRef.current.quake, contentRef.current.prefIntensities, mRef.current),
+        buildClickHtml: () => buildPopupHtml(contentRef.current.quake, contentRef.current.prefIntensities, mRef.current, placeRef.current),
       })
     } catch (err) {
       log.error('[HypocenterDepthGL] 吹き出しの元データを登録できなかった', err)

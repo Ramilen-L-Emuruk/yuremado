@@ -11,6 +11,7 @@ import { hasKnownEpicenter } from './geo'
 import { kyoshinDetectionScaleText } from './kyoshinIntensity'
 import { lpgmClassLabelWithApproxAbove } from './lpgm'
 import type { Messages } from '../i18n/messages'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 
 // 共有カードの見出しと出典行を、いま地図が見せているものから組み立てる。
 //
@@ -72,6 +73,7 @@ export function buildShareCardContent(
   }: ShareCardContentInput,
   appUrl: string,
   m: Messages,
+  place: PlaceNameLookup,
 ): ShareCardContent {
   const liveEews = eews.filter((e) => !e.cancelled && !e.expired)
   // **描いていないものを出典に挙げない**——読み手が画像の中に探しても見つからない。逆に
@@ -96,7 +98,7 @@ export function buildShareCardContent(
   if (liveEews.length > 0) notices.unshift(m.shareImage.eewNotice)
 
   const base =
-    mode === 'tsunami' ? tsunamiContent(tsunamis, tsunamiSourceQuakes, m) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection, m) : quakeContent(quake, m)
+    mode === 'tsunami' ? tsunamiContent(tsunamis, tsunamiSourceQuakes, m, place) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection, m, place) : quakeContent(quake, m, place)
   return { ...base, notices, shareText: buildShareText(base.header, appUrl, m) }
 }
 
@@ -132,13 +134,13 @@ function shareDepthText(depth: number | undefined, depthAtLeast: boolean | undef
   return depth !== undefined && hasDepth(depth) ? m.shareImage.depth(depthText(depth, depthAtLeast === true, m.formats)) : m.shareImage.depthUnknown
 }
 
-function quakeContent(quake: JMAQuake | null, m: Messages): ContentWithoutNotices {
+function quakeContent(quake: JMAQuake | null, m: Messages, place: PlaceNameLookup): ContentWithoutNotices {
   if (!quake) return { header: { title: m.shareImage.quakeTitle }, filenameLabel: 'quake' }
   const { hypocenter, maxScale, time } = quake.earthquake
   // 震度を伝えない電文（震源情報など）は maxScale がセンチネル（-1）で届く。
   // 「最大震度 不明」と書くくらいなら見出しを種別名に落とす。
   const knownScale = isValidIntensityScale(maxScale) && maxScale >= 0
-  const parts = [hypocenter.name]
+  const parts = [hypocenter.name ? place('epi', hypocenter.name) : hypocenter.name]
   // 規模・深さが不明でも「M不明」「深さ 不明」と焼く（→ `shareMagnitudeText`）。**震源要素をまったく伝えていない電文
   // （震度速報。座標がセンチネルで規模・深さも無い）では足さない** —— その電文は規模・深さを「不明」と言っているのではなく、
   // まだ伝えていない。**位置だけが判らない電文（震源要素不明）では足す** —— 判っている規模・深さを位置と一緒に伏せない
@@ -168,7 +170,7 @@ function quakeContent(quake: JMAQuake | null, m: Messages): ContentWithoutNotice
   }
 }
 
-function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[], m: Messages): ContentWithoutNotices {
+function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[], m: Messages, place: PlaceNameLookup): ContentWithoutNotices {
   // **解除表示中（`cancelledAt`）も外す。** 等級の判定（`tsunamiOverallGrade`・`isTsunamiForecastOnly`）は
   // どちらも外すので、ここで残すと見出しは発表中の津波、区域数・震源・時刻は解除された津波、と出どころが割れる。
   const live = tsunamis.filter((t) => !t.cancelled && !t.cancelledAt)
@@ -201,7 +203,8 @@ function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[], m: 
       : (source.magnitudeCondition ? magnitudeConditionText(source.magnitudeCondition, m.formats) : m.shareImage.magnitudeUnknown)
     // **深さも焼く**（2026-10-23 ユーザー選択「どちらも出す (Recommended)」。全期間で 439 件中 266 件が深さを持つ）。
     // 判らなければ「深さ 不明」（地震・EEW と揃える）。
-    const text = m.shareImage.joinParts([source.hypocenterName, magnitudeText, shareDepthText(source.depth, source.depthAtLeast, m)])
+    // 重なりの判定はこの文で行う。同じ震源名は同じ訳になるので、訳した後で比べても判定は変わらない
+    const text = m.shareImage.joinParts([source.hypocenterName ? place('epi', source.hypocenterName) : source.hypocenterName, magnitudeText, shareDepthText(source.depth, source.depthAtLeast, m)])
     const time = sourceEarthquakeTime(source)
     // 時刻は瞬間で比べる（同じ時刻でも表記が報ごとに違いうる）。
     const ms = time ? Date.parse(time) : NaN
@@ -234,13 +237,13 @@ function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[], m: 
   }
 }
 
-function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['kyoshinDetection'], m: Messages): ContentWithoutNotices {
+function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['kyoshinDetection'], m: Messages, place: PlaceNameLookup): ContentWithoutNotices {
   const eew = pickMostSevereEew(liveEews)
   if (!eew) return detectionContent(detection, m)
   // **複数の緊急地震速報が発表中なら、副見出しに全件を並べる**（2026-10-23 ユーザー選択「全件を並べる」。全期間で同時発表の組
   // 108・200 地震。並べ方は 2026-10-24 ユーザー選択「副見出しで折り返す (Recommended)」）。見出しの区分・色と右上の報番号・
   // 発生時刻は最も深刻な 1 件のまま。並びは深刻な順（見出しの 1 件が先頭）。
-  const subtitle = sortEewsBySeverity(liveEews).map(e => eewSubtitle(e, m)).join(m.formats.slashSpaced)
+  const subtitle = sortEewsBySeverity(liveEews).map(e => eewSubtitle(e, m, place)).join(m.formats.slashSpaced)
   const info = eewMaxScaleInfo(eew)
   const knownScale = isValidIntensityScale(info.scale) && info.scale >= 0
   const serial = eewDisplaySerial(eew)
@@ -300,13 +303,13 @@ function detectionContent(detection: ShareCardContentInput['kyoshinDetection'], 
  * **`condition` を参照する箇所は eew-spec.md §5 に列挙する決まり。足したらそちらも更新すること。**
  * **深さも焼く**（2026-10-23 ユーザー選択「どちらも出す (Recommended)」。全期間 45,079 報すべてが深さを持つ）。
  */
-function eewSubtitle(eew: EEWAlert, m: Messages): string {
+function eewSubtitle(eew: EEWAlert, m: Messages, place: PlaceNameLookup): string {
   const { hypocenter } = eew.earthquake
   const info = eewMaxScaleInfo(eew)
   const knownScale = isValidIntensityScale(info.scale) && info.scale >= 0
   // 震央地名が空の報は、画面のカード・地図の吹き出しと同じ「震源調査中」を名前の位置に置く
   // （2026-10-22 ユーザー承認「「震源調査中」を入れる」）
-  const parts = [hypocenter.name || m.shareImage.unknownHypocenter]
+  const parts = [hypocenter.name ? place('epi', hypocenter.name) : m.shareImage.unknownHypocenter]
   if (!isProvisionalHypocenter(eew)) {
     // 数値が無くても「Ｍ８を超える巨大地震」は落とさない（地震情報の共有カードと同じ。2026-10-22 ユーザー承認
     // 「吹き出しと共有カードも揃える (Recommended)」）。不明なら「M不明」

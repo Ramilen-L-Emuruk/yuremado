@@ -10,7 +10,7 @@ import { serverNow } from '../../utils/clock'
 import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 import { areaPrefIndexOf, getStationCoordsCache, onStationCoordsLoaded, regionOrderIndexOf, regionOrderRank, type StationCoordsData } from '../../utils/stationCoords'
 import { clampPeriodRange } from '../../utils/historyDays'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
 import { quakeReportNameText } from './quakeNames'
 import {
   clearQuakeListFilter, QUAKE_DEPTH_RANGE, QUAKE_LIST_TYPES, QUAKE_MAGNITUDE_RANGE, QUAKE_PERIOD_HOURS, QUAKE_SCALE_STEPS,
@@ -357,8 +357,10 @@ function PeriodPicker({ filter, nowMs, onChange }: { filter: QuakeListFilter; no
  */
 function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; quakes: readonly JMAQuake[]; onChange: (f: QuakeListFilter) => void }) {
   const { quake: w, formats } = useMessages()
-  // 県でない組（海域・遠方）の名前を画面の語にする。県と地方の名前は地名なので電文の文字のまま
-  const groupLabel = (label: string) => w.filter.groupName[label] ?? label
+  const place = usePlaceNames()
+  // 県でない組（海域・遠方）と地方の名前は画面の語に、県の名前は地名の訳にする（どちらも無ければ電文の文字のまま）。
+  // 鍵・選んだ名前・絞り込みには日本語の名前を使い、出す文字だけを替える
+  const groupLabel = (label: string) => w.filter.groupName[label] ?? place('pref', label)
   // 一覧と地図のどちらを出すかは設定に覚える（2026-11-08 選択「最後に選んだ方を覚える」）
   const mode = filter.region.view
   const setMode = (view: QuakeRegionView) => { if (view !== mode) onChange({ ...filter, region: { ...filter.region, view } }) }
@@ -398,6 +400,8 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
   const setBasis = (b: QuakeRegionBasis) => { if (b !== basis) { setGroupOpen(new Map()); onChange({ ...filter, region: { ...filter.region, basis: b, names: [] } }) } }
   const seg = (on: boolean) => `px-2 py-0.5 ${on ? 'bg-blue-500/30 text-white' : 'hover:bg-white/10'}`
   const q = query.trim()
+  // 選択肢の地名は、震央で絞るなら震央地名、観測した地域で絞るなら細分区域
+  const optionLabel = (name: string) => place(basis === 'epicenter' ? 'epi' : 'area', name)
   const mapOn = basis === 'observed' && mode === 'map'
   // 地図のときは一覧（地名の検索欄も）を隠す。地図を読み込めなかったときだけ出す（2026-11-08 選択「地図のときは一覧を隠す」）。
   // 区域の形はメインの地図と同じ取得の控えを読むだけなので、ここで読んでも通信は増えない
@@ -408,7 +412,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
     .map(b => ({
       ...b,
       groups: b.groups
-        .map(g => ({ ...g, options: q === '' || b.label.includes(q) || groupLabel(b.label).includes(q) ? g.options : g.options.filter(o => o.name.includes(q) || g.label.includes(q) || groupLabel(g.label).includes(q)) }))
+        .map(g => ({ ...g, options: q === '' || b.label.includes(q) || groupLabel(b.label).includes(q) ? g.options : g.options.filter(o => o.name.includes(q) || optionLabel(o.name).includes(q) || g.label.includes(q) || groupLabel(g.label).includes(q)) }))
         .filter(g => g.options.length > 0),
     }))
     .filter(b => b.groups.length > 0)
@@ -429,7 +433,7 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
       {options.map(o => (
         <label key={o.name} className="flex cursor-pointer items-center gap-1.5">
           <input type="checkbox" checked={names.includes(o.name)} onChange={() => toggle(o.name)} />
-          <span className="min-w-0 flex-1 truncate">{o.name}</span>
+          <span className="min-w-0 flex-1 truncate">{optionLabel(o.name)}</span>
           <span className="tabular-nums">{o.count}</span>
         </label>
       ))}
@@ -526,6 +530,7 @@ let regionPathCache: { data: unknown; paths: { name: string; d: string }[] } | n
 
 function RegionMap({ selected, present, onToggle }: { selected: readonly string[]; present: ReadonlySet<string>; onToggle: (name: string) => void }) {
   const q = useMessages().quake
+  const place = usePlaceNames()
   const { data, failed } = useSubRegions()
   const paths = useMemo(() => {
     if (!data) return null
@@ -640,9 +645,9 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
       fill={selected.includes(p.name) ? 'rgba(59,130,246,.75)' : present.has(p.name) ? 'rgba(148,163,184,.45)' : 'rgba(148,163,184,.08)'}
       stroke="rgba(15,23,42,.9)" strokeWidth={0.8} vectorEffect="non-scaling-stroke"
     >
-      <title>{p.name}</title>
+      <title>{place('area', p.name)}</title>
     </path>
-  )), [paths, present, selected])
+  )), [paths, present, selected, place])
   const zoomBy = (factor: number) => setView(v => zoomView(v, factor, v.x + v.w / 2, v.y + (v.w * MAP_H / MAP_W) / 2))
   const whole = view.w >= MAP_W
   // 読み込み中・失敗は地図の代わりに 1 行出す（2026-11-08 ユーザー選択「両方出す (Recommended)」）。選ぶのは下の一覧でもできる

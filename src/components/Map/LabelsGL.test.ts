@@ -19,7 +19,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createElement } from 'react'
 import { render, cleanup } from '@testing-library/react'
 import { MapGLContext } from './mapGLContext'
-import { LabelsGL } from './LabelsGL'
+import { LabelsGL, relabelTargets, type LabelTarget } from './LabelsGL'
+import { JA_MESSAGES } from '../../i18n/messages'
+import { mapLabelPlaceNames, placeNameLookup, PLACE_NAME_KINDS, type PlaceNameTable } from '../../i18n/placeNames'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 
 type LatLng = [number, number]
@@ -396,5 +398,49 @@ describe('LabelsGL はマーカーの位置が変わると判定をやり直す'
     view.setProps({ overlapSignature: 'a' })
     await vi.advanceTimersByTimeAsync(1100)
     expect(h.queryCalls).toBe(before)
+  })
+})
+
+describe('relabelTargets（言語を切り替えたときのラベルの字）', () => {
+  const en = placeNameLookup({
+    ...(Object.fromEntries(PLACE_NAME_KINDS.map((k) => [k, {}])) as unknown as PlaceNameTable),
+    pref: { 石川県: 'Ishikawa Prefecture' },
+    area: { 石川県能登: 'Noto, Ishikawa Prefecture' },
+  })
+  const es = placeNameLookup({
+    ...(Object.fromEntries(PLACE_NAME_KINDS.map((k) => [k, {}])) as unknown as PlaceNameTable),
+    pref: { 石川県: 'Prefectura de Ishikawa' },
+    area: { 石川県能登: 'Noto, Prefectura de Ishikawa' },
+  })
+  const targets = (): LabelTarget[] => [
+    { source: 'basemap-region-labels', id: 0, lngLat: [0, 0], text: '北海道', textSize: 12 },
+    { source: 'basemap-pref-labels', id: 0, lngLat: [0, 0], text: '石川県', textSize: 12, place: { kind: 'pref', name: '石川県' } },
+    { source: 'basemap-subregion-labels', id: 0, lngLat: [0, 0], text: '石川県能登', textSize: 12, place: { kind: 'area', name: '石川県能登' } },
+  ]
+
+  it('正: 訳す言語では県名・区域名を訳し、字の変わったソースだけを返す', () => {
+    const t = targets()
+    const changed = relabelTargets(t, mapLabelPlaceNames('en', en), JA_MESSAGES.map)
+    expect(t.map((x) => x.text)).toEqual(['北海道', 'Ishikawa Prefecture', 'Noto, Ishikawa Prefecture'])
+    expect([...changed].sort()).toEqual(['basemap-pref-labels', 'basemap-subregion-labels'])
+  })
+
+  it('正: 英語からスペイン語へ移っても、元の日本語の名前から引き直す', () => {
+    const t = targets()
+    relabelTargets(t, mapLabelPlaceNames('en', en), JA_MESSAGES.map)
+    relabelTargets(t, mapLabelPlaceNames('es', es), JA_MESSAGES.map)
+    expect(t[2].text).toBe('Noto, Prefectura de Ishikawa')
+  })
+
+  it('対照: 訳さない言語（中国語）では、訳の表があっても日本語の名前へ戻す', () => {
+    const t = targets()
+    relabelTargets(t, mapLabelPlaceNames('en', en), JA_MESSAGES.map)
+    relabelTargets(t, mapLabelPlaceNames('zh-Hans', en), JA_MESSAGES.map)
+    expect(t.map((x) => x.text)).toEqual(['北海道', '石川県', '石川県能登'])
+  })
+
+  it('安全弁: 字が変わらなければ何も返さない（書き戻しと重なりの測り直しを起こさない）', () => {
+    const t = targets()
+    expect(relabelTargets(t, mapLabelPlaceNames('ja', en), JA_MESSAGES.map).size).toBe(0)
   })
 })

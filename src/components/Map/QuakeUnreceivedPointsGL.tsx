@@ -10,8 +10,9 @@ import { haversineKm } from '../../utils/geo'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, UNRECEIVED_ICON_ID, UNRECEIVED_COLOR, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
@@ -77,6 +78,8 @@ function buildFC(
       iconSizeRatio: radius / INTENSITY_ICON_BASE_RADIUS,
       scale: UNRECEIVED_SORT_LEVEL,
       addr: m.addr,
+      // 名前が区域か観測点か（訳を引く表を選ぶため）
+      isArea: m.isArea,
       pref: m.pref,
       region: m.region ?? '',
       nonJma: m.nonJma ?? false,
@@ -93,8 +96,9 @@ function buildFC(
 }
 
 /** 吹き出しの見出し。気象庁以外が運用する観測点には `＊` を戻す（観測値のドットと同じ扱い）。 */
-function popupTitle(f: MapGeoJSONFeature): string {
-  return withNonJmaMark(String(f.properties?.addr ?? ''), Boolean(f.properties?.nonJma))
+function popupTitle(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  const addr = String(f.properties?.addr ?? '')
+  return withNonJmaMark(place(f.properties?.isArea ? 'area' : 'station', addr), Boolean(f.properties?.nonJma))
 }
 
 /**
@@ -105,17 +109,17 @@ function unreceivedBadgeLabel(m: Messages): string {
   return intensityLabelWithOrAbove(UNRECEIVED_SORT_LEVEL, true, m.formats)
 }
 
-function hoverHtml(f: MapGeoJSONFeature, m: Messages): string {
+function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${badgeHtml(unreceivedBadgeLabel(m), UNRECEIVED_COLOR)}` +
-    `<span style="font-weight:600">${escapeHtml(popupTitle(f))}</span></div>`
+    `<span style="font-weight:600">${escapeHtml(popupTitle(f, place))}</span></div>`
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
-  const pref = String(f.properties?.pref ?? '')
-  const region = String(f.properties?.region ?? '')
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
+  const pref = place('pref', String(f.properties?.pref ?? ''))
+  const region = place('area', String(f.properties?.region ?? ''))
   const distanceKm = Number(f.properties?.distanceKm ?? -1)
   const nonJma = Boolean(f.properties?.nonJma)
   const sub = [pref, region].filter(Boolean).join(' / ')
@@ -125,7 +129,7 @@ function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
     `<div style="min-width:150px">` +
     `<div style="font-weight:700;font-size:13px"` +
       (nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
-      `>${escapeHtml(popupTitle(f))}</div>` +
+      `>${escapeHtml(popupTitle(f, place))}</div>` +
     (sub ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(sub)}</div>` : '') +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
       `${badgeHtml(label, UNRECEIVED_COLOR)}` +
@@ -147,6 +151,7 @@ export function QuakeUnreceivedPointsGL({ markers, iconScale, visible, epicenter
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -171,8 +176,8 @@ export function QuakeUnreceivedPointsGL({ markers, iconScale, visible, epicenter
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
-      buildHoverHtml: (f) => hoverHtml(f, mRef.current),
-      buildClickHtml: (f) => clickHtml(f, mRef.current),
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

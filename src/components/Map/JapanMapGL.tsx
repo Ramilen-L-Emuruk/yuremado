@@ -66,7 +66,7 @@ import { syncEewFirstSeen } from './gl/eewFirstSeen'
 import { applyFrontSortKeys, bearingChangedEnough } from './gl/screenDepth'
 import { installNoopCameraUpdateSkip } from './gl/skipNoopCameraUpdate'
 import type { MapLegendSources, LegendKey } from '../MapLegend/legendBlocks'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
 
 // MapLibre GL JS 版の地図コンポーネント（Leaflet 版 JapanMap と同一 Props）。
 // MapLibre 移行計画 docs/webgl-migration-implementation-plan.md のフェーズ順に、
@@ -156,6 +156,7 @@ export function JapanMapGL({
   const mapRef = useRef<maplibregl.Map | null>(null)
   const [map, setMap] = useState<maplibregl.Map | null>(null)
   const messages = useMessages()
+  const place = usePlaceNames()
   // 地図そのものを作れなかった。地図の代わりに、その旨を出すために持つ。
   const [mapUnavailable, setMapUnavailable] = useState(false)
   // 地図の生成 effect は依存配列が空（地図は 1 度だけ作る）。コールバックを直接読むと、
@@ -351,8 +352,8 @@ export function JapanMapGL({
     if (mode !== 'quake' || !distributionMode) return null
     const atPosition = stationMarkers.filter((p) => p.position[0] === position[0] && p.position[1] === position[1])
     const m = (stationName !== null ? atPosition.find((p) => p.addr === stationName) : undefined) ?? atPosition[0]
-    return m ? quakePointClickHtml(m, epicenter, messages) : null
-  }, [mode, distributionMode, stationMarkers, epicenter, messages])
+    return m ? quakePointClickHtml(m, epicenter, messages, place) : null
+  }, [mode, distributionMode, stationMarkers, epicenter, messages, place])
   const overlapSignature = useMemo(() => {
     const parts = [
       aggregateByRegion ? regionAggregates.map((r) => r.name).join(',') : '',

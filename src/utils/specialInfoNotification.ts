@@ -3,6 +3,7 @@ import type {
   JMAQuakeNotice,
 } from '../types/earthquake'
 import type { Messages } from '../i18n/messages'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 import { readDateTime } from './formatters'
 import type { NotificationOpen } from './notificationOpen'
 
@@ -94,14 +95,15 @@ export function nankaiCommentaryNotification(event: JMANankaiCommentary, m: Spec
  * それまでは 2026-10-24 ユーザー選択「階級1以上 (Recommended)」で呼び出し側が 1 以上に絞っていた）。
  * 取消は表示中の報から地名を引けないこともあるので、`name` を呼び出し側が渡す（空なら地名なし）。
  */
-export function lpgmNotification(event: JMALpgm, cancelSubjectName: string, m: SpecialInfoNotificationWords): SpecialInfoNotification {
+export function lpgmNotification(event: JMALpgm, cancelSubjectName: string, m: SpecialInfoNotificationWords, place: PlaceNameLookup): SpecialInfoNotification {
   const tag = `lpgm-${event.eventId}`
   const lpgmName = localizedInfoName(LPGM_NAME, m)
   if (event.cancelled) {
     const name = cancelSubjectName.trim()
-    return cancelled(lpgmName, tag, name ? m.alertText.lpgmFor(name, lpgmName) : lpgmName, '', m)
+    return cancelled(lpgmName, tag, name ? m.alertText.lpgmFor(place('epi', name), lpgmName) : lpgmName, '', m)
   }
-  const name = event.hypocenter?.name.trim() ?? ''
+  const raw = event.hypocenter?.name.trim() ?? ''
+  const name = raw ? place('epi', raw) : ''
   const body = m.alertText.joinParts([name, m.alertText.lpgmMaxClass(event.maxClass)].filter(p => p !== ''))
   return { title: lpgmName, body, tag, open: { tab: 'earthquake', lpgm: event.eventId } }
 }
@@ -149,14 +151,15 @@ export function quakeNoticeNotification(event: JMAQuakeNotice, m: SpecialInfoNot
  * `internationalTsunamiBody` と同じ文。2026-11-06 ユーザー選択「通知もそろえる (Recommended)」）。
  *
  * - 発生時刻は日本時間（端末の時間帯で読まない。中継は UTC で動く）
- * - 震源は、同じ地震の地震カードに結べたときはその震源名（`quakeName`。電文の値なのでどの言語もそのまま）、結べなければ電文の座標
+ * - 震源は、同じ地震の地震カードに結べたときはその震源名（`quakeName`。表示する言語へ `place` で訳し、表に無い名前は日本語のまま）、結べなければ電文の座標
  * - 深さは電文にあるときだけ。評価が 5 種のどれとしても読めない報は、評価の句の代わりに情報名で結ぶ
  */
-export function internationalTsunamiNotificationBody(x: JMAInternationalTsunami, quakeName: string | undefined, m: SpecialInfoNotificationWords): string {
+export function internationalTsunamiNotificationBody(x: JMAInternationalTsunami, quakeName: string | undefined, m: SpecialInfoNotificationWords, place: PlaceNameLookup): string {
   const w = m.alertText
   if (x.isCommunicationsTest) return w.communicationsTest
   const ms = x.originTime ? Date.parse(x.originTime) : NaN
-  const where = quakeName?.trim()
+  const named = quakeName?.trim()
+  const where = (named ? place('epi', named) : '')
     || (x.epicenter ? w.internationalTsunamiCoordinate(x.epicenter.latitude, x.epicenter.longitude, m.formats.coordinate) : '')
   return w.internationalTsunami({
     // その瞬間をそのまま渡し、日本時間で書くのは辞書（端末の時刻として組み直すと、端末の夏時間の切り替わりで 1 時間ずれる）
@@ -174,8 +177,8 @@ export function internationalTsunamiNotificationBody(x: JMAInternationalTsunami,
  * {@link internationalTsunamiNotificationBody}。同じ地震の報は後の報で置き換える（`tag` は発生時刻ごと）。
  * 押したら、その地震のカード（結べた地震カードか、英文だけのカード）を選ぶ。通信試験は開き先を持たない。
  */
-export function internationalTsunamiNotification(event: JMAInternationalTsunami, quakeName: string | undefined, m: SpecialInfoNotificationWords): SpecialInfoNotification {
-  const body = internationalTsunamiNotificationBody(event, quakeName, m)
+export function internationalTsunamiNotification(event: JMAInternationalTsunami, quakeName: string | undefined, m: SpecialInfoNotificationWords, place: PlaceNameLookup): SpecialInfoNotification {
+  const body = internationalTsunamiNotificationBody(event, quakeName, m, place)
   const title = m.specialInfo.internationalTsunami
   if (event.isCommunicationsTest || event.originTime === undefined) {
     return { title, body, tag: 'international-tsunami', open: null }

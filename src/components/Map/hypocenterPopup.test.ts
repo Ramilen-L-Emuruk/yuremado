@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildPopupHtml } from './HypocenterDepthGL'
 import { JA_MESSAGES } from '../../i18n/messages'
+import { JA_PLACE_NAMES } from '../../i18n/placeNames'
 import type { PrefIntensity } from '../../hooks/useQuakeLayerData'
 import type { JMAQuake } from '../../types/earthquake'
 
@@ -30,7 +31,7 @@ const row = (over: Partial<PrefIntensity>): PrefIntensity =>
 describe('震源の吹き出しの都道府県別最大震度', () => {
   // 正: 観測できた県でも、未入電があれば印を出す。
   it('観測値がある県に「未入電あり」を出す', () => {
-    const html = buildPopupHtml(QUAKE, [row({ hasUnreceived: true })], JA_MESSAGES)
+    const html = buildPopupHtml(QUAKE, [row({ hasUnreceived: true })], JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain('愛媛県')
     expect(html).toContain('未入電あり')
     // 値そのものは観測値のまま（印は値を書き換えない）。
@@ -39,12 +40,12 @@ describe('震源の吹き出しの都道府県別最大震度', () => {
 
   // 対照: 未入電を持たない県には出さない。
   it('未入電を持たない県には出さない', () => {
-    expect(buildPopupHtml(QUAKE, [row({})], JA_MESSAGES)).not.toContain('未入電')
+    expect(buildPopupHtml(QUAKE, [row({})], JA_MESSAGES, JA_PLACE_NAMES)).not.toContain('未入電')
   })
 
   // 安全弁: 値そのものが推定の県には重ねない（「5弱以上」が既にそれを言っている）。
   it('値が推定の県に「未入電あり」を重ねない', () => {
-    const html = buildPopupHtml(QUAKE, [row({ scale: 45, unreceived: true })], JA_MESSAGES)
+    const html = buildPopupHtml(QUAKE, [row({ scale: 45, unreceived: true })], JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain('5弱以上')
     expect(html).not.toContain('未入電あり')
   })
@@ -60,17 +61,17 @@ describe('震源の吹き出しで 6 県を超えたとき', () => {
 
   // 正: 超えた分の件数を末尾の 1 行で添える。
   it('8 県なら「ほか 2 都道府県」を添える', () => {
-    expect(buildPopupHtml(QUAKE, rows(8), JA_MESSAGES)).toContain('ほか 2 都道府県')
+    expect(buildPopupHtml(QUAKE, rows(8), JA_MESSAGES, JA_PLACE_NAMES)).toContain('ほか 2 都道府県')
   })
 
   // 対照: ちょうど 6 県なら添えない（境界の手前）。
   it('6 県ちょうどなら添えない', () => {
-    expect(buildPopupHtml(QUAKE, rows(6), JA_MESSAGES)).not.toContain('ほか')
+    expect(buildPopupHtml(QUAKE, rows(6), JA_MESSAGES, JA_PLACE_NAMES)).not.toContain('ほか')
   })
 
   // 安全弁: 並べるのは強い順の上位 6 県のままで、7 県目以降の名前は出さない。
   it('7 県目以降の名前は並べない', () => {
-    const html = buildPopupHtml(QUAKE, rows(8), JA_MESSAGES)
+    const html = buildPopupHtml(QUAKE, rows(8), JA_MESSAGES, JA_PLACE_NAMES)
     expect(html).toContain('長野県')
     expect(html).not.toContain('群馬県')
     expect(html).not.toContain('山形県')

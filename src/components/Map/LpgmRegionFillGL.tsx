@@ -11,8 +11,9 @@ import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { ensureLpgmIcons, lpgmIconId, LPGM_ICON_BASE_RADIUS } from './gl/lpgmIcons'
 
 // 長周期地震動のズームアウト時、一次細分区域ごとの最大階級を塗る MapLibre 版
@@ -89,7 +90,7 @@ export const POPUP_STATION_LIMIT = 8
  * カードで区域の行を開いたときと同じ顔ぶれ・同じ順（→ `lpgmStationsByArea`）。
  * 作りは地震の区域塗りの吹き出しの市町村の行（`regionCityRowsHtml`）に揃える。
  */
-export function regionStationRowsHtml(stations: readonly LpgmStationRow[], m: Messages): string {
+export function regionStationRowsHtml(stations: readonly LpgmStationRow[], m: Messages, place: PlaceNameLookup): string {
   if (stations.length === 0) return ''
   const omitted = stations.length - POPUP_STATION_LIMIT
   const rows = stations
@@ -98,7 +99,7 @@ export function regionStationRowsHtml(stations: readonly LpgmStationRow[], m: Me
       `<div style="display:flex;align-items:center;gap:8px;font-size:12px">` +
       `${badgeHtml(String(s.lgInt), getLpgmClassColor(s.lgInt))}` +
       `<span style="color:#cbd5e1"` + (s.nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
-      `>${escapeHtml(withNonJmaMark(s.name, s.nonJma === true))}</span>` +
+      `>${escapeHtml(withNonJmaMark(place('station', s.name), s.nonJma === true))}</span>` +
       (s.int !== undefined
         ? `<span style="color:#94a3b8">${m.map.popup.intensity(escapeHtml(intensityLabel(s.int, m.formats)))}</span>`
         : '') +
@@ -108,16 +109,16 @@ export function regionStationRowsHtml(stations: readonly LpgmStationRow[], m: Me
   return `<div style="margin-top:8px;display:flex;flex-direction:column;gap:2px">${rows}${more}</div>`
 }
 
-function clickHtml(f: MapGeoJSONFeature, stationsByRegion: ReadonlyMap<string, readonly LpgmStationRow[]>, m: Messages): string {
+function clickHtml(f: MapGeoJSONFeature, stationsByRegion: ReadonlyMap<string, readonly LpgmStationRow[]>, m: Messages, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
   const name = String(f.properties?.name ?? '')
   const int = Number(f.properties?.int ?? -1)
   return (
-    `<div class="text-sm" style="min-width:160px"><div class="font-bold">${escapeHtml(name)}</div>` +
+    `<div class="text-sm" style="min-width:160px"><div class="font-bold">${escapeHtml(place('area', name))}</div>` +
     `<div class="text-xs" style="color:#94a3b8">` +
     m.map.popup.lpgmRegion(escapeHtml(lpgmClassLabel(lgInt, m.formats)), int >= 0 ? escapeHtml(intensityLabel(int, m.formats)) : null) +
     `</div>` +
-    regionStationRowsHtml(stationsByRegion.get(name) ?? [], m) +
+    regionStationRowsHtml(stationsByRegion.get(name) ?? [], m, place) +
     popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
     `</div>`
   )
@@ -128,6 +129,7 @@ export function LpgmRegionFillGL({ regionAggregates, iconScale, visible }: Props
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
   // 吹き出しの登録は [map] 依存で 1 回だけなので、観測点は ref 越しに最新を読む（QuakeRegionFillGL と同じ）。
   const stationsByRegionRef = useRef<ReadonlyMap<string, readonly LpgmStationRow[]>>(new Map())
   stationsByRegionRef.current = new Map(regionAggregates.map((r) => [r.name, r.stations]))
@@ -171,7 +173,7 @@ export function LpgmRegionFillGL({ regionAggregates, iconScale, visible }: Props
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'lgInt',
-      buildClickHtml: (f) => clickHtml(f, stationsByRegionRef.current, mRef.current),
+      buildClickHtml: (f) => clickHtml(f, stationsByRegionRef.current, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {
