@@ -23,13 +23,13 @@ export function missingTooltipHtml(marker: TsunamiMissingMarker, m: Messages): s
   const lines = [`<div class="font-bold">${esc(marker.name)}</div>`]
   // 第1波の行は観測棒・到達確認の吹き出しと同じ形（「第1波 05:12 押し波」。2026-10-24 ユーザー選択「この形で揃える
   // (Recommended)」）。日時として読めない時刻は行ごと落とす（→ `observationFirstWaveText`）。
-  const firstWave = observationFirstWaveText(marker)
+  const firstWave = observationFirstWaveText(marker, m.tsunami)
   if (firstWave) {
     lines.push(`<div class="text-xs" style="color:#e5e7eb">${esc(firstWave)}</div>`)
   }
   // これまでに観測できた波高があれば出す。欠測になる前の値であることを添えないと、いまの波高だと読める。
   if (marker.height) {
-    lines.push(`<div class="text-xs" style="color:#e5e7eb">${m.map.popup.maxWaveSoFar(esc(overSuffixedHeight(marker.height)))}</div>`)
+    lines.push(`<div class="text-xs" style="color:#e5e7eb">${m.map.popup.maxWaveSoFar(esc(overSuffixedHeight(marker.height, m.tsunami)))}</div>`)
   }
   lines.push(`<div class="text-xs" style="color:${TSUNAMI_MISSING_COLOR}">${m.map.popup.tsunamiMissing}</div>`)
   lines.push(popupCodeLineHtml(marker.code, m))

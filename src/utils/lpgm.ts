@@ -45,9 +45,20 @@ export function isObservedLpgmClass(v: number): boolean {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4
 }
 
+/** 長周期地震動階級の札の日本語。**読み上げ・通知・中継の文面用。** 画面は {@link lpgmClassLabel} を使う */
 export function getLpgmClassLabel(cls: number): string {
+  return lpgmClassLabel(cls, ja.formats)
+}
+
+/** 長周期地震動階級の札（言語に合わせる形） */
+export function lpgmClassLabel(cls: number, w: Messages['formats']): string {
   // 0 は観測情報にだけ現れる（予測の側は 1〜4 だけを通してから呼ぶ）
-  return isObservedLpgmClass(cls) ? `階級${cls}` : '階級不明'
+  return isObservedLpgmClass(cls) ? w.lpgmClass(cls) : w.lpgmClassUnknown
+}
+
+/** 地震タブ・速報の札の短い形（「長周期3」）。読めない階級は「長周期不明」 */
+export function lpgmShortLabel(cls: number, w: Messages['formats']): string {
+  return isObservedLpgmClass(cls) ? w.lpgmShort(cls) : w.lpgmShortUnknown
 }
 
 /**
@@ -61,8 +72,13 @@ export function getLpgmClassLabel(cls: number): string {
  * 「階級不明」に語を足しても意味を成さないので、その場合は付けない。
  */
 export function getLpgmClassLabelWithApproxAbove(cls: number, over: boolean): string {
-  const label = getLpgmClassLabel(cls)
-  return over && isValidLpgmClass(cls) ? `${label}程度以上` : label
+  return lpgmClassLabelWithApproxAbove(cls, over, ja.formats)
+}
+
+/** {@link getLpgmClassLabelWithApproxAbove} の言語に合わせる形（画面用） */
+export function lpgmClassLabelWithApproxAbove(cls: number, over: boolean, w: Messages['formats']): string {
+  const label = lpgmClassLabel(cls, w)
+  return over && isValidLpgmClass(cls) ? w.approxAbove(label) : label
 }
 
 export function getLpgmClassColor(cls: number): string {

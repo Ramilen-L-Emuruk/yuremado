@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { quakeReportTimeline, formatTimelineTime } from './quakeReportTimeline'
 import { mergeQuakeInto } from './quakeMerge'
+import { ja } from '../i18n/messages/ja'
 import type { IssueType, JMAQuake } from '../types/earthquake'
 
 const t = (h: number, m: number) => new Date(2024, 0, 1, h, m).toISOString()
@@ -79,6 +80,6 @@ describe('quakeReportTimeline', () => {
   })
 
   it('時刻は「日 時:分」で書く', () => {
-    expect(formatTimelineTime(new Date(2024, 0, 1, 16, 5).getTime())).toBe('1日 16:05')
+    expect(formatTimelineTime(new Date(2024, 0, 1, 16, 5).getTime(), ja.formats)).toBe('1日 16:05')
   })
 })

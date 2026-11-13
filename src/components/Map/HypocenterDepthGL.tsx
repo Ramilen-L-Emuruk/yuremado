@@ -4,9 +4,9 @@ import { useMapGL } from './mapGLContext'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPointLayer } from './gl/depthPointLayer'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { getIntensityColor, getIntensityLabelWithOrAbove } from '../../utils/intensity'
+import { getIntensityColor, intensityLabelWithOrAbove } from '../../utils/intensity'
 import { readableTextColor } from '../../utils/contrast'
-import { formatMagnitudeWithCondition, formatDepth, hasDepth } from '../../utils/formatters'
+import { magnitudeWithConditionText, depthText, hasDepth } from '../../utils/formatters'
 import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 import type { JMAQuake } from '../../types/earthquake'
@@ -70,7 +70,7 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
       // 観測値が 1 件も無い県は、震度階級色を借りずに無彩色で出し、語も断定形にしない
       // （→ docs/spec/quake-spec.md §4）。地図の未入電の印と同じ色・同じ語。
       const color = unreceived ? UNRECEIVED_COLOR : getIntensityColor(scale)
-      const label = getIntensityLabelWithOrAbove(scale, unreceived)
+      const label = intensityLabelWithOrAbove(scale, unreceived, m.formats)
       // **観測できた県にも「未入電あり」を出す。** 値そのものは確かでも、その県にはもっと強い
       // 地点があるかもしれない。カードの行と同じ語・同じ条件にする（聞いた語・見た語で探せる）。
       // 値が推定の県（`unreceived`）には重ねない —— 「5弱以上」が既にそれを言っている。
@@ -94,8 +94,8 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
     `<div class="text-sm" style="min-width:160px">` +
     `<div class="font-bold" style="margin-bottom:4px">${esc(hc.name)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${m.map.popup.magnitudeDepth(
-      esc(formatMagnitudeWithCondition(hc.magnitude, hc.magnitudeCondition, hc.magnitudeType)),
-      esc(formatDepth(hc.depth, hc.depthAtLeast === true)),
+      esc(magnitudeWithConditionText(hc.magnitude, hc.magnitudeCondition, hc.magnitudeType, m.formats)),
+      esc(depthText(hc.depth, hc.depthAtLeast === true, m.formats)),
     )}</div>` +
     (rows ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:2px">${rows}</div>` : '') +
     // 震央地名コード（`Area/Code`）。詳細震央地名を持つ国外の地震では詳細のコードを添える

@@ -179,6 +179,7 @@ describe('catalogGridHeatPoints（列から直接畳む）', () => {
 })
 
 import { MAG_CONDITION_HUGE, MAG_CONDITION_UNKNOWN } from './bufrEstimatedIntensity'
+import { ja } from '../i18n/messages/ja'
 
 const HUGE = 'Ｍ８を超える巨大地震'
 
@@ -229,24 +230,24 @@ describe('heatMagnitude', () => {
     expect(heatMagnitude(3.2)).toBe(3.2)
     const roundTrip = JSON.parse(JSON.stringify({ magnitude: heatMagnitude(NaN), magnitudeCondition: HUGE }))
     expect(roundTrip.magnitude).toBe(-1)
-    expect(heatMagnitudeLabel(roundTrip.magnitude, roundTrip.magnitudeCondition)).toBe('M8を超える巨大地震')
+    expect(heatMagnitudeLabel(roundTrip.magnitude, roundTrip.magnitudeCondition, ja.formats)).toBe('M8を超える巨大地震')
     expect(magnitudeToWeight(roundTrip.magnitude, roundTrip.magnitudeCondition)).toBe(1)
   })
 })
 
 describe('heatMagnitudeLabel', () => {
   it('巨大地震は気象庁の説明を半角へ直して出す', () => {
-    expect(heatMagnitudeLabel(-1, HUGE)).toBe('M8を超える巨大地震')
+    expect(heatMagnitudeLabel(-1, HUGE, ja.formats)).toBe('M8を超える巨大地震')
   })
 
   // 対照: M 不明は「Ｍ不明」の説明を持っていても「不明」のまま。
   it('M 不明は「不明」のまま', () => {
-    expect(heatMagnitudeLabel(-1, 'Ｍ不明')).toBe('不明')
-    expect(heatMagnitudeLabel(-1, null)).toBe('不明')
+    expect(heatMagnitudeLabel(-1, 'Ｍ不明', ja.formats)).toBe('不明')
+    expect(heatMagnitudeLabel(-1, null, ja.formats)).toBe('不明')
   })
 
   it('数値の規模は従来どおり', () => {
-    expect(heatMagnitudeLabel(3.24, null)).toBe('M3.2')
+    expect(heatMagnitudeLabel(3.24, null, ja.formats)).toBe('M3.2')
   })
 })
 

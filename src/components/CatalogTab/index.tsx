@@ -175,7 +175,7 @@ export const CatalogTab = memo(function CatalogTab({
   onRetry,
   tail,
 }: Props) {
-  const cm = useMessages().catalog
+  const { catalog: cm, formats: fw } = useMessages()
   const tag = localeTag(useLocale())
   // 桁の区切りは言語ごと。整形の部品は言語が変わったときだけ作る（スライダーを動かすたびに作り直さない）
   const numberFormat = useMemo(() => new Intl.NumberFormat(tag), [tag])
@@ -278,8 +278,8 @@ export const CatalogTab = memo(function CatalogTab({
         <RangeRow
           label={cm.period}
           description={cm.periodHint}
-          valueText={cm.periodValue(formatJstDate(filter.fromMs), formatJstDate(filter.toMs), dayCount, num(dayCount))}
-          note={index ? preliminaryNote(index, filter, tail?.fromMs ?? null, cm) : null}
+          valueText={cm.periodValue(formatJstDate(filter.fromMs, fw), formatJstDate(filter.toMs, fw), dayCount, num(dayCount))}
+          note={index ? preliminaryNote(index, filter, tail?.fromMs ?? null, cm, fw) : null}
         >
           <RangeSlider
             label={cm.period}

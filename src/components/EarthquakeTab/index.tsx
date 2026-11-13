@@ -212,6 +212,7 @@ interface Notice { text: string; tone: NoticeTone; onClose?: () => void }
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyDays, onLoadPeriod, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   const words = useMessages().quake
+  const formats = useMessages().formats
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
@@ -289,8 +290,8 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   const loadNote = filter.period === null || newestMissing === null
     ? null
     : autoLoading
-      ? { note: words.list.loadingBackTo(quakeListPeriodStartLabel(filter.period, nowMs)), countSuffix: words.list.loadingSuffix, loading: true }
-      : { note: words.list.notLoadedBefore(quakeListDayLabel(newestMissing)), countSuffix: words.list.loadedFrom(quakeListDayLabel(addDays(newestMissing, 1))), loading: false }
+      ? { note: words.list.loadingBackTo(quakeListPeriodStartLabel(filter.period, nowMs, formats)), countSuffix: words.list.loadingSuffix, loading: true }
+      : { note: words.list.notLoadedBefore(quakeListDayLabel(newestMissing, formats)), countSuffix: words.list.loadedFrom(quakeListDayLabel(addDays(newestMissing, 1), formats)), loading: false }
   // 「もっと見る」が読むもの。期間を選んでいる間は期間の続き（足りない日が無ければ出さない）、外しているときは今日から続く分を遡る
   // （2026-11-08 選択「期間の続きを読む (Recommended)」）
   const loadMoreAction: (() => Promise<boolean>) | null = periodRange !== null
@@ -450,7 +451,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
   const dayKeyCount = new Map<string, number>()
   let lastDayKey: string | null = null
   for (const q of sorted) {
-    const day = quakeListSection(q, sort.key, words.section)
+    const day = quakeListSection(q, sort.key, words.section, formats)
     if (day && day.key !== lastDayKey) {
       lastDayKey = day.key
       const n = dayKeyCount.get(day.key) ?? 0

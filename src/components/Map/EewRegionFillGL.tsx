@@ -72,19 +72,20 @@ function buildFC(areaFills: EewAreaFill[]): FeatureCollection<Polygon> {
 // 上限が定まらない区域（「震度4程度以上」）はバッジにも語を出す。塗り色は下限の階級色のままで、
 // 色を変える手立ては無いため、断定に見えないよう文字側で補う。下限と上限が違う区域は「3〜4」と
 // 幅で出す（色は上限のまま。→ `getEewAreaIntensityLabel`）。
-function scaleLabelOf(f: MapGeoJSONFeature): string {
+function scaleLabelOf(f: MapGeoJSONFeature, m: Messages): string {
   return getEewAreaIntensityLabel(
     Number(f.properties?.scaleFrom ?? -1),
     Number(f.properties?.scale ?? 0),
     Boolean(f.properties?.scaleOrAbove),
+    m.formats,
   )
 }
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+function hoverHtml(f: MapGeoJSONFeature, m: Messages): string {
   const scale = Number(f.properties?.scale ?? 0)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${badgeHtml(scaleLabelOf(f), getIntensityColor(scale))}` +
+    `${badgeHtml(scaleLabelOf(f, m), getIntensityColor(scale))}` +
     `<span style="font-weight:600">${escapeHtml(String(f.properties?.name ?? ''))}</span></div>`
   )
 }
@@ -124,8 +125,8 @@ function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
     `<div style="min-width:160px">` +
     `<div style="font-weight:700;font-size:13px">${escapeHtml(String(f.properties?.name ?? ''))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-    `${badgeHtml(scaleLabelOf(f), getIntensityColor(scale))}` +
-    `<span style="color:#cbd5e1">${m.map.popup.forecastIntensity(escapeHtml(scaleLabelOf(f)))}</span>` +
+    `${badgeHtml(scaleLabelOf(f, m), getIntensityColor(scale))}` +
+    `<span style="color:#cbd5e1">${m.map.popup.forecastIntensity(escapeHtml(scaleLabelOf(f, m)))}</span>` +
     `<span style="color:${kindColor};font-weight:700">${kind}</span></div>` +
     arrivalRowHtml(f, m) +
     `</div>`
@@ -160,7 +161,7 @@ export function EewRegionFillGL({ areaFills, visible }: Props) {
       priority: 'fill',
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
-      buildHoverHtml: hoverHtml,
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current),
       buildClickHtml: (f) => clickHtml(f, mRef.current),
       refreshMs: REFRESH_MS,
     })

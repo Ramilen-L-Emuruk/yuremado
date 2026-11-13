@@ -3,6 +3,7 @@ import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type 
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
 import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
+import { ja } from '../i18n/messages/ja'
 import { joinSegments, plain, type SpeechSegment, type SpeechRef, type QuakeFact, type SpokenObservation } from './ttsFollow'
 import { getSubRegionsCache } from './subregions'
 import { getPrefecturesCache } from './prefectures'
@@ -3224,7 +3225,7 @@ function omittedPointsSentence(total: number, shown: number, tail: string, parti
 // 「以上」の補完はカード・地図と同じ `overSuffixedHeight` に通す（補ってから単位を読み替える順）。
 // この 2 つは可換で、どちらを先に通しても同じ文字列になる。順序に意味を持たせていない。
 function observedHeightSuffix(o: TsunamiObservation): string {
-  return `で${tsunamiHeightToSpeech(overSuffixedHeight(o.height!))}`
+  return `で${tsunamiHeightToSpeech(overSuffixedHeight(o.height!, ja.tsunami))}`
 }
 
 /** 観測点更新で読み上げる件数の上限（多いときは波高の大きい順に絞る）。 */
@@ -3322,7 +3323,7 @@ export function tsunamiObservationUpdateToSegments(
     // 波高だけ上がる形も起きる）。前が無い（初出）なら読む —— 聞き手はその時刻を知らない。
     const spokenAt = spokenMaxHeightTimes?.get(o.name)
     const at = o.maxHeightDateTime && o.maxHeightDateTime !== spokenAt ? formatTime(o.maxHeightDateTime) : null
-    const value = tsunamiHeightToSpeech(overSuffixedHeight(o.height!))
+    const value = tsunamiHeightToSpeech(overSuffixedHeight(o.height!, ja.tsunami))
     return `で${fw ? `、${fw.time}に${fw.initial}が到達し、` : ''}${at ? `${at}に` : ''}${value}${stem}`
   }
   /**

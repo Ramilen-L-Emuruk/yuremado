@@ -3,7 +3,7 @@ import type { ExpressionSpecification, GeoJSONSource, MapGeoJSONFeature } from '
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
 import { heatMagnitudeColorValue, heatMagnitudeLabel, heatMagnitudeRank, type HeatPoint } from '../../utils/quakeHeatmap'
-import { formatDepth, formatDateTimeMin } from '../../utils/formatters'
+import { depthText, formatDateTimeMin } from '../../utils/formatters'
 import { getMagnitudeColor } from '../../utils/intensity'
 import { heatmapColorExpression } from './gl/heatmapRamp'
 import { addOrderedLayer } from './gl/layerOrder'
@@ -151,10 +151,10 @@ function conditionOf(f: MapGeoJSONFeature): string | null {
 }
 
 /** 規模の札（「M3.2」「M8を超える巨大地震」「不明」）。中身の決め方は quakeHeatmap.ts。 */
-function magnitudeBadge(f: MapGeoJSONFeature): string {
-  const m = Number(f.properties?.magnitude ?? -1)
+function magnitudeBadge(f: MapGeoJSONFeature, m: Messages): string {
+  const mag = Number(f.properties?.magnitude ?? -1)
   const c = conditionOf(f)
-  return badgeHtml(heatMagnitudeLabel(m, c), getMagnitudeColor(heatMagnitudeColorValue(m, c)))
+  return badgeHtml(heatMagnitudeLabel(mag, c, m.formats), getMagnitudeColor(heatMagnitudeColorValue(mag, c)))
 }
 
 /** 格子にまとめた点（`gridHeatPoints`）なら、まとめた地震の数。1 つの地震の点なら `null`。 */
@@ -167,7 +167,7 @@ function groupCountOf(f: MapGeoJSONFeature): number | null {
 function groupHoverHtml(f: MapGeoJSONFeature, count: number, m: Messages): string {
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${magnitudeBadge(f)}` +
+    `${magnitudeBadge(f, m)}` +
     `<span style="font-weight:600">${m.map.popup.nearbyCount(count)}</span></div>`
   )
 }
@@ -179,7 +179,7 @@ function groupClickHtml(f: MapGeoJSONFeature, count: number, m: Messages): strin
     `<div style="min-width:160px">` +
     `<div style="font-weight:700;font-size:13px">${m.map.popup.nearbyTitle(count)}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-    `<span style="color:#cbd5e1">${m.map.popup.largest}</span>${magnitudeBadge(f)}</div>` +
+    `<span style="color:#cbd5e1">${m.map.popup.largest}</span>${magnitudeBadge(f, m)}</div>` +
     (timeText ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${m.map.popup.latest(escapeHtml(timeText))}</div>` : '') +
     `</div>`
   )
@@ -190,7 +190,7 @@ export function hoverHtml(f: MapGeoJSONFeature, m: Messages): string {
   if (count !== null) return groupHoverHtml(f, count, m)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${magnitudeBadge(f)}` +
+    `${magnitudeBadge(f, m)}` +
     `<span style="font-weight:600">${escapeHtml(titleOf(f, m))}</span></div>`
   )
 }
@@ -206,8 +206,8 @@ export function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
     `<div style="min-width:160px">` +
     `<div style="font-weight:700;font-size:13px">${escapeHtml(titleOf(f, m))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-    `${magnitudeBadge(f)}` +
-    `<span style="color:#cbd5e1">${m.map.popup.depth(escapeHtml(formatDepth(depth, f.properties?.depthAtLeast === true)))}</span></div>` +
+    `${magnitudeBadge(f, m)}` +
+    `<span style="color:#cbd5e1">${m.map.popup.depth(escapeHtml(depthText(depth, f.properties?.depthAtLeast === true, m.formats)))}</span></div>` +
     (timeText ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${escapeHtml(timeText)}</div>` : '') +
     `</div>`
   )

@@ -137,11 +137,17 @@ export default defineConfig(configEnv => ({
         // 静的な import なら ES モジュールの決まりでエントリの実行前に読み込まれるので、
         // アプリから見れば同期のまま（→ `src/utils/travelTime.ts` の冒頭）。
         //
+        // **日本語の辞書（`src/i18n/messages/ja.ts`）も静的 import のまま分ける。** 起動のときに
+        // 読むものと順番は変わらず（`index.html` に先読みが付く）、予算が掛かる 1 ファイルの
+        // 大きさだけが分かれる。文言を辞書へ移すほど辞書は育つので、main チャンクに入れたままだと
+        // 移すたびに main が予算へ近づく（分ける前の main は 1,709 KiB、分けると 1,626 KiB）。
+        //
         // 返り値が `undefined` のものは vite の既定の分け方に任せる。
         manualChunks(id: string) {
           const path = id.replace(/\\/g, '/')
           if (path.includes('/src/data/jma2001TravelTime')) return 'travel-time'
           if (path.includes('/node_modules/maplibre-gl/')) return 'maplibre'
+          if (path.endsWith('/src/i18n/messages/ja.ts')) return 'messages-ja'
           // react と react-dom は同じチャンクへ入れる（分けると初期化の順序に依存する）。
           if (/\/node_modules\/(?:react|react-dom|scheduler)\//.test(path)) return 'react'
           return undefined

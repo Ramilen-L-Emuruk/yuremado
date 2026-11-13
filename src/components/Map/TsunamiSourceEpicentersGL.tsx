@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import type { TsunamiSourceEarthquake } from '../../types/earthquake'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDepth, formatMagnitude, formatMagnitudeCondition, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { depthText, magnitudeText, magnitudeConditionText, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { hasKnownEpicenter, normalizeEpicenterLng } from '../../utils/geo'
 import { sourceEarthquakeTime } from '../../utils/tsunami'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
@@ -68,15 +68,15 @@ export function buildSourcePoints(
  * どちらも無ければ・深さが判らなければ・時刻が読めなければ、その項目を落とす（カードの行と同じ）。
  */
 export function sourcePopupHtml(s: TsunamiSourceEarthquake, m: Messages): string {
-  const mag = s.magnitude !== undefined ? formatMagnitude(s.magnitude, s.magnitudeType) : s.magnitudeCondition ? formatMagnitudeCondition(s.magnitudeCondition) : ''
-  const depth = s.depth !== undefined && hasDepth(s.depth) ? m.map.popup.depth(formatDepth(s.depth, s.depthAtLeast === true)) : ''
+  const mag = s.magnitude !== undefined ? magnitudeText(s.magnitude, s.magnitudeType, m.formats) : s.magnitudeCondition ? magnitudeConditionText(s.magnitudeCondition, m.formats) : ''
+  const depth = s.depth !== undefined && hasDepth(s.depth) ? m.map.popup.depth(depthText(s.depth, s.depthAtLeast === true, m.formats)) : ''
   const quakeTime = sourceEarthquakeTime(s)
   const hm = quakeTime ? formatTimeMin(quakeTime) : null
   const detail = [mag, depth].filter(Boolean).join('　')
   return (
     `<div class="text-sm"><div class="font-bold">${escapeHtml(s.hypocenterName)}</div>` +
     (detail ? `<div class="text-xs" style="color:#e5e7eb">${escapeHtml(detail)}</div>` : '') +
-    (hm ? `<div class="text-xs" style="color:#94a3b8">${escapeHtml(`${QUAKE_ARRIVAL_TIME_LABEL} ${hm}`)}</div>` : '') +
+    (hm ? `<div class="text-xs" style="color:#94a3b8">${escapeHtml(`${m.formats.arrivalTime} ${hm}`)}</div>` : '') +
     `</div>`
   )
 }

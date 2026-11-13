@@ -6,6 +6,7 @@ import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 
 import { seismoOverlayRows } from './seismoOverlayRows'
 import { JA_MESSAGES } from '../../i18n/messages'
+import { en } from '../../i18n/messages/en'
 
 function station(
   intensity: number | null,
@@ -45,6 +46,13 @@ describe('seismoOverlayRows', () => {
     expect([up.valueText, up.gradeLabel]).toEqual(['2.5', '3'])
     const down = seismoOverlayRows([station(2.46)], JA_MESSAGES)[0]
     expect([down.valueText, down.gradeLabel]).toEqual(['2.4', '2'])
+  })
+
+  // 正: 札は渡した辞書の語で出す（英語は弱・強を英語で）。対照: 日本語の辞書では今の字面のまま
+  it('震度の札は辞書の語で出す', () => {
+    expect(seismoOverlayRows([station(4.7)], en)[0].gradeLabel).toBe('5 Lower')
+    expect(seismoOverlayRows([station(4.7)], JA_MESSAGES)[0].gradeLabel).toBe('5弱')
+    expect(seismoOverlayRows([station(-0.32)], en)[0].gradeLabel).toBe('0')
   })
 
   // 静穏時のホストは負の計測震度を返す。**行ごと消さない** ——

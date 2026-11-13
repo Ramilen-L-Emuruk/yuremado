@@ -12,12 +12,12 @@ import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdow
 import { usePageVisible } from '../../hooks/usePageVisible'
 import { useFollowScroll, scrollParentOf } from '../../hooks/useFollowScroll'
 import { cancelBlockOffset } from '../../utils/cancelBlockOffset'
-import { formatDateTime, formatDepth, formatMagnitudeWithCondition, formatTime, hasDepth, hasMagnitude, magnitudeHeading, QUAKE_ARRIVAL_TIME_LABEL, QUAKE_ORIGIN_TIME_LABEL } from '../../utils/formatters'
-import { getIntensityColor, getIntensityLabel, getEewAreaIntensityLabel, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
-import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor } from '../../utils/lpgm'
+import { depthText, formatDateTime, formatTime, hasDepth, hasMagnitude, magnitudeHeadingText, magnitudeWithConditionText } from '../../utils/formatters'
+import { getIntensityColor, intensityShortLabel, getEewAreaIntensityLabel, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
+import { getLpgmClassColor, isValidLpgmClass, lpgmShortLabel } from '../../utils/lpgm'
 import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, eewSerialSeries, eewDisplaySerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewScaleZeroForecast, statesEewLpgmClassZero, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
 import { eewForecastChangeFirstSeenAt } from '../../utils/eewForecastChangeSeen'
-import { KYOSHIN_SUB_ZERO_COLOR, kyoshinDetectionScaleLabel, kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
+import { KYOSHIN_SUB_ZERO_COLOR, intensityGradeLabel, kyoshinIndexShortLabelText, kyoshinIndexToJma, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { liftForContrast } from '../../utils/contrast'
 import { quakeTileColors, TileScaleLabel } from '../EarthquakeTab/QuakeListRow'
@@ -32,6 +32,7 @@ import { getSubRegionsCache, onSubRegionsLoaded, type SubRegion } from '../../ut
 import { dominantRegionName } from '../../utils/kyoshinRegionName'
 import { useMessages } from '../../i18n/I18nProvider'
 import type { RealtimeWords } from '../../utils/eew'
+import type { Messages } from '../../i18n/messages'
 
 
 
@@ -94,12 +95,24 @@ function noForecastReasonLabel(eew: EEWAlert, noForecastWaited: boolean, rt: Rea
 /**
  * 緊急地震速報のカードの時刻。地震タブの時刻（`formatQuakeTime`「11月4日 0:49」）と同じ書き方に、電文が持つ秒を残す
  * （2026-11-04 ユーザー選択「「11月4日 1:13:27」 (Recommended)」）。例: 11月4日 1:13:27。読めなければ null
+ *
+ * 月・日と時・分は辞書の `monthDayTime`（言語ごとの書き方）で組み、その後ろに秒を足す。辞書の書き方は
+ * どの言語も分で終わる（日本語「11月4日 1:13」・英語「Nov 4, 01:13」）ので、秒を足しても読み順は崩れない
  */
-function formatEewTime(iso: string): string | null {
+function formatEewTime(iso: string, w: Pick<Messages['formats'], 'monthDayTime'>): string | null {
   const t = formatDateTime(iso)
   if (!t) return null
-  const [, M, d, h, m, sec] = /^\d+\/(\d+)\/(\d+) (\d+):(\d+):(\d+)$/.exec(t) ?? []
-  return M ? `${Number(M)}月${Number(d)}日 ${Number(h)}:${m}:${sec}` : t
+  const [, y, M, d, h, m, sec] = /^(\d+)\/(\d+)\/(\d+) (\d+):(\d+):(\d+)$/.exec(t) ?? []
+  if (!M) return t
+  return `${w.monthDayTime(new Date(Number(y), Number(M) - 1, Number(d), Number(h), Number(m)))}:${sec}`
+}
+
+/**
+ * 「程度以上」の語を、札の前に来る部分と後ろに来る部分に分けて返す（震度の枠は札を大きく、語を小さく描くため）。
+ * 日本語は前が空・後ろが「程度以上」、英語は前が「About」・後ろが「or higher」、簡体字は前が「约」・後ろが「以上」
+ */
+function approxAboveParts(w: Pick<Messages['formats'], 'approxAboveBefore' | 'approxAboveAfter'>): { before: string; after: string } {
+  return { before: w.approxAboveBefore(), after: w.approxAboveAfter }
 }
 
 /**
@@ -338,7 +351,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   onToggleLpgm?: (eventId: string) => void
   onDeactivateLpgm?: () => void
 }) {
-  const rt = useMessages().realtime
+  const { realtime: rt, formats: fw } = useMessages()
   const { scale: maxScale, orAbove: maxScaleOrAbove } = eewMaxScaleInfo(eew)
   const scaleZero = isEewScaleZeroForecast(eew)
   const { cls: lpgmClass, over: lpgmClassOver } = eewMaxLpgmClassInfo(eew)
@@ -350,10 +363,10 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   const { hypocenter } = eew.earthquake
   // **値が無いときは整形を呼ばない。** 呼ぶと「読めない値が来た」として記録され、
   // 「電文が時刻を持たない」ことと区別が付かなくなる（他の呼び出しと表記も揃う）。
-  const originTimeText = eew.earthquake.originTime ? formatEewTime(eew.earthquake.originTime) : null
+  const originTimeText = eew.earthquake.originTime ? formatEewTime(eew.earthquake.originTime, fw) : null
   // 地震発現時刻（`Earthquake/ArrivalTime`）。Yahoo hypoInfo の報は配信せず空文字が入るので、
   // 空なら整形を呼ばずに行ごと出さない（上と同じ理由）。
-  const arrivalTimeText = eew.earthquake.arrivalTime ? formatEewTime(eew.earthquake.arrivalTime) : null
+  const arrivalTimeText = eew.earthquake.arrivalTime ? formatEewTime(eew.earthquake.arrivalTime, fw) : null
   // 震源が決まっていない報（仮定震源要素と「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）。
   // 震源・規模・深さは仮の値（観測点直下 10km）なので、数値は伏せ、地名には未確定である旨を添える。
   // M・深さを伏せることは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
@@ -602,7 +615,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   // 字体が後から読み込まれると字幅が変わるので、読み込みが済んだらもう一度測る
   const arrivalListRef = useRef<HTMLDivElement>(null)
   const arrivalBadgeSignature = areasWithArrival
-    .map(a => getEewAreaIntensityLabel(a.scaleFrom, a.scaleTo, a.scaleToOrAbove === true))
+    .map(a => getEewAreaIntensityLabel(a.scaleFrom, a.scaleTo, a.scaleToOrAbove === true, fw))
     .join('|')
   useLayoutEffect(() => {
     const list = arrivalListRef.current
@@ -720,6 +733,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             const lpgmPaintable = lpgmShown || (lpgmZero && eewAreas(eew).some((a) => a.lgIntBelowClass1))
             const bandClass = lpgmShown ? lpgmClass : lpgmZero ? 0 : null
             const f = fade(flash.maxScale)
+            const approxParts = approxAboveParts(fw)
             // 枠の上の見出し。枠の幅に 1 行で収まるよう、字の大きさを字数で決める（2026-11-04 ユーザー発言「予想と最大震度が分かれてるのがなんか気持ち悪い」）
             const tileLabel = tileScale === null ? (reasonLabel ?? '') : rt.maxForecastIntensity
             return (
@@ -730,21 +744,26 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                       {tileLabel}
                     </span>
                   )}
+                  {tileScale !== null && !scaleZero && maxScaleOrAbove && approxParts.before && <span className="text-[0.8rem] font-bold">{approxParts.before}</span>}
                   {tileScale === null ? (
                     <span className="font-extrabold leading-tight" style={{ fontSize: 'calc(var(--qk-big-f) * 0.3 * var(--rt-tw))' }}>{rt.noForecast[0]}<br />{rt.noForecast[1]}</span>
                   ) : (
+                    // 枠の札は短い形（5+・5-）。地震タブの枠と同じ（2026-11-11 ユーザー選択「短い形にそろえる (Recommended)」）
                     <span key={f.key} className={`rounded font-black${f.className}`} style={{ fontSize: 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))', ...f.style }}>
-                      {scaleZero ? '0' : <TileScaleLabel label={getIntensityLabel(maxScale)} />}
+                      {scaleZero ? '0' : <TileScaleLabel label={intensityShortLabel(maxScale, fw)} />}
                     </span>
                   )}
-                  {/* 上限が定まらない報（「震度4程度以上」等）は語を落とさず、本体より小さく添える */}
-                  {tileScale !== null && !scaleZero && maxScaleOrAbove && <span className="text-[0.8rem] font-bold">程度以上</span>}
+                  {/* 上限が定まらない報（「震度4程度以上」等）は語を落とさず、本体より小さく添える。
+                      語が札の前に来る言語（英語「About 4 or higher」）は、前の語を札の上に添える（→ `approxAboveParts`） */}
+                  {tileScale !== null && !scaleZero && maxScaleOrAbove && approxParts.after && <span className="text-[0.8rem] font-bold">{approxParts.after}</span>}
                 </div>
                 {/* 押すと区域ごとの予想階級を地図に塗る。**塗れる区域が 1 つも無い報では押せない形（div）のまま出す** ——
                     区域は電文全体の予想が震度4 以上の報にしか載らないので、最大予想震度 0 の報は塗る区域を持たない。 */}
                 {bandClass !== null && (() => {
                   const BandTag = lpgmPaintable ? 'button' : 'div'
-                  const bandText = getLpgmClassLabelWithApproxAbove(bandClass, bandClass === lpgmClass && lpgmClassOver).replace('階級', '長周期')
+                  // 札の短い形（「長周期3」）に、上限が定まらない予想だけ「程度以上」の語を足す（`lpgmClassLabelWithApproxAbove` と同じ条件）
+                  const bandShort = lpgmShortLabel(bandClass, fw)
+                  const bandText = bandClass === lpgmClass && lpgmClassOver && isValidLpgmClass(bandClass) ? fw.approxAbove(bandShort) : bandShort
                   return (
                   <BandTag
                     {...(lpgmPaintable ? { type: 'button' as const, onClick: (e: React.MouseEvent) => { e.stopPropagation(); onToggleLpgm?.(eew.issue?.eventId ?? eew.id) } } : {})}
@@ -796,7 +815,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
               {originTimeText && (
                 <div>
-                  <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{QUAKE_ORIGIN_TIME_LABEL}</span>
+                  <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{fw.originTime}</span>
                   <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'calc(var(--qk-val) * var(--rt-k))' }}>{originTimeText}</b>
                 </div>
               )}
@@ -806,7 +825,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                 // 吹き出しの見出し（DescriptionTip）は白・text-sm で描かれるので、この行の弱い字と大きさを継がせる。
                 // 折り返さない指定は見出しと時刻にだけ掛ける（行に掛けると、同じ行に描かれる吹き出しの本文まで折り返さなくなる）
                 <div className="-mt-1 basis-full leading-snug text-secondary [&>button]:whitespace-nowrap [&>button]:leading-[inherit] [&>button]:text-[length:inherit] [&>button]:text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
-                  <DescriptionTip label={QUAKE_ARRIVAL_TIME_LABEL} description={rt.arrivalTimeHint} />
+                  <DescriptionTip label={fw.arrivalTime} description={rt.arrivalTimeHint} />
                   {' '}<span className="whitespace-nowrap tabular-nums">{arrivalTimeText}</span>
                 </div>
               )}
@@ -817,7 +836,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                   {(originTimeText || arrivalTimeText) && <i className="h-0 basis-full" />}
                   <div>
                     {/* 開いた地震カードと同じ形 —— 見出しは種別の名前、値は記号つき（→ `magnitudeHeading`）。 */}
-                    <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{magnitudeHeading(hypocenter.magnitudeType)}</span>
+                    <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{magnitudeHeadingText(hypocenter.magnitudeType, fw)}</span>
                     <b
                       key={fade(flash.magnitude).key}
                       className={`rounded font-bold tabular-nums leading-tight${fade(flash.magnitude).className}`}
@@ -826,7 +845,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                       <i className="mr-1.5 inline-block h-[0.9em] w-1 rounded-[2px] align-[-0.05em]" style={{ backgroundColor: magColor }} />
                       {/* 数値が無く説明（「M8を超える巨大地震」）を出すときは字だけ縮める（開いた地震カードと同じ分岐） */}
                       <span style={hypocenter.magnitudeCondition && !hasMagnitude(hypocenter.magnitude) ? { fontSize: '0.7em' } : undefined}>
-                        {formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}
+                        {magnitudeWithConditionText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType, fw)}
                       </span>
                     </b>
                   </div>
@@ -838,8 +857,8 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                       style={{ fontSize: 'calc(var(--qk-val) * var(--rt-k))', ...fade(flash.depth).style }}
                     >
                       <i className="mr-1.5 inline-block h-[0.9em] w-1 rounded-[2px] align-[-0.05em]" style={{ backgroundColor: depthColor }} />
-                      {/* **`formatDepth` を通す。** 素で埋めると、深さが判らない報（`-1`）で「-1km」と出る。 */}
-                      {formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}
+                      {/* **`depthText` を通す。** 素で埋めると、深さが判らない報（`-1`）で「-1km」と出る。 */}
+                      {depthText(hypocenter.depth, hypocenter.depthAtLeast === true, fw)}
                     </b>
                   </div>
                 </>
@@ -1019,7 +1038,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                         background: `color-mix(in srgb, ${scaleColor} 35%, #141414)`,
                       }}
                     >
-                      {getEewAreaIntensityLabel(a.scaleFrom, a.scaleTo, a.scaleToOrAbove === true)}
+                      {getEewAreaIntensityLabel(a.scaleFrom, a.scaleTo, a.scaleToOrAbove === true, fw)}
                     </span>
                     {kind === 'plum' && plumStartText ? (
                       // PLUM 法の区域の時刻は到達の予測ではなく「その区域を初めて予測した時刻」なので、
@@ -1144,9 +1163,6 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
     </div>
   )
 }
-
-// 震度ラベルの降順（表示ソート用）
-const LABEL_ORDER = ['7', '6強', '6弱', '5強', '5弱', '4', '3', '2', '1', '0']
 
 /**
  * 主要動の到達カウントダウン。
@@ -1339,7 +1355,7 @@ function KyoshinGatePanel({ events, points, subregions, settled }: {
   /** 反応が収まったか（収まったら区域名を出さない。本文の「最も強く揺れている地域」と揃える） */
   settled: boolean
 }) {
-  const { detection: dt, evidence: ev } = useMessages().realtime
+  const { realtime: { detection: dt, evidence: ev }, formats: fw } = useMessages()
   return (
         <div className="flex flex-col gap-2 px-2 pb-2 @min-[520px]:px-3 @min-[520px]:pb-3">
           {/* 番号は**イベント ID の順**で振る。渡された順に番号を振ると、並びが変わったときに
@@ -1360,7 +1376,7 @@ function KyoshinGatePanel({ events, points, subregions, settled }: {
                 {/* 幅は中身に合わせる（`w-full` にすると見出しと数値が横いっぱいに離れて対応が読めない） */}
                 <table className="text-[length:var(--qk-fs)]">
                   <tbody>
-                    {ensembleRows(e, ev).map(r => (
+                    {ensembleRows(e, ev, fw).map(r => (
                       <tr key={r.label}>
                         <td className="text-secondary py-0.5 pr-2 align-top whitespace-nowrap">{r.label}</td>
                         <td className="py-0.5 text-white align-top">{r.value}</td>
@@ -1392,7 +1408,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   /** カードがユーザーの目に入っているか。バー幅スケールの張り直しの可否に使う。 */
   visible: boolean
 }) {
-  const { detection: dt, evidence: ev } = useMessages().realtime
+  const { realtime: { detection: dt, evidence: ev }, formats: fw } = useMessages()
   const [detailOpen, setDetailOpen] = useState(false)
   const scalePeakRef = useRef(0)
   // 最上位の段（確かな段 > 早い段）。震度では分けない（2026-10-29 ユーザー選択「段のまま鳴らす」）
@@ -1405,7 +1421,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const primary = events
     .filter(e => e.confidence === topTier)
     .reduce<EnsembleDetection | null>((best, e) => (!best || intensityOf(e) > intensityOf(best) ? e : best), null)
-  const summary = primary ? ensembleSummary(primary, ev) : null
+  const summary = primary ? ensembleSummary(primary, ev, fw) : null
   const regionCount = events.length
   const earliestMs = events.reduce((m, e) => Math.min(m, e.originTimeMs), Infinity)
   const time = new Date(earliestMs).toLocaleTimeString('ja-JP', { hour12: false })
@@ -1417,27 +1433,31 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // 震度0 未満の点は一番下の「0未満」の行へ数える（地図の文字なしの印と同じ点。2026-10-29 ユーザー選択
   // 「棒に「0以下」を足す (Recommended)」。呼び名は 2026-11-05 に「0未満」へ改めた）。地図の検知点マーカー（gl/kyoshinDetectedFeatures.ts の
   // buildFeatures）も同じ判定で描き分けており、ここと基準を分けると表示点数が食い違う。
-  const counts = new Map<string, { color: string; count: number }>()
+  // 行は震度の段（`rank`。0=震度0 … 9=震度7）で数える。札の字（言語で変わる）を鍵にしない
+  const counts = new Map<number, { label: string; color: string; count: number }>()
   let maxIndex = 0
   let activeCount = 0
   let subZeroCount = 0
   for (const p of points) {
-    const label = kyoshinIndexToLabel(p.index)
-    if (!label) {
+    const grade = kyoshinIndexToJma(p.index)
+    if (!grade) {
       if (p.index >= 0) subZeroCount++
       continue
     }
-    if (!counts.has(label)) counts.set(label, { color: kyoshinIntensityColor(p.index) ?? '#94a3b8', count: 0 })
-    counts.get(label)!.count++
+    if (!counts.has(grade.rank)) counts.set(grade.rank, { label: intensityGradeLabel(grade, fw), color: kyoshinIntensityColor(p.index) ?? '#94a3b8', count: 0 })
+    counts.get(grade.rank)!.count++
     activeCount++
     if (p.index > maxIndex) maxIndex = p.index
   }
-  const maxLabel = kyoshinIndexToLabel(maxIndex)
-  const groups = LABEL_ORDER.filter(l => counts.has(l)).map(l => ({ label: l, ...counts.get(l)! }))
-  const subZeroLabel = kyoshinDetectionScaleLabel(0)
+  const maxLabel = kyoshinIndexShortLabelText(maxIndex, fw)
+  // 震度の降順に並べ、震度0 未満の行（`subZero`）を一番下に足す
+  const groups: { key: string; label: string; color: string; count: number; subZero: boolean }[] = [...counts.entries()]
+    .sort(([a], [b]) => b - a)
+    .map(([rank, g]) => ({ key: String(rank), ...g, subZero: false }))
+  const subZeroLabel = fw.belowZero
   // 棒の札「<0」と枠の「0未満」を、ホバーと画面読み上げで伝える語（本文の「震度0未満の反応」と同じ呼び名）
-  const subZeroFullLabel = subZeroLabel ? `震度${subZeroLabel}` : undefined
-  if (subZeroCount > 0 && subZeroLabel) groups.push({ label: subZeroLabel, color: KYOSHIN_SUB_ZERO_COLOR, count: subZeroCount })
+  const subZeroFullLabel = ev.maxIntensity(subZeroLabel)
+  if (subZeroCount > 0) groups.push({ key: 'subZero', label: subZeroLabel, color: KYOSHIN_SUB_ZERO_COLOR, count: subZeroCount, subZero: true })
   const rawMaxCount = groups.reduce((m, g) => Math.max(m, g.count), 1)
   // バー幅のスケール（分母）は、カードが見えている間は**下げない**。瞬間値を分母にすると、
   // 最大だった震度の点数が減っただけで他のバーが伸び、揺れが収まっている最中に「増えた」と
@@ -1469,7 +1489,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // ので震度1未満まで減衰した後も赤枠のままになる不整合が起きるため、震度1未満は常に
   // 震度0の色（SHINDO0_COLOR）へフォールバックする（段には依存しない）。
   const maxJma = kyoshinIndexToJma(maxIndex)
-  const hasIntensity = maxJma != null && maxJma.label !== '0'
+  const hasIntensity = maxJma != null && maxJma.rank !== 0
   const frameBorder = hasIntensity ? getIntensityColor(maxJma.scale) : SHINDO0_COLOR
   const frameBg = hasIntensity ? getIntensityBgColor(maxJma.scale) : 'rgba(42,42,42,0.6)'
 
@@ -1505,8 +1525,11 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const belowZeroCount = activeCount === 0 && topTier === 'confirmed' ? subZeroCount : 0
   const belowZero = belowZeroCount > 0
   const settled = activeCount === 0 && !belowZero
-  // 枠の数字は「0未満」と書く。「<0」と詰めるのは棒の札だけ（→ `BELOW_ZERO_SHORT_LABEL`）
-  const maxLabelShown = maxLabel ?? (belowZero ? subZeroLabel : null)
+  // 枠の数字は「0未満」と書き、「0」を大きく・残りを 0.55 倍にする（→ TileScaleLabel）。数字で始まらない言語の語
+  // （英語 Below 0・中国語 低于0 など）はこの組み方が効かず、枠からはみ出す・枠を広げるので、棒の札と同じ「<0」にする
+  // （2026-11-11 ユーザー選択「数字で始まらない言語は「<0」 (Recommended)」）
+  const subZeroTileLabel = /^\d/.test(subZeroLabel) ? subZeroLabel : BELOW_ZERO_SHORT_LABEL
+  const maxLabelShown = maxLabel ?? (belowZero ? subZeroTileLabel : null)
   const strongestName = settled ? null : strongestRegionName(points, subregions)
 
   return (
@@ -1553,17 +1576,17 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           {groups.length > 0 && (
             <div className="flex flex-col gap-1">
               {groups.map(g => (
-                <div key={g.label} className="flex items-center gap-2">
+                <div key={g.key} className="flex items-center gap-2">
                   {/* 幅は 2 文字の札（「5弱」「<0」）が縁の内側に収まる幅に揃える（行ごとに幅が違うと棒の左端がずれる）。
                       震度0 未満の行は「0未満」ではなく「<0」と書く（→ `BELOW_ZERO_SHORT_LABEL`）。
                       札の形は到達一覧の震度の札と同じ（震度の色の縁・震度の色を 35% 混ぜた地・白い字） */}
                   <span
                     className="box-border text-center text-[length:var(--qk-fs)] font-extrabold leading-tight whitespace-nowrap text-white rounded-[3px] shrink-0"
-                    title={g.label === subZeroLabel ? subZeroFullLabel : undefined}
-                    aria-label={g.label === subZeroLabel ? subZeroFullLabel : undefined}
+                    title={g.subZero ? subZeroFullLabel : undefined}
+                    aria-label={g.subZero ? subZeroFullLabel : undefined}
                     style={{ width: 'calc(2.2em + 4px)', border: `2px solid ${g.color}`, background: `color-mix(in srgb, ${g.color} 35%, #141414)` }}
                   >
-                    {g.label === subZeroLabel ? BELOW_ZERO_SHORT_LABEL : g.label}
+                    {g.subZero ? BELOW_ZERO_SHORT_LABEL : g.label}
                   </span>
                   <div className="flex-1 h-2 rounded-[3px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
                     <div style={{ width: `${(g.count / maxCount) * 100}%`, height: '100%', background: g.color }} />
@@ -1588,7 +1611,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             {activeCount > 0
               ? dt.reacting(activeCount + subZeroCount)
               : belowZero
-                ? dt.reactingBelowZero(belowZeroCount, subZeroFullLabel ?? '')
+                ? dt.reactingBelowZero(belowZeroCount, subZeroFullLabel)
                 : dt.settled}
             {regionCount >= 2 && dt.regionsSuffix(regionCount)}
           </span>

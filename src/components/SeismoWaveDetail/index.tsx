@@ -58,6 +58,7 @@ import {
   type ViewRange,
 } from './detailView'
 import { paintIntensitySeries } from './paintIntensity'
+import { intensityLabel } from '../../utils/intensity'
 import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 import { paintSampleLane } from './paintSampleLane'
 import {
@@ -117,7 +118,9 @@ interface Props {
 }
 
 export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
-  const w = useMessages().quake.seismo
+  const { quake: { seismo: w, section: quakeSection }, formats: fw } = useMessages()
+  // 震度の推移の境目に添える名前（「震度5弱」）。辞書が変わったときだけ作り直す（描く効果の依存に入る）
+  const intensityEdgeLabel = useCallback((scale: number) => quakeSection.scale(intensityLabel(scale, fw)), [quakeSection, fw])
   const [axes, setAxes] = useState<readonly boolean[]>([true, true, true])
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -473,6 +476,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
           displayRange,
           seriesSegments(intensity.realtimeSeries, displayRange, SERIES_GAP_MS),
           [...arrivalMarks, ...peakMarkAt(intensity.maxRealtimeAtMs)],
+          intensityEdgeLabel,
         )
       }
     }
@@ -494,7 +498,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
     // `visibleIdx` は `axes` から作るので `axes` で足りる。`view` は `useSamples` のときだけ使い、
     // そのとき `displayFromMs`/`displayToMs` が `view` と一致する。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted, wave.unit, w])
+  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted, wave.unit, w, intensityEdgeLabel])
 
   // ---- 操作 ----
   const zoomBy = useCallback(

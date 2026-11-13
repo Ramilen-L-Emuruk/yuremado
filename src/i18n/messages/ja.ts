@@ -176,6 +176,8 @@ export const ja = {
     estimating: '推定中',
     weak: '微弱',
     arrivalUnknown: '到達時刻不明',
+    /** 地図の吹き出しの第1波の行（「第1波 05:12 押し波」） */
+    firstWaveRow: (rest: string) => `第1波 ${rest}`,
     /** 高さの語。`over` は上限を定めない値か（数字の後ろに「以上」を付ける）。電文の語に既に「以上」があれば重ねない */
     height: (description: string, over: boolean) =>
       !over || description.includes('以上') || !/[\d０-９]/.test(description) ? description : `${description}以上`,
@@ -788,6 +790,8 @@ export const ja = {
       magnitudeUnknown: 'M 不明',
       preliminary: '速報値',
       telegram: '地震情報の電文',
+      /** 震源カタログの最大震度の欄の、震度ではない記号の語（気象庁のフォーマット仕様の語） */
+      catalogOther: { F: '有感', X: '付近有感', L: '局発地震', S: '小局発地震', M: 'やや顕著地震', R: '顕著地震' },
       externalHypocenter: '気象庁以外の機関の震源',
       epicenterUnknown: '震源地不明',
       nearbyCount: (n: number) => `この付近 ${n.toLocaleString('ja-JP')} 件`,
@@ -1953,5 +1957,87 @@ export const ja = {
         description: '揺れ検知が走ったとき、その前後 30 秒の観測値・検知の内訳・学習状態を端末内に残します。地震でないのに検知した場合、この記録があれば原因を追えます。書き出すまで端末の外へは出ません。',
       },
     },
+  },
+  /**
+   * いくつもの画面が使う書式の語（段 9）。震度・長周期の札・深さ・規模・緯度経度・津波の区分・訂正の種類・日付。
+   * 読み上げと通知の文面は日本語のまま組むので、そちらはこの日本語の節を直に渡す（`JA_MESSAGES.formats`）。
+   */
+  formats: {
+    /** 震度の札（一覧・カードの枠・文の中） */
+    intensity: { '-1': '不明', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5弱', 50: '5強', 55: '6弱', 60: '6強', 70: '7' },
+    /** 地図の震度の丸の中の札（丸は 2 文字までの大きさ）。日本語は札と同じ */
+    intensityShort: { '-1': '不明', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5弱', 50: '5強', 55: '6弱', 60: '6強', 70: '7' },
+    /** 「5弱以上」の形（電文の「震度５弱以上未入電」） */
+    orAbove: (label: string) => `${label}以上`,
+    /** 「5弱程度以上」の形（緊急地震速報の上限を定めない予想） */
+    approxAbove: (label: string) => `${label}程度以上`,
+    /** 「3〜4」の形（緊急地震速報の区域の予想の幅） */
+    range: (from: string, to: string) => `${from}〜${to}`,
+    /** 長周期地震動階級の札 */
+    lpgmClass: (cls: number) => `階級${cls}`,
+    lpgmClassUnknown: '階級不明',
+    /** 地震タブ・速報の札の短い形（「長周期3」） */
+    lpgmShort: (cls: number) => `長周期${cls}`,
+    /** 階級が読めないときの短い札（「長周期不明」） */
+    lpgmShortUnknown: '長周期不明',
+    /** 札の枠の下に別の要素で小さく添える「以上」の語 */
+    orAboveSuffix: '以上',
+    /** 札の前後に別の要素で添える「程度以上」の語。札の前に来る語は関数で持つ（日本語・韓国語は無いので空の文字列を返す） */
+    approxAboveBefore: () => '',
+    approxAboveAfter: '程度以上',
+    /** 揺れ検知の震度0 未満の呼び名 */
+    belowZero: '0未満',
+    unknown: '不明',
+    magnitudeConditions: { 'M不明': 'M不明', 'M8を超える巨大地震': 'M8を超える巨大地震' },
+    veryShallow: 'ごく浅い',
+    depth: (km: number) => `${km}km`,
+    depthAtLeast: (km: number) => `${km}km以上`,
+    hypocenterSource: (source: string) => `震源決定: ${source}（気象庁以外）`,
+    magnitudeJma: '気象庁マグニチュード',
+    magnitude: 'マグニチュード',
+    /** 緯度・経度。値は桁をそろえた絶対値 */
+    coordinate: (lat: string, lng: string, south: boolean, west: boolean) =>
+      `${south ? '南緯' : '北緯'} ${lat}° ${west ? '西経' : '東経'} ${lng}°`,
+    originTime: '地震発生時刻',
+    arrivalTime: '地震発現時刻',
+    arrivalTimeUnknown: '地震発現時刻不明',
+    /** 国内の津波の区分（地震情報の付加文の区分） */
+    domesticTsunami: {
+      なし: '津波の心配なし',
+      不明: '不明',
+      調査中: '調査中',
+      海面変動の可能性: '津波発生のおそれあり',
+      若干の海面変動: '若干の海面変動',
+      注意報: '津波注意報',
+      警報等: '津波警報等',
+    },
+    /** 付加文のコードで語を分けるもの */
+    domesticTsunamiCode: {
+      '0213': '海面変動に注意',
+      '0214': '海面変動に注意',
+      '0216': '津波のおそれ（震源が海底の場合）',
+      '0217': '今後の情報に注意',
+      '0230': '日本への影響なし',
+    },
+    tsunamiGroupTitle: '大津波警報・津波警報あるいは津波注意報のいずれかが発表されています',
+    correct: {
+      訂正: '訂正（内容不明）',
+      震度のみ訂正: '震度を訂正',
+      震源を訂正: '震源を訂正',
+      '震度・震源を訂正': '震度・震源を訂正',
+    },
+    nonJmaStation: '気象庁以外の機関が運用する観測点です',
+    /** 地図の津波の観測の凡例 */
+    tsunamiObsLegend: { m3: '3m以上', m1: '1m以上', m02: '0.2m以上', under02: '0.2m未満' },
+    /** 月・日と時刻（「11月11日 11:32」） */
+    monthDayTime: (d: Date) => `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`,
+    /** 日と時刻（報の更新の「11日 11:46」）。ほかの言語は月・日と時刻で出す */
+    dayTime: (d: Date) => `${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`,
+    /** 月・日（「11月11日」） */
+    monthDay: (d: Date) => `${d.getMonth() + 1}月${d.getDate()}日`,
+    /** 年・月・日（日付の区切り「2026年11月11日」） */
+    fullDate: (d: Date) => `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`,
+    /** 曜日の無い年・月・日（震源カタログの期間など）。日本語は日付の区切りと同じ */
+    calendarDate: (d: Date) => `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`,
   },
 } as const

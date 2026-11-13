@@ -1,5 +1,9 @@
 import type { Messages } from '../messages'
 import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+import { intlDateWords } from '../intlDates'
+
+/** 日付の書式。言語ごとに 1 回だけ作って使い回す（→ `i18n/intlDates.ts`） */
+const ES_DATES = intlDateWords('es')
 
 /** 複数形の判定。スライダーを動かすたびに作り直さないよう、1 つ作って使い回す */
 const ES_PLURAL = new Intl.PluralRules('es')
@@ -149,6 +153,7 @@ export const es: Messages = {
     estimating: 'Información pendiente',
     weak: 'Débil',
     arrivalUnknown: 'Hora de llegada desconocida',
+    firstWaveRow: (rest) => `Primera ola ${rest}`,
     height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
     cancel: {
       lifted: { title: 'Información del tsunami: desactivación', badge: 'Desactivación', desc: 'Esta información de tsunami ha sido desactivada.' },
@@ -464,16 +469,16 @@ export const es: Messages = {
     },
     unreceivedOwn: '(No recibido)',
     unreceivedSome: '(Parte no recibida)',
-    unreceivedOwnHint: 'La JMA estima intensidad sísmica 5 inferior o mayor, pero la intensidad no se ha recibido',
+    unreceivedOwnHint: 'La JMA estima intensidad sísmica 5 débil o superior, pero la intensidad no se ha recibido',
     unreceivedSomeHint: 'Algunos lugares de esta zona no han informado su intensidad',
     unreceivedButton: { 地点: 'Estaciones sin intensidad', 地域: 'Zonas sin intensidad', 件: 'Lugares sin intensidad' },
     unreceivedCount: (n, _unit) => `${n}`,
-    unreceivedButtonHint: 'Lugares donde la JMA estima intensidad 5 inferior o mayor, pero no se ha recibido ninguna intensidad. Pulse para mostrarlos en la lista y en el mapa',
+    unreceivedButtonHint: 'Lugares donde la JMA estima intensidad 5 débil o superior, pero no se ha recibido ninguna intensidad. Pulse para mostrarlos en la lista y en el mapa',
     lpgmHeading: 'Movimiento sísmico de período largo',
     lpgmCategory: {
       highFloors: 'En algunas zonas, los pisos altos de edificios altos se movieron mucho aunque la intensidad sísmica fue baja',
-      class1: 'Todas las zonas que observaron movimiento sísmico de período largo de clase 1 o mayor tuvieron intensidad sísmica 5 inferior o mayor',
-      class3: 'Todas las zonas que observaron movimiento sísmico de período largo de clase 3 o mayor tuvieron intensidad sísmica 5 inferior o mayor',
+      class1: 'Todas las zonas que observaron movimiento sísmico de período largo de clase 1 o mayor tuvieron intensidad sísmica 5 débil o superior',
+      class3: 'Todas las zonas que observaron movimiento sísmico de período largo de clase 3 o mayor tuvieron intensidad sísmica 5 débil o superior',
     },
     lpgmCategoryRegions: (note, regions) => `${note} (${regions.join(', ')})`,
     lpgmPeriodsHeading: 'Por período (clase, movimiento)',
@@ -648,7 +653,7 @@ export const es: Messages = {
       moreMunicipalities: (n) => (ES_PLURAL.select(n) === 'one' ? `${n} municipio más` : `${n} municipios más`),
       moreStations: (n) => (ES_PLURAL.select(n) === 'one' ? `${n} estación más` : `${n} estaciones más`),
       someUnreceived: 'Algunos sin recibir',
-      unreceivedNote: 'La JMA estima una intensidad de 5 inferior o mayor, pero la intensidad no se ha recibido (no recibida)',
+      unreceivedNote: 'La JMA estima una intensidad de 5 débil o superior, pero la intensidad no se ha recibido (no recibida)',
       code: (code) => `Código ${code}`,
       distance: (km) => `Distancia hipocentral aprox. ${km} km`,
       depth: (depth) => `Profundidad ${depth}`,
@@ -656,6 +661,7 @@ export const es: Messages = {
       magnitudeUnknown: 'M desconocida',
       preliminary: 'Preliminar',
       telegram: 'Telegrama de información sísmica',
+      catalogOther: { F: 'Sentido', X: 'Sentido en las cercanías', L: 'Terremoto local', S: 'Pequeño terremoto local', M: 'Terremoto relativamente notable', R: 'Terremoto notable' },
       externalHypocenter: 'Hipocentro de una agencia distinta de la JMA',
       epicenterUnknown: 'Epicentro desconocido',
       nearbyCount: (n) => `${n.toLocaleString('es')} cerca`,
@@ -939,7 +945,7 @@ export const es: Messages = {
       },
       ttsUnreceivedDetail: {
         label: 'Lugares sin intensidad recibida',
-        description: 'Cómo leer los lugares con intensidad estimada de 5 inferior o mayor cuyo valor observado no ha llegado. "Nombres de área" los agrupa por área en vez de por lugar (p. ej.: 石川県能登では、一部の地点で…). Con "No leer lugares" también se leen el número y que son 「震度5弱以上と推定されるが未入電」',
+        description: 'Cómo leer los lugares con intensidad estimada de 5 débil o superior cuyo valor observado no ha llegado. "Nombres de área" los agrupa por área en vez de por lugar (p. ej.: 石川県能登では、一部の地点で…). Con "No leer lugares" también se leen el número y que son 「震度5弱以上と推定されるが未入電」',
         stations: 'Nombres de lugar',
         areas: 'Nombres de área',
         none: 'No leer lugares',
@@ -1427,7 +1433,7 @@ export const es: Messages = {
       },
       eewSpecial: {
         label: 'Alerta Temprana de Terremoto: alerta de emergencia',
-        description: 'Tono de alarma Bb4/F4 alternado 9 veces + grave (intensidad 6 inferior o mayor)',
+        description: 'Tono de alarma Bb4/F4 alternado 9 veces + grave (intensidad 6 débil o superior)',
       },
       eewUpdate: {
         label: 'Alerta Temprana de Terremoto: actualización',
@@ -1516,12 +1522,12 @@ export const es: Messages = {
       },
       eewStrongShaking: {
         label: 'Pronóstico del movimiento sísmico (movimiento muy fuerte detectado)',
-        description: 'Primer boletín emitido solo con las estaciones que detectaron movimiento fuerte, antes de determinar el hipocentro (intensidad máx. 5 inferior). No muestra M, profundidad ni hora de origen, y bajo el nombre del hipocentro aparece el texto de la JMA – sonido eewForecast',
+        description: 'Primer boletín emitido solo con las estaciones que detectaron movimiento fuerte, antes de determinar el hipocentro (intensidad máx. 5 débil). No muestra M, profundidad ni hora de origen, y bajo el nombre del hipocentro aparece el texto de la JMA – sonido eewForecast',
         button: 'Prueba de movimiento fuerte',
       },
       eewAssumed: {
         label: 'Pronóstico del movimiento sísmico (estación única)',
-        description: 'Primer boletín con el hipocentro sin determinar (valores fijos que pone la JMA: M1.0, profundidad 10 km). Al pulsar se determina el hipocentro y sube a alerta con intensidad prevista 5 inferior. Cómo se anuncia la subida depende de si pulsa durante la lectura o después – sonido eewForecast',
+        description: 'Primer boletín con el hipocentro sin determinar (valores fijos que pone la JMA: M1.0, profundidad 10 km). Al pulsar se determina el hipocentro y sube a alerta con intensidad prevista 5 débil. Cómo se anuncia la subida depende de si pulsa durante la lectura o después – sonido eewForecast',
         button: 'Prueba de estación única',
       },
       eewDeep: {
@@ -1541,12 +1547,12 @@ export const es: Messages = {
       },
       eewWarning: {
         label: 'Alerta Temprana de Terremoto (alerta)',
-        description: 'Boletín que pasa de pronóstico a alerta. Al pulsar, la intensidad prevista sube de 5 inferior a 5 superior – sonido eew',
+        description: 'Boletín que pasa de pronóstico a alerta. Al pulsar, la intensidad prevista sube de 5 débil a 5 fuerte – sonido eew',
         button: 'Prueba de alerta',
       },
       eew: {
         label: 'Alerta Temprana de Terremoto (alerta de emergencia)',
-        description: 'Sube a intensidad 6 inferior, nivel de alerta de emergencia – sonido eewSpecial',
+        description: 'Sube a intensidad 6 débil, nivel de alerta de emergencia – sonido eewSpecial',
         button: 'Prueba de alerta de emergencia',
       },
       eewRetraction: {
@@ -1566,13 +1572,13 @@ export const es: Messages = {
       },
       unreceivedQuake: {
         label: 'Información de terremotos (boletín con muchos lugares sin intensidad)',
-        description: '日向灘 M6.4, intensidad máx. 5 superior (telegrama real) – 60 lugares sin intensidad. Las filas de municipios, áreas y prefecturas llevan la marca "Parte no recibida", y los 18 municipios cuyo valor no llegó aparecen como 「5弱以上」',
+        description: '日向灘 M6.4, intensidad máx. 5 fuerte (telegrama real) – 60 lugares sin intensidad. Las filas de municipios, áreas y prefecturas llevan la marca "Parte no recibida", y los 18 municipios cuyo valor no llegó aparecen como 「5弱以上」',
         button: 'Prueba de no recibidos',
       },
       maxScaleOrAboveQuake: {
         label: 'Información de terremotos (boletín con intensidad máx. 「5弱以上」)',
-        description: '石川県西方沖 M6.4, intensidad máx. 5 inferior (telegrama real) – 1 lugar sin recibir. Es del mismo nivel que la intensidad máxima observada, así que la tarjeta muestra la intensidad máxima como 「5弱以上」 (solo ocurre en terremotos con intensidad máx. 5 inferior)',
-        button: 'Prueba de 5 inferior o mayor',
+        description: '石川県西方沖 M6.4, intensidad máx. 5 débil (telegrama real) – 1 lugar sin recibir. Es del mismo nivel que la intensidad máxima observada, así que la tarjeta muestra la intensidad máxima como 「5弱以上」 (solo ocurre en terremotos con intensidad máx. 5 débil)',
+        button: 'Prueba de 5 débil o superior',
       },
       areaUnreceivedQuake: {
         label: 'Información de terremotos (área entera 「5弱以上・未入電」)',
@@ -1616,7 +1622,7 @@ export const es: Messages = {
       },
       quakeReportSequence: {
         label: 'Boletines de tipos alternos',
-        description: '7 telegramas: Información de intensidad sísmica → Información del hipocentro → Información de intensidad sísmica → Información del hipocentro y la intensidad sísmica → su actualización → Información de intensidad sísmica → su actualización (los 4 primeros, en el mismo orden que el sismo precursor del terremoto de la península de Noto de 2024). El título muestra los tipos recibidos, y la etapa preliminar se pliega con la Información del hipocentro y la intensidad sísmica. El 1.º telegrama aún no tiene todas las intensidades (máx. 5 inferior) y el 3.º trae 5 superior, así que con las notificaciones del navegador activadas sale la notificación "Intensidad máx. actualizada". También se ve que una Información de intensidad sísmica tardía no mueve la tarjeta y que las filas cuya intensidad subió o bajó llevan marca',
+        description: '7 telegramas: Información de intensidad sísmica → Información del hipocentro → Información de intensidad sísmica → Información del hipocentro y la intensidad sísmica → su actualización → Información de intensidad sísmica → su actualización (los 4 primeros, en el mismo orden que el sismo precursor del terremoto de la península de Noto de 2024). El título muestra los tipos recibidos, y la etapa preliminar se pliega con la Información del hipocentro y la intensidad sísmica. El 1.º telegrama aún no tiene todas las intensidades (máx. 5 débil) y el 3.º trae 5 fuerte, así que con las notificaciones del navegador activadas sale la notificación "Intensidad máx. actualizada". También se ve que una Información de intensidad sísmica tardía no mueve la tarjeta y que las filas cuya intensidad subió o bajó llevan marca',
         button: 'Prueba de cambio de tipo',
       },
       quakeCancel: {
@@ -1761,7 +1767,7 @@ export const es: Messages = {
       },
       lpgmCategories: {
         label: 'Información de observación del movimiento sísmico de período largo (tipos 1 y 3)',
-        description: 'Envía telegramas reales de los tipos 1 y 3 de la información de observación (2024年1月1日 石川県能登地方 y 2024年8月8日 日向灘). Bajo el apartado de período largo aparece una frase que indica que todas las zonas donde se observó una clase tuvieron intensidad sísmica 5 inferior o mayor',
+        description: 'Envía telegramas reales de los tipos 1 y 3 de la información de observación (2024年1月1日 石川県能登地方 y 2024年8月8日 日向灘). Bajo el apartado de período largo aparece una frase que indica que todas las zonas donde se observó una clase tuvieron intensidad sísmica 5 débil o superior',
         button: 'Prueba de período largo (tipos 1 y 3)',
       },
       lpgmClassZeroRegion: {
@@ -1832,5 +1838,62 @@ export const es: Messages = {
         description: 'Cuando actúa la detección de movimiento, guarda en el dispositivo los valores observados, el desglose de la detección y el estado de aprendizaje de los 30 s anteriores y posteriores. Si detecta algo que no es un terremoto, este registro permite buscar la causa. No sale del dispositivo hasta que lo exporte.',
       },
     },
+  },
+  formats: {
+    intensity: { '-1': 'Desconocido', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5 débil', 50: '5 fuerte', 55: '6 débil', 60: '6 fuerte', 70: '7' },
+    intensityShort: { '-1': '?', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5-', 50: '5+', 55: '6-', 60: '6+', 70: '7' },
+    orAbove: (label) => `${label} o superior`,
+    approxAbove: (label) => `Alrededor de ${label} o superior`,
+    range: (from, to) => `${from}–${to}`,
+    lpgmClass: (cls) => `Clase ${cls}`,
+    lpgmClassUnknown: 'Clase desconocida',
+    lpgmShort: (cls) => `LPGM ${cls}`,
+    lpgmShortUnknown: 'LPGM desconocida',
+    orAboveSuffix: 'o superior',
+    approxAboveBefore: () => 'Alrededor de',
+    approxAboveAfter: 'o superior',
+    belowZero: 'Menos de 0',
+    unknown: 'Desconocido',
+    magnitudeConditions: { 'M不明': 'M desconocida', 'M8を超える巨大地震': 'Más de M8' },
+    veryShallow: 'Muy superficial',
+    depth: (km) => `${km} km`,
+    depthAtLeast: (km) => `${km} km o más profundo`,
+    hypocenterSource: (source) => `Hipocentro por ${source} (no JMA)`,
+    magnitudeJma: 'Magnitud JMA',
+    magnitude: 'Magnitud',
+    coordinate: (lat, lng, south, west) => `${lat}°${south ? 'S' : 'N'} ${lng}°${west ? 'O' : 'E'}`,
+    originTime: 'Hora de origen',
+    arrivalTime: 'Hora de inicio del temblor',
+    arrivalTimeUnknown: 'Hora de inicio del temblor desconocida',
+    domesticTsunami: {
+      なし: 'Sin riesgo de tsunami',
+      不明: 'Desconocido',
+      調査中: 'En investigación',
+      海面変動の可能性: 'Posible tsunami',
+      若干の海面変動: 'Ligera alteración del nivel del mar',
+      注意報: 'Advertencia de Tsunami',
+      警報等: 'Alertas de tsunami vigentes',
+    },
+    domesticTsunamiCode: {
+      '0213': 'Atención a las alteraciones del nivel del mar',
+      '0214': 'Atención a las alteraciones del nivel del mar',
+      '0216': 'Posible tsunami (si el hipocentro está bajo el mar)',
+      '0217': 'Atención a la información posterior',
+      '0230': 'Sin impacto en Japón',
+    },
+    tsunamiGroupTitle: 'Está vigente una Alerta de Mega Tsunami, Alerta de Tsunami o Advertencia de Tsunami',
+    correct: {
+      訂正: 'Corregido (contenido desconocido)',
+      震度のみ訂正: 'Intensidad corregida',
+      震源を訂正: 'Hipocentro corregido',
+      '震度・震源を訂正': 'Intensidad e hipocentro corregidos',
+    },
+    nonJmaStation: 'Estación operada por un organismo distinto de la JMA',
+    tsunamiObsLegend: { m3: '3 m o más', m1: '1 m o más', m02: '0,2 m o más', under02: 'Menos de 0,2 m' },
+    monthDayTime: ES_DATES.monthDayTime,
+    dayTime: ES_DATES.monthDayTime,
+    monthDay: ES_DATES.monthDay,
+    fullDate: ES_DATES.fullDate,
+    calendarDate: ES_DATES.calendarDate,
   },
 }

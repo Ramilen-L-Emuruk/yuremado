@@ -188,7 +188,7 @@ describe('buildLegendBlocks', () => {
       expect(block.key).toBe('tsunamiObsHeight')
       if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
       expect(block.swatch.chips).toEqual(
-        TSUNAMI_OBS_HEIGHT_STEPS.map((s) => ({ label: s.label, color: s.color, shape: 'bar' })),
+        TSUNAMI_OBS_HEIGHT_STEPS.map((s, i) => ({ label: ['3m以上', '1m以上', '0.2m以上', '0.2m未満'][i], color: s.color, shape: 'bar' })),
       )
       // 実際に棒へ塗る色と一致すること（表を読み替えていない）。
       expect(tsunamiObsBarColor(5)).toBe(block.swatch.chips[0].color)

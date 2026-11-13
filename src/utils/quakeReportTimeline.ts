@@ -1,5 +1,6 @@
 import type { JMAQuake } from '../types/earthquake'
 import { readDateTime } from './formatters'
+import type { Messages } from '../i18n/messages'
 
 /**
  * 開いた地震カードの「更新 ▾」で開く報の一覧（見本 opened.html の .rlist）。
@@ -89,8 +90,7 @@ export function msOf(time: string): number | null {
   return d ? d.getTime() : null
 }
 
-/** 一覧と「更新」の時刻の書き方（見本の「1日 16:12」）。 */
-export function formatTimelineTime(ms: number): string {
-  const d = new Date(ms)
-  return `${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
+/** 一覧と「更新」の時刻の書き方（見本の「1日 16:12」。ほかの言語は辞書の `dayTime` の形）。 */
+export function formatTimelineTime(ms: number, w: Pick<Messages['formats'], 'dayTime'>): string {
+  return w.dayTime(new Date(ms))
 }

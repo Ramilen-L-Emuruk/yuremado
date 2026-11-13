@@ -28,7 +28,7 @@ export function arrivalTooltipHtml(marker: TsunamiArrivalMarker, m: Messages): s
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   // 第1波の行は観測棒・欠測の吹き出しと同じ形（「第1波 05:12 押し波」。→ `observationFirstWaveText`）。
   // 時刻を出せないときは「到達を確認」へ落とす —— 到達したこと自体は確定しているので、そこは伝える。
-  const arrival = esc(observationFirstWaveText(marker) || m.map.popup.arrivalConfirmed)
+  const arrival = esc(observationFirstWaveText(marker, m.tsunami) || m.map.popup.arrivalConfirmed)
   return (
     `<div class="text-sm"><div class="font-bold">${esc(marker.name)}</div>` +
     `<div class="text-xs" style="color:#e5e7eb">${arrival}</div>` +

@@ -1,5 +1,9 @@
 import type { Messages } from '../messages'
 import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+import { intlDateWords } from '../intlDates'
+
+/** 日付の書式。言語ごとに 1 回だけ作って使い回す（→ `i18n/intlDates.ts`） */
+const EN_DATES = intlDateWords('en')
 
 /** 複数形の判定。スライダーを動かすたびに作り直さないよう、1 つ作って使い回す */
 const EN_PLURAL = new Intl.PluralRules('en')
@@ -149,6 +153,7 @@ export const en: Messages = {
     estimating: 'Information pending',
     weak: 'Weak',
     arrivalUnknown: 'Arrival time unknown',
+    firstWaveRow: (rest) => `Initial wave ${rest}`,
     height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
     cancel: {
       lifted: { title: 'Tsunami Information Lifted', badge: 'Lifted', desc: 'This tsunami information has been lifted.' },
@@ -656,6 +661,7 @@ export const en: Messages = {
       magnitudeUnknown: 'M unknown',
       preliminary: 'Preliminary',
       telegram: 'Earthquake information telegram',
+      catalogOther: { F: 'Felt', X: 'Felt nearby', L: 'Local earthquake', S: 'Small local earthquake', M: 'Moderately notable earthquake', R: 'Notable earthquake' },
       externalHypocenter: 'Hypocenter from an agency other than JMA',
       epicenterUnknown: 'Epicenter unknown',
       nearbyCount: (n) => `${n.toLocaleString('en')} nearby`,
@@ -1832,5 +1838,62 @@ export const en: Messages = {
         description: 'When shaking detection runs, keeps the observed values, detection breakdown and learning state for 30 seconds before and after on this device. If shaking is detected without an earthquake, these records help trace the cause. They do not leave the device until you export them.',
       },
     },
+  },
+  formats: {
+    intensity: { '-1': 'Unknown', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5 Lower', 50: '5 Upper', 55: '6 Lower', 60: '6 Upper', 70: '7' },
+    intensityShort: { '-1': '?', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5-', 50: '5+', 55: '6-', 60: '6+', 70: '7' },
+    orAbove: (label) => `${label} or higher`,
+    approxAbove: (label) => `About ${label} or higher`,
+    range: (from, to) => `${from}–${to}`,
+    lpgmClass: (cls) => `Class ${cls}`,
+    lpgmClassUnknown: 'Class unknown',
+    lpgmShort: (cls) => `LPGM ${cls}`,
+    lpgmShortUnknown: 'LPGM unknown',
+    orAboveSuffix: 'or higher',
+    approxAboveBefore: () => 'About',
+    approxAboveAfter: 'or higher',
+    belowZero: 'Below 0',
+    unknown: 'Unknown',
+    magnitudeConditions: { 'M不明': 'M unknown', 'M8を超える巨大地震': 'Over M8' },
+    veryShallow: 'Very shallow',
+    depth: (km) => `${km} km`,
+    depthAtLeast: (km) => `${km} km or deeper`,
+    hypocenterSource: (source) => `Hypocenter by ${source} (not JMA)`,
+    magnitudeJma: 'JMA magnitude',
+    magnitude: 'Magnitude',
+    coordinate: (lat, lng, south, west) => `${lat}°${south ? 'S' : 'N'} ${lng}°${west ? 'W' : 'E'}`,
+    originTime: 'Origin time',
+    arrivalTime: 'Shaking onset time',
+    arrivalTimeUnknown: 'Onset time unknown',
+    domesticTsunami: {
+      なし: 'No tsunami threat',
+      不明: 'Unknown',
+      調査中: 'Under investigation',
+      海面変動の可能性: 'Possible tsunami',
+      若干の海面変動: 'Slight sea-level change',
+      注意報: 'Tsunami Advisory',
+      警報等: 'Tsunami warnings in effect',
+    },
+    domesticTsunamiCode: {
+      '0213': 'Watch for sea-level changes',
+      '0214': 'Watch for sea-level changes',
+      '0216': 'Possible tsunami (if the hypocenter is under the sea)',
+      '0217': 'Watch for further information',
+      '0230': 'No impact on Japan',
+    },
+    tsunamiGroupTitle: 'A Major Tsunami Warning, Tsunami Warning or Tsunami Advisory is in effect',
+    correct: {
+      訂正: 'Corrected (details unknown)',
+      震度のみ訂正: 'Intensity corrected',
+      震源を訂正: 'Hypocenter corrected',
+      '震度・震源を訂正': 'Intensity and hypocenter corrected',
+    },
+    nonJmaStation: 'Station operated by an agency other than JMA',
+    tsunamiObsLegend: { m3: '3 m or more', m1: '1 m or more', m02: '0.2 m or more', under02: 'Under 0.2 m' },
+    monthDayTime: EN_DATES.monthDayTime,
+    dayTime: EN_DATES.monthDayTime,
+    monthDay: EN_DATES.monthDay,
+    fullDate: EN_DATES.fullDate,
+    calendarDate: EN_DATES.calendarDate,
   },
 }

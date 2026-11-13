@@ -3,15 +3,15 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, lpgmPeriodRows, lpgmPeriodSeconds } from '../../utils/lpgm'
-import { getIntensityLabel } from '../../utils/intensity'
+import { getLpgmClassColor, lpgmClassLabel, getLpgmClassRadius, lpgmPeriodRows, lpgmPeriodSeconds } from '../../utils/lpgm'
+import { intensityLabel } from '../../utils/intensity'
 import type { LpgmMarker } from '../../hooks/useQuakeLayerData'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { useMessagesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
-import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
+import { withNonJmaMark } from '../../utils/formatters'
 import { ensureLpgmIcons, lpgmIconId, LPGM_ICON_BASE_RADIUS } from './gl/lpgmIcons'
 
 // 長周期地震動観測点を階級ラベル付き四角バッジで描画する MapLibre 版。
@@ -134,16 +134,16 @@ function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
   return (
     `<div style="min-width:170px">` +
     `<div style="font-weight:700;font-size:13px"` +
-      (nonJma ? ` title="${escapeHtml(NON_JMA_MARK_TITLE)}"` : '') +
+      (nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
       `>${escapeHtml(lpgmPointPopupTitle(f))}</div>` +
     (pref ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(pref)}</div>` : '') +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
-    `<span style="color:#cbd5e1">${m.map.popup.lpgm(escapeHtml(getLpgmClassLabel(lgInt)))}</span></div>` +
+    `<span style="color:#cbd5e1">${m.map.popup.lpgm(escapeHtml(lpgmClassLabel(lgInt, m.formats)))}</span></div>` +
     // **震度も併せて出す。** 震度は小さいのに階級が高い観測点があることが長周期地震動の
     // 要点で、片方だけ出すとその差が見えない。
     (int >= 0
-      ? `<div style="margin-top:4px;font-size:12px;color:#cbd5e1">${m.map.popup.intensity(escapeHtml(getIntensityLabel(int)))}</div>`
+      ? `<div style="margin-top:4px;font-size:12px;color:#cbd5e1">${m.map.popup.intensity(escapeHtml(intensityLabel(int, m.formats)))}</div>`
       : '') +
     // 絶対速度応答スペクトルの最大値。語をそのまま出しても伝わらないので、
     // 「揺れの大きさ」と書いて単位を添える（値は電文のまま）。

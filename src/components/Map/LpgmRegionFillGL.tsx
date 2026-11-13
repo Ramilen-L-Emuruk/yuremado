@@ -3,9 +3,9 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point, Polygon } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, type LpgmStationRow } from '../../utils/lpgm'
-import { getIntensityLabel } from '../../utils/intensity'
-import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
+import { getLpgmClassColor, lpgmClassLabel, getLpgmClassRadius, type LpgmStationRow } from '../../utils/lpgm'
+import { intensityLabel } from '../../utils/intensity'
+import { withNonJmaMark } from '../../utils/formatters'
 import type { LpgmRegionAggregate } from '../../hooks/useQuakeLayerData'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
@@ -97,10 +97,10 @@ export function regionStationRowsHtml(stations: readonly LpgmStationRow[], m: Me
     .map((s) =>
       `<div style="display:flex;align-items:center;gap:8px;font-size:12px">` +
       `${badgeHtml(String(s.lgInt), getLpgmClassColor(s.lgInt))}` +
-      `<span style="color:#cbd5e1"` + (s.nonJma ? ` title="${escapeHtml(NON_JMA_MARK_TITLE)}"` : '') +
+      `<span style="color:#cbd5e1"` + (s.nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
       `>${escapeHtml(withNonJmaMark(s.name, s.nonJma === true))}</span>` +
       (s.int !== undefined
-        ? `<span style="color:#94a3b8">${m.map.popup.intensity(escapeHtml(getIntensityLabel(s.int)))}</span>`
+        ? `<span style="color:#94a3b8">${m.map.popup.intensity(escapeHtml(intensityLabel(s.int, m.formats)))}</span>`
         : '') +
       `</div>`)
     .join('')
@@ -115,7 +115,7 @@ function clickHtml(f: MapGeoJSONFeature, stationsByRegion: ReadonlyMap<string, r
   return (
     `<div class="text-sm" style="min-width:160px"><div class="font-bold">${escapeHtml(name)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">` +
-    m.map.popup.lpgmRegion(escapeHtml(getLpgmClassLabel(lgInt)), int >= 0 ? escapeHtml(getIntensityLabel(int)) : null) +
+    m.map.popup.lpgmRegion(escapeHtml(lpgmClassLabel(lgInt, m.formats)), int >= 0 ? escapeHtml(intensityLabel(int, m.formats)) : null) +
     `</div>` +
     regionStationRowsHtml(stationsByRegion.get(name) ?? [], m) +
     popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +

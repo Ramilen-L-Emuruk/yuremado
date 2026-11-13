@@ -1,5 +1,9 @@
 import type { Messages } from '../messages'
 import { translateHeight, translateInitialWave, translateKindName, translateOperationStatus, type TsunamiTermWords } from '../tsunamiTerms'
+import { intlDateWords } from '../intlDates'
+
+/** 日付の書式。言語ごとに 1 回だけ作って使い回す（→ `i18n/intlDates.ts`） */
+const KO_DATES = intlDateWords('ko')
 
 const TSUNAMI_WORDS: TsunamiTermWords = {
   grade: { MajorWarning: '대형 지진해일 경보', Warning: '지진해일 경보', Watch: '지진해일 주의보', Forecast: '지진해일 예보(약간의 해수면 변동)' },
@@ -156,6 +160,7 @@ export const ko: Messages = {
     estimating: '정보 보류 중',
     weak: '미약',
     arrivalUnknown: '도달 시각 불명',
+    firstWaveRow: (rest) => `제1파 ${rest}`,
     height: (description, over) => translateHeight(description, over, TSUNAMI_WORDS),
     cancel: {
       lifted: { title: '지진해일 정보 해제', badge: '해제', desc: '이 지진해일 정보는 해제되었습니다.' },
@@ -662,6 +667,7 @@ export const ko: Messages = {
       magnitudeUnknown: '규모 불명',
       preliminary: '속보값',
       telegram: '지진 정보 전문',
+      catalogOther: { F: '유감', X: '부근 유감', L: '국지 지진', S: '소규모 국지 지진', M: '다소 현저한 지진', R: '현저한 지진' },
       externalHypocenter: '일본 기상청 이외 기관의 진원',
       epicenterUnknown: '진앙 불명',
       nearbyCount: (n) => `이 부근 ${n.toLocaleString('ko')}건`,
@@ -1838,5 +1844,62 @@ export const ko: Messages = {
         description: '흔들림 감지가 작동했을 때 그 전후 30초의 관측값・감지 내역・학습 상태를 기기 안에 남깁니다. 지진이 아닌데 감지했을 때 이 기록이 있으면 원인을 추적할 수 있습니다. 내보내기 전까지는 기기 밖으로 나가지 않습니다.',
       },
     },
+  },
+  formats: {
+    intensity: { '-1': '불명', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5약', 50: '5강', 55: '6약', 60: '6강', 70: '7' },
+    intensityShort: { '-1': '불명', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5약', 50: '5강', 55: '6약', 60: '6강', 70: '7' },
+    orAbove: (label) => `${label} 이상`,
+    approxAbove: (label) => `${label} 정도 이상`,
+    range: (from, to) => `${from}~${to}`,
+    lpgmClass: (cls) => `계급 ${cls}`,
+    lpgmClassUnknown: '계급 불명',
+    lpgmShort: (cls) => `장주기 ${cls}`,
+    lpgmShortUnknown: '장주기 불명',
+    orAboveSuffix: '이상',
+    approxAboveBefore: () => '',
+    approxAboveAfter: '정도 이상',
+    belowZero: '0 미만',
+    unknown: '불명',
+    magnitudeConditions: { 'M不明': 'M 불명', 'M8を超える巨大地震': 'M8 초과' },
+    veryShallow: '매우 얕음',
+    depth: (km) => `${km}km`,
+    depthAtLeast: (km) => `${km}km 이상`,
+    hypocenterSource: (source) => `진원 결정: ${source}(기상청 이외)`,
+    magnitudeJma: '기상청 규모',
+    magnitude: '규모',
+    coordinate: (lat, lng, south, west) => `${south ? '남위' : '북위'} ${lat}° ${west ? '서경' : '동경'} ${lng}°`,
+    originTime: '지진 발생 시각',
+    arrivalTime: '흔들림 시작 시각',
+    arrivalTimeUnknown: '흔들림 시작 시각 불명',
+    domesticTsunami: {
+      なし: '지진해일 걱정 없음',
+      不明: '불명',
+      調査中: '조사 중',
+      海面変動の可能性: '지진해일 발생 우려 있음',
+      若干の海面変動: '약간의 해수면 변동',
+      注意報: '지진해일 주의보',
+      警報等: '지진해일 경보 등 발표 중',
+    },
+    domesticTsunamiCode: {
+      '0213': '해수면 변동에 주의',
+      '0214': '해수면 변동에 주의',
+      '0216': '지진해일 우려(진원이 해저인 경우)',
+      '0217': '향후 정보에 주의',
+      '0230': '일본에 대한 영향 없음',
+    },
+    tsunamiGroupTitle: '대형 지진해일 경보·지진해일 경보 또는 지진해일 주의보가 발표되어 있습니다',
+    correct: {
+      訂正: '정정(내용 불명)',
+      震度のみ訂正: '진도 정정',
+      震源を訂正: '진원 정정',
+      '震度・震源を訂正': '진도·진원 정정',
+    },
+    nonJmaStation: '기상청 이외의 기관이 운영하는 관측점입니다',
+    tsunamiObsLegend: { m3: '3m 이상', m1: '1m 이상', m02: '0.2m 이상', under02: '0.2m 미만' },
+    monthDayTime: KO_DATES.monthDayTime,
+    dayTime: KO_DATES.monthDayTime,
+    monthDay: KO_DATES.monthDay,
+    fullDate: KO_DATES.fullDate,
+    calendarDate: KO_DATES.calendarDate,
   },
 }
