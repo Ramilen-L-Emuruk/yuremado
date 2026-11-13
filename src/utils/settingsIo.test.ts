@@ -119,6 +119,31 @@ describe('設定の読み込み', () => {
     expect(r.ok && r.settings.ttsVoice).toBe('system')
   })
 
+  // 言語の設定ができる前に書き出したファイルは、端末の設定と同じく日本語で読む（→ `migrateLocale`）
+  it('正: 言語を持たないファイルは日本語で入れ、読めなかった項目に数えない', () => {
+    const { locale: _l, ...rest } = DEFAULTS
+    const r = parseSettingsFile(buildSettingsFile(rest as AppSettings, NO_KEYS), DEFAULTS)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.settings.locale).toBe('ja')
+    expect(r.rejectedKeys).toEqual([])
+  })
+
+  it('対照: 言語を持つファイルは、書いてある言語（端末に合わせるも含む）をそのまま入れる', () => {
+    for (const locale of ['ko', 'auto'] as const) {
+      const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, locale }, NO_KEYS), DEFAULTS)
+      expect(r.ok && r.settings.locale).toBe(locale)
+    }
+  })
+
+  it('安全弁: 知らない言語の値は端末に合わせるへ戻し、読めなかった項目に出す', () => {
+    const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, locale: 'fr' } as unknown as AppSettings, NO_KEYS), DEFAULTS)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.settings.locale).toBe('auto')
+    expect(r.rejectedKeys).toContain('locale')
+  })
+
   it('安全弁: 読み込んでも、いま入力してあるAPIキーが消えない', () => {
     // 書き出しにキーが入らない以上、ファイル側は空。空で塗ると読み込むたびにキーが消える。
     const file = buildSettingsFile(DEFAULTS, NO_KEYS)

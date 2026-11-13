@@ -1013,6 +1013,11 @@ export const ko: Messages = {
         label: '기상청 발표문',
         description: '전문에 덧붙은 본문·부가문(난카이 해곡 지진 임시 정보의 본문 등)을 읽습니다. 진도나 지진해일 읽기가 끝난 뒤에 읽으므로, 전문이 이어지는 동안에는 읽지 못할 수 있습니다',
       },
+      locale: {
+        label: '언어 (Language)',
+        description: '화면과 알림의 언어입니다. 음성 읽기는 일본어 그대로입니다.',
+        auto: '기기 설정에 따름',
+      },
       uiScale: {
         label: 'UI 배율',
         description: '화면 전체의 표시 배율을 바꿉니다',

@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, use
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
 import { useMessages, useMessagesRef } from './i18n/I18nProvider'
+import { useApplyLocaleSetting } from './i18n/useApplyLocaleSetting'
 import { historicalArchiveLabel } from './utils/historicalArchiveLabel'
 import { JA_MESSAGES } from './i18n/messages'
 import { LocalizedError, errorText } from './utils/localizedError'
@@ -221,6 +222,8 @@ export function App() {
   // 後から呼ばれる組み立て（地震情報の通知の待ち行列）が、呼ばれた時点の言語の辞書を読むための参照
   const messagesRef = useMessagesRef()
   const tabNames = messages.nav
+  // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
+  useApplyLocaleSetting(settings.locale)
   // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
   usePushSubscription(settings, updateSetting)
   // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す

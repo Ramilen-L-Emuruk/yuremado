@@ -8,6 +8,7 @@ import {
   TIME_SIGNAL_CLOCKS, TIME_SIGNAL_INTERVALS, TIME_SIGNAL_ORDERS, TIME_SIGNAL_PHRASES, TIME_SIGNAL_SOUNDS, TIME_SIGNAL_WHILE_SPEAKING,
 } from './timeSignal'
 import { WAVE_SPAN_CHOICES } from './waveSpan'
+import { LOCALE_SETTINGS } from '../i18n/messages'
 import { USAGE_SETTING_COUNT, USAGE_SETTING_SPECS, validUsageSettingValue } from './usageSettings'
 
 const sorted = (xs: readonly (string | number)[]) => [...xs].map(String).sort()
@@ -40,6 +41,8 @@ describe('送る項目の決まりが、設定の読み込みと揃っている'
     expect(choices('heatmapPeriod')).toEqual(sorted(HEATMAP_PERIODS.map(p => p.key)))
     expect(choices('waveSpanSec')).toEqual(sorted(WAVE_SPAN_CHOICES))
     expect(choices('shareCardFormat')).toEqual(sorted(Object.keys(SHARE_CARD_FORMATS)))
+    // 言語を足したら、ここ（中継へ写すので言語の表を import できない）にも足さないと落ちる
+    expect(choices('locale')).toEqual(sorted(LOCALE_SETTINGS))
   })
 
   it('正: 選択肢の値はどれも設定の読み込みを素通りする（読み込みが落とす値を決まりに書いていない）', () => {

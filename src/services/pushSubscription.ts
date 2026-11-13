@@ -1,4 +1,5 @@
 import type { AppSettings } from '../hooks/useSettings'
+import { deviceLanguageTags, resolveLocale, type Locale } from '../i18n/messages'
 import { log } from '../utils/logger'
 import { setPushQuietBinding } from './notifyQuietWhileOpen'
 import { RELAY_ORIGIN, relayTokenStore } from './relayEndpoint'
@@ -29,15 +30,21 @@ export interface PushPrefsCopy {
    */
   testDelivery: boolean
   prefectures: string[]
+  /**
+   * 通知の文の言語（設定の言語。端末に合わせるときは、いま端末から決まる言語）。この欄を知らない古い中継には無視され、
+   * 日本語で送られる（2026-11-11 ユーザー選択「言語の設定の段で合わせる (Recommended)」・2026-11-12 同「11-11 の決定どおりこの段で (Recommended)」）
+   */
+  locale: Locale
 }
 
 type PushSettings = Pick<AppSettings,
   'notifyEnabled' | 'notifyQuake' | 'notifyMinScale' | 'notifyEEW' | 'notifyTsunami' | 'notifyNankai' | 'nankaiCommentaryAlerts'
-  | 'notifyNankaiRoutine' | 'notifyQuakeNotice' | 'notifyPrefectures' | 'dmdataTestDelivery'>
+  | 'notifyNankaiRoutine' | 'notifyQuakeNotice' | 'notifyPrefectures' | 'dmdataTestDelivery' | 'locale'>
 
-export function pushPrefsOf(s: PushSettings): PushPrefsCopy {
+export function pushPrefsOf(s: PushSettings, deviceTags: readonly string[] = deviceLanguageTags()): PushPrefsCopy {
   const on = s.notifyEnabled
   return {
+    locale: resolveLocale(s.locale, deviceTags),
     quake: on && s.notifyQuake,
     minScale: s.notifyMinScale,
     eew: on && s.notifyEEW,

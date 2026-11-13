@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { log } from '../utils/logger'
 import { consumeSettingsHandoff } from '../utils/settingsHandoff'
+import { LOCALE_SETTINGS, type LocaleSetting } from '../i18n/messages'
 import { isValidIntensityScale } from '../utils/intensity'
 import { isObservedLpgmClass } from '../utils/lpgm'
 import {
@@ -95,6 +96,12 @@ export interface AppSettings extends QuakeListSettings {
    * 既定は行わない（2026-10-31 ユーザー選択「設定を足し既定オフ」）。
    */
   kyoshinDetectSpeech: boolean
+  /**
+   * 画面とブラウザの通知の言語。`auto` は端末（ブラウザ）の言語に合わせる（→ `i18n/messages.ts` の `resolveLocale`）。
+   * 既定は `auto`。この項目を持たない保存済みの設定（言語の設定ができる前から使っている端末）は日本語で読む
+   * （{@link migrateLocale}。2026-11-12 ユーザー選択「新しい人だけ端末に合わせる (Recommended)」）。
+   */
+  locale: LocaleSetting
   uiScale: number           // UI 倍率 (1 = 100%)
   mapIconScale: number      // 地図アイコンの倍率 (1 = 100%、UI 倍率とは独立)
   // 地図を傾けたとき、震源をどれだけ深く見せるか (1 = 実際の深さ)。水平方向は常に実スケール。
@@ -366,6 +373,7 @@ export const DEFAULTS: AppSettings = {
   // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   quakeNoticeAlerts: false,
   kyoshinDetectSpeech: false,
+  locale: 'auto',
   uiScale: 1,
   mapIconScale: 1,
   hypocenterDepthScale: 1,
@@ -690,6 +698,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     quakeNoticeBanner: ensureBool(partial.quakeNoticeBanner, DEFAULTS.quakeNoticeBanner),
     quakeNoticeAlerts: ensureBool(partial.quakeNoticeAlerts, DEFAULTS.quakeNoticeAlerts),
     kyoshinDetectSpeech: ensureBool(partial.kyoshinDetectSpeech, DEFAULTS.kyoshinDetectSpeech),
+    locale: ensureOneOf(partial.locale, LOCALE_SETTINGS, DEFAULTS.locale),
     uiScale: clampNumber(partial.uiScale, 0.5, 3, DEFAULTS.uiScale),
     mapIconScale: clampNumber(partial.mapIconScale, 0.5, 3, DEFAULTS.mapIconScale),
     hypocenterDepthScale: clampNumber(partial.hypocenterDepthScale, 1, 20, DEFAULTS.hypocenterDepthScale),
@@ -1039,7 +1048,38 @@ export function migrateScaleToggles(stored: Partial<AppSettings>, settings: AppS
  * -1 を消す `migrateScaleToggles` より先に掛ける。
  */
 export function migrateStoredSettings(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
-  return migrateLegacyTts(stored, migrateScaleToggles(stored, migrateDetachedNotifications(stored, settings)))
+  return migrateLocale(stored, migrateLegacyTts(stored, migrateScaleToggles(stored, migrateDetachedNotifications(stored, settings))))
+}
+
+/**
+ * 言語の設定ができる前に保存された設定（`locale` を持たない）は、日本語で読む。それまで画面は日本語だけだったので、
+ * 更新しただけで画面の言語が変わらないようにする（2026-11-12 ユーザー選択「新しい人だけ端末に合わせる (Recommended)」）。
+ * 端末に合わせるのは、設定を保存していない新しい端末だけ。読み込みで変えた値は保存しない（`migrateDetachedNotifications` と同じ）。
+ *
+ * **`sanitize()` の中では行わない**（理由は `migrateDetachedNotifications` と同じ）。
+ */
+export function migrateLocale(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
+  return stored.locale === undefined ? { ...settings, locale: 'ja' } : settings
+}
+
+/**
+ * 起動の前に、保存された言語の設定だけを読む（`main.tsx` が最初の画面を描く前に辞書を読むため）。
+ * 旧アドレスから渡された設定があれば先に受け取る（受け取った設定も「言語の設定ができる前の設定」として日本語で読む）。
+ * 読めなければ既定（端末に合わせる）。
+ */
+export function readStoredLocaleSetting(): LocaleSetting {
+  receiveSettingsHandoff()
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return DEFAULTS.locale
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') return DEFAULTS.locale
+    const stored = parsed as Partial<AppSettings>
+    return stored.locale === undefined ? 'ja' : ensureOneOf(stored.locale, LOCALE_SETTINGS, DEFAULTS.locale)
+  } catch (e) {
+    log.warn('[settings] 起動の前に言語の設定を読めず、端末に合わせる', e)
+    return DEFAULTS.locale
+  }
 }
 
 /** 読み上げの入り切りを `voicevoxEnabled` で持っていた頃の設定。VOICEVOX だけで読んでいたので、入なら声は VOICEVOX */

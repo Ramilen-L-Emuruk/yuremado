@@ -1006,6 +1006,11 @@ export const en: Messages = {
         label: 'JMA announcement text',
         description: 'Reads the body text and supplementary text attached to telegrams (such as the body of Nankai Trough Earthquake Extra Information). It is read after intensity and tsunami readings finish, so it may not be read while telegrams keep arriving',
       },
+      locale: {
+        label: 'Language',
+        description: 'Language of the screens and notifications. Speech stays in Japanese.',
+        auto: 'Match device',
+      },
       uiScale: {
         label: 'UI scale',
         description: 'Changes the display scale of the whole screen',

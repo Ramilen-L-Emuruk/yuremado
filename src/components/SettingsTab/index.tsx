@@ -14,7 +14,8 @@ import type { ConnectionStatus } from '../../types/earthquake'
 import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLabel'
 import type { RelayUpstreamStatus } from '../../services/dmdata'
 import { useMessages } from '../../i18n/I18nProvider'
-import type { Messages } from '../../i18n/messages'
+import { LOCALE_LOAD_FAILED_EN, LOCALE_LOAD_FAILED_JA, LOCALES, type LocaleSetting, type Messages } from '../../i18n/messages'
+import { useLocaleLoadFailed } from '../../i18n/I18nProvider'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, intensityLabel, intensityShortLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
 import { kyoshinIndexLabelText, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
@@ -922,7 +923,8 @@ function Row({ label, description, hint, children }: {
         {description
           ? <DescriptionTip label={label} description={description} />
           : <p className="text-white text-sm">{label}</p>}
-        {hint && <p className="text-secondary text-xs mt-0.5 w-0 min-w-full">{hint}</p>}
+        {/* 改行は行を分ける（言語の行の「読み込めない」知らせは日本語と英語の 2 行） */}
+        {hint && <p className="text-secondary text-xs mt-0.5 w-0 min-w-full whitespace-pre-line">{hint}</p>}
       </div>
       {/* ml-auto は 2 段に落ちた行のためにある。折り返した 2 行目はコントロール 1 個だけの行になり、
           アイテムが 1 個の行では justify-between が flex-start にフォールバックして左寄せになる
@@ -1375,6 +1377,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   const m = useMessages()
   const w = m.settings
   const fw = m.formats
+  const localeLoadFailed = useLocaleLoadFailed()
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -1937,6 +1940,26 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       {/* 地震の一覧の絞り込みは地震タブの一覧の上へ移した（2026-11-07 選択「地震タブに置き、設定から外す (Recommended)」・
           移したことは設定の窓に書かない: 選択「書かない (Recommended)」） */}
       <Section category="display" title={w.sections.display}>
+        {/* 表示設定の先頭に置く（2026-11-12 ユーザー選択「表示の節の先頭 (Recommended)」）。言語の名前はどの言語の画面でも
+            その言語自身の書き方（→ i18n/messages.ts の LOCALES） */}
+        <Row
+          label={w.rows.locale.label}
+          description={w.rows.locale.description}
+          // 選んだ言語の辞書を読めず日本語で出しているときだけ。そのときは選んだ言語では書けないので、日本語と英語で出す
+          // （2026-11-12 ユーザー選択「日本語＋英語で出す (Recommended)」）
+          hint={localeLoadFailed !== null ? `${LOCALE_LOAD_FAILED_JA}\n${LOCALE_LOAD_FAILED_EN}` : undefined}
+        >
+          <select
+            value={settings.locale}
+            onChange={e => onUpdate('locale', e.target.value as LocaleSetting)}
+            className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
+          >
+            <option value="auto">{w.rows.locale.auto}</option>
+            {LOCALES.map(l => (
+              <option key={l.id} value={l.id} lang={l.tag}>{l.name}</option>
+            ))}
+          </select>
+        </Row>
         <Row label={w.rows.uiScale.label} description={w.rows.uiScale.description}>
           <select
             value={settings.uiScale}

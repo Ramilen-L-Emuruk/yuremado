@@ -11,6 +11,7 @@ import {
   injectDevForecastKey,
   stripDevArrivalToken,
   settingsToStore,
+  readStoredLocaleSetting,
   DAY_NIGHT_OPACITY_MIN,
   DAY_NIGHT_OPACITY_MAX,
 } from './useSettings'
@@ -368,6 +369,35 @@ describe('load', () => {
     const result = load()
     expect(result.notifyQuake).toBe(false)
     expect(result.notifyEEW).toBe(false)
+  })
+
+  // 言語の設定ができる前に保存された設定は日本語で読む（2026-11-12 ユーザー選択「新しい人だけ端末に合わせる (Recommended)」。→ `migrateLocale`）
+  it('正: 言語を持たない保存済みの設定は、日本語で読む（起動の前に読む言語も同じ）', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ soundVolume: 0.5 }))
+    expect(load().locale).toBe('ja')
+    expect(readStoredLocaleSetting()).toBe('ja')
+  })
+
+  it('対照: 設定を保存していない新しい端末は、端末に合わせる', () => {
+    expect(load().locale).toBe('auto')
+    expect(readStoredLocaleSetting()).toBe('auto')
+  })
+
+  it('安全弁: 選んで保存した言語は、そのまま読む（端末に合わせるも含む）', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: 'ko' }))
+    expect(load().locale).toBe('ko')
+    expect(readStoredLocaleSetting()).toBe('ko')
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: 'auto' }))
+    expect(load().locale).toBe('auto')
+    expect(readStoredLocaleSetting()).toBe('auto')
+  })
+
+  it('安全弁: 知らない言語の値・壊れた設定は、端末に合わせる', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: 'fr' }))
+    expect(load().locale).toBe('auto')
+    expect(readStoredLocaleSetting()).toBe('auto')
+    localStorage.setItem(STORAGE_KEY, '{invalid json}')
+    expect(readStoredLocaleSetting()).toBe('auto')
   })
 
   it('正常な部分設定は sanitize 後にマージ', () => {
