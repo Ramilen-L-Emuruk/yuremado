@@ -9,8 +9,9 @@ import { heatmapColorExpression } from './gl/heatmapRamp'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // 地震活動ヒートマップを描画する MapLibre 版（Leaflet 版 QuakeHeatmapLayer 相当）。期間は凡例で選ぶ（`useQuakeHeatmap`）。
 // Leaflet は leaflet.heat（Canvas）だったが、MapLibre はネイティブの heatmap レイヤーで描く。
@@ -139,9 +140,9 @@ function buildFC(points: readonly HeatPoint[]): FeatureCollection<Point> {
 }
 
 /** 震源地名。DMDSS の GD Earthquake List は名前を返さないことがある。 */
-function titleOf(f: MapGeoJSONFeature, m: Messages): string {
+function titleOf(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const name = String(f.properties?.name ?? '').trim()
-  return name || m.map.popup.epicenterUnknown
+  return name ? place('epi', name) : m.map.popup.epicenterUnknown
 }
 
 /** 地物から読んだ規模の説明。地図の地物は `null` の欄を落とすことがあるので、文字列以外は「なし」。 */
@@ -185,17 +186,17 @@ function groupClickHtml(f: MapGeoJSONFeature, count: number, m: Messages): strin
   )
 }
 
-export function hoverHtml(f: MapGeoJSONFeature, m: Messages): string {
+export function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const count = groupCountOf(f)
   if (count !== null) return groupHoverHtml(f, count, m)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${magnitudeBadge(f, m)}` +
-    `<span style="font-weight:600">${escapeHtml(titleOf(f, m))}</span></div>`
+    `<span style="font-weight:600">${escapeHtml(titleOf(f, m, place))}</span></div>`
   )
 }
 
-export function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
+export function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const count = groupCountOf(f)
   if (count !== null) return groupClickHtml(f, count, m)
   const depth = Number(f.properties?.depth ?? -1)
@@ -204,7 +205,7 @@ export function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
   const timeText = time ? formatDateTimeMin(time) : null
   return (
     `<div style="min-width:160px">` +
-    `<div style="font-weight:700;font-size:13px">${escapeHtml(titleOf(f, m))}</div>` +
+    `<div style="font-weight:700;font-size:13px">${escapeHtml(titleOf(f, m, place))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${magnitudeBadge(f, m)}` +
     `<span style="color:#cbd5e1">${m.map.popup.depth(escapeHtml(depthText(depth, f.properties?.depthAtLeast === true, m.formats)))}</span></div>` +
@@ -218,6 +219,7 @@ export function QuakeHeatmapGL({ points, iconScale, intensityScale, visible }: P
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
   // レイヤー構築は [map] 依存のため、構築時は ref 経由で最新の倍率を読む
   // （クロージャが握った初期値のままだと、構築前に倍率を変えた場合に旧値で組まれる）。
   const iconScaleRef = useRef(iconScale)
@@ -279,8 +281,8 @@ export function QuakeHeatmapGL({ points, iconScale, intensityScale, visible }: P
       priority: 'heat',
       tolPx: HIT_TOL_PX,
       rankKey: 'rank',
-      buildHoverHtml: (f) => hoverHtml(f, mRef.current),
-      buildClickHtml: (f) => clickHtml(f, mRef.current),
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

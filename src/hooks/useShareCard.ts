@@ -1,4 +1,4 @@
-import { useMessages } from '../i18n/I18nProvider'
+import { useMessages, usePlaceNamesRef } from '../i18n/I18nProvider'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MapHandle } from '../components/Map/mapTypes'
 import { captureMapImage } from '../components/Map/gl/captureMap'
@@ -57,6 +57,8 @@ export function useShareCard(
   const messages = useMessages()
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+  // 震源名を画像と本文の言語へ訳す表（日本語ならそのまま）
+  const placeNamesRef = usePlaceNamesRef()
   useEffect(() => {
     contentRef.current = content
   }, [content])
@@ -81,7 +83,7 @@ export function useShareCard(
         try {
           // **見出しと出典を先に決める。** 出典の行数で地図に割ける高さが変わるため、撮影の
           // 寸法はここが確定してからでないと出せない（`shareCardMapHeight`）。
-          const built = buildShareCardContent(contentRef.current, currentAppUrl(), messagesRef.current)
+          const built = buildShareCardContent(contentRef.current, currentAppUrl(), messagesRef.current, placeNamesRef.current)
           const format = formatRef.current
           const capture = await captureMapImage(handle.map, {
             width: format.width,

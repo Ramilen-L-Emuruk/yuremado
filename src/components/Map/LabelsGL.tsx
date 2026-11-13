@@ -5,7 +5,9 @@ import { useMapGL } from './mapGLContext'
 import { loadPrefectures } from '../../utils/prefectures'
 import { loadSubRegions } from '../../utils/subregions'
 import { REGIONS, regionLabel } from '../../utils/regions'
-import { useMessages, useMessagesRef } from '../../i18n/I18nProvider'
+import { useLocale, useMessages, useMessagesRef, usePlaceNames } from '../../i18n/I18nProvider'
+import { mapLabelPlaceNames, type PlaceNameLookup } from '../../i18n/placeNames'
+import type { Messages } from '../../i18n/messages'
 import { addOrderedLayer } from './gl/layerOrder'
 import { JP_FONT_STACK } from './gl/fontStack'
 import { log } from '../../utils/logger'
@@ -237,6 +239,30 @@ function applyPlacements(
   }
 }
 
+/**
+ * ラベル 1 枚。県名・区域名は、言語を切り替えたときに字を引き直せるよう日本語の名前を持つ。
+ * 地方名は `REGIONS` の並び（`id`）から引き直すので持たない。
+ */
+/**
+ * ラベルの字をいまの言語に合わせて書き換え、字の変わったソースを返す。地方名は辞書の語、
+ * 県名・区域名は地名の引き方（`mapLabelPlaceNames` が訳さない言語では日本語の名前のまま返す）。
+ * 元の日本語の名前（`place.name`）は残すので、言語を何度切り替えても日本語へ戻せる
+ */
+export function relabelTargets(targets: LabelTarget[], labelPlace: PlaceNameLookup, mapWords: Messages['map']): Set<string> {
+  const changed = new Set<string>()
+  for (const t of targets) {
+    const text = t.place
+      ? labelPlace(t.place.kind, t.place.name)
+      : t.source === REGION_SRC ? regionLabel(REGIONS[Number(t.id)]?.name ?? t.text, mapWords) : t.text
+    if (t.text !== text) { t.text = text; changed.add(t.source) }
+  }
+  return changed
+}
+
+export interface LabelTarget extends LabelOverlapTarget {
+  place?: { kind: 'pref' | 'area'; name: string }
+}
+
 interface Props {
   /**
    * 重なり判定の再評価トリガー。震度塗り・観測点・検知点等「マーカー」側の位置情報が変わったときだけ
@@ -256,7 +282,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
   const iconScaleRef = useRef(iconScale)
   iconScaleRef.current = iconScale
   // 各ラベルの生データ（重なり判定の再計算に使う）。ロード完了後に確定する。
-  const targetsRef = useRef<LabelOverlapTarget[]>([])
+  const targetsRef = useRef<LabelTarget[]>([])
   // 前回 setData した配置結果のソース別署名（applyPlacements の空振り判定に使う）。
   const lastSigRef = useRef<Record<string, string>>({})
   // 重なり判定のスケジュール関数（下のトリガー用 useEffect が設定する）。県名・区域名の
@@ -265,6 +291,11 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
   // 地方名の語（言語が変わったら下の effect が地方のラベルの字だけを差し替える）
   const messages = useMessages()
   const messagesRef = useMessagesRef()
+  // 県名・区域名の訳（訳す言語は `MAP_LABEL_LOCALES`。それ以外は日本語のまま）。県名・区域名は
+  // 非同期に読んでから足すので、足すときの言語で引けるよう ref でも持つ
+  const labelPlace = mapLabelPlaceNames(useLocale(), usePlaceNames())
+  const labelPlaceRef = useRef<PlaceNameLookup>(labelPlace)
+  labelPlaceRef.current = labelPlace
 
   useEffect(() => {
     if (!map) return
@@ -329,11 +360,12 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
     loadPrefectures().then((prefs) => {
       if (cancelled || !map.getSource(REGION_SRC)) return
       // 県名ラベル。県中心の最大震度バッジと重なったときだけ、県内に収まる範囲で上下へ退避する。
-      const prefTargets: LabelOverlapTarget[] = Object.entries(prefs).map(([name, shape], i) => ({
+      const prefTargets: LabelTarget[] = Object.entries(prefs).map(([name, shape], i) => ({
         source: PREF_SRC,
         id: i,
         lngLat: [shape.label[1], shape.label[0]],
-        text: name,
+        text: labelPlaceRef.current('pref', name),
+        place: { kind: 'pref', name },
         textSize: PREF_TEXT_SIZE,
         shiftEm: PREF_SHIFT_EM,
         room: shape.room,
@@ -373,11 +405,12 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
       if (cancelled || !map.getSource(REGION_SRC)) return
       // 区域名ラベル。区域中心の震度バッジ（QuakeRegionFillGL・同じ label 座標にアイコンを置く）と
       // 重なったときだけ、区域内に収まる範囲で上下へ退避する（退避量は SUB_SHIFT_EM）。
-      const subTargets: LabelOverlapTarget[] = subs.map((sr, i) => ({
+      const subTargets: LabelTarget[] = subs.map((sr, i) => ({
         source: SUB_SRC,
         id: i,
         lngLat: [sr.label[1], sr.label[0]],
-        text: sr.name,
+        text: labelPlaceRef.current('area', sr.name),
+        place: { kind: 'area', name: sr.name },
         textSize: SUB_TEXT_SIZE,
         shiftEm: SUB_SHIFT_EM,
         room: sr.room,
@@ -564,21 +597,17 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
     scheduleOverlapCheckRef.current()
   }, [map, overlapSignature])
 
-  // 言語が変わったら、地方のラベルの字を差し替える（県名・区域名は電文と同じ地名なので訳さない）。
-  // **レイヤーは作り直さない。** 字を変えて地方のソースの書き戻しを 1 回だけ起こし（前回の署名を外す）、字の幅が変わるので重なりも測り直す。
-  // 言語が変わったときだけ走る（地図の移動や毎秒の更新では走らない）
+  // 言語が変わったら（訳の表を読み終えたときも）、ラベルの字を差し替える。地方名は辞書の語、
+  // 県名・区域名は地名の訳（`MAP_LABEL_LOCALES` の言語だけ。ほかは日本語のまま）。
+  // **レイヤーは作り直さない。** 字の変わったソースだけ書き戻しを 1 回起こし（前回の署名を外す）、字の幅が変わるので重なりも測り直す。
+  // 言語か表が変わったときだけ走る（地図の移動や毎秒の更新では走らない）
   useEffect(() => {
     if (!map) return
-    let changed = false
-    for (const t of targetsRef.current) {
-      if (t.source !== REGION_SRC) continue
-      const text = regionLabel(REGIONS[Number(t.id)]?.name ?? t.text, messages.map)
-      if (t.text !== text) { t.text = text; changed = true }
-    }
-    if (!changed) return
-    delete lastSigRef.current[REGION_SRC]
+    const changedSources = relabelTargets(targetsRef.current, labelPlace, messages.map)
+    if (changedSources.size === 0) return
+    for (const id of changedSources) delete lastSigRef.current[id]
     scheduleOverlapCheckRef.current()
-  }, [map, messages])
+  }, [map, messages, labelPlace])
 
   return null
 }

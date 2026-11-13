@@ -1,5 +1,6 @@
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../types/earthquake'
 import type { Messages } from '../i18n/messages'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 import { OPEN_TSUNAMI, type NotificationOpen } from './notificationOpen'
 import { tsunamiMaxGrade, tsunamiLiftText, sortAreasAcrossGradesForCardDisplay, observationHeight, isObservationMissing } from './tsunami'
 
@@ -39,8 +40,8 @@ export const TSUNAMI_NOTIFY_MAX_AREAS = 5
  *
  * 黙って切ると、6 件目以降の区域が通知から消えたことに読み手は気づけない。
  */
-export function joinAreaNamesForNotification(areas: readonly TsunamiArea[], m: TsunamiNotificationWords): string {
-  const names = areas.slice(0, TSUNAMI_NOTIFY_MAX_AREAS).map(a => a.name).join(m.alertText.nameSeparator)
+export function joinAreaNamesForNotification(areas: readonly TsunamiArea[], m: TsunamiNotificationWords, place: PlaceNameLookup): string {
+  const names = areas.slice(0, TSUNAMI_NOTIFY_MAX_AREAS).map(a => place('tsunamiArea', a.name)).join(m.alertText.nameSeparator)
   const rest = areas.length - TSUNAMI_NOTIFY_MAX_AREAS
   return rest > 0 ? m.alertText.tsunamiMoreAreas(names, rest) : names
 }
@@ -58,12 +59,12 @@ export function joinAreaNamesForNotification(areas: readonly TsunamiArea[], m: T
  * - **閉じるまで残すのは津波注意報以上**。津波予報は自然に消える（2026-10-14 ユーザー選択
  *   「注意報以上を残す（推奨）」）
  */
-export function tsunamiIssueNotification(event: JMATsunami, basis: TsunamiNotificationBasis, m: TsunamiNotificationWords): TsunamiNotification {
+export function tsunamiIssueNotification(event: JMATsunami, basis: TsunamiNotificationBasis, m: TsunamiNotificationWords, place: PlaceNameLookup): TsunamiNotification {
   const grade = tsunamiMaxGrade(event)
   const title = m.tsunami.grade[grade === 'Unknown' ? 'Watch' : grade]
-  const lines = [joinAreaNamesForNotification(sortAreasAcrossGradesForCardDisplay(basis.areas, basis.observations), m)]
+  const lines = [joinAreaNamesForNotification(sortAreasAcrossGradesForCardDisplay(basis.areas, basis.observations), m, place)]
   // 並びはカードの解除の枠と同じ材料（`liftedAreas`）から取る。
-  if (basis.liftedAreas.length > 0) lines.push(m.alertText.tsunamiLifted(joinAreaNamesForNotification(basis.liftedAreas, m)))
+  if (basis.liftedAreas.length > 0) lines.push(m.alertText.tsunamiLifted(joinAreaNamesForNotification(basis.liftedAreas, m, place)))
   // 等級を読めなかった報（`Unknown`）は残さない。選んだのは「注意報以上を残す」で、読めない等級はそこに入らない
   const requireInteraction = grade === 'MajorWarning' || grade === 'Warning' || grade === 'Watch'
   return { title, body: lines.join('\n'), requireInteraction, open: OPEN_TSUNAMI }
@@ -97,13 +98,14 @@ export const TSUNAMI_OBS_NOTIFY_MAX_POINTS = 5
  * 観測できていたことと、いま観測できていないことの両方が事実なので、片方へ丸めない（この 2 つの形は 2026-10-24 ユーザー選択
  * 「この形で残す (Recommended)」）。値がまだ無い観測点（観測中）は「到達確認」と言う。
  */
-function observationNotifyLabel(o: TsunamiObservation, m: TsunamiNotificationWords): string {
+function observationNotifyLabel(o: TsunamiObservation, m: TsunamiNotificationWords, place: PlaceNameLookup): string {
   const h = observationHeight(o)
+  const name = place('tsunamiStation', o.name)
   const missing = isObservationMissing(o) ? ` ${m.tsunami.badge.missing}` : ''
-  if (h?.kind === 'height') return `${o.name} ${m.tsunami.height(h.description, h.over)}${missing}`
-  if (h?.kind === 'weak') return `${o.name} ${m.tsunami.weak}${missing}`
-  if (missing) return `${o.name}${missing}`
-  return `${o.name} ${m.tsunami.badge.arrivalConfirmed}`
+  if (h?.kind === 'height') return `${name} ${m.tsunami.height(h.description, h.over)}${missing}`
+  if (h?.kind === 'weak') return `${name} ${m.tsunami.weak}${missing}`
+  if (missing) return `${name}${missing}`
+  return `${name} ${m.tsunami.badge.arrivalConfirmed}`
 }
 
 /** 観測情報の通知の札。発表中の通知（`tsunami`）と分ける（理由は {@link tsunamiObservationNotification}）。 */
@@ -124,8 +126,9 @@ export function tsunamiObservationNotification(
   event: Pick<JMATsunami, 'infoName'>,
   marked: readonly TsunamiObservation[],
   m: TsunamiNotificationWords,
+  place: PlaceNameLookup,
 ): TsunamiNotification {
-  const shown = marked.slice(0, TSUNAMI_OBS_NOTIFY_MAX_POINTS).map(o => observationNotifyLabel(o, m)).join(m.alertText.nameSeparator)
+  const shown = marked.slice(0, TSUNAMI_OBS_NOTIFY_MAX_POINTS).map(o => observationNotifyLabel(o, m, place)).join(m.alertText.nameSeparator)
   const rest = marked.length - TSUNAMI_OBS_NOTIFY_MAX_POINTS
   return {
     title: event.infoName || m.alertText.tsunamiObservationTitle,

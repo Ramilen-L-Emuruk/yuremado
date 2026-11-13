@@ -11,8 +11,9 @@ import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type M
 import type { CatalogPointCloud } from '../../utils/hypocenterCatalogView'
 import { hypocenterIntensityLabel, type TelegramPointLabels } from '../../utils/hypocenterCatalog'
 import { escapeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // 長期震源カタログの点群。**深さを持つ点**として地下へ描く（gl/depthPointLayer.ts）。
 //
@@ -92,7 +93,7 @@ function formatCatalogMagnitude(magnitude: number, m: Messages): string {
  * （時刻は分まで・規模の説明・「700km以上」・「以上」の付いた最大震度・震源決定機関）。
  * 「地震情報の電文」の行は 2026-11-06 ユーザー選択「「地震情報の電文」 (Recommended)」。
  */
-function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null, coord: string, m: Messages): string {
+function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null, coord: string, m: Messages, place: PlaceNameLookup): string {
   const f = m.formats
   const intensity = label.intensity != null ? m.map.popup.maxIntensity(intensityLabelWithOrAbove(label.intensity.scale, label.intensity.orAbove, f)) : null
   // 数値が無く説明も無いときだけ、カタログの点と同じ「M 不明」（吹き出しは M と深さを 1 行に並べるので「不明」だけにしない）
@@ -103,7 +104,7 @@ function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null,
     `<div class="text-sm" style="min-width:170px">` +
     `<div class="font-bold" style="margin-bottom:4px">${escapeHtml(label.time)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${m.map.popup.telegram}</div>` +
-    (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
+    (name != null ? `<div class="text-xs">${escapeHtml(place('epi', name))}</div>` : '') +
     (intensity != null ? `<div class="text-xs">${escapeHtml(intensity)}</div>` : '') +
     `<div class="text-xs" style="color:#94a3b8">${escapeHtml(magnitude)} / ${escapeHtml(depth)}</div>` +
     `<div class="text-xs" style="color:#64748b;margin-top:4px">${coord}</div>` +
@@ -112,12 +113,12 @@ function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null,
   )
 }
 
-function buildPopupHtml(cloud: CatalogPointCloud, i: number, m: Messages): string {
+function buildPopupHtml(cloud: CatalogPointCloud, i: number, m: Messages, place: PlaceNameLookup): string {
   const lat = cloud.columns.lat[i]
   const lng = cloud.columns.lng[i]
   const coord = coordinateText(lat, lng, 3, m.formats)
   const telegram = cloud.telegramLabels.get(i)
-  if (telegram) return buildTelegramPopupHtml(telegram, cloud.names[i], coord, m)
+  if (telegram) return buildTelegramPopupHtml(telegram, cloud.names[i], coord, m, place)
   // 行の並びは 2026-10-25 ユーザー承認「C の案でよい (Recommended)」・「D の案でよい (Recommended)」。
   // 震央地名と最大震度は、記録が無い地震では行ごと出さない。
   const name = cloud.names[i]
@@ -132,7 +133,7 @@ function buildPopupHtml(cloud: CatalogPointCloud, i: number, m: Messages): strin
     // 日別の震源リスト（速報値）の年の地震。取得元は「暫定値であり、変更になる場合があります」と書く
     // （2026-11-04 ユーザー選択「吹き出しに出す (Recommended)」。語はタブの期間の注記と同じ）
     (cloud.preliminary[i] === 1 ? `<div class="text-xs" style="color:#94a3b8">${m.map.popup.preliminary}</div>` : '') +
-    (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
+    (name != null ? `<div class="text-xs">${escapeHtml(place('epi', name))}</div>` : '') +
     (intensity != null ? `<div class="text-xs">${escapeHtml(intensity)}</div>` : '') +
     `<div class="text-xs" style="color:#94a3b8">` +
     `${formatCatalogMagnitude(cloud.magnitude[i], m)} / ${depth}</div>` +
@@ -154,6 +155,7 @@ export function HypocenterCatalogGL({ cloud, exaggeration, visible }: Props) {
   // 判定で引き当てた添字。`buildClickHtml` は引数を取らないため、pick から受け渡す。
   const hitRef = useRef<number | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -208,7 +210,7 @@ export function HypocenterCatalogGL({ cloud, exaggeration, visible }: Props) {
           const i = hitRef.current
           const c = cloudRef.current
           if (i == null || i >= c.columns.count) return ''
-          return buildPopupHtml(c, i, mRef.current)
+          return buildPopupHtml(c, i, mRef.current, placeRef.current)
         },
       })
     } catch (err) {

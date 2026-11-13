@@ -14,7 +14,8 @@
 // （カードが 0 件なら全画面の失敗表示）。
 import { DEFAULT_QUAKE_LIST_FILTER, DEFAULT_QUAKE_LIST_SORT } from '../../utils/quakeListView'
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { act, render, screen, cleanup, waitFor } from '@testing-library/react'
+import { settleI18n } from '../../test-utils/settleI18n'
 import type { ReactNode } from 'react'
 import { I18nProvider } from '../../i18n/I18nProvider'
 import { loadMessages, type Locale } from '../../i18n/messages'
@@ -134,6 +135,8 @@ async function renderTab(opts: {
   // 観測点を持たない空の一覧（`earthquakes: []`）ではカードが 1 枚も描かれず、
   // `useSubRegions` の失敗経路も起きない。それでも毎回呼んでおけば無害。
   await flushDataEffects()
+  // 言語を渡したときは、配り役が読みに行った辞書と地名の表の読み込みが終わるまで act の中で待つ
+  if (opts.locale !== undefined) await act(async () => { await settleI18n(opts.locale!) })
   return result
 }
 

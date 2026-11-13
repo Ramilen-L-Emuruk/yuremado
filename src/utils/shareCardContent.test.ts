@@ -3,6 +3,7 @@ import type { MapMode } from '../components/Map/mapTypes'
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import { ja } from '../i18n/messages/ja'
 import { en } from '../i18n/messages/en'
+import { JA_PLACE_NAMES } from '../i18n/placeNames'
 
 const ATTRIBUTION_SOURCES = ja.shareImage.sourceNames
 const EEW_NOTICE = ja.shareImage.eewNotice
@@ -58,7 +59,7 @@ const APP_URL = 'https://example.test/'
 
 /** 見出しと出典を見るテストは URL を気にしないので、既定の URL で包んで呼ぶ。 */
 function build(i: ShareCardContentInput): ShareCardContent {
-  return buildShareCardContent(i, APP_URL, ja)
+  return buildShareCardContent(i, APP_URL, ja, JA_PLACE_NAMES)
 }
 
 function tsunami(over: { grade?: string; areaName?: string } = {}): JMATsunami {
@@ -726,9 +727,9 @@ describe('buildShareCardContent — 複数の緊急地震速報・深さ・揺�
   })
 })
 
-// 段 9b: 画像と共有の本文は、いま出している言語の辞書で組む。震源名は電文のまま
+// 段 9b: 画像と共有の本文は、いま出している言語の辞書で組む。震源名は地名の表で訳す（ここでは表を素通しにして辞書の語だけを見る）
 describe('buildShareCardContent — 英語の辞書', () => {
-  const buildEn = (i: ShareCardContentInput): ShareCardContent => buildShareCardContent(i, APP_URL, en)
+  const buildEn = (i: ShareCardContentInput): ShareCardContent => buildShareCardContent(i, APP_URL, en, JA_PLACE_NAMES)
 
   it('見出し・副見出し・時刻の名前・出典を英語で組む', () => {
     const c = buildEn(input({ mode: 'quake', quake: quake() }))

@@ -9,8 +9,9 @@ import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer } from './gl/depthPointLayer'
 import { escapeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 
@@ -67,14 +68,14 @@ export function buildSourcePoints(
  * 整形はカードの行と同じ `formatMagnitude`）。規模が数値で無ければ気象庁の説明（「Ｍ８を超える巨大地震」）を出し、
  * どちらも無ければ・深さが判らなければ・時刻が読めなければ、その項目を落とす（カードの行と同じ）。
  */
-export function sourcePopupHtml(s: TsunamiSourceEarthquake, m: Messages): string {
+export function sourcePopupHtml(s: TsunamiSourceEarthquake, m: Messages, place: PlaceNameLookup): string {
   const mag = s.magnitude !== undefined ? magnitudeText(s.magnitude, s.magnitudeType, m.formats) : s.magnitudeCondition ? magnitudeConditionText(s.magnitudeCondition, m.formats) : ''
   const depth = s.depth !== undefined && hasDepth(s.depth) ? m.map.popup.depth(depthText(s.depth, s.depthAtLeast === true, m.formats)) : ''
   const quakeTime = sourceEarthquakeTime(s)
   const hm = quakeTime ? formatTimeMin(quakeTime) : null
   const detail = [mag, depth].filter(Boolean).join(m.formats.spaceSep())
   return (
-    `<div class="text-sm"><div class="font-bold">${escapeHtml(s.hypocenterName)}</div>` +
+    `<div class="text-sm"><div class="font-bold">${escapeHtml(place('epi', s.hypocenterName))}</div>` +
     (detail ? `<div class="text-xs" style="color:#e5e7eb">${escapeHtml(detail)}</div>` : '') +
     (hm ? `<div class="text-xs" style="color:#94a3b8">${escapeHtml(`${m.formats.arrivalTime} ${hm}`)}</div>` : '') +
     `</div>`
@@ -92,6 +93,7 @@ export function TsunamiSourceEpicentersGL({ sources, iconScale }: Props) {
   const ownersRef = useRef<number[]>([])
   const placedRef = useRef<ReturnType<typeof placeableSources>>([])
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -136,7 +138,7 @@ export function TsunamiSourceEpicentersGL({ sources, iconScale }: Props) {
         },
         buildClickHtml: (feature) => {
           const s = placedRef.current[Number(feature.properties?.index)]
-          return s ? sourcePopupHtml(s, mRef.current) : ''
+          return s ? sourcePopupHtml(s, mRef.current, placeRef.current) : ''
         },
       })
     } catch (err) {

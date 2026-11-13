@@ -2,6 +2,7 @@
 import type { IntensityScale, JMALpgm, LpgmClass, LpgmPeriodBand, LpgmPoint, LpgmPref, LpgmRegion } from '../types/earthquake'
 import { log } from './logger'
 import type { Messages } from '../i18n/messages'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 import { ja } from '../i18n/messages/ja'
 // 階級 0 は「階級1以上を観測していない」観測値。気象庁の配色に当たる色が無いので、
 // 階級 1〜4 の色の外の灰色にする（2026-10-24 ユーザー選択「この形でよい (Recommended)」）。
@@ -166,13 +167,14 @@ const warnedHeadlines = new Set<string>()
 /**
  * 「観測情報の種類」の一文に、見出し文の地域名を括弧で添える
  * （例「震度が小さくても高層階が大きく揺れた地域があります（長野県中部）」。読み上げには足さない。
- * 2026-10-30 ユーザー選択「一文に地域名を添える (Recommended)」）。
+ * 2026-10-30 ユーザー選択「一文に地域名を添える (Recommended)」）。地域名は細分区域の名前なので、
+ * 表示の言語の訳（`place('area', …)`）に直して添える。
  */
-export function lpgmCategoryNoteWithRegions(category: number | undefined, headline: string | undefined, w: Messages['quake']): string {
+export function lpgmCategoryNoteWithRegions(category: number | undefined, headline: string | undefined, w: Messages['quake'], place: PlaceNameLookup): string {
   const note = lpgmCategoryNote(category, w)
   if (!note) return ''
   const regions = category === 2 || category === 4 ? lpgmHeadlineRegions(headline) : []
-  return regions.length > 0 ? w.lpgmCategoryRegions(note, regions) : note
+  return regions.length > 0 ? w.lpgmCategoryRegions(note, regions.map(r => place('area', r))) : note
 }
 
 

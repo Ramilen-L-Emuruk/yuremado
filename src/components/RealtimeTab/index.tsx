@@ -30,7 +30,9 @@ import { log } from '../../utils/logger'
 import { hasKnownEpicenter } from '../../utils/geo'
 import { getSubRegionsCache, onSubRegionsLoaded, type SubRegion } from '../../utils/subregions'
 import { dominantRegionName } from '../../utils/kyoshinRegionName'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
+import { eewPrefDisplayName } from '../../data/eewPrefectureCodes'
 import type { RealtimeWords } from '../../utils/eew'
 import type { Messages } from '../../i18n/messages'
 
@@ -352,6 +354,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   onDeactivateLpgm?: () => void
 }) {
   const { realtime: rt, formats: fw } = useMessages()
+  const place = usePlaceNames()
   const { scale: maxScale, orAbove: maxScaleOrAbove } = eewMaxScaleInfo(eew)
   const scaleZero = isEewScaleZeroForecast(eew)
   const { cls: lpgmClass, over: lpgmClassOver } = eewMaxLpgmClassInfo(eew)
@@ -795,7 +798,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                 className={`rounded font-extrabold leading-tight text-white${fade(flash.hypocenterName).className}`}
                 style={{ fontSize: 'calc(var(--qk-name) * var(--rt-k))', ...fade(flash.hypocenterName).style }}
               >
-                {hypocenter.name || rt.unknownHypocenter}
+                {hypocenter.name ? place('epi', hypocenter.name) : rt.unknownHypocenter}
               </span>
               {/* 「（震源未確定）」と内陸か海域か（電文の `LandOrSea`）。震源が決まっていない報にも、電文が載せていれば
                   「（震源未確定）」の後ろへ同じ形で添える（2026-10-29 ユーザー承認「添える」、書き方は同日
@@ -943,7 +946,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             // 区域が種別コードを持たない報。同じ県の細分区域が複数並ぶので重複を畳む。
             return (
               <div className="text-[length:var(--qk-fs)] text-secondary leading-relaxed">
-                {rt.targets} {[...new Set(prefAreas.map(a => a.pref))].join(rt.prefSeparator)}
+                {rt.targets} {[...new Set(prefAreas.map(a => a.pref))].map(p => eewPrefDisplayName(p, place)).join(rt.prefSeparator)}
               </div>
             )
           }
@@ -952,13 +955,13 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
               {warningPrefs.length > 0 && (
                 <div className="leading-relaxed">
                   <span className="text-red-300 font-bold mr-1">{rt.warningPrefs}</span>
-                  <span className="text-secondary">{warningPrefs.join(rt.prefSeparator)}</span>
+                  <span className="text-secondary">{warningPrefs.map(p => eewPrefDisplayName(p, place)).join(rt.prefSeparator)}</span>
                 </div>
               )}
               {forecastPrefs.length > 0 && (
                 <div className="leading-relaxed">
                   <span className="text-yellow-300 mr-1">{rt.forecastPrefs}</span>
-                  <span className="text-secondary">{forecastPrefs.join(rt.prefSeparator)}</span>
+                  <span className="text-secondary">{forecastPrefs.map(p => eewPrefDisplayName(p, place)).join(rt.prefSeparator)}</span>
                 </div>
               )}
             </div>
@@ -1046,7 +1049,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                       // 右端の「時刻不明」は残したまま、区域名の下へ小さく添える
                       // （2026-10-30 ユーザー選択「区域名の下に小さく出す (Recommended)」）。
                       <span className="flex-1 min-w-0 flex flex-col">
-                        <span className="truncate text-white" title={a.name}>{a.name}</span>
+                        <span className="truncate text-white" title={place('area', a.name)}>{place('area', a.name)}</span>
                         {/* 切らずに折り返す。2 列では「HH:MM:SS に予測開始」が列幅（実測 約 110px）に収まらず、
                             truncate だと肝心の「予測開始」が「…」に隠れる。 */}
                         <span className="text-secondary font-mono tabular-nums wrap-break-word" style={{ fontSize: '0.625rem' }}>
@@ -1055,8 +1058,8 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                       </span>
                     ) : (
                       // 2 列で「…」に切れた区域名は、ホバー・長押しで全文を読めるようにする
-                      <span className={`flex-1 truncate ${kind === 'arrived' ? 'text-secondary' : 'text-white'}`} title={a.name}>
-                        {a.name}
+                      <span className={`flex-1 truncate ${kind === 'arrived' ? 'text-secondary' : 'text-white'}`} title={place('area', a.name)}>
+                        {place('area', a.name)}
                       </span>
                     )}
                     {kind === 'arrived' ? (
@@ -1193,7 +1196,8 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // **自前計算の行と発表値の行が混ざった枠（`'mixed'`）は、範囲を行ごとに出し、注記を 2 つとも出す**
   // （2026-10-22 ユーザー承認「行ごとに範囲を出す (Recommended)」）。1 回だけ出すと、どちらかの行の範囲を偽って伝える
   const mixed = arrival.source === 'mixed'
-  const scopeOf = (source: 'telegram' | 'own') => source === 'telegram' && arrival.areaName ? arrival.areaName : cd.homePoint
+  const place = usePlaceNames()
+  const scopeOf = (source: 'telegram' | 'own') => source === 'telegram' && arrival.areaName ? place('area', arrival.areaName) : cd.homePoint
   const scopeLabel = scopeOf(arrival.source === 'own' ? 'own' : 'telegram')
   // 注記はそれが説明する行があるときだけ出す。気象庁の注記は**到達予測時刻を出した発表値の行**があるときだけ（距離だけの行は
   // 時刻を出していない。2026-10-22 ユーザー承認「時刻のある行があるときだけ (Recommended)」）
@@ -1228,7 +1232,7 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
           <div key={row.key} className="border-t border-border pt-1 mt-1">
             <div className="flex items-center gap-2">
               <span className="text-[length:var(--qk-fs)] font-bold text-white min-w-0 truncate">
-                {row.hypocenterName ?? rt.unknownHypocenter}
+                {row.hypocenterName !== null ? place('epi', row.hypocenterName) : rt.unknownHypocenter}
                 {row.provisional && row.hypocenterName !== null && rt.provisional}
               </span>
               {row.distanceKm !== null && (
@@ -1312,10 +1316,13 @@ function useLoadedSubRegions(): SubRegion[] | null {
 function strongestRegionName(
   points: readonly DetectedPoint[],
   subregions: readonly SubRegion[] | null,
+  place: PlaceNameLookup,
   keys?: ReadonlySet<string>,
 ): string | null {
   if (!subregions) return null
-  return dominantRegionName(keys ? points.filter(p => keys.has(p.key)) : points, subregions)
+  // 区域は一次細分区域なので、画面へ出す名前だけ訳す（読み上げは同じ `dominantRegionName` を日本語のまま使う）
+  const name = dominantRegionName(keys ? points.filter(p => keys.has(p.key)) : points, subregions)
+  return name === null ? null : place('area', name)
 }
 
 /**
@@ -1357,6 +1364,7 @@ function KyoshinGatePanel({ events, points, subregions, settled }: {
   settled: boolean
 }) {
   const { realtime: { detection: dt, evidence: ev }, formats: fw } = useMessages()
+  const place = usePlaceNames()
   return (
         <div className="flex flex-col gap-2 px-2 pb-2 @min-[520px]:px-3 @min-[520px]:pb-3">
           {/* 番号は**イベント ID の順**で振る。渡された順に番号を振ると、並びが変わったときに
@@ -1367,7 +1375,7 @@ function KyoshinGatePanel({ events, points, subregions, settled }: {
                 {events.length >= 2 && (() => {
                   // 区域名はその地域のメンバーから引く（2026-10-24 ユーザー選択
                   // 「本文と内訳の両方 (Recommended)」）。引けなければ番号だけ
-                  const name = settled ? null : strongestRegionName(points, subregions, new Set(e.memberKeys))
+                  const name = settled ? null : strongestRegionName(points, subregions, place, new Set(e.memberKeys))
                   return (
                     <div className="text-[length:var(--qk-fs)] text-secondary mb-1">
                       {dt.region(i + 1, name, dt.tier[e.confidence])}
@@ -1410,6 +1418,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   visible: boolean
 }) {
   const { realtime: { detection: dt, evidence: ev }, formats: fw } = useMessages()
+  const place = usePlaceNames()
   const [detailOpen, setDetailOpen] = useState(false)
   const scalePeakRef = useRef(0)
   // 最上位の段（確かな段 > 早い段）。震度では分けない（2026-10-29 ユーザー選択「段のまま鳴らす」）
@@ -1531,7 +1540,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // （2026-11-11 ユーザー選択「数字で始まらない言語は「<0」 (Recommended)」）
   const subZeroTileLabel = /^\d/.test(subZeroLabel) ? subZeroLabel : BELOW_ZERO_SHORT_LABEL
   const maxLabelShown = maxLabel ?? (belowZero ? subZeroTileLabel : null)
-  const strongestName = settled ? null : strongestRegionName(points, subregions)
+  const strongestName = settled ? null : strongestRegionName(points, subregions, place)
 
   return (
     <div className="bg-card rounded-md overflow-hidden" style={{ border: `2px solid ${frameBorder}` }}>

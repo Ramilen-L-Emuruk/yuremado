@@ -10,7 +10,7 @@ import { bindDynamicZoomRange, clampMinZoom } from './gl/viewSpan'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { twoLinePopupHtml } from './gl/popupHtml'
 import { log } from '../../utils/logger'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import {
   BATHYMETRY_URL,
   GEBCO_HIRES_MIN_ZOOM,
@@ -95,6 +95,7 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
   const map = useMapGL()
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
   // 録画モードの係が「下地を出しているか」を読む口（effect を作り直さずに今の値を渡す）
   const showBathymetryRef = useRef(showBathymetry)
   showBathymetryRef.current = showBathymetry
@@ -217,7 +218,7 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
         tolPx: 1,
         // 全面を覆うレイヤーなので、カーソルは変えない（どこでも指マークになってしまう）。
         hoverCursor: false,
-        buildClickHtml: (f) => twoLinePopupHtml(String(f.properties?.name ?? ''), mRef.current.map.popup.region),
+        buildClickHtml: (f) => twoLinePopupHtml(placeRef.current('area', String(f.properties?.name ?? '')), mRef.current.map.popup.region),
       })
     }, (reason) => {
       if (!cancelled) log.warn('[data] subregions 取得失敗（区域境界線と区域名ポップアップの当たり判定が全ズームで出ない）', reason)

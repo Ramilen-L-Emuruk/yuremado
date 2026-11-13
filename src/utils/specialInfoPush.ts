@@ -8,6 +8,7 @@ import {
   lpgmNotification, nankaiCommentaryNotification, nankaiNotification, quakeNoticeNotification, type SpecialInfoNotification,
   type SpecialInfoNotificationWords,
 } from './specialInfoNotification'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 
 /**
  * 南海トラフ・後発地震・関連解説情報・長周期地震動・推計震度分布図・地震回数・国際津波関連情報・地震・津波に関するお知らせの通知を、**出すかの判定と文面**まで決める。
@@ -77,21 +78,21 @@ export type LpgmNameLookup = (eventId: string) => string | undefined
 
 /**
  * 通知を出しうるなら、その中身と条件を返す（今はどの種類も返す。`null` は出さない報のための口）。
- * `m` は文を組む辞書（アプリはいまの言語、中継は日本語の辞書 `JA_MESSAGES`）。
+ * `m` は文を組む辞書（アプリはいまの言語、中継は日本語の辞書 `JA_MESSAGES`）。`place` は本文の地名を同じ言語へ訳す表。
  */
-export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: LpgmNameLookup, m: SpecialInfoNotificationWords): SpecialInfoPlan | null {
+export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: LpgmNameLookup, m: SpecialInfoNotificationWords, place: PlaceNameLookup): SpecialInfoPlan | null {
   switch (event.kind) {
     case 'lpgm': {
       const e = event.data
       const key = `lpgm:${e.eventId}`
       if (e.cancelled) {
-        return { notification: lpgmNotification(e, lpgmName(e.eventId) ?? '', m), kind: 'quake', prefectures: null, requires: key }
+        return { notification: lpgmNotification(e, lpgmName(e.eventId) ?? '', m, place), kind: 'quake', prefectures: null, requires: key }
       }
       // 長周期地震動は電文に都道府県ごとの階級を持つので、その県で絞る（2026-11-03 の問いの説明「長周期地震動は電文に
       // 都道府県ごとの階級があるので、その県で絞る」）
       const prefectures = (e.prefs ?? []).map(p => p.code).filter(c => /^\d{2}$/.test(c))
       // 都道府県を 1 つも読めなかった報は、絞れないので絞らない（空のまま渡すと、地域を選んだ人には届かなくなる）
-      return { notification: lpgmNotification(e, '', m), kind: 'quake', prefectures: prefectures.length > 0 ? prefectures : null, remember: key }
+      return { notification: lpgmNotification(e, '', m, place), kind: 'quake', prefectures: prefectures.length > 0 ? prefectures : null, remember: key }
     }
     case 'estimatedIntensity':
       return { notification: estimatedIntensityNotification(event.data, event.isNew, m), kind: 'quake', prefectures: null }
@@ -133,7 +134,7 @@ export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: L
       // 「通知する地域では絞らない（国外の地震で県が無いため。南海トラフと同じ扱い）」）。通信試験は試験報を受け取る設定の
       // 受け手にだけ出す（`test`。2026-11-09 ユーザー選択「試験報の設定で止める (Recommended)」）
       return {
-        notification: internationalTsunamiNotification(event.data, event.quakeName, m), kind: 'tsunami', prefectures: null,
+        notification: internationalTsunamiNotification(event.data, event.quakeName, m, place), kind: 'tsunami', prefectures: null,
         ...(event.data.isCommunicationsTest && { test: true as const }),
       }
   }

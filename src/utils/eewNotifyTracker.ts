@@ -16,6 +16,7 @@ import {
   raisesNotifiedForecast, supplementEewReport,
 } from './eew'
 import type { Messages } from '../i18n/messages'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 
 /**
  * 報の自動解除の時刻を、その報自身から求めたもの（`calcEEWCancelTime` に発表時刻を渡す）。発表時刻が読めない報・
@@ -238,14 +239,15 @@ export interface EewNotice {
  * 続報で震度が下がってから長周期の予想が上がる・格上げが立つなどで出し直しても「特別警報」のまま。
  * 予報級の電文は VXSE45「緊急地震速報（地震動予報）」なので、見出しも「地震動予報」
  */
-export function eewAnnounceNotice(key: string, event: EEWAlert, forecast: EewNotifiedForecast, m: Pick<Messages, 'alertText' | 'formats'>): EewNotice {
+export function eewAnnounceNotice(key: string, event: EEWAlert, forecast: EewNotifiedForecast, m: Pick<Messages, 'alertText' | 'formats'>, place: PlaceNameLookup): EewNotice {
   const level = computeDisplayEEWLevel(event)
   const w = m.alertText
   const kind = level === 2 ? w.eewSpecialWarningTitle : level === 1 ? w.eewWarningTitle : eewKindText(0, m)
   return {
     // 最終報は見出しに添え、本文に規模を足す（2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
     title: event.isFinal ? w.eewFinal(kind) : kind,
-    body: eewNotificationBody(event.earthquake.hypocenter.name, forecast, eewNoticeMagnitude(event), m),
+    // 震央地名は表示する言語へ訳す（空の名前は空のまま。本文の組み立てが空を落とす）
+    body: eewNotificationBody(event.earthquake.hypocenter.name ? place('epi', event.earthquake.hypocenter.name) : '', forecast, eewNoticeMagnitude(event), m),
     tag: `eew-${key}`,
     open: OPEN_REALTIME,
   }
@@ -272,6 +274,6 @@ export function eewQuietReplaceNotice(notice: EewNotice, lastShown: Pick<EewNoti
 }
 
 /** 誤報取消の通知。名前は取消の報・覚えた震央地名・消えた地震の最後の報の順に引いたもの（無ければ名前抜きの文） */
-export function eewCancelNotice(key: string, name: string | undefined, m: Pick<Messages, 'alertText'>): EewNotice {
-  return { title: m.alertText.eewCancelTitle, body: eewCancelNotificationBody(name, m), tag: `eew-cancel-${key}`, open: OPEN_REALTIME }
+export function eewCancelNotice(key: string, name: string | undefined, m: Pick<Messages, 'alertText'>, place: PlaceNameLookup): EewNotice {
+  return { title: m.alertText.eewCancelTitle, body: eewCancelNotificationBody(name ? place('epi', name) : name, m), tag: `eew-cancel-${key}`, open: OPEN_REALTIME }
 }

@@ -108,10 +108,16 @@ const OVERLAP_CHECK_LAYER_IDS = [
   'public-stations',
 ]
 
-// 日本語ラベル（事前生成グリフのフォント＝ gl/fontStack.ts の JP_FONT_STACK）の推定文字幅・行高比率。
+// ラベル（事前生成グリフのフォント＝ gl/fontStack.ts の JP_FONT_STACK）の推定文字幅・行高比率。
 // 全角文字はおよそ 1 文字 = フォントサイズ幅（現行フォントでも全角の advance が font-size と一致する）。
 const CHAR_WIDTH_RATIO = 1.0
+// 半角（訳したラベルの英字・アクセント付きの字・記号）。同じフォントで英葡西の県名・区域名の訳を測ると
+// 1 字の平均は 0.53〜0.55em、名前ごとの平均の最大が 0.61em なので、少し広めに取る。
+const HALF_WIDTH_CHAR_RATIO = 0.6
 const LINE_HEIGHT_RATIO = 1.3
+// MapLibre の `text-max-width` の既定（em）。ラベルのレイヤーはこれを変えていないので、これより長い
+// 名前は折り返す（行の長さをそろえて割る）。
+const TEXT_MAX_WIDTH_EM = 10
 
 export interface LabelOverlapTarget {
   /** GeoJSON source id。 */
@@ -154,11 +160,19 @@ export interface LabelOverlapTarget {
   excludeName?: string
 }
 
-/** ラベルの推定表示矩形（画面ピクセル半幅・半高）。 */
-function estimateHalfExtent(text: string, textSize: number): { halfW: number; halfH: number } {
+/**
+ * ラベルの推定表示矩形（画面ピクセル半幅・半高）。
+ *
+ * 幅は字ごとに全角・半角で数え、`TEXT_MAX_WIDTH_EM` を超えたら MapLibre と同じく行の長さをそろえて
+ * 折り返したものとして、幅を行数で割り、高さに行数を掛ける（訳した県名・区域名は 2〜4 行になる）。
+ */
+export function estimateHalfExtent(text: string, textSize: number): { halfW: number; halfH: number } {
+  let em = 0
+  for (const ch of text) em += (ch.codePointAt(0) ?? 0) < 0x2e80 ? HALF_WIDTH_CHAR_RATIO : CHAR_WIDTH_RATIO
+  const lines = Math.max(1, Math.ceil(em / TEXT_MAX_WIDTH_EM))
   return {
-    halfW: (text.length * textSize * CHAR_WIDTH_RATIO) / 2,
-    halfH: (textSize * LINE_HEIGHT_RATIO) / 2,
+    halfW: ((em / lines) * textSize) / 2,
+    halfH: (lines * textSize * LINE_HEIGHT_RATIO) / 2,
   }
 }
 

@@ -5,7 +5,8 @@ import { intensityLabelWithApproxAbove } from '../utils/intensity'
 import { CANCEL_REASON_LABEL } from '../utils/tsunamiCancelLabel'
 import { log } from '../utils/logger'
 import type { Messages } from '../i18n/messages'
-import { useMessagesRef } from '../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../i18n/I18nProvider'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 
 /** 題名を組む語（辞書の通知の節と書式の語）。**日本語の題名は外の道具が字面を見るので、日本語の辞書の文を変えない** */
 export type AlertTitleWords = Pick<Messages, 'alertText' | 'formats'>
@@ -41,7 +42,7 @@ export function resolveAlertTitle(title: AlertTitle, tsunamiForecastOnly: boolea
  * EEW 発表中のウィンドウタイトルを組み立てる（純粋関数）。
  * 区分の名前をどの軸で決めるかを取り違えやすいため、テストできるように公開している。
  */
-export function computeEEWTitle(eews: ReadonlyMap<string, EEWAlert>, m: AlertTitleWords): string {
+export function computeEEWTitle(eews: ReadonlyMap<string, EEWAlert>, m: AlertTitleWords, place: PlaceNameLookup): string {
   const primary = Array.from(eews.values()).sort((a, b) => eewMaxScale(b) - eewMaxScale(a))[0]
   // 上限が定まらない報は「震度4以上予想」と出す（値だけにすると下限を断定してしまう）。
   const { scale, orAbove } = eewMaxScaleInfo(primary)
@@ -55,7 +56,8 @@ export function computeEEWTitle(eews: ReadonlyMap<string, EEWAlert>, m: AlertTit
   const maxLevel = Array.from(eews.values())
     .reduce<0 | 1 | 2>((m, e) => Math.max(m, computeDisplayEEWLevel(e)) as 0 | 1 | 2, 0)
   return joinTitleParts(m,
-    eewKindText(maxLevel, m), primary.earthquake.hypocenter.name,
+    // 震央地名は出す言語の名前で（2026-11-13 ユーザー選択「訳す (Recommended)」。日本語の題名は電文の名前のまま）
+    eewKindText(maxLevel, m), primary.earthquake.hypocenter.name ? place('epi', primary.earthquake.hypocenter.name) : '',
     scale > 0 ? m.alertText.maxScaleForecast(intensityLabelWithApproxAbove(scale, orAbove, m.formats))
       // 最大予想震度 0 の報は通知と同じ「最大震度0予想」（2026-10-30 ユーザー決定「全部出す」）
       : isEewScaleZeroForecast(primary) ? m.alertText.maxScaleForecast('0') : '',
@@ -82,13 +84,14 @@ function applyPriorityTitle(
   kyoshinDetected: boolean,
   tsunamiEndLabel: string | null,
   m: AlertTitleWords,
+  place: PlaceNameLookup,
   setState: (v: AlertTitle) => void,
 ) {
   // 終わった津波の語（`showTsunamiEndTitle`）は、進行中のもの（緊急地震速報・発表中の津波・揺れ検知）の
   // 下に置く。出している間に再評価が走っても消さず、上が無くなれば残り時間だけ戻ってくる。
   if (eews.size === 0 && !tsunami) { setState(kyoshinDetected ? m.alertText.titleShakingDetected : tsunamiEndLabel) }
-  else if (eews.size > 0 && tsunami) { setState(priority ? TSUNAMI_ACTIVE_TITLE : computeEEWTitle(eews, m)) }
-  else if (eews.size > 0) { setState(computeEEWTitle(eews, m)) }
+  else if (eews.size > 0 && tsunami) { setState(priority ? TSUNAMI_ACTIVE_TITLE : computeEEWTitle(eews, m, place)) }
+  else if (eews.size > 0) { setState(computeEEWTitle(eews, m, place)) }
   else { setState(TSUNAMI_ACTIVE_TITLE) }
 }
 
@@ -213,6 +216,8 @@ export function useAlertTitle(opts: {
   const { activeEEWsRef, kyoshinDetectedRef } = opts
   // 題名を組む辞書。後から呼ばれる待ちの中でも、呼ばれた時点の言語で組む
   const messagesRef = useMessagesRef()
+  // 題名に入れる震央地名の訳の引き方（辞書と同じく、呼ばれた時点の言語で引く）
+  const placeNamesRef = usePlaceNamesRef()
 
   // 情報更新時にウィンドウタイトルへ表示する文言（null = 平常時タイトル）。
   // デフォルトタブへ戻るタイミングで null に戻す。
@@ -258,6 +263,7 @@ export function useAlertTitle(opts: {
       overrides?.kyoshinDetected ?? kyoshinDetectedRef.current,
       endLabelRef.current,
       messagesRef.current,
+      placeNamesRef.current,
       setAlertTitle,
     )
   }

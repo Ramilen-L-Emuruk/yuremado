@@ -9,8 +9,9 @@ import type { LpgmMarker } from '../../hooks/useQuakeLayerData'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { withNonJmaMark } from '../../utils/formatters'
 import { ensureLpgmIcons, lpgmIconId, LPGM_ICON_BASE_RADIUS } from './gl/lpgmIcons'
 
@@ -67,16 +68,16 @@ function buildFC(markers: LpgmMarker[], iconScale: number): FeatureCollection<Po
  * **気象庁以外が運用する観測点には `＊` を付ける**（→ `withNonJmaMark`）。ホバーと
  * クリックの両方がこれを通るので、同じ観測点が場所によって違う名前で出ることはない。
  */
-export function lpgmPointPopupTitle(f: MapGeoJSONFeature): string {
-  return withNonJmaMark(String(f.properties?.name ?? ''), Boolean(f.properties?.nonJma))
+export function lpgmPointPopupTitle(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  return withNonJmaMark(place('station', String(f.properties?.name ?? '')), Boolean(f.properties?.nonJma))
 }
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+function hoverHtml(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
-    `<span style="font-weight:600">${escapeHtml(lpgmPointPopupTitle(f))}</span></div>`
+    `<span style="font-weight:600">${escapeHtml(lpgmPointPopupTitle(f, place))}</span></div>`
   )
 }
 
@@ -124,9 +125,9 @@ export function lpgmPeriodsHtml(json: string, m: Messages): string {
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
-  const pref = String(f.properties?.pref ?? '')
+  const pref = place('pref', String(f.properties?.pref ?? ''))
   const int = Number(f.properties?.int ?? -1)
   const sva = Number(f.properties?.sva ?? -1)
   // 気象庁以外が運用する観測点。震度側の吹き出しと同じ扱い（→ `withNonJmaMark`）。
@@ -135,7 +136,7 @@ function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
     `<div style="min-width:170px">` +
     `<div style="font-weight:700;font-size:13px"` +
       (nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
-      `>${escapeHtml(lpgmPointPopupTitle(f))}</div>` +
+      `>${escapeHtml(lpgmPointPopupTitle(f, place))}</div>` +
     (pref ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(pref)}</div>` : '') +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
@@ -161,6 +162,7 @@ export function LpgmPointsGL({ markers, iconScale, visible }: Props) {
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -186,8 +188,8 @@ export function LpgmPointsGL({ markers, iconScale, visible }: Props) {
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'lgInt',
-      buildHoverHtml: hoverHtml,
-      buildClickHtml: (f) => clickHtml(f, mRef.current),
+      buildHoverHtml: (f) => hoverHtml(f, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

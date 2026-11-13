@@ -5,6 +5,7 @@ import { joinAreaNamesForNotification, tsunamiIssueNotification, tsunamiLiftNoti
 import { TSUNAMI_ALL_LIFTED_SENTENCE } from './ttsText'
 import { ja } from '../i18n/messages/ja'
 import { en } from '../i18n/messages/en'
+import { JA_PLACE_NAMES } from '../i18n/placeNames'
 
 const area = (name: string, code: string, grade: TsunamiGrade, lastGrade?: TsunamiGrade): TsunamiArea =>
   ({ name, code, grade, ...(lastGrade && { lastGrade }), immediate: false } as TsunamiArea)
@@ -27,19 +28,19 @@ const SEVEN_WATCH = [
 describe('区域名の並べ方', () => {
   // 2026-10-14 ユーザー選択「「ほか N 区域」を足す（推奨）」・2026-10-19「空白を入れる (Recommended)」
   it('正: 上限を超えた分は「ほか N 区域」にまとめる', () => {
-    expect(joinAreaNamesForNotification(SEVEN_WATCH, ja))
+    expect(joinAreaNamesForNotification(SEVEN_WATCH, ja, JA_PLACE_NAMES))
       .toBe('石川県能登、新潟県上中下越、富山県、石川県加賀、福井県 ほか 2 区域')
   })
 
   it('対照: 上限ちょうどなら件数を添えない', () => {
-    expect(joinAreaNamesForNotification(SEVEN_WATCH.slice(0, TSUNAMI_NOTIFY_MAX_AREAS), ja))
+    expect(joinAreaNamesForNotification(SEVEN_WATCH.slice(0, TSUNAMI_NOTIFY_MAX_AREAS), ja, JA_PLACE_NAMES))
       .toBe('石川県能登、新潟県上中下越、富山県、石川県加賀、福井県')
   })
 })
 
 describe('発表中の報の通知', () => {
   // 受信処理の材料（`tsunamiCardOrderBasis`）と同じ作り方: 前報を持たない報では、その報の区域と解除の組
-  const issue = (r: JMATsunami) => tsunamiIssueNotification(r, { areas: r.areas, observations: [], liftedAreas: tsunamiLiftedAreas(r, []) }, ja)
+  const issue = (r: JMATsunami) => tsunamiIssueNotification(r, { areas: r.areas, observations: [], liftedAreas: tsunamiLiftedAreas(r, []) }, ja, JA_PLACE_NAMES)
 
   // 2026-10-14 ユーザー選択「解除区域を別の行で出す」・2026-10-19「「解除：」を頭に付ける (Recommended)」
   it('正: この報で解除された区域を「解除：」の行に出す', () => {
@@ -92,18 +93,18 @@ describe('tsunamiObservationNotification', () => {
       o('輪島港', { height: { value: 1.2, description: '1.2m' } }),
       o('珠洲市長橋'),
       o('富山', { condition: { maxHeightMissing: true } }),
-    ], ja)
+    ], ja, JA_PLACE_NAMES)
     expect(n).toEqual({ title: '沖合の津波観測に関する情報', body: '輪島港 1.2m、珠洲市長橋 到達確認、富山 欠測', requireInteraction: false, open: { tab: 'tsunami' } })
   })
 
   it('正: 上限を超えた分は「ほか N 地点」にまとめる', () => {
     const many = Array.from({ length: TSUNAMI_OBS_NOTIFY_MAX_POINTS + 2 }, (_, i) => o(`地点${i}`))
-    expect(tsunamiObservationNotification({}, many, ja).body).toMatch(/ ほか 2 地点$/)
+    expect(tsunamiObservationNotification({}, many, ja, JA_PLACE_NAMES).body).toMatch(/ ほか 2 地点$/)
   })
 
   // 安全弁: 値を観測できていた欠測は値も残す（片方へ丸めない）
   it('安全弁: 波高を持つ欠測は値と欠測の両方を出す', () => {
-    const n = tsunamiObservationNotification({}, [o('富山', { height: { value: 0.3, description: '0.3m' }, condition: { maxHeightMissing: true } })], ja)
+    const n = tsunamiObservationNotification({}, [o('富山', { height: { value: 0.3, description: '0.3m' }, condition: { maxHeightMissing: true } })], ja, JA_PLACE_NAMES)
     expect(n.title).toBe('津波観測に関する情報')
     expect(n.body).toBe('富山 0.3m 欠測')
   })
@@ -136,10 +137,10 @@ describe('英語の通知の文', () => {
       [area('石川県能登', '360', 'Warning', 'Warning'), area('富山県', '350', 'Watch', 'Watch')],
       [area('秋田県', '230', 'Unknown', 'Watch')],
     )
-    const n = tsunamiIssueNotification(r, { areas: r.areas, observations: [], liftedAreas: tsunamiLiftedAreas(r, []) }, en)
+    const n = tsunamiIssueNotification(r, { areas: r.areas, observations: [], liftedAreas: tsunamiLiftedAreas(r, []) }, en, JA_PLACE_NAMES)
     expect(n.title).toBe('Tsunami Warning')
     expect(n.body).toBe('石川県能登, 富山県\nLifted: 秋田県')
-    expect(joinAreaNamesForNotification(SEVEN_WATCH, en)).toBe('石川県能登, 新潟県上中下越, 富山県, 石川県加賀, 福井県 and 2 more areas')
+    expect(joinAreaNamesForNotification(SEVEN_WATCH, en, JA_PLACE_NAMES)).toBe('石川県能登, 新潟県上中下越, 富山県, 石川県加賀, 福井県 and 2 more areas')
   })
 
   it('解除: 気象庁の文が無ければ辞書の文', () => {
@@ -153,11 +154,11 @@ describe('英語の通知の文', () => {
       o('輪島港', { height: { value: 1.2, description: '1.2m' } }),
       o('珠洲市長橋'),
       o('富山', { condition: { maxHeightMissing: true, weak: true } }),
-    ], en)
+    ], en, JA_PLACE_NAMES)
     expect(n.title).toBe('Tsunami Observation Information')
     expect(n.body).toBe('輪島港 1.2m, 珠洲市長橋 Arrival confirmed, 富山 Weak No data')
     const many = Array.from({ length: TSUNAMI_OBS_NOTIFY_MAX_POINTS + 1 }, (_, i) => o(`地点${i}`))
-    expect(tsunamiObservationNotification({}, many, en).body).toMatch(/ and 1 more station$/)
+    expect(tsunamiObservationNotification({}, many, en, JA_PLACE_NAMES).body).toMatch(/ and 1 more station$/)
   })
 
   it('取消・失効', () => {

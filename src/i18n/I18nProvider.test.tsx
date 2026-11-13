@@ -7,6 +7,7 @@ import { createRef, useEffect } from 'react'
 import { I18nProvider, useLocale, useMessages, useSetLocale } from './I18nProvider'
 import { IconNav } from '../components/IconNav'
 import { loadMessages } from './messages'
+import { settleI18n } from '../test-utils/settleI18n'
 
 // 英語の辞書を先に一度読んでおく。初回の変換の待ちをテスト本体に載せないため
 await import('./messages/en')
@@ -34,8 +35,7 @@ describe('I18nProvider', () => {
     await act(async () => {
       view = render(<I18nProvider locale="en"><Probe /></I18nProvider>)
       // 配り役が待っている読み込みと同じものを待ち、差し替えの描き直しまで act の中で済ませる
-      await loadMessages('en')
-      await new Promise((r) => setTimeout(r, 0))
+      await settleI18n('en')
     })
     expect(screen.getByTestId('probe').textContent).toBe('en:Earthquake Information')
     expect(document.documentElement.lang).toBe('en')
@@ -53,7 +53,7 @@ describe('I18nProvider', () => {
       seen.push(`${useLocale()}:${m.nav.earthquake}`)
       return null
     }
-    await act(async () => { render(<I18nProvider locale="en" preloaded={en}><Recorder /></I18nProvider>) })
+    await act(async () => { render(<I18nProvider locale="en" preloaded={en}><Recorder /></I18nProvider>); await settleI18n('en') })
     expect(seen.length).toBeGreaterThan(0)
     expect(seen.every((s) => s === 'en:Earthquake Information')).toBe(true)
     expect(document.documentElement.lang).toBe('en')
@@ -67,8 +67,7 @@ describe('I18nProvider', () => {
     }
     await act(async () => {
       render(<I18nProvider locale="en"><Recorder /></I18nProvider>)
-      await loadMessages('en')
-      await new Promise((r) => setTimeout(r, 0))
+      await settleI18n('en')
     })
     expect(seen[0]).toBe('ja')
     expect(seen[seen.length - 1]).toBe('en')
@@ -84,8 +83,7 @@ describe('I18nProvider', () => {
     expect(screen.getByTestId('probe').textContent).toBe('ja:地震情報')
     await act(async () => {
       setLocale('en')
-      await loadMessages('en')
-      await new Promise((r) => setTimeout(r, 0))
+      await settleI18n('en')
     })
     expect(screen.getByTestId('probe').textContent).toBe('en:Earthquake Information')
     await act(async () => { setLocale('ja') })
@@ -100,8 +98,7 @@ describe('I18nProvider', () => {
     }
     await act(async () => {
       render(<I18nProvider locale="ja"><ChildSetsEnglish /><Probe /></I18nProvider>)
-      await loadMessages('en')
-      await new Promise((r) => setTimeout(r, 0))
+      await settleI18n('en')
     })
     expect(screen.getByTestId('probe').textContent).toBe('en:Earthquake Information')
   })

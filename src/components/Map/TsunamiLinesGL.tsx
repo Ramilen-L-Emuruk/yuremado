@@ -11,7 +11,7 @@ import { escapeHtml, popupCodeLineHtml } from './gl/popupHtml'
 import { tsunamiAreaPopupLines, tsunamiAreaPopupParts, type TsunamiAreaPopupParts } from '../../utils/tsunami'
 import { createTsunamiBlink, TSUNAMI_LINE_OPACITY_ON, type TsunamiBlink } from './gl/tsunamiBlink'
 import { registerCaptureHold } from './gl/captureMap'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
 import type { TsunamiGrade } from '../../types/earthquake'
 
@@ -98,6 +98,7 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
   const map = useMapGL()
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
   const blinkRef = useRef<TsunamiBlink | null>(null)
   const addedRef = useRef(false)
   // 点滅を作る effect（依存は map だけ）から、作った時点の visible を読むための ref。
@@ -128,7 +129,8 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
       priority: 'line',
       tolPx: HIT_TOL_PX,
       buildClickHtml: (f) => tsunamiLinePopupHtml(
-        String(f.properties?.name ?? ''),
+        // 地物の名前は日本語のまま（区域の形の引き当てに使う）。出す名前だけ訳す
+        placeRef.current('tsunamiArea', String(f.properties?.name ?? '')),
         tsunamiGradeLabel(f.properties?.grade, mRef.current),
         tsunamiDetailsOf(f.properties, mRef.current),
         f.properties?.code === undefined ? undefined : String(f.properties.code),

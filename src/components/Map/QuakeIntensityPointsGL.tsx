@@ -12,8 +12,9 @@ import { whenIdle } from './gl/whenIdle'
 import { isMapStyleGone } from './gl/mapStyleGone'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
-import { useMessages, useMessagesRef } from '../../i18n/I18nProvider'
+import { useMessages, useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, intensityIconId, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
@@ -87,8 +88,8 @@ function popupProperties(m: IntensityMarker, epicenter: LatLng | null) {
  * 震度分布モードのあいだは点を描かないので、一覧の行から押した観測点の吹き出しはこれで出す
  * （`JapanMapGL` → `FocusTargetGL`）。
  */
-export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null, messages: Messages): string {
-  return clickHtml({ properties: popupProperties(m, epicenter) } as unknown as MapGeoJSONFeature, messages)
+export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null, messages: Messages, place: PlaceNameLookup): string {
+  return clickHtml({ properties: popupProperties(m, epicenter) } as unknown as MapGeoJSONFeature, messages, place)
 }
 
 /**
@@ -98,24 +99,26 @@ export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null
  * **気象庁以外が運用する観測点には `＊` を付ける。** 電文が名前の末尾へ置く印を、
  * 読み取りの側では外して持っているため（→ `withNonJmaMark`）。ホバーとクリックの
  * 両方がこれを通るので、同じ観測点が場所によって違う名前で出ることはない。
+ * 地名は表示の直前で訳す（地物の `addr` は日本語のまま。一覧から押した観測点の照合に使う）。
  */
-export function quakePointPopupTitle(f: MapGeoJSONFeature): string {
-  return withNonJmaMark(String(f.properties?.addr ?? ''), Boolean(f.properties?.nonJma))
+export function quakePointPopupTitle(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  const addr = String(f.properties?.addr ?? '')
+  return withNonJmaMark(place(f.properties?.isArea ? 'area' : 'station', addr), Boolean(f.properties?.nonJma))
 }
 
-function hoverHtml(f: MapGeoJSONFeature, m: Messages): string {
+function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? -1)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${badgeHtml(intensityLabel(scale, m.formats), getIntensityColor(scale))}` +
-    `<span style="font-weight:600">${escapeHtml(quakePointPopupTitle(f))}</span></div>`
+    `<span style="font-weight:600">${escapeHtml(quakePointPopupTitle(f, place))}</span></div>`
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? -1)
-  const pref = String(f.properties?.pref ?? '')
-  const region = String(f.properties?.region ?? '')
+  const pref = place('pref', String(f.properties?.pref ?? ''))
+  const region = place('area', String(f.properties?.region ?? ''))
   const isArea = Boolean(f.properties?.isArea)
   const distanceKm = Number(f.properties?.distanceKm ?? -1)
 
@@ -142,7 +145,7 @@ function clickHtml(f: MapGeoJSONFeature, m: Messages): string {
     `<div style="min-width:150px">` +
     `<div style="font-weight:700;font-size:13px"` +
       (nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
-      `>${escapeHtml(quakePointPopupTitle(f))}</div>` +
+      `>${escapeHtml(quakePointPopupTitle(f, place))}</div>` +
     (sub ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(sub)}</div>` : '') +
     rows +
     popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
@@ -155,6 +158,7 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -180,8 +184,8 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
-      buildHoverHtml: (f) => hoverHtml(f, mRef.current),
-      buildClickHtml: (f) => clickHtml(f, mRef.current),
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

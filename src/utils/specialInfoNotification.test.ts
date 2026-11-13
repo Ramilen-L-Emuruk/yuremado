@@ -6,6 +6,7 @@ import {
 import { internationalTsunamiBody } from './internationalTsunamiSpeech'
 import { ja } from '../i18n/messages/ja'
 import { en } from '../i18n/messages/en'
+import { JA_PLACE_NAMES } from '../i18n/placeNames'
 import type {
   JMANankai, JMAKohatsu, JMANankaiCommentary, JMALpgm, JMAEstimatedIntensity, JMAEarthquakeCount, JMAQuakeNotice,
   JMAInternationalTsunami,
@@ -95,16 +96,16 @@ const lpgm = (over: Partial<JMALpgm>): JMALpgm => ({
 
 describe('lpgmNotification', () => {
   it('正: 震央地名と最大長周期地震動階級', () => {
-    expect(lpgmNotification(lpgm({}), '', ja)).toEqual({
+    expect(lpgmNotification(lpgm({}), '', ja, JA_PLACE_NAMES)).toEqual({
       title: '長周期地震動に関する観測情報', body: '石川県能登地方 最大長周期地震動階級3', tag: 'lpgm-20260101161000',
       open: { tab: 'earthquake', lpgm: '20260101161000' },
     })
   })
   it('対照: 地名が無ければ階級だけ', () => {
-    expect(lpgmNotification(lpgm({ hypocenter: undefined }), '', ja).body).toBe('最大長周期地震動階級3')
+    expect(lpgmNotification(lpgm({ hypocenter: undefined }), '', ja, JA_PLACE_NAMES).body).toBe('最大長周期地震動階級3')
   })
   it('正: 取消は覚えた地名で言い、同じ札で置き換える', () => {
-    expect(lpgmNotification(lpgm({ cancelled: true, hypocenter: undefined }), '石川県能登地方', ja)).toEqual({
+    expect(lpgmNotification(lpgm({ cancelled: true, hypocenter: undefined }), '石川県能登地方', ja, JA_PLACE_NAMES)).toEqual({
       title: '長周期地震動に関する観測情報 取消',
       body: '石川県能登地方の長周期地震動に関する観測情報は取り消されました',
       tag: 'lpgm-20260101161000',
@@ -113,7 +114,7 @@ describe('lpgmNotification', () => {
     })
   })
   it('対照: 地名を覚えていない取消は地名なし', () => {
-    expect(lpgmNotification(lpgm({ cancelled: true }), '', ja).body).toBe('長周期地震動に関する観測情報は取り消されました')
+    expect(lpgmNotification(lpgm({ cancelled: true }), '', ja, JA_PLACE_NAMES).body).toBe('長周期地震動に関する観測情報は取り消されました')
   })
 })
 
@@ -164,11 +165,11 @@ describe('internationalTsunamiNotification', () => {
       [wepa({ isCommunicationsTest: true }), undefined],
     ]
     for (const [x, name] of cases) {
-      expect(internationalTsunamiNotification(x, name, ja).body).toBe(internationalTsunamiBody(x, name))
+      expect(internationalTsunamiNotification(x, name, ja, JA_PLACE_NAMES).body).toBe(internationalTsunamiBody(x, name))
     }
-    expect(internationalTsunamiNotification(wepa({}), undefined, ja).body)
+    expect(internationalTsunamiNotification(wepa({}), undefined, ja, JA_PLACE_NAMES).body)
       .toBe('25日8時43分頃、北緯13.9度、東経120.5度で発生した深さ139キロメートル、マグニチュード7.0の地震について、震源付近に被害をもたらす津波の可能性があると発表されました。')
-    expect(internationalTsunamiNotification(wepa({}), undefined, ja).title).toBe('国際津波関連情報')
+    expect(internationalTsunamiNotification(wepa({}), undefined, ja, JA_PLACE_NAMES).title).toBe('国際津波関連情報')
   })
 })
 
@@ -189,10 +190,10 @@ describe('英語の通知の文', () => {
       .toMatchObject({ title: 'Information on the Number of Earthquakes', body: '' })
   })
   it('長周期: 階級の文と取消の件名', () => {
-    expect(lpgmNotification(lpgm({}), '', en)).toMatchObject({
+    expect(lpgmNotification(lpgm({}), '', en, JA_PLACE_NAMES)).toMatchObject({
       title: 'Long-Period Ground Motion Observation Information', body: '石川県能登地方 · Max long-period ground motion class 3',
     })
-    expect(lpgmNotification(lpgm({ cancelled: true, hypocenter: undefined }), '石川県能登地方', en).body)
+    expect(lpgmNotification(lpgm({ cancelled: true, hypocenter: undefined }), '石川県能登地方', en, JA_PLACE_NAMES).body)
       .toBe('Long-Period Ground Motion Observation Information for 石川県能登地方 has been retracted')
   })
   it('推計震度分布図: 受信と更新', () => {
@@ -202,12 +203,12 @@ describe('英語の通知の文', () => {
     expect(estimatedIntensityNotification(ei, false, en).body).toBe('Estimated seismic intensity map updated for the earthquake at about 10:05 JST')
   })
   it('国際津波関連情報: 日時は言語の書き方（日本時間）、震源名が無ければ座標、評価の訳', () => {
-    expect(internationalTsunamiNotification(wepa({}), undefined, en)).toMatchObject({
+    expect(internationalTsunamiNotification(wepa({}), undefined, en, JA_PLACE_NAMES)).toMatchObject({
       title: 'International tsunami information',
       body: 'Earthquake at about Nov 25, 08:43 JST, 13.9°N 120.5°E, depth 139 km, M7.0: A tsunami that could cause damage near the epicenter is possible.',
     })
-    expect(internationalTsunamiNotification(wepa({ evaluation: undefined, depthKm: undefined }), 'フィリピン諸島', en).body)
+    expect(internationalTsunamiNotification(wepa({ evaluation: undefined, depthKm: undefined }), 'フィリピン諸島', en, JA_PLACE_NAMES).body)
       .toBe('Earthquake at about Nov 25, 08:43 JST, フィリピン諸島, M7.0: International tsunami information issued.')
-    expect(internationalTsunamiNotification(wepa({ isCommunicationsTest: true }), undefined, en).body).toBe('Communications test.')
+    expect(internationalTsunamiNotification(wepa({ isCommunicationsTest: true }), undefined, en, JA_PLACE_NAMES).body).toBe('Communications test.')
   })
 })

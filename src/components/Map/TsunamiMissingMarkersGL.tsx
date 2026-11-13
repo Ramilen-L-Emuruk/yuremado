@@ -8,7 +8,8 @@ import { BADGE_SHADOW_BLUR, BADGE_SHADOW_COLOR } from './gl/tsunamiObsBar'
 import { TSUNAMI_MISSING_COLOR } from '../../utils/tsunamiStyle'
 import { overSuffixedHeight, observationFirstWaveText } from '../../utils/tsunami'
 import { popupCodeLineHtml } from './gl/popupHtml'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import type { Messages } from '../../i18n/messages'
 import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
@@ -18,9 +19,9 @@ import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiM
 // （理由と寸法は `gl/tsunamiMissingMarker.ts` の冒頭）。差分更新・点滅・後始末の作りは
 // 到達確認マーカーと揃えてある。
 
-export function missingTooltipHtml(marker: TsunamiMissingMarker, m: Messages): string {
+export function missingTooltipHtml(marker: TsunamiMissingMarker, m: Messages, place: PlaceNameLookup): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const lines = [`<div class="font-bold">${esc(marker.name)}</div>`]
+  const lines = [`<div class="font-bold">${esc(place('tsunamiStation', marker.name))}</div>`]
   // 第1波の行は観測棒・到達確認の吹き出しと同じ形（「第1波 05:12 押し波」。2026-10-24 ユーザー選択「この形で揃える
   // (Recommended)」）。日時として読めない時刻は行ごと落とす（→ `observationFirstWaveText`）。
   const firstWave = observationFirstWaveText(marker, m.tsunami)
@@ -85,6 +86,7 @@ export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
   const entriesRef = useRef<Map<string, MarkerEntry>>(new Map())
   // 吹き出しの中身は印を差分で更新するときに組むので、言語が変わったら同じ差分更新で組み直す（印は作り直さない）
   const messages = useMessages()
+  const place = usePlaceNames()
 
   useEffect(() => {
     if (!map) return
@@ -96,7 +98,7 @@ export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
       if (existing) {
         updateMarkerEl(existing.el, m, iconScale)
         existing.data = m
-        existing.popup.setHTML(missingTooltipHtml(m, messages)).setOffset(popupOffset(iconScale))
+        existing.popup.setHTML(missingTooltipHtml(m, messages, place)).setOffset(popupOffset(iconScale))
         continue
       }
       const el = buildMissingMarkerEl(m, iconScale)
@@ -107,7 +109,7 @@ export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
         closeButton: false,
         closeOnClick: false,
         offset: popupOffset(iconScale),
-      }).setHTML(missingTooltipHtml(m, messages))
+      }).setHTML(missingTooltipHtml(m, messages, place))
       const entry: MarkerEntry = { marker, popup, el, data: m, opener: null as unknown as TsunamiMarkerPopup }
       entry.opener = attachTsunamiMarkerPopup(map, el, popup, m.name, 'missing', () => [entry.data.lng, entry.data.lat])
       entries.set(m.name, entry)
@@ -119,7 +121,7 @@ export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
       entry.marker.remove()
       entries.delete(name)
     }
-  }, [map, markers, iconScale, messages])
+  }, [map, markers, iconScale, messages, place])
 
   // アンマウント時に全マーカーを後始末する。
   useEffect(() => {
