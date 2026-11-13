@@ -2122,6 +2122,8 @@ export const zhHant: Messages = {
     joinParts: (parts) => parts.join(' '),
     quakeTitle: '地震訊息',
     quakeCancelTitle: '地震訊息 取消',
+    pushReadyTitle: 'Yuremado',
+    pushReadyBody: '現在可以接收推播通知了',
     areaAndOthers: (name) => `${name}等`,
     scalePrompt: (area, scale) => (area === null ? `震度速報 最大震度${scale}` : `震度速報 ${area} 最大震度${scale}`),
     hypocenter: (name, scale, magnitude) => `${name} 最大震度${scale} ${magnitude}`,

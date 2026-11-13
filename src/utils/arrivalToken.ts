@@ -15,6 +15,7 @@ import { serverNow } from './clock'
 import { formatDateTimeMin } from './formatters'
 import { log } from './logger'
 import type { Messages } from '../i18n/messages'
+import type { ArrivalTokenProblem } from '../i18n/messageKeys'
 
 /** 予報キー・到達予想キーの状態の文（辞書の `settings.signedKey`） */
 export type SignedKeyWords = Messages['settings']['signedKey']
@@ -42,8 +43,9 @@ interface TokenPayload {
  * 通らなかった理由。**画面に出すためのもので、門の判定には使わない。**
  *
  * `empty` は未入力。設定を触っていない端末では記録も表示も出さないので、他と分けてある。
+ * 辞書も鍵に使うので、型そのものは i18n/messageKeys.ts に置く。
  */
-export type ArrivalTokenProblem = 'empty' | 'malformed' | 'signature' | 'no-expiry' | 'expired' | 'error'
+export type { ArrivalTokenProblem }
 
 /**
  * 検証の結果。

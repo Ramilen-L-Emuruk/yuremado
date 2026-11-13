@@ -9,7 +9,9 @@ import {
 } from './timeSignal'
 import { WAVE_SPAN_CHOICES } from './waveSpan'
 import { LOCALE_SETTINGS } from '../i18n/messages'
-import { USAGE_SETTING_COUNT, USAGE_SETTING_SPECS, validUsageSettingValue } from './usageSettings'
+import {
+  USAGE_DEFAULT_HISTORY, USAGE_RETIRED_SETTINGS, USAGE_SETTING_COUNT, USAGE_SETTING_SPECS, usageDefaultAt, validUsageSettingValue,
+} from './usageSettings'
 
 const sorted = (xs: readonly (string | number)[]) => [...xs].map(String).sort()
 
@@ -143,5 +145,30 @@ describe('型で見られない選択肢と、本文の大きさ', () => {
       settings: { apiKey: true, tts: true, sound: true, notify: true, seismo: true }, prefs,
     } })
     expect(new TextEncoder().encode(body).length).toBeLessThan(8192)
+  })
+})
+
+describe('版ごとの既定と外した項目（#1619）', () => {
+  // 正: 既定が変わる前の版の端末は、その版の既定で比べる
+  it('既定が変わる前の版は前の既定', () => {
+    expect(usageDefaultAt('notifyQuietWhileOpen', '6.15.0')).toBe('0')
+    expect(usageDefaultAt('notifyQuietWhileOpen', '6.2.0')).toBe('0')
+  })
+
+  // 対照: 変わった後の版・既定の変わっていない項目・版の読めない端末は今の既定
+  it('変わった後の版と、版の読めない端末は今の既定', () => {
+    expect(usageDefaultAt('notifyQuietWhileOpen', '6.16.0')).toBe(USAGE_SETTING_SPECS.notifyQuietWhileOpen.default)
+    expect(usageDefaultAt('notifyQuietWhileOpen', '')).toBe(USAGE_SETTING_SPECS.notifyQuietWhileOpen.default)
+    expect(usageDefaultAt('notifyEnabled', '6.2.0')).toBe(USAGE_SETTING_SPECS.notifyEnabled.default)
+    expect(usageDefaultAt('noSuchSetting', '6.2.0')).toBeUndefined()
+  })
+
+  // 安全弁: 表の項目は今の仕様にあり、前の既定も今の決まりに合う値。外した項目は今の仕様に無い
+  it('表は今の仕様と食い違わない', () => {
+    for (const [name, history] of Object.entries(USAGE_DEFAULT_HISTORY)) {
+      expect(USAGE_SETTING_SPECS[name]).toBeDefined()
+      for (const h of history) expect(validUsageSettingValue(name, h.value)).toBe(h.value)
+    }
+    for (const name of USAGE_RETIRED_SETTINGS) expect(USAGE_SETTING_SPECS[name]).toBeUndefined()
   })
 })

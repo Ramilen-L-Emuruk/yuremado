@@ -16,6 +16,7 @@ import { hasKnownEpicenter } from './geo'
 import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
 import { DOMESTIC_TSUNAMI_CODE_TEXT, warnIfDomesticTsunamiSentenceMissing, withoutDomesticTsunamiSentences } from './domesticTsunamiComment'
 import { isObservedLpgmClass } from './lpgm'
+import { TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_TEXT_BLOCK_KEYS, type TelegramBoilerplateKey, type TelegramTextBlockKey } from '../i18n/messageKeys'
 
 /**
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
@@ -198,41 +199,10 @@ export type TtsUnreceivedDetail = 'stations' | 'areas' | 'none'
  * 前半 4 つは地域をどこまで挙げるか、後半 2 つは 1 件ごとの詳しさ。
  * **どちらも既定は「この設定を入れる前の挙動」**（→ `useSettings.ts` の `DEFAULTS`）。
  */
-/**
- * 気象庁が書いた文のうち、読み上げを個別に選べる単位。**電文種別 × ブロック**で並べる。
- *
- * 同じ「自由付加文」でも種別によって中身の性質が違う（地震情報は `＊` の説明が主、津波は
- * いつ来ていつまで続くかの説明、南海トラフは評価の本文）。種類でまとめて切る形にすると、
- * 片方を聞くためにもう片方も付いてくる。
- *
- * **一覧はここが単一情報源。** 設定の既定値（`useSettings.ts`）・設定の窓のラベル・
- * `telegramTextToSpeak` の判定がこの型から導かれるので、足したものを書き忘れると型検査で止まる。
- */
-export const TELEGRAM_TEXT_BLOCK_KEYS = [
-  // 地震情報
-  'quakeForecast', 'quakeVarComment', 'quakeFreeText',
-  // 津波
-  'tsunamiBody', 'tsunamiVarComment', 'tsunamiFreeText',
-  // 長周期地震動観測情報
-  'lpgmForecast', 'lpgmVarComment', 'lpgmFreeText',
-  // 南海トラフ地震臨時情報
-  'nankaiSummary', 'nankaiBody', 'nankaiNextAdvisory',
-  // 南海トラフ地震関連解説情報
-  'nankaiCommentarySummary', 'nankaiCommentaryBody', 'nankaiCommentaryNextAdvisory',
-  // 北海道・三陸沖後発地震注意情報
-  // **次回発表予定は持たない。** 解説資料 Ⅱ.42 が定める VYSE60 の `Body` は `EarthquakeInfo` と
-  // `Text` だけで `NextAdvisory` を含まない（実電文 7 通でも 0 件。→ data-sources-spec.md
-  // 「3 種別に共通する要素は 1 箇所で読む」）。**切っても入れても何も起きない欄を設定に並べない。**
-  // 気象庁がこの要素を出すようになったら、キーと `telegramTextToSpeak` の `pick` を戻す。
-  'kohatsuSummary', 'kohatsuBody',
-  // 地震回数に関する情報。本文（`Body/Text`）は回数を伴わない発表報だけが運ぶ
-  // （2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）
-  'earthquakeCountBody', 'earthquakeCountFreeText',
-  // 地震・津波に関するお知らせ（本文は `Body/Text` の 1 枠だけ。自由付加文も同じ枠に従う）
-  'quakeNoticeBody',
-] as const
+// 読み上げを選べる単位（ブロック・定型文）の一覧は、辞書も鍵に使うので i18n/messageKeys.ts に置く（辞書から画面の部品を
+// 辿らせないため）。ここでは書き出し直すだけ
+export { TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_TEXT_BLOCK_KEYS, type TelegramBoilerplateKey, type TelegramTextBlockKey }
 
-export type TelegramTextBlockKey = typeof TELEGRAM_TEXT_BLOCK_KEYS[number]
 export type TelegramTextBlocks = Readonly<Record<TelegramTextBlockKey, boolean>>
 
 /**
@@ -255,22 +225,8 @@ export type TelegramTextBlocks = Readonly<Record<TelegramTextBlockKey, boolean>>
  * 文面が種別で違う（0262 は「震度観測点」・0263 は「長周期地震動観測点」）ことを見落とし、
  * 長周期の報だけ落ちない状態が残っていた。自由付加文はコードを持たないので検出できない。
  *
- * **一覧はここが単一情報源。** 設定の既定値・設定の窓のラベルと説明・落とす判定がこの型から
- * 導かれるので、足したものを書き忘れると型検査で止まる。
+ * **一覧の単一情報源は i18n/messageKeys.ts の `TELEGRAM_BOILERPLATE_KEYS`**（ここから書き出し直している）。
  */
-export const TELEGRAM_BOILERPLATE_KEYS = [
-  'starMark',
-  'eewIssued',
-  'lpgmClassTable',
-  'tsunamiHeightLegend',
-  // 南海トラフ・後発地震の情報の参考情報（`Body/EarthquakeInfo/Appendix`）。他の 4 つと違って
-  // 文の照合で落とすものではなく、**要素ごと**読むかを決める（電文がこの文を独立した要素で運ぶため）。
-  // 定型文の並びに置くのは、性質（情報の種類の説明で、事象によらずほぼ同じ文）と既定（読まない）が
-  // 同じだから（2026-10-23 ユーザー選択「設定で読めるようにする (Recommended)」の「A1 の階級表などと揃える」）。
-  'earthquakeInfoAppendix',
-] as const
-
-export type TelegramBoilerplateKey = typeof TELEGRAM_BOILERPLATE_KEYS[number]
 /** 真 = 読む（落とさない）。向きは {@link TelegramTextBlocks} と揃えてある。 */
 export type TelegramBoilerplateReads = Readonly<Record<TelegramBoilerplateKey, boolean>>
 

@@ -11,6 +11,7 @@ import type { Messages } from '../i18n/messages'
 import type { AppSettings, DevInjectedKeys } from '../hooks/useSettings'
 import { sanitize, migrateStoredSettings } from '../hooks/useSettings'
 import { formatFileStamp } from './formatters'
+import type { SettingsFileError } from '../i18n/messageKeys'
 
 /** 書き出したファイルの中身。 */
 export interface SettingsFile {
@@ -118,8 +119,8 @@ export function settingsFileName(now = new Date()): string {
   return `${formatFileStamp(now.getTime())}_quake-viewer-settings.json`
 }
 
-/** 読めなかった理由。画面の文は辞書（`settings.io.fileErrors`）が持つ */
-export type SettingsFileError = 'empty' | 'notThisApp' | 'notSettings' | 'malformed' | 'newer' | 'noSettings' | 'noKeys'
+/** 読めなかった理由。画面の文は辞書（`settings.io.fileErrors`）が持つ（型は辞書も使うので i18n/messageKeys.ts） */
+export type { SettingsFileError }
 
 export type ParseResult =
   | {

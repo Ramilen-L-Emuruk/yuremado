@@ -9,6 +9,7 @@ import { quakeListDay } from './quakeListDay'
 import { isAreaPoint, isMaxScaleUnreceived, type AreaPrefIndex } from './quakePoints'
 import { clampPeriodRange } from './historyDays'
 import type { Messages } from '../i18n/messages'
+import type { QuakeFilterKind, QuakeSortKey } from '../i18n/messageKeys'
 
 /** 地震タブの語（`i18n/messages` の `quake`） */
 export type QuakeWords = Messages['quake']
@@ -55,10 +56,8 @@ export interface QuakeListFilter {
 /** 地域の窓で一覧と地図のどちらを出すか。 */
 export type QuakeRegionView = 'list' | 'map'
 
-export type QuakeSortKey = 'time' | 'scale' | 'magnitude' | 'depth' | 'region'
-
-/** 絞り込みの条件の種類（帯の札と窓の節） */
-export type QuakeFilterKind = 'scale' | 'magnitude' | 'depth' | 'region' | 'types' | 'period'
+// 並べ替えの鍵と、絞り込みの条件の種類（帯の札と窓の節）。辞書も鍵に使うので i18n/messageKeys.ts に置く
+export type { QuakeFilterKind, QuakeSortKey }
 
 export interface QuakeListSort {
   readonly key: QuakeSortKey

@@ -247,6 +247,48 @@ export const USAGE_SETTING_SPECS: Readonly<Record<string, UsageSettingSpec>> = {
 /** 送る項目の数（中継が 1 回に書ける件数の上限 250 と比べる） */
 export const USAGE_SETTING_COUNT = Object.keys(USAGE_SETTING_SPECS).length
 
+/**
+ * 外した設定の項目名。前の版のアプリはまだ送ってくるので、中継は記録せず、知らない名前としても数えずに捨てる
+ * （2026-11-13 ユーザー選択「取り下げた項目として黙って捨てる (Recommended)」）。仕様の一覧（USAGE_SETTING_SPECS）と重ねない
+ */
+export const USAGE_RETIRED_SETTINGS: readonly string[] = [
+  // 通知の設定へまとめて外した（プッシュ通知は「通知を表示」と通知の許可で決まる）
+  'pushNotifyEnabled',
+]
+
+/**
+ * 既定が変わった項目の、変わる前の既定。`throughVersion` の版まで（その版を含む）は `value` が既定だった。
+ * 管理の画面が「既定から変えた人」を、記録した端末の版の既定で数えるのに使う（2026-11-13 ユーザー選択「記録の版ごとの既定で比べる (Recommended)」）。
+ * 古い順に並べる
+ */
+export const USAGE_DEFAULT_HISTORY: Readonly<Record<string, readonly { readonly throughVersion: string; readonly value: string }[]>> = {
+  // 既定を切から入へ変えた（6.15.0 までの版は切）
+  notifyQuietWhileOpen: [{ throughVersion: '6.15.0', value: '0' }],
+}
+
+/** 版の文字列（`6.15.0`）を比べる。a が古ければ負、同じなら 0、新しければ正。読めない版は 0（比べない） */
+function compareVersion(a: string, b: string): number {
+  const pa = /^(\d+)\.(\d+)\.(\d+)$/.exec(a)
+  const pb = /^(\d+)\.(\d+)\.(\d+)$/.exec(b)
+  if (!pa || !pb) return 0
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(pa[i]) - Number(pb[i])
+    if (d !== 0) return d
+  }
+  return 0
+}
+
+/** その版のアプリでの、項目の既定。版が読めない（空・形が違う）ときは今の既定 */
+export function usageDefaultAt(name: string, version: string): string | undefined {
+  const spec = USAGE_SETTING_SPECS[name]
+  if (!spec) return undefined
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return spec.default
+  for (const h of USAGE_DEFAULT_HISTORY[name] ?? []) {
+    if (compareVersion(version, h.throughVersion) <= 0) return h.value
+  }
+  return spec.default
+}
+
 /** 小数を 3 桁に丸めて文字列にする（`0.1 + 0.2` のような端数で値が割れないように） */
 function numberText(v: number): string {
   return String(Math.round(v * 1000) / 1000)

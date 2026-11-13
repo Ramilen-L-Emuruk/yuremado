@@ -2128,6 +2128,8 @@ export const en: Messages = {
     joinParts: (parts) => parts.join(' · '),
     quakeTitle: 'Earthquake Information',
     quakeCancelTitle: 'Earthquake Information cancelled',
+    pushReadyTitle: 'Yuremado',
+    pushReadyBody: 'You can now receive push notifications',
     areaAndOthers: (name) => `${name} and others`,
     scalePrompt: (area, scale) =>
       area === null ? `Seismic Intensity Information · Max intensity ${scale}` : `Seismic Intensity Information · ${area} · Max intensity ${scale}`,

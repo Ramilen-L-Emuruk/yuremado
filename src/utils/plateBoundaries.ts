@@ -4,6 +4,7 @@
 // 出典: PB2002 (Bird, 2003) — https://github.com/fraxen/tectonicplates（Open Data Commons Attribution License）
 
 import { fetchJsonWithTimeout } from './fetchJson'
+import type { PlateBoundaryClass } from '../i18n/messageKeys'
 
 export type LatLng = [number, number]
 
@@ -12,8 +13,10 @@ export type LatLng = [number, number]
  *
  * SUB 沈み込み帯／OCB 海洋の収束境界／CCB 大陸の収束境界／OSR 海洋の拡大軸／CRB 大陸のリフト／
  * OTF 海洋のトランスフォーム断層／CTF 大陸のトランスフォーム断層
+ *
+ * 辞書も鍵に使うので、型そのものは i18n/messageKeys.ts に置く
  */
-export type PlateBoundaryClass = 'SUB' | 'OCB' | 'CCB' | 'OSR' | 'CRB' | 'OTF' | 'CTF'
+export type { PlateBoundaryClass }
 
 /** 凡例と色の系統。7 分類を 4 つにまとめる（2026-10-25 ユーザー承認「B の案でよい (Recommended)」）。 */
 export type PlateBoundaryGroup = 'subduction' | 'convergent' | 'divergent' | 'transform'

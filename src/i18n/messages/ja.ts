@@ -2,21 +2,19 @@ import type { IssueType, TelegramLogKind, TelegramOperationStatus, TsunamiGrade 
 import { EPICENTER_RANK_LABEL, MAGNITUDE_RANK_LABEL } from '../../utils/eewAccuracyRanks'
 import type { EnsembleSource } from '../../utils/kyoshinEnsembleDetector'
 import { TELEGRAM_LOG_ERROR, type TelegramLogErrorMark } from '../../utils/telegramLogErrorMark'
-import type { CatalogColorBy } from '../../utils/hypocenterCatalogView'
+// 画面の部品で使う鍵の型は、部品からではなく messageKeys（何も読まないファイル）から読む（→ そのファイルの冒頭）
+import type {
+  ArrivalTokenProblem, CatalogColorBy, PlateBoundaryClass, QuakeFilterKind, QuakeSortKey, SettingsFileError, ShareCardFormatId,
+  TelegramBoilerplateKey, TelegramTextBlockKey,
+} from '../messageKeys'
 import type { QuakeHoldBackReason } from '../../utils/quakeMerge'
 import type { JmaCommentKind } from '../../utils/jmaCommentGroups'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
-import type { QuakeFilterKind, QuakeSortKey } from '../../utils/quakeListView'
 import type { MapLayerName } from '../../utils/renderHealth'
-import type { PlateBoundaryClass } from '../../utils/plateBoundaries'
 import type { HeatmapPeriod } from '../../utils/quakeHeatmap'
 import type { SettingsCategoryId } from '../../components/SettingsTab/settingsCategories'
-import type { TelegramBoilerplateKey, TelegramTextBlockKey } from '../../utils/ttsText'
 import type { TimeSignalClock, TimeSignalIntervalMin, TimeSignalOrder, TimeSignalSound, TimeSignalWhileSpeaking } from '../../utils/timeSignal'
 import type { DmdataClassification } from '../../services/dmdataClassifications'
-import type { SettingsFileError } from '../../utils/settingsIo'
-import type { ArrivalTokenProblem } from '../../utils/arrivalToken'
-import type { ShareCardFormatId } from '../../utils/shareCard'
 import { EVALUATION_SPEECH, type InternationalTsunamiNoticeParts } from '../../utils/internationalTsunamiSpeech'
 import type { UpdateStatus } from '../../utils/updateMark'
 
@@ -2368,6 +2366,9 @@ export const ja = {
     joinParts: (parts: readonly string[]) => parts.join(' '),
     quakeTitle: '地震情報',
     quakeCancelTitle: '地震情報 取消',
+    /** 初めてプッシュ通知を購読したときに中継が試しに送る通知の題と本文（中継だけが使う。2026-11-13 ユーザー選択「この訳で入れる (Recommended)」） */
+    pushReadyTitle: '揺れ窓',
+    pushReadyBody: 'プッシュ通知を受け取れるようになりました',
     /** 最大震度を観測した区域が複数あるときの区域の語 */
     areaAndOthers: (name: string) => `${name}ほか`,
     /** 震度速報（震源がまだ判らない報）。`area` は最大震度を観測した区域（読めなければ null） */

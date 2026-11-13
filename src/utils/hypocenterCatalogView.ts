@@ -6,6 +6,7 @@ import type { HypocenterIndex, HypocenterYear, TelegramPointLabels } from './hyp
 import { completeMinMagnitude } from './hypocenterCatalog'
 import { depthPointShapeId, type DepthPointColumns } from '../components/Map/gl/depthPointLayer'
 import type { Messages } from '../i18n/messages'
+import type { CatalogColorBy } from '../i18n/messageKeys'
 
 /** 震源カタログの語（日本語なら `ja.catalog`）。見出しを組む関数は、いま出している言語の辞書を受け取る */
 export type CatalogWords = Messages['catalog']
@@ -19,8 +20,8 @@ export type CatalogWords = Messages['catalog']
  */
 export const CATALOG_REBUILD_DEBOUNCE_MS = 150
 
-/** 点の色を何で決めるか。 */
-export type CatalogColorBy = 'depth' | 'magnitude' | 'time'
+/** 点の色を何で決めるか（辞書も鍵に使うので i18n/messageKeys.ts に置く）。 */
+export type { CatalogColorBy }
 
 /** 点の大きさを何で決めるか。 */
 export type CatalogSizeBy = 'fixed' | 'magnitude'
