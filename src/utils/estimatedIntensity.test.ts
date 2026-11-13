@@ -14,6 +14,7 @@ import {
 import type { JMAQuake, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
 import { CELL_LAT_DEG, CELL_LON_DEG } from './bufrEstimatedIntensity'
 import { log } from './logger'
+import { ja } from '../i18n/messages/ja'
 
 function quake(time: string, lat = 32.6, lng = 130.7, maxScale: IntensityScale = 70): JMAQuake {
   return {
@@ -442,25 +443,25 @@ describe('estimatedMarkMismatchNote（推計の電文の震央補助表現）', 
 
   // 対照: 地震カードと同じなら出さない（全期間の控えでは 18 通すべてこの形）
   it('地震カードの補助表現と同じなら出さない', () => {
-    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 } }, card)).toBeNull()
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 } }, card, ja.quake)).toBeNull()
   })
 
   // 正: 目印が同じで距離だけ違えば、カードの文から目印の名前を借りる
   it('目印が同じなら名前を借りて食い違いを文にする', () => {
-    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 40 } }, card))
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 40 } }, card, ja.quake))
       .toBe('推計の電文では 輪島の東北東40km付近')
   })
 
   // 正: 目印が違えば名前を借りず番号で書く
   it('目印が違えば番号で書く', () => {
-    expect(estimatedMarkMismatchNote({ mark: { pointCode: 308, directionDeg: 0, distanceKm: 20 } }, card))
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 308, directionDeg: 0, distanceKm: 20 } }, card, ja.quake))
       .toBe('推計の電文では 目印308の北20km付近')
   })
 
   // 安全弁: 推計の電文が補助表現を持たなければ何も出さない。カードが持たなければ番号で出す
   it('推計の電文が持たなければ出さず、カードが持たなければ番号で出す', () => {
-    expect(estimatedMarkMismatchNote({}, card)).toBeNull()
-    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 } }, {}))
+    expect(estimatedMarkMismatchNote({}, card, ja.quake)).toBeNull()
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 } }, {}, ja.quake))
       .toBe('推計の電文では 目印201の東北東30km付近')
   })
 

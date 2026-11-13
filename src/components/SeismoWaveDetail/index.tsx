@@ -29,6 +29,7 @@ import { createLogThrottle, log } from '../../utils/logger'
 import { columnsSpan, measureQuietLevel, selectQuakeWindow } from '../../utils/seismoQuakeWindow'
 import { trimTrailingGap } from '../../utils/seismoWaveColumns'
 import { MEAN_LINE_WINDOW_MS } from '../../utils/waveMeanLines'
+import { useMessages } from '../../i18n/I18nProvider'
 import { axisZeroLabel, buildArrivalMarksForRange, formatQuakeIntensityParts, QuakeIntensityLine } from '../EarthquakeTab/QuakeSeismoWave'
 import { foldHistoryColumns } from '../SeismoWaveChart/historyColumns'
 import {
@@ -116,6 +117,7 @@ interface Props {
 }
 
 export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
+  const w = useMessages().quake.seismo
   const [axes, setAxes] = useState<readonly boolean[]>([true, true, true])
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -148,7 +150,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
   const displayFromMs = useSamples ? view.fromMs : columnsShownRange.fromMs
   const displayToMs = useSamples ? view.toMs : columnsShownRange.toMs
 
-  const intensityParts = formatQuakeIntensityParts(wave.intensity, quakeSpan)
+  const intensityParts = formatQuakeIntensityParts(wave.intensity, quakeSpan, w)
   // **震度は描く区間と訊いた区間が一致するときだけ使う**（行の文言と同じ条件）。
   const intensity = intensityParts !== null ? wave.intensity : null
   const peaks = useMemo(
@@ -319,7 +321,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
     const peakMarkAt = (atMs: number | null | undefined): WaveMark[] => {
       if (atMs === null || atMs === undefined) return []
       const ratio = ratioOf(atMs)
-      return ratio === null ? [] : [{ ratio, label: '最大', ...PEAK_MARK }]
+      return ratio === null ? [] : [{ ratio, label: w.peak, ...PEAK_MARK }]
     }
     const arrivalMarks = buildArrivalMarksForRange(displayRange, wave.arrival)
     // 段ごとの線: 到達（P/S のラベルは一番上の段だけ。合成の段があればそちら）＋その成分の最大加速度の時刻。
@@ -328,7 +330,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
       ...peakMarkAt(peaks[a]?.atMs),
     ]
     const lastLane = visibleIdx[visibleIdx.length - 1]
-    const zeroLabel = axisZeroLabel(wave.axisZero)
+    const zeroLabel = axisZeroLabel(wave.axisZero, w)
     const ticksFor = (a: number) =>
       a === lastLane
         ? (widthPx: number) =>
@@ -492,7 +494,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
     // `visibleIdx` は `axes` から作るので `axes` で足りる。`view` は `useSamples` のときだけ使い、
     // そのとき `displayFromMs`/`displayToMs` が `view` と一致する。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted, wave.unit])
+  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted, wave.unit, w])
 
   // ---- 操作 ----
   const zoomBy = useCallback(
@@ -554,7 +556,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
       return next.some((on) => on) ? next : prev
     })
 
-  const distanceText = wave.distanceKm === null ? null : `震源距離 約${Math.round(wave.distanceKm)} km`
+  const distanceText = wave.distanceKm === null ? null : w.distance(Math.round(wave.distanceKm))
 
   const content = (
     <div
@@ -575,7 +577,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`${wave.displayName} の波形の詳細`}
+        aria-label={w.detailTitle(wave.displayName)}
         className="flex max-h-full w-full max-w-5xl flex-col gap-2 overflow-y-auto rounded-lg border border-border bg-panel p-3 text-sm shadow-2xl shadow-black/60"
       >
         <div className="flex items-start gap-2">
@@ -592,7 +594,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
             type="button"
             onClick={onClose}
             className="rounded-sm px-2 py-0.5 text-lg leading-none text-secondary hover:bg-white/10 hover:text-white"
-            aria-label="閉じる"
+            aria-label={w.close}
           >
             ×
           </button>
@@ -605,9 +607,9 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
             </ToggleChip>
           ))}
           <span className="ml-auto flex items-center gap-1">
-            <ZoomButton label="拡大" onClick={() => zoomBy(1 / 2)}>＋</ZoomButton>
-            <ZoomButton label="縮小" onClick={() => zoomBy(2)}>−</ZoomButton>
-            <ZoomButton label="全体" onClick={() => setRawView(bounds)}>全体</ZoomButton>
+            <ZoomButton label={w.zoomIn} onClick={() => zoomBy(1 / 2)}>＋</ZoomButton>
+            <ZoomButton label={w.zoomOut} onClick={() => zoomBy(2)}>−</ZoomButton>
+            <ZoomButton label={w.fit} onClick={() => setRawView(bounds)}>{w.fit}</ZoomButton>
           </span>
         </div>
 
@@ -622,9 +624,9 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
           {showComposite && (
             <div>
               <div className="flex gap-2 text-[11px] leading-none" style={{ color: COMPOSITE_COLOR }}>
-                <span>合成</span>
+                <span>{w.composite}</span>
                 {compositePeak !== null && (
-                  <span className="tabular-nums text-secondary">最大 {formatGal(compositePeak.value)} {wave.unit.label}</span>
+                  <span className="tabular-nums text-secondary">{w.peak} {formatGal(compositePeak.value)} {wave.unit.label}</span>
                 )}
                 <span className="ml-auto font-mono tabular-nums text-secondary">{compositeScaleText ?? '—'}</span>
               </div>
@@ -637,7 +639,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
                 <div className="flex gap-2 text-[11px] leading-none" style={{ color: AXIS_COLORS[a] }}>
                   <span>{AXIS_LABELS[a]}</span>
                   {peaks[a] !== null && (
-                    <span className="tabular-nums text-secondary">最大 {formatGal((peaks[a] as AxisPeak).gal)} {wave.unit.label}</span>
+                    <span className="tabular-nums text-secondary">{w.peak} {formatGal((peaks[a] as AxisPeak).gal)} {wave.unit.label}</span>
                   )}
                   {/* 縦の範囲は**段ごとの見出しの右端**（合成の段と同じ位置）。3 成分は縦を共通にしているので、
                       どの段にも同じ値が並ぶ。 */}
@@ -655,7 +657,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
           )}
           {intensity !== null && intensity.realtimeSeries.length > 0 && (
             <div>
-              <div className="text-[11px] leading-none text-secondary">リアルタイム震度の推移</div>
+              <div className="text-[11px] leading-none text-secondary">{w.realtimeTrend}</div>
               <canvas ref={intensityRef} className="block h-[80px] w-full" />
             </div>
           )}

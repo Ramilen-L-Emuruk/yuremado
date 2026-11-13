@@ -347,10 +347,15 @@ export const FETCH_THROTTLED_NOTICE = 'リクエスト過多のため、取得�
  * @param remainingMs 待っている取得が全部通り終えるまでの残り（→ `dmdataThrottleDrainsAt`）
  */
 export function formatLoadMoreThrottleLabel(remainingMs: number): string {
+  return `取得制限中（あと ${formatLoadMoreThrottleLeft(remainingMs)}）`
+}
+
+/** 待ちの残りを「1:30」の形に（1 秒未満も 0:01 と出す）。画面の文は地震タブの辞書（`quake.list.throttled`）が組む */
+export function formatLoadMoreThrottleLeft(remainingMs: number): string {
   const sec = Math.max(1, Math.ceil(remainingMs / 1000))
   const m = Math.floor(sec / 60)
   const s = sec % 60
-  return `取得制限中（あと ${m}:${String(s).padStart(2, '0')}）`
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 /**

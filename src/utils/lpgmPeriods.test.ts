@@ -4,7 +4,7 @@
 // 吹き出しは内訳を、地図の区域の吹き出しは観測点の並びを出す（→ docs/spec/quake-spec.md §8
 // 「長周期地震動は「どの周期帯が強く出たか」まで出す」）。
 import { describe, it, expect } from 'vitest'
-import { buildLpgmRows, lpgmPeriodRows, lpgmStationsByArea } from './lpgm'
+import { buildLpgmRows, lpgmPeriodLabel, lpgmPeriodRows, lpgmStationsByArea } from './lpgm'
 import type { LpgmPoint } from '../types/earthquake'
 
 const noRank = () => 0
@@ -13,7 +13,7 @@ const deps = { prefOfArea: () => null, rank: noRank, onUnplaceableStation: () =>
 describe('lpgmPeriodRows', () => {
   // 単位 cm/s を行ごとに付ける（2026-10-30 ユーザー選択「行ごとに cm/s を付ける (Recommended)」）
   it('正: 帯ごとに中心周期の見出し・階級・揺れの大きさ（小数 1 桁＋cm/s）を並べる', () => {
-    expect(lpgmPeriodRows([{ band: 1, lgInt: 4, sva: 268.54 }, { band: 7, lgInt: 2, sva: 30 }])).toEqual([
+    expect(lpgmPeriodRows([{ band: 1, lgInt: 4, sva: 268.54 }, { band: 7, lgInt: 2, sva: 30 }], lpgmPeriodLabel)).toEqual([
       { label: '2秒', lgInt: 4, sva: '268.5 cm/s' },
       { label: '8秒', lgInt: 2, sva: '30.0 cm/s' },
     ])
@@ -21,17 +21,17 @@ describe('lpgmPeriodRows', () => {
 
   // 階級 0 は「0」と出す（2026-10-30 ユーザー選択「「0」と出す (Recommended)」。以前は null＝「−」だった）
   it('正: 階級 0 の帯は階級 0 のまま残す', () => {
-    expect(lpgmPeriodRows([{ band: 5, lgInt: 0, sva: 1.2 }])).toEqual([{ label: '6秒', lgInt: 0, sva: '1.2 cm/s' }])
+    expect(lpgmPeriodRows([{ band: 5, lgInt: 0, sva: 1.2 }], lpgmPeriodLabel)).toEqual([{ label: '6秒', lgInt: 0, sva: '1.2 cm/s' }])
   })
 
   it('安全弁: 階級の値域の外（5 以上・負）は null', () => {
-    expect(lpgmPeriodRows([{ band: 5, lgInt: 5, sva: 1.2 }])[0].lgInt).toBeNull()
-    expect(lpgmPeriodRows([{ band: 5, lgInt: -1, sva: 1.2 }])[0].lgInt).toBeNull()
+    expect(lpgmPeriodRows([{ band: 5, lgInt: 5, sva: 1.2 }], lpgmPeriodLabel)[0].lgInt).toBeNull()
+    expect(lpgmPeriodRows([{ band: 5, lgInt: -1, sva: 1.2 }], lpgmPeriodLabel)[0].lgInt).toBeNull()
   })
 
   it('対照: 読めない値は空にする（NaN・無限大を文字にしない）', () => {
-    expect(lpgmPeriodRows([{ band: 9, sva: Number.NaN }])).toEqual([{ label: '周期不明', lgInt: null, sva: '' }])
-    expect(lpgmPeriodRows([{ band: 1, lgInt: 2, sva: Number.POSITIVE_INFINITY }])).toEqual([{ label: '2秒', lgInt: 2, sva: '' }])
+    expect(lpgmPeriodRows([{ band: 9, sva: Number.NaN }], lpgmPeriodLabel)).toEqual([{ label: '周期不明', lgInt: null, sva: '' }])
+    expect(lpgmPeriodRows([{ band: 1, lgInt: 2, sva: Number.POSITIVE_INFINITY }], lpgmPeriodLabel)).toEqual([{ label: '2秒', lgInt: 2, sva: '' }])
   })
 })
 

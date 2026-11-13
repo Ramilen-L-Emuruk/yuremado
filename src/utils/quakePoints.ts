@@ -92,8 +92,11 @@ export function partitionUnreceivedPoints(
   return { stations, areas: unreceived.filter(p => p.isArea && !covered.has(p.addr)) }
 }
 
+/** 未入電の地点の単位（日本語の語のまま。画面の文は辞書 `quake.unreceivedButton` がこの語を鍵に引く） */
+export type UnreceivedUnit = '件' | '地点' | '地域'
+
 /** {@link partitionUnreceivedPoints} の結果に合わせた単位の語（「ほかN◯◯」と見出しに使う）。 */
-export function unreceivedUnitLabel(hasStations: boolean, hasAreas: boolean): string {
+export function unreceivedUnitLabel(hasStations: boolean, hasAreas: boolean): UnreceivedUnit {
   if (hasStations && hasAreas) return '件'
   return hasStations ? '地点' : '地域'
 }
