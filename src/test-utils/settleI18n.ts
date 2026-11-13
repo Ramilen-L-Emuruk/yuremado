@@ -1,5 +1,5 @@
 import { loadMessages, type Locale } from '../i18n/messages'
-import { loadPlaceNames } from '../i18n/placeNames'
+import { loadPlaceNames } from '../i18n/placeNameLoader'
 
 /**
  * 言語の配り役（`I18nProvider`）を日本語以外で立てたテストで、辞書と地名の表の読み込みが

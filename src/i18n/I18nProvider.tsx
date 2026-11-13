@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { log } from '../utils/logger'
 import { JA_MESSAGES, loadMessages, localeTag, type Locale, type Messages } from './messages'
-import { getCachedPlaceNames, JA_PLACE_NAMES, loadPlaceNames, placeNameLookup, type PlaceNameLookup } from './placeNames'
+import { JA_PLACE_NAMES, placeNameLookup, type PlaceNameLookup } from './placeNames'
+import { getCachedPlaceNames, loadPlaceNames } from './placeNameLoader'
 
 interface I18nValue {
   /** いま画面に出している辞書の言語（選んだ言語の読み込みが済むまでは、その前の言語）。 */
