@@ -6,6 +6,34 @@ import {
 
 const FORMAT_LOG_PREFIX = '[format]'
 
+/**
+ * 書式を組む語（辞書の `formats` の節が満たす形）。画面は `useMessages().formats` を渡す。
+ *
+ * **辞書（`i18n/messages`）をここで読まない。** このファイルは中継にも写され、通知・読み上げの文面を組むのにも
+ * 使うので、日本語の語はこのファイルが持つ（`JA_FORMATTER_WORDS`）。辞書の日本語と同じ字面であることは
+ * `formatters.test.ts` が確かめる。
+ */
+export interface FormatterWords {
+  unknown: string
+  /**
+   * 規模を数字で出せないときの電文の説明の訳。鍵は {@link formatMagnitudeCondition} で半角へ揃えた電文の字面
+   * （「M不明」「M8を超える巨大地震」）。鍵に無い字面は電文のまま出す
+   */
+  magnitudeConditions: Readonly<Record<string, string>>
+  veryShallow: string
+  depth: (km: number) => string
+  depthAtLeast: (km: number) => string
+  magnitudeJma: string
+  magnitude: string
+  coordinate: (lat: string, lng: string, south: boolean, west: boolean) => string
+  arrivalTime: string
+  arrivalTimeUnknown: string
+  domesticTsunami: Readonly<Record<DomesticTsunami, string>>
+  domesticTsunamiCode: Readonly<Partial<Record<DomesticTsunamiCode, string>>>
+  correct: Readonly<Partial<Record<CorrectType, string>>>
+  monthDayTime: (d: Date) => string
+}
+
 // 読めない値の記録は**値ごとに 1 回**出し、種類が溢れたら時間で間引く
 // （理由は `createPerLabelLogGate`）。時刻の整形は再描画のたびに走るため、素朴に
 // `log.warn` を置くと壊れた値 1 つでコンソールが埋まる。
@@ -136,13 +164,13 @@ export const QUAKE_ARRIVAL_TIME_UNKNOWN = '地震発現時刻不明'
  * 例: 6月6日 8:47
  */
 export function formatQuakeTime(isoString: string): string | null {
+  return quakeTimeText(isoString, JA_FORMATTER_WORDS)
+}
+
+/** {@link formatQuakeTime} の言語に合わせる形（画面用） */
+export function quakeTimeText(isoString: string, w: Pick<FormatterWords, 'monthDayTime'>): string | null {
   const date = readDateTime('formatQuakeTime', isoString)
-  if (!date) return null
-  const M = date.getMonth() + 1
-  const d = date.getDate()
-  const h = date.getHours()
-  const m = String(date.getMinutes()).padStart(2, '0')
-  return `${M}月${d}日 ${h}:${m}`
+  return date ? w.monthDayTime(date) : null
 }
 
 /**
@@ -150,18 +178,13 @@ export function formatQuakeTime(isoString: string): string | null {
  * 読めなければ {@link QUAKE_ARRIVAL_TIME_UNKNOWN}（空欄にすると、時刻を読み落としたのか電文に無いのか分からない）。
  */
 export function formatQuakeTimeLabeled(isoString: string): string {
-  return quakeTimeLabeledParts(isoString).join(' ')
+  return quakeTimeLabeledText(isoString, JA_FORMATTER_WORDS)
 }
 
-/**
- * {@link formatQuakeTimeLabeled} を、半角空白で繋ぐ前の塊に分けたもの。
- * 例: `['地震発現時刻', '6月6日 8:47']`。読めなければ `['地震発現時刻不明']`。
- * 塊の途中では折り返させたくない表示（畳んだ地震カード）が使う。文字列はこちらだけで組むので、
- * 塊で出す表示と 1 本の文字列で出す表示がずれない。
- */
-export function quakeTimeLabeledParts(isoString: string): readonly string[] {
-  const t = formatQuakeTime(isoString)
-  return t ? [QUAKE_ARRIVAL_TIME_LABEL, t] : [QUAKE_ARRIVAL_TIME_UNKNOWN]
+/** {@link formatQuakeTimeLabeled} の言語に合わせる形（画面用） */
+export function quakeTimeLabeledText(isoString: string, w: Pick<FormatterWords, 'monthDayTime' | 'arrivalTime' | 'arrivalTimeUnknown'>): string {
+  const t = quakeTimeText(isoString, w)
+  return t ? `${w.arrivalTime} ${t}` : w.arrivalTimeUnknown
 }
 
 /**
@@ -247,9 +270,14 @@ export function hasDepth(depth: number): boolean {
  *   真なら「700km以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
  */
 export function formatDepth(depth: number, atLeast: boolean): string {
-  if (!hasDepth(depth)) return '不明'
-  if (depth === 0) return 'ごく浅い'
-  return atLeast ? `${depth}km以上` : `${depth}km`
+  return depthText(depth, atLeast, JA_FORMATTER_WORDS)
+}
+
+/** {@link formatDepth} の言語に合わせる形（画面用） */
+export function depthText(depth: number, atLeast: boolean, w: Pick<FormatterWords, 'unknown' | 'veryShallow' | 'depth' | 'depthAtLeast'>): string {
+  if (!hasDepth(depth)) return w.unknown
+  if (depth === 0) return w.veryShallow
+  return atLeast ? w.depthAtLeast(depth) : w.depth(depth)
 }
 
 /**
@@ -308,12 +336,21 @@ export function formatHypocenterSource(source: string): string {
 }
 
 export function magnitudeHeading(magnitudeType: string | undefined): string {
-  if (magnitudeType === 'Mj') return '気象庁マグニチュード'
-  return 'マグニチュード'
+  return magnitudeHeadingText(magnitudeType, JA_FORMATTER_WORDS)
+}
+
+/** {@link magnitudeHeading} の言語に合わせる形（画面用） */
+export function magnitudeHeadingText(magnitudeType: string | undefined, w: Pick<FormatterWords, 'magnitudeJma' | 'magnitude'>): string {
+  return magnitudeType === 'Mj' ? w.magnitudeJma : w.magnitude
 }
 
 export function formatMagnitude(magnitude: number, magnitudeType: string | undefined): string {
-  if (!hasMagnitude(magnitude)) return '不明'
+  return magnitudeText(magnitude, magnitudeType, JA_FORMATTER_WORDS)
+}
+
+/** {@link formatMagnitude} の言語に合わせる形（画面用）。数値と記号（`Mj6.4`）はどの言語でも同じ */
+export function magnitudeText(magnitude: number, magnitudeType: string | undefined, w: Pick<FormatterWords, 'unknown'>): string {
+  if (!hasMagnitude(magnitude)) return w.unknown
   return `${magnitudePrefix(magnitudeType)}${magnitude.toFixed(1)}`
 }
 
@@ -333,6 +370,15 @@ export function formatMagnitudeCondition(condition: string): string {
 }
 
 /**
+ * {@link formatMagnitudeCondition} の言語に合わせる形（画面用）。日本語以外は短い訳（英語 M unknown・Over M8 など。
+ * 2026-11-11 ユーザー選択「短く訳す (Recommended)」）。訳の無い字面は電文のまま出す
+ */
+export function magnitudeConditionText(condition: string, w: Pick<FormatterWords, 'magnitudeConditions'>): string {
+  const raw = formatMagnitudeCondition(condition)
+  return Object.prototype.hasOwnProperty.call(w.magnitudeConditions, raw) ? w.magnitudeConditions[raw] : raw
+}
+
+/**
  * {@link formatMagnitude} の、説明を落とさない版。
  *
  * **規模を出す箇所はすべてこれを通すこと。** 呼び出し側ごとに `hasMagnitude` の分岐を書くと、
@@ -343,8 +389,17 @@ export function formatMagnitudeCondition(condition: string): string {
  * 説明を持たない経路（EEW・長期震源カタログ）では従来どおり「不明」を返す。
  */
 export function formatMagnitudeWithCondition(magnitude: number, condition: string | undefined, magnitudeType: string | undefined): string {
-  if (hasMagnitude(magnitude)) return formatMagnitude(magnitude, magnitudeType)
-  return condition ? formatMagnitudeCondition(condition) : '不明'
+  return magnitudeWithConditionText(magnitude, condition, magnitudeType, JA_FORMATTER_WORDS)
+}
+
+/**
+ * {@link formatMagnitudeWithCondition} の言語に合わせる形（画面用）。
+ * 電文の条件の文（「Ｍ８を超える巨大地震」など）は {@link magnitudeConditionText} を通す。日本語は電文の語のまま（数字と記号だけ半角）、
+ * ほかの言語は辞書の短い訳。訳の無い字面は電文のまま出す。
+ */
+export function magnitudeWithConditionText(magnitude: number, condition: string | undefined, magnitudeType: string | undefined, w: Pick<FormatterWords, 'unknown' | 'magnitudeConditions'>): string {
+  if (hasMagnitude(magnitude)) return magnitudeText(magnitude, magnitudeType, w)
+  return condition ? magnitudeConditionText(condition, w) : w.unknown
 }
 
 /**
@@ -371,13 +426,16 @@ export function hasHypocenterFacts(hypocenter: Hypocenter): boolean {
  * @param digits 小数点以下の桁数。震源要素は 0.1 度刻み、長期震源カタログはより細かい
  */
 export function formatCoordinate(latitude: number, longitude: number, digits = 1): string {
+  return coordinateText(latitude, longitude, digits, JA_FORMATTER_WORDS)
+}
+
+/** {@link formatCoordinate} の言語に合わせる形（画面用） */
+export function coordinateText(latitude: number, longitude: number, digits: number, w: Pick<FormatterWords, 'unknown' | 'coordinate'>): string {
   // 深さ・規模と同じく、読めない値はこの関数の中で弾く。呼び出し側のガードだけに任せると、
   // ガードを持たない経路が足された日に「NaN°」が無警告で画面へ出る（`Infinity < 0` は偽なので
   // 向きの語まで誤る）。
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return '不明'
-  const ns = latitude < 0 ? '南緯' : '北緯'
-  const ew = longitude < 0 ? '西経' : '東経'
-  return `${ns} ${Math.abs(latitude).toFixed(digits)}° ${ew} ${Math.abs(longitude).toFixed(digits)}°`
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return w.unknown
+  return w.coordinate(Math.abs(latitude).toFixed(digits), Math.abs(longitude).toFixed(digits), latitude < 0, longitude < 0)
 }
 
 /**
@@ -428,6 +486,17 @@ export function formatDomesticTsunami(type: DomesticTsunami, code: DomesticTsuna
   const base = formatDomesticTsunamiCategory(type)
   const byCode = code ? DOMESTIC_TSUNAMI_CODE_LABEL[code] : undefined
   return byCode ? { text: byCode, color: base.color } : base
+}
+
+/** {@link formatDomesticTsunami} の言語に合わせる形（画面用）。色は区分で決まり、言語によらない */
+export function domesticTsunamiText(
+  type: DomesticTsunami,
+  code: DomesticTsunamiCode | undefined,
+  w: Pick<FormatterWords, 'unknown' | 'domesticTsunami' | 'domesticTsunamiCode'>,
+): { text: string; color: string } {
+  const { color } = formatDomesticTsunamiCategory(type)
+  const byCode = code ? w.domesticTsunamiCode[code] : undefined
+  return { text: byCode ?? w.domesticTsunami[type] ?? w.unknown, color }
 }
 
 /** 区分の語のままでは気象庁の文と食い違うコードだけを持つ。ほかのコードは区分の語で足りる。 */
@@ -492,16 +561,15 @@ export function quakeReportLabels(
 }
 
 export function formatCorrectType(type: CorrectType): string {
-  const map: Record<CorrectType, string> = {
-    'なし': '',
-    // 訂正の有無が不明。印は出さない（→ `CorrectType`）
-    '不明': '',
-    '訂正': '訂正（内容不明）',
-    '震度のみ訂正': '震度を訂正',
-    '震源を訂正': '震源を訂正',
-    '震度・震源を訂正': '震度・震源を訂正',
-  }
-  return map[type] ?? ''
+  return correctTypeText(type, JA_FORMATTER_WORDS)
+}
+
+/**
+ * {@link formatCorrectType} の言語に合わせる形（画面用）。「なし」と、訂正の有無が不明の「不明」は
+ * 印を出さないので空文字（→ `CorrectType`）。
+ */
+export function correctTypeText(type: CorrectType, w: Pick<FormatterWords, 'correct'>): string {
+  return w.correct[type] ?? ''
 }
 
 export function formatTsunamiGrade(grade: TsunamiGrade): { text: string; color: string; bg: string } {
@@ -564,4 +632,40 @@ export const NON_JMA_MARK_TITLE = '気象庁以外の機関が運用する観測
  */
 export function withNonJmaMark(name: string, nonJma: boolean | undefined): string {
   return nonJma ? `${name}${NON_JMA_MARK}` : name
+}
+
+/**
+ * 日本語の書式の語。読み上げ・通知・中継の文面と、`format*` の日本語の関数が使う。
+ * 辞書の `ja.formats` と同じ字面であることは `formatters.test.ts` が確かめる。
+ */
+const DOMESTIC_TSUNAMI_JA: Readonly<Record<DomesticTsunami, string>> = {
+  'なし': formatDomesticTsunamiCategory('なし').text,
+  '不明': formatDomesticTsunamiCategory('不明').text,
+  '調査中': formatDomesticTsunamiCategory('調査中').text,
+  '海面変動の可能性': formatDomesticTsunamiCategory('海面変動の可能性').text,
+  '若干の海面変動': formatDomesticTsunamiCategory('若干の海面変動').text,
+  '注意報': formatDomesticTsunamiCategory('注意報').text,
+  '警報等': formatDomesticTsunamiCategory('警報等').text,
+}
+
+const JA_FORMATTER_WORDS: FormatterWords = {
+  unknown: '不明',
+  magnitudeConditions: { 'M不明': 'M不明', 'M8を超える巨大地震': 'M8を超える巨大地震' },
+  veryShallow: 'ごく浅い',
+  depth: (km) => `${km}km`,
+  depthAtLeast: (km) => `${km}km以上`,
+  magnitudeJma: '気象庁マグニチュード',
+  magnitude: 'マグニチュード',
+  coordinate: (lat, lng, south, west) => `${south ? '南緯' : '北緯'} ${lat}° ${west ? '西経' : '東経'} ${lng}°`,
+  arrivalTime: QUAKE_ARRIVAL_TIME_LABEL,
+  arrivalTimeUnknown: QUAKE_ARRIVAL_TIME_UNKNOWN,
+  get domesticTsunami() { return DOMESTIC_TSUNAMI_JA },
+  domesticTsunamiCode: DOMESTIC_TSUNAMI_CODE_LABEL,
+  correct: {
+    '訂正': '訂正（内容不明）',
+    '震度のみ訂正': '震度を訂正',
+    '震源を訂正': '震源を訂正',
+    '震度・震源を訂正': '震度・震源を訂正',
+  },
+  monthDayTime: (d) => `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`,
 }

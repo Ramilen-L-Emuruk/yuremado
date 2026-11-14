@@ -1,7 +1,7 @@
 import * as maplibregl from 'maplibre-gl'
 import type { Map as MapLibreMap, MapMouseEvent, MapGeoJSONFeature, PointLike } from 'maplibre-gl'
 import { log } from '../../../utils/logger'
-import { reportRenderFailure, clearRenderFailure } from '../../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, type MapLayerName } from '../../../utils/renderHealth'
 
 // 地図上のポップアップを一元調停する。1クリックにつき必ず1枚だけ開く。
 //
@@ -65,7 +65,7 @@ export interface PopupSource {
    * 省略すると記録だけ残して画面には出さない。**`pick` を持つソースにだけ意味がある**——
    * `queryRenderedFeatures` に任せるソースは MapLibre 側が面倒を見るため、ここで拾う失敗が無い。
    */
-  label?: string
+  label?: MapLayerName
 }
 
 export interface PopupHandle {

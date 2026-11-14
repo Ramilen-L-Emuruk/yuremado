@@ -149,7 +149,7 @@ describe('makeReplayLogEntry', () => {
 
   it('読めた電文は parsed、読めなかった電文は filtered として組む', () => {
     const parsed = makeReplayLogEntry({
-      headType: 'VXSE53', origin: 'test', rawHead: undefined, rawBody: '<Report/>', rawBytes: null,
+      headType: 'VXSE53', origin: 'test', rawHead: undefined, rawBody: '<Report/>', bodyNote: null, rawBytes: null,
       payload: { kind: 'nankai', data: {} as never }, errorMessage: null, isTest: false,
     })
     expect(parsed.status).toBe('parsed')
@@ -157,7 +157,7 @@ describe('makeReplayLogEntry', () => {
     expect(parsed.errorMessage).toBeUndefined()
 
     const failed = makeReplayLogEntry({
-      headType: 'VXSE53', origin: 'replay', rawHead: head, rawBody: '<broken', rawBytes: null,
+      headType: 'VXSE53', origin: 'replay', rawHead: head, rawBody: '<broken', bodyNote: null, rawBytes: null,
       payload: null, errorMessage: null, isTest: false,
     })
     expect(failed.status).toBe('filtered')
@@ -167,30 +167,33 @@ describe('makeReplayLogEntry', () => {
 
   it('理由を渡すと error の行になり、理由を errorMessage に持つ（ライブと同じ語）', () => {
     const entry = makeReplayLogEntry({
-      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: '（BUFR 3 バイト）', rawBytes: new Uint8Array([1, 2, 3]),
+      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: null, bodyNote: { kind: 'bufr', bytes: 3 }, rawBytes: new Uint8Array([1, 2, 3]),
       payload: null, errorMessage: 'bufr decode failed', isTest: false,
     })
     expect(entry.status).toBe('error')
     expect(entry.errorMessage).toBe('bufr decode failed')
+    // 要約は鍵と値で持ち、本文の欄には日本語の文も入れる（書き出しと、欄の無い古い行の読み方を変えない）
+    expect(entry.bodyNote).toEqual({ kind: 'bufr', bytes: 3 })
+    expect(entry.rawBody).toBe('（BUFR 3 バイト）')
   })
 
   it('見出し（rawHead）と結合した二進（rawBytes）をそのまま持つ／持たないときは rawBytes の欄ごと無い', () => {
     const bytes = new Uint8Array([0x42, 0x55, 0x46, 0x52])
     const withBytes = makeReplayLogEntry({
-      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: '（BUFR 4 バイト・1 セル）', rawBytes: bytes,
+      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: null, bodyNote: { kind: 'bufrCells', bytes: 4, cells: 1 }, rawBytes: bytes,
       payload: null, errorMessage: null, isTest: false,
     })
     expect(withBytes.rawHead).toBe(head)
     expect(withBytes.rawBytes).toBe(bytes)
     // 対照: 結合待ちの断片・XML の電文は二進を持たない
     const without = makeReplayLogEntry({
-      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: '（BUFR の断片 4 バイト・結合待ち）', rawBytes: null,
+      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: null, bodyNote: { kind: 'bufrFragmentWaiting', bytes: 4 }, rawBytes: null,
       payload: null, errorMessage: null, isTest: false,
     })
     expect('rawBytes' in without).toBe(false)
     // 安全弁: 見出しの無い経路（テストボタン）は undefined のまま
     const noHead = makeReplayLogEntry({
-      headType: 'VXSE53', origin: 'test', rawHead: undefined, rawBody: '<Report/>', rawBytes: null,
+      headType: 'VXSE53', origin: 'test', rawHead: undefined, rawBody: '<Report/>', bodyNote: null, rawBytes: null,
       payload: null, errorMessage: null, isTest: false,
     })
     expect(noHead.rawHead).toBeUndefined()

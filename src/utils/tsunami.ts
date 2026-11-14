@@ -1,5 +1,6 @@
 import type { JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiEstimationCondition, TsunamiGrade, TsunamiObservation, TsunamiObservationCondition, TsunamiSourceEarthquake, TsunamiStation, TsunamiWarningComment } from '../types/earthquake'
 import { ja } from '../i18n/messages/ja'
+import type { Messages } from '../i18n/messages'
 import { formatTimeMin, readDateTime } from './formatters'
 import { log } from './logger'
 import { compareReportAge, reportOrderKey } from './quakeMerge'
@@ -1519,10 +1520,12 @@ export function observationArrivalUnknown(obs: TsunamiObservation): boolean {
  *
  * 波高を出していない行では返さない —— 時刻だけが残ると、値の無い観測点に何かを観測した
  * ように見える。**日時として読めない時刻も同じく返さない**（「最大波 」とラベルだけが残る）。
+ *
+ * `w` は「最大波」の語（辞書の `tsunami.maxWave`）。画面は言語に合わせた辞書を渡す。
  */
-export function observationMaxHeightTimeText(obs: TsunamiObservation): string {
+export function observationMaxHeightTimeText(obs: TsunamiObservation, w: { maxWave: (time: string) => string }): string {
   const hm = observationMaxHeightTime(obs)
-  return hm ? ja.tsunami.maxWave(hm) : ''
+  return hm ? w.maxWave(hm) : ''
 }
 
 /** {@link observationMaxHeightTimeText} の時刻だけ（出さない場面なら null）。 */
@@ -1539,10 +1542,13 @@ export function observationMaxHeightTime(obs: TsunamiObservation): string | null
  * (Recommended)」。以前は到達確認が「05:12 到達（押し波）」・欠測が「05:12 到達」と形が割れていた）。
  * 判定は整形の結果で行う（日時として読めない時刻は「第1波 」だけを残さない）。
  */
-export function observationFirstWaveText(obs: { arrivalTime?: string; initial?: string; condition?: { firstWaveUnidentifiable?: boolean } }): string {
+export function observationFirstWaveText(
+  obs: { arrivalTime?: string; initial?: string; condition?: { firstWaveUnidentifiable?: boolean } },
+  w: { firstWave: (time: string, initial: string | null) => string; arrivalUnknown: string; firstWaveRow: (rest: string) => string },
+): string {
   const hm = obs.arrivalTime ? formatTimeMin(obs.arrivalTime) : null
-  if (hm) return `第1波 ${hm}${obs.initial ? ` ${obs.initial}波` : ''}`
-  return obs.condition?.firstWaveUnidentifiable ? '第1波 到達時刻不明' : ''
+  if (hm) return w.firstWaveRow(w.firstWave(hm, obs.initial ?? null))
+  return obs.condition?.firstWaveUnidentifiable ? w.firstWaveRow(w.arrivalUnknown) : ''
 }
 
 /**
@@ -2037,9 +2043,11 @@ export function firstWaveSpokenKey(
  *
  * **観測波高を人に見せる・読み上げる経路はすべてこれを通すこと。** 片方だけ通すと、地図には
  * 「以上」が出てカードと読み上げには出ない、という食い違いになる。
+ *
+ * `w` は高さの語（辞書の `tsunami.height`）。画面は言語に合わせた辞書を、読み上げ・速報の帯は日本語の `ja.tsunami` を渡す。
  */
-export function overSuffixedHeight(height: { description: string; over?: boolean }): string {
-  return ja.tsunami.height(height.description, !!height.over)
+export function overSuffixedHeight(height: { description: string; over?: boolean }, w: { height: (description: string, over: boolean) => string }): string {
+  return w.height(height.description, !!height.over)
 }
 
 // 区域に紐づく観測点のうち、最も深刻な実測値（height）を返す。実測値を持つ観測点が無ければ null。
@@ -2390,12 +2398,39 @@ export function arrivalConditionBadge(condition: string | undefined): string | u
  * （「まもなく到達」「到達中」「第1波到達」）。2026-10-21 ユーザー選択「波高と到達予想も出す (Recommended)」・
  * 形は 2026-10-24 ユーザー選択「この形で (Recommended)」。**語はカードと同じ関数から採る**（`arrivalConditionBadge`）。
  */
-export function tsunamiAreaPopupLines(area: TsunamiArea): string[] {
+export function tsunamiAreaPopupLines(parts: TsunamiAreaPopupParts, m: Pick<Messages, 'tsunami'>): string[] {
   const lines: string[] = []
-  if (hasForecastHeight(area)) lines.push(`予想 ${area.maxHeight!.description}`)
-  const hm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
-  const arrival = hm ? `到達予想 ${hm}`
-    : (arrivalConditionBadge(area.firstHeight?.condition) ?? (area.immediate ? ARRIVAL_CONDITION_BADGE['ただちに津波来襲と予測'] : undefined))
+  // 高さは電文の語（数値にならないときは「巨大」など）。上限を定めない形の「以上」は前からここでは添えていない
+  if (parts.height !== null) lines.push(m.tsunami.forecastHeight(m.tsunami.height(parts.height, false)))
+  const arrival = parts.arrivalTime !== null ? m.tsunami.estimatedArrival(parts.arrivalTime) : arrivalConditionText(parts.arrivalCondition, m)
   if (arrival) lines.push(arrival)
   return lines
+}
+
+/**
+ * 吹き出しの行の材料（地物の属性に平らな値で持たせ、押されたときに {@link tsunamiAreaPopupLines} が言語の辞書で文にする）。
+ * `arrivalTime` は書式を済ませた到達予想の時刻、`arrivalCondition` は時刻が無いときの電文の到達状況の語
+ * （語が無く「ただちに津波来襲と予測」の区域なら、その語）
+ */
+export interface TsunamiAreaPopupParts {
+  readonly height: string | null
+  readonly arrivalTime: string | null
+  readonly arrivalCondition: string | null
+}
+
+/** 吹き出しの行の材料を区域から取る */
+export function tsunamiAreaPopupParts(area: TsunamiArea): TsunamiAreaPopupParts {
+  const hm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
+  return {
+    height: hasForecastHeight(area) ? area.maxHeight!.description : null,
+    arrivalTime: hm || null,
+    arrivalCondition: hm ? null : (area.firstHeight?.condition || (area.immediate ? 'ただちに津波来襲と予測' : null)),
+  }
+}
+
+/** 到達状況の語を言語の辞書の札へ。表に無い語は電文の語のまま（記録は {@link arrivalConditionBadge} が残す） */
+function arrivalConditionText(condition: string | null, m: Pick<Messages, 'tsunami'>): string | undefined {
+  if (!condition) return undefined
+  const key = arrivalConditionKey(condition)
+  return key !== undefined ? m.tsunami.arrivalCondition[key] : arrivalConditionBadge(condition)
 }

@@ -1,4 +1,5 @@
 import type { AppSettings } from '../hooks/useSettings'
+import { deviceLanguageTags, resolveLocale, type Locale } from '../i18n/messages'
 import { log } from '../utils/logger'
 import { setPushQuietBinding } from './notifyQuietWhileOpen'
 import { RELAY_ORIGIN, relayTokenStore } from './relayEndpoint'
@@ -29,15 +30,21 @@ export interface PushPrefsCopy {
    */
   testDelivery: boolean
   prefectures: string[]
+  /**
+   * 通知の文の言語（設定の言語。端末に合わせるときは、いま端末から決まる言語）。この欄を知らない古い中継には無視され、
+   * 日本語で送られる（2026-11-11 ユーザー選択「言語の設定の段で合わせる (Recommended)」・2026-11-12 同「11-11 の決定どおりこの段で (Recommended)」）
+   */
+  locale: Locale
 }
 
 type PushSettings = Pick<AppSettings,
   'notifyEnabled' | 'notifyQuake' | 'notifyMinScale' | 'notifyEEW' | 'notifyTsunami' | 'notifyNankai' | 'nankaiCommentaryAlerts'
-  | 'notifyNankaiRoutine' | 'notifyQuakeNotice' | 'notifyPrefectures' | 'dmdataTestDelivery'>
+  | 'notifyNankaiRoutine' | 'notifyQuakeNotice' | 'notifyPrefectures' | 'dmdataTestDelivery' | 'locale'>
 
-export function pushPrefsOf(s: PushSettings): PushPrefsCopy {
+export function pushPrefsOf(s: PushSettings, deviceTags: readonly string[] = deviceLanguageTags()): PushPrefsCopy {
   const on = s.notifyEnabled
   return {
+    locale: resolveLocale(s.locale, deviceTags),
     quake: on && s.notifyQuake,
     minScale: s.notifyMinScale,
     eew: on && s.notifyEEW,
@@ -98,19 +105,8 @@ function sameBytes(a: ArrayBuffer | null, b: Uint8Array): boolean {
 }
 
 /**
- * 通知の許可を求める。**設定の切り替えを押した操作の中で、ほかの待ちより先に呼ぶ** —— Safari（iOS のホーム画面から
- * 開いたものを含む）と Firefox は、操作から離れたところで求めた許可を尋ねない。許可されたかを返す
- */
-export async function requestPushPermission(): Promise<boolean> {
-  if (!pushSupported()) return false
-  if (Notification.permission === 'granted') return true
-  if (Notification.permission === 'denied') return false
-  return (await Notification.requestPermission()) === 'granted'
-}
-
-/**
- * 購読を作るか、既にあるものを使い、中継へ送り先と設定の写しを登録する。通知の許可は尋ねない（`requestPushPermission` が
- * 設定の切り替えの中で尋ねる）。返すのは登録できたか。出来なかった理由は記録に残す（設定を戻す・やり直すのは呼び出し側）
+ * 購読を作るか、既にあるものを使い、中継へ送り先と設定の写しを登録する。通知の許可は尋ねない（設定の窓の許可のボタンが
+ * `hooks/useNotificationPermission.ts` の `requestNotificationPermission` で尋ねる）。返すのは登録できたか。出来なかった理由は記録に残す（設定を戻す・やり直すのは呼び出し側）
  */
 export async function subscribePush(
   settings: PushSettings,
@@ -160,6 +156,8 @@ export async function unsubscribePush(): Promise<void> {
   if (!pushSupported()) return
   let endpoint: string
   try {
+    // Service Worker がまだ登録されていなければ購読も無い。用意を待たずに抜ける（初めて開いた端末・dev サーバーで、起動のたびに待ちが切れて警告を残さない）
+    if (!(await navigator.serviceWorker.getRegistration())) return
     const registration = await serviceWorkerReady()
     const subscription = await registration.pushManager.getSubscription()
     if (!subscription) return

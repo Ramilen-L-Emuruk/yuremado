@@ -1,4 +1,5 @@
-import { UPDATE_MARK_COLOR, UPDATE_MARK_TITLE, type UpdateStatus } from '../utils/updateMark'
+import { UPDATE_MARK_COLOR, type UpdateStatus } from '../utils/updateMark'
+import { useMessages } from '../i18n/I18nProvider'
 
 /**
  * 「この報で動いた」を示す肩の印。**値の右上に小さな点を置く。**
@@ -27,11 +28,13 @@ export function UpdateDot({ status, size = 'md', className = '' }: {
 }) {
   // **rem で書く。** 表示倍率の設定は UI 全体を rem で拡縮する（→ `settings-pwa-spec.md` §2）。
   const px = size === 'lg' ? '0.625rem' : size === 'sm' ? '0.375rem' : '0.5rem'
+  // 印の意味（色だけを手掛かりにしないため、ホバーと読み上げソフトに言葉で添える）
+  const title = useMessages().updateMark[status]
   return (
     <span
       role="img"
-      aria-label={UPDATE_MARK_TITLE[status]}
-      title={UPDATE_MARK_TITLE[status]}
+      aria-label={title}
+      title={title}
       className={`inline-block shrink-0 rounded-full ${className}`}
       style={{ width: px, height: px, backgroundColor: UPDATE_MARK_COLOR[status] }}
     />

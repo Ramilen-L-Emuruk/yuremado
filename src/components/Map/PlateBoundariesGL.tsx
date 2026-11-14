@@ -5,6 +5,7 @@ import { PLATE_BOUNDARY_CLASSES, type PlateBoundaryClass, type PlateBoundarySegm
 import { segmentsToMultiLineFC } from './gl/geojson'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { twoLinePopupHtml } from './gl/popupHtml'
+import { useMessagesRef } from '../../i18n/I18nProvider'
 import { addOrderedLayer } from './gl/layerOrder'
 import {
   OVERLAY_LINE_SRC,
@@ -58,6 +59,7 @@ interface Props {
 export function PlateBoundariesGL({ plateBoundaries, visible }: Props) {
   const map = useMapGL()
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
 
   useEffect(() => {
     if (!map || !plateBoundaries) return
@@ -96,11 +98,11 @@ export function PlateBoundariesGL({ plateBoundaries, visible }: Props) {
       tolPx: HIT_TOL_PX,
       buildClickHtml: (f) => {
         const p = f.properties ?? {}
-        const cls = PLATE_BOUNDARY_CLASSES[p.type as PlateBoundaryClass]
-        return twoLinePopupHtml(
-          `${p.plateA ?? ''} – ${p.plateB ?? ''}`,
-          cls ? `プレート境界（${cls.label}・PB2002モデル）` : 'プレート境界（PB2002モデル）',
-        )
+        const m = mRef.current
+        // 分類の表に載っている値だけ名前を添える（表に無い値は分類なしの見出しにする）
+        const type = p.type as PlateBoundaryClass
+        const cls = Object.prototype.hasOwnProperty.call(PLATE_BOUNDARY_CLASSES, type) ? m.map.popup.plateClass[type] : null
+        return twoLinePopupHtml(`${p.plateA ?? ''} – ${p.plateB ?? ''}`, m.map.popup.plateBoundary(cls))
       },
     })
     return () => {

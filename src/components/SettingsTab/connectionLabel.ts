@@ -2,6 +2,10 @@ import type { ConnectionStatus } from '../../types/earthquake'
 import type { RelayUpstreamStatus } from '../../services/dmdata'
 import { formatHourMinute } from '../../utils/formatters'
 import { log } from '../../utils/logger'
+import type { Messages } from '../../i18n/messages'
+
+/** 接続の札の文（辞書の `settings.connection`） */
+export type ConnectionWords = Messages['settings']['connection']
 
 /** 接続状態の行に出す文言と色。 */
 export interface ConnectionLabel {
@@ -34,12 +38,13 @@ export interface ConnectionLabel {
 export function telegramConnectionLabel(
   status: ConnectionStatus,
   upstream: RelayUpstreamStatus | null,
+  words: ConnectionWords,
 ): ConnectionLabel {
   if (status === 'connected' && upstream !== null && !upstream.connected) {
-    const since = upstream.disconnectedAtMs === null ? '' : `・${formatHourMinute(new Date(upstream.disconnectedAtMs))} から`
-    return { text: `切断（配信サーバーが DMDATA.JP と切断中${since}）`, className: 'text-red-400' }
+    const since = upstream.disconnectedAtMs === null ? '' : words.upstreamSince(formatHourMinute(new Date(upstream.disconnectedAtMs)))
+    return { text: words.upstreamDown(since), className: 'text-red-400' }
   }
-  return status === 'disconnected' ? { text: '切断', className: 'text-secondary' } : liveLabel(status)
+  return status === 'disconnected' ? { text: words.disconnected, className: 'text-secondary' } : liveLabel(status, words)
 }
 
 /**
@@ -61,12 +66,13 @@ export function forecastConnectionLabel(
     relayForecastAvailable: boolean
   },
   opts: { apiKeySet: boolean; apiKeyInvalid: boolean },
+  words: ConnectionWords,
 ): ConnectionLabel {
-  if (state.relayForecastLive) return { text: '接続中（配信サーバー経由）', className: 'text-green-400 font-medium' }
-  if (state.keyStatus === 'connected') return { text: '接続中（APIキー）', className: 'text-green-400 font-medium' }
+  if (state.relayForecastLive) return { text: words.viaRelay, className: 'text-green-400 font-medium' }
+  if (state.keyStatus === 'connected') return { text: words.viaApiKey, className: 'text-green-400 font-medium' }
   // APIキーが無く予報キーだけの端末は、中継の接続の状態をそのまま出す（鍵で受ける道が無い）
-  if (!opts.apiKeySet && state.relayForecastAvailable) return telegramConnectionLabel(state.relayStatus, state.relayUpstream)
-  return keyForecastConnectionLabel(state.keyStatus, opts)
+  if (!opts.apiKeySet && state.relayForecastAvailable) return telegramConnectionLabel(state.relayStatus, state.relayUpstream, words)
+  return keyForecastConnectionLabel(state.keyStatus, opts, words)
 }
 
 /**
@@ -76,29 +82,30 @@ export function forecastConnectionLabel(
 export function keyForecastConnectionLabel(
   status: ConnectionStatus | null,
   opts: { apiKeySet: boolean; apiKeyInvalid: boolean },
+  words: ConnectionWords,
 ): ConnectionLabel {
   if (status === null || status === 'disconnected') {
-    if (!opts.apiKeySet) return { text: 'APIキー未設定', className: 'text-secondary' }
-    if (opts.apiKeyInvalid) return { text: 'APIキーが無効', className: 'text-red-400' }
-    return { text: '切断', className: 'text-secondary' }
+    if (!opts.apiKeySet) return { text: words.apiKeyUnset, className: 'text-secondary' }
+    if (opts.apiKeyInvalid) return { text: words.apiKeyInvalid, className: 'text-red-400' }
+    return { text: words.disconnected, className: 'text-secondary' }
   }
-  return liveLabel(status)
+  return liveLabel(status, words)
 }
 
 /** 切断以外の状態の文言（2 行で同じ） */
-function liveLabel(status: Exclude<ConnectionStatus, 'disconnected'>): ConnectionLabel {
+function liveLabel(status: Exclude<ConnectionStatus, 'disconnected'>, words: ConnectionWords): ConnectionLabel {
   switch (status) {
     case 'connected':
-      return { text: '接続中', className: 'text-green-400 font-medium' }
+      return { text: words.connected, className: 'text-green-400 font-medium' }
     case 'connecting':
-      return { text: '接続試行中…', className: 'text-blue-400' }
+      return { text: words.connecting, className: 'text-blue-400' }
     case 'replay':
       // 過去再生中はライブ受信を意図的に止めている。「切断」と出すと異常のように見え、
       // 更新しないままだと「接続中」が残って実態と食い違う。
-      return { text: '再生中（ライブ受信は停止）', className: 'text-blue-400' }
+      return { text: words.replay, className: 'text-blue-400' }
     case 'crowded':
       return {
-        text: '同時接続の上限（別のタブか端末が接続中。閉じれば自動で繋がります）',
+        text: words.crowded,
         className: 'text-amber-400',
       }
     // 配信元が理由を言って閉じ、繋ぎ直さない状態（→ `dmdata.ts` の `closeCodeAction`）。
@@ -107,12 +114,12 @@ function liveLabel(status: Exclude<ConnectionStatus, 'disconnected'>): Connectio
     // 選択肢「理由ごとに出す (Recommended)」）
     case 'contract-ended':
       return {
-        text: '接続を停止（受信できる区分がなくなりました。契約を確かめてから再読み込みしてください）',
+        text: words.contractEnded,
         className: 'text-red-400',
       }
     case 'closed-by-user':
       return {
-        text: '接続を停止（DMDATA.JP 側で接続が終了されました。再読み込みで繋ぎ直します）',
+        text: words.closedByUser,
         className: 'text-amber-400',
       }
     default: {

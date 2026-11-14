@@ -11,6 +11,10 @@
 // （「応答がない。ホストが起動しているか確かめてください」）。括弧は使わない。
 
 import { SEISMO_STATUS_TIMEOUT_MS, type SeismoHostCheck } from '../../services/seismoStream'
+import type { Messages } from '../../i18n/messages'
+
+/** 状態の文（辞書の `settings.seismoStatus`） */
+export type SeismoStatusWords = Messages['settings']['seismoStatus']
 
 /**
  * 画面に出す前の状態。**`SeismoHostCheck` に、通信する手前で決まる 4 つを足したもの。**
@@ -46,16 +50,16 @@ export interface SeismoStatusLine {
  * （`Failed to fetch` 等）は利用者の行動に繋がらないので、代わりに
  * 「何を確かめればよいか」を書く。詳細は記録へ出る（`seismoStream.ts`）。
  */
-export function seismoStatusLine(status: SeismoUiStatus): SeismoStatusLine {
+export function seismoStatusLine(status: SeismoUiStatus, words: SeismoStatusWords): SeismoStatusLine {
   switch (status.kind) {
     case 'disabled':
       return { text: '—', tone: 'muted' }
     case 'no-url':
-      return { text: 'ホストのURLを入力してください', tone: 'muted' }
+      return { text: words.noUrl, tone: 'muted' }
     case 'invalid':
-      return { text: 'URLの形式が正しくない。http:// または https:// から入力してください', tone: 'problem' }
+      return { text: words.invalid, tone: 'problem' }
     case 'checking':
-      return { text: '確認中…', tone: 'muted' }
+      return { text: words.checking, tone: 'muted' }
     case 'ok': {
       // **観測点の数は設定の割り当てから数える**（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
       // 届いたセンサーから数えると、ホストの起動直後や基板が黙っている間は 0 になり、
@@ -66,17 +70,17 @@ export function seismoStatusLine(status: SeismoUiStatus): SeismoStatusLine {
       // 文字だけ見ると成功か異常か判らない —— ホストは動いているが観測点の設定が
       // まだ、という状態なので、それを名指しする。
       if (stationCount === 0) {
-        return { text: '接続済み: 観測点は未設定', tone: 'ok' }
+        return { text: words.noStations, tone: 'ok' }
       }
       // **割り当てはあるのに 1 つも届いていない。** 「センサー 0」と出すと、センサーを
       // 繋いでいないのか、繋いだのに届いていないのかが読めない。
       if (status.sensorCount === 0) {
-        return { text: `接続済み: 観測点 ${stationCount}・まだ届いていない`, tone: 'ok' }
+        return { text: words.notArrived(stationCount), tone: 'ok' }
       }
       // **観測点とセンサーの本数を出す。** 「繋がった」だけでは、繋いだ先が
       // 自分の意図したホストかを確かめられない。センサーの数は届いているもの。
       return {
-        text: `接続済み: 観測点 ${stationCount}・センサー ${status.sensorCount}`,
+        text: words.ok(stationCount, status.sensorCount),
         tone: 'ok',
       }
     }
@@ -90,23 +94,23 @@ export function seismoStatusLine(status: SeismoUiStatus): SeismoStatusLine {
       switch (status.reason) {
         case 'timeout':
           return {
-            text: `応答がない: ${Math.round(SEISMO_STATUS_TIMEOUT_MS / 1000)}秒待って打ち切った。ホストが起動しているか確かめてください`,
+            text: words.timeout(Math.round(SEISMO_STATUS_TIMEOUT_MS / 1000)),
             tone: 'problem',
           }
         case 'mixed-content':
           return {
-            text: '繋げない: このページは https なので http のホストへは繋げない。https:// のURLを入力してください',
+            text: words.mixedContent,
             tone: 'problem',
           }
         case 'offline':
-          return { text: '繋げない: この端末がオフライン。ネットワークに繋いでください', tone: 'problem' }
+          return { text: words.offline, tone: 'problem' }
         case 'unknown':
-          return { text: '応答がない。ホストが起動しているか確かめてください', tone: 'problem' }
+          return { text: words.unknown, tone: 'problem' }
       }
     case 'http-error':
-      return { text: `応答がエラー: HTTP ${status.status}`, tone: 'problem' }
+      return { text: words.httpError(status.status), tone: 'problem' }
     case 'unreadable':
-      return { text: '応答を読めない。URLが地震計のホストを指しているか確かめてください', tone: 'problem' }
+      return { text: words.unreadable, tone: 'problem' }
   }
 }
 
@@ -114,8 +118,8 @@ export function seismoStatusLine(status: SeismoUiStatus): SeismoStatusLine {
  * 読めない押し出しが届いていることを伝える 1 行（2026-10-22 選択「設定タブに出す (Recommended)」、文面は 2026-10-24
  * 選択「その文でよい (Recommended)」）。件数はこの接続先での累計。**版の食い違い**がいちばんありそうな原因なので、それを確かめさせる。
  */
-export function seismoUnreadableLine(count: number): string {
-  return `読めないデータが届いている: ${count} 件。ホストとアプリの版が合っているか確かめてください`
+export function seismoUnreadableLine(count: number, words: SeismoStatusWords): string {
+  return words.unreadableData(count)
 }
 
 export const SEISMO_STATUS_TONE_CLASS: Record<SeismoStatusTone, string> = {

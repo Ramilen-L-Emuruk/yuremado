@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ja } from '../i18n/messages/ja'
 import { buildSettingsFile, keysFileNotice, LEGACY_SETTINGS_FILE_APP, parseSettingsFile, settingsFileHasKeys, settingsFileName, SETTINGS_FILE_VERSION } from './settingsIo'
 import { DEFAULTS, type AppSettings } from '../hooks/useSettings'
 
@@ -116,6 +117,31 @@ describe('設定の読み込み', () => {
   it('対照: ttsEnabled を持つファイルは移し替えない（声は書いてあるまま）', () => {
     const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, ttsEnabled: true, ttsVoice: 'system' }, NO_KEYS), DEFAULTS)
     expect(r.ok && r.settings.ttsVoice).toBe('system')
+  })
+
+  // 言語の設定ができる前に書き出したファイルは、端末の設定と同じく日本語で読む（→ `migrateLocale`）
+  it('正: 言語を持たないファイルは日本語で入れ、読めなかった項目に数えない', () => {
+    const { locale: _l, ...rest } = DEFAULTS
+    const r = parseSettingsFile(buildSettingsFile(rest as AppSettings, NO_KEYS), DEFAULTS)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.settings.locale).toBe('ja')
+    expect(r.rejectedKeys).toEqual([])
+  })
+
+  it('対照: 言語を持つファイルは、書いてある言語（端末に合わせるも含む）をそのまま入れる', () => {
+    for (const locale of ['ko', 'auto'] as const) {
+      const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, locale }, NO_KEYS), DEFAULTS)
+      expect(r.ok && r.settings.locale).toBe(locale)
+    }
+  })
+
+  it('安全弁: 知らない言語の値は端末に合わせるへ戻し、読めなかった項目に出す', () => {
+    const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, locale: 'fr' } as unknown as AppSettings, NO_KEYS), DEFAULTS)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.settings.locale).toBe('auto')
+    expect(r.rejectedKeys).toContain('locale')
   })
 
   it('安全弁: 読み込んでも、いま入力してあるAPIキーが消えない', () => {
@@ -271,7 +297,8 @@ describe('設定の読み込み', () => {
     const r = parseSettingsFile(file, DEFAULTS)
     expect(r.ok).toBe(false)
     if (r.ok) return
-    expect(r.error).toContain('アプリを更新')
+    expect(r.error).toBe('newer')
+    expect(ja.settings.io.fileErrors[r.error]).toContain('アプリを更新')
   })
 
   it('対照: 形式の番号が無いファイルは、新しい版とは別の文面で断る', () => {
@@ -282,8 +309,9 @@ describe('設定の読み込み', () => {
     const r = parseSettingsFile(file, DEFAULTS)
     expect(r.ok).toBe(false)
     if (r.ok) return
-    expect(r.error).not.toContain('undefined')
-    expect(r.error).not.toContain('アプリを更新')
+    expect(r.error).toBe('malformed')
+    expect(ja.settings.io.fileErrors[r.error]).not.toContain('undefined')
+    expect(ja.settings.io.fileErrors[r.error]).not.toContain('アプリを更新')
   })
 
   it('対照: settings が無いファイルは受け付けない', () => {
@@ -310,12 +338,12 @@ describe('キーだけのファイル（kind: keys）', () => {
     expect(r.settings.arrivalToken).toBe('old-token')
     expect(r.settings.soundVolume).toBe(0.42)
     expect(r.keysOnly).toEqual({ forecastKey: true, arrivalToken: false })
-    expect(keysFileNotice(r.keysOnly!)).toBe('予報キーを読み込みました（ほかの設定はそのままです）')
+    expect(keysFileNotice(r.keysOnly!, ja.settings.io)).toBe('予報キーを読み込みました（ほかの設定はそのままです）')
   })
 
   it('正: 2 つとも入っていれば両方を名前に出す', () => {
     const r = parseSettingsFile(keysFile({ forecastKey: 'f.k', arrivalToken: 'a.t' }), current)
-    expect(r.ok && r.keysOnly && keysFileNotice(r.keysOnly)).toBe('予報キー・到達予想キーを読み込みました（ほかの設定はそのままです）')
+    expect(r.ok && r.keysOnly && keysFileNotice(r.keysOnly, ja.settings.io)).toBe('予報キー・到達予想キーを読み込みました（ほかの設定はそのままです）')
   })
 
   it('対照: キーが 1 つも無いファイルは断る', () => {
@@ -353,20 +381,12 @@ describe('使用状況データの送信の許可', () => {
   })
 })
 
-// プッシュ通知の購読も運ばない（2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）
-describe('プッシュ通知の購読', () => {
-  const on: AppSettings = { ...DEFAULTS, pushNotifyEnabled: true }
-  it('書き出したファイルには入れない（いつもオフで書く）', () => {
-    expect(buildSettingsFile(on, NO_KEYS).settings.pushNotifyEnabled).toBe(false)
-  })
-  it('安全弁: オンと書かれたファイルを読み込んでも、購読していない端末はオフのまま', () => {
+// プッシュ通知の購読は設定ではなく、端末の通知の許可から決まる（hooks/usePushSubscription.ts）。ファイルで運ぶものは無い
+describe('通知の設定', () => {
+  it('前の版のファイルにあるプッシュ通知の入り切りは、読み込んでも設定に残らない', () => {
     const file = { ...buildSettingsFile(DEFAULTS, NO_KEYS), settings: { ...DEFAULTS, pushNotifyEnabled: true } }
     const r = parseSettingsFile(file, DEFAULTS)
-    expect(r.ok && r.settings.pushNotifyEnabled).toBe(false)
-  })
-  it('対照: 購読している端末は、オフと書かれたファイルを読み込んでもオンのまま', () => {
-    const r = parseSettingsFile(buildSettingsFile(DEFAULTS, NO_KEYS), on)
-    expect(r.ok && r.settings.pushNotifyEnabled).toBe(true)
+    expect(r.ok && 'pushNotifyEnabled' in r.settings).toBe(false)
   })
   it('通知する地域は運ぶ（端末に結びつかない設定）', () => {
     const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, notifyPrefectures: ['13', '16'] }, NO_KEYS), DEFAULTS)

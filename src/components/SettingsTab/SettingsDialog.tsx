@@ -1,27 +1,10 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { SETTINGS_DIALOG_ATTR } from '../../utils/appUpdateGate'
+import { useMessages } from '../../i18n/I18nProvider'
+import { SETTINGS_CATEGORIES, type SettingsCategoryId } from './settingsCategories'
 
-/**
- * 設定の分類。**並び順はここが単一情報源**で、分類の一覧はこの順に出る。各分類にどの見出しが入るかは
- * `SettingsTab` の `<Section category=…>` で決まり、分類の中の並びは `<Section>` の出現順。
- *
- * 分け方と名前は 2026-10-27 ユーザー承認（選んだ選択肢「9 分類にまとめる (Recommended)」）。
- * `separated` は一覧で区切り線の下に置く分類（開発・検証）。
- */
-export const SETTINGS_CATEGORIES = [
-  { id: 'connection', label: '接続' },
-  { id: 'notification', label: '通知' },
-  { id: 'sound', label: '音と読み上げ' },
-  { id: 'display', label: '表示' },
-  { id: 'behavior', label: '動作' },
-  { id: 'location', label: '登録地点と地震計' },
-  { id: 'share', label: '共有と保存' },
-  { id: 'about', label: 'このアプリについて' },
-  { id: 'dev', label: '開発・検証', separated: true },
-] as const satisfies readonly { id: string; label: string; separated?: true }[]
-
-export type SettingsCategoryId = typeof SETTINGS_CATEGORIES[number]['id']
+export { SETTINGS_CATEGORIES, type SettingsCategoryId } from './settingsCategories'
 
 const ActiveCategoryContext = createContext<SettingsCategoryId | null>(null)
 
@@ -125,7 +108,8 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  const activeLabel = SETTINGS_CATEGORIES.find((c) => c.id === active)?.label ?? ''
+  const w = useMessages().settings
+  const activeLabel = w.categories[active]
 
   const content = (
     <div
@@ -148,7 +132,7 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="設定"
+        aria-label={w.dialog.title}
         {...{ [SETTINGS_DIALOG_ATTR]: '' }}
         // 角丸と影は全画面でそろえた物差し（窓は rounded-md・影は 1 種）
         className="flex h-full w-full flex-col overflow-hidden bg-app sm:h-[85dvh] sm:max-h-full sm:max-w-[880px] sm:rounded-md sm:border sm:border-border sm:shadow-[0_3px_8px_rgba(0,0,0,.55)]"
@@ -171,7 +155,7 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
             <button
               type="button"
               onClick={() => setShowList(true)}
-              aria-label="戻る"
+              aria-label={w.dialog.back}
               className="flex h-9 w-9 items-center justify-center rounded-md text-secondary hover:bg-white/10 hover:text-white sm:hidden"
             >
               <span aria-hidden="true" className="text-lg leading-none">←</span>
@@ -179,14 +163,14 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
           )}
           <h2 className="min-w-0 flex-1 truncate text-sm font-bold text-white">
             {/* 幅の狭い画面で中身を見ているときは分類名を出す（一覧が隠れているので、どこにいるかを見出しで示す） */}
-            <span className={showList ? '' : 'hidden sm:inline'}>設定</span>
+            <span className={showList ? '' : 'hidden sm:inline'}>{w.dialog.title}</span>
             {!showList && <span className="sm:hidden">{activeLabel}</span>}
           </h2>
           <button
             ref={closeRef}
             type="button"
             onClick={onClose}
-            aria-label="閉じる"
+            aria-label={w.dialog.close}
             className="flex h-9 w-9 items-center justify-center rounded-md text-secondary hover:bg-white/10 hover:text-white"
           >
             <span aria-hidden="true" className="text-lg leading-none">×</span>
@@ -194,7 +178,7 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
         </div>
         <div className="flex min-h-0 flex-1">
           <nav
-            aria-label="設定の分類"
+            aria-label={w.dialog.categoryList}
             className={`${showList ? 'flex' : 'hidden'} w-full flex-col overflow-y-auto py-2 sm:flex sm:w-52 sm:shrink-0 sm:border-r sm:border-border sm:bg-panel`}
           >
             {SETTINGS_CATEGORIES.map((c) => {
@@ -213,7 +197,7 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
                       selected ? 'sm:bg-white/15 sm:text-white' : ''
                     } ${'separated' in c ? 'text-secondary' : 'text-white'} hover:bg-white/5`}
                   >
-                    <span>{c.label}</span>
+                    <span>{w.categories[c.id]}</span>
                     <span aria-hidden="true" className="text-secondary sm:hidden">›</span>
                   </button>
                 </div>

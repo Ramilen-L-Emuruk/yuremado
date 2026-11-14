@@ -19,7 +19,7 @@ const UNCONFIRMED_RADIUS_BONUS = 2
 // 震度0は固定小半径、震度1以上は計測震度連動。
 // 固定式 (bonus + 3) / 2 は bonus=2（likelyの旧confirmed相当）で旧固定値 2.5 と一致する。
 function detectedRadius(jma: IntensityGrade, iconScale: number, bonus: number): number {
-  return jma.label !== '0' ? (getScaleRadius(jma.scale) + bonus) * iconScale : ((bonus + 3) / 2) * iconScale
+  return jma.rank !== 0 ?(getScaleRadius(jma.scale) + bonus) * iconScale : ((bonus + 3) / 2) * iconScale
 }
 
 // 震度0 未満の印の半径を、震度0 のバッジ（`(bonus + 3) / 2`）に対する比で段ごとに決める。

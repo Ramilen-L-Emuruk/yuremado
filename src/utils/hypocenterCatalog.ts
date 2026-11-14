@@ -27,6 +27,7 @@
 // TypedArray で保持し、利用側は添字で読む。
 
 import { fetchJsonWithTimeout } from './fetchJson'
+import { intensityLabel, type IntensityWords } from './intensity'
 import { RELAY_CATALOG_BASE } from '../services/relayEndpoint'
 
 const BASE_URL = RELAY_CATALOG_BASE
@@ -79,13 +80,16 @@ export interface HypocenterIndex {
 export interface TelegramPointLabels {
   /** 発生時刻（日本時間・電文の桁の分まで） */
   time: string
-  /** 最大震度（例「最大震度 5弱以上」）。電文に無ければ null */
-  intensity: string | null
-  /** 規模（例「M4.2」「Mj4.2」「M8を超える巨大地震」） */
-  magnitude: string
-  /** 深さ（例「深さ 10km」「深さ ごく浅い」「深さ 700km以上」） */
-  depth: string
-  /** 震源決定機関の行（気象庁以外が決めた震源だけ。地震カードと同じ文面）。無ければ null */
+  /**
+   * 最大震度の階級値と「以上」を付けるか（未入電のとき）。電文に無ければ null。
+   * **語は持たず値だけを持つ。** 吹き出しを開いたときの言語で組む（「最大震度 5弱以上」）
+   */
+  intensity: { scale: number; orAbove: boolean } | null
+  /** 規模の値・電文の説明（「Ｍ８を超える巨大地震」）・種別（`Mj` など）。値も説明も無ければ「M 不明」と出す */
+  magnitude: { value: number; condition: string | undefined; type: string | undefined }
+  /** 深さ（km）と「以上」。読めなければ null（「深さ不明」と出す） */
+  depth: { km: number; atLeast: boolean } | null
+  /** 震源決定機関（気象庁以外が決めた震源だけ）。無ければ null */
   source: string | null
 }
 
@@ -230,27 +234,36 @@ const INTENSITY_SCALE_LABEL: Readonly<Record<string, string>> = {
 }
 
 /**
- * 震度ではない記号の語。L〜R は気象庁のフォーマット仕様の語そのまま。F は「有感」と出す
- * （2026-10-25 ユーザー承認「C の案でよい (Recommended)」。仕様の語は「有感地震」）。
+ * 震度ではない記号（F・X・L〜R）。語は辞書の `map.popup.catalogOther` が持つ。L〜R は気象庁のフォーマット仕様の語、
+ * F は「有感」と出す（2026-10-25 ユーザー承認「C の案でよい (Recommended)」。仕様の語は「有感地震」）。
  */
-const INTENSITY_OTHER_LABEL: Readonly<Record<string, string>> = {
-  F: '有感',
-  X: '付近有感',
-  L: '局発地震',
-  S: '小局発地震',
-  M: 'やや顕著地震',
-  R: '顕著地震',
-}
+const INTENSITY_OTHER_CODES: ReadonlySet<string> = new Set(['F', 'X', 'L', 'S', 'M', 'R'])
 
 /**
  * 最大震度の記号を吹き出しの 1 行にする。階級なら「最大震度 5弱」、震度ではない記号は語だけ。
  * 表に無い記号は `null`（行を出さない）。
  */
-export function hypocenterIntensityLabel(code: string): string | null {
+export function hypocenterIntensityLabel(code: string, w: HypocenterIntensityWords): string | null {
   const scale = INTENSITY_SCALE_LABEL[code]
-  if (scale !== undefined) return `最大震度 ${scale}`
-  return INTENSITY_OTHER_LABEL[code] ?? null
+  if (scale !== undefined) {
+    // 弱強の付く階級（A〜D）は言語の札で書く。数字だけの階級（1〜7、1996 年 9 月までの 5・6）はどの言語でも数字のまま
+    const value = INTENSITY_CODE_SCALE[code]
+    return w.maxIntensity(value !== undefined ? intensityLabel(value, w.formats) : scale)
+  }
+  return INTENSITY_OTHER_CODES.has(code) ? w.catalogOther[code as keyof HypocenterIntensityWords['catalogOther']] : null
 }
+
+/** {@link hypocenterIntensityLabel} が使う語。画面は `m.map.popup` と `m.formats` から渡す */
+export interface HypocenterIntensityWords {
+  /** 「最大震度 5弱」の形 */
+  maxIntensity: (scale: string) => string
+  formats: IntensityWords
+  /** 震度ではない記号の語 */
+  catalogOther: Readonly<Record<'F' | 'X' | 'L' | 'S' | 'M' | 'R', string>>
+}
+
+/** 弱強の付く記号の階級値（震度の札を言語で引くため） */
+const INTENSITY_CODE_SCALE: Readonly<Record<string, number>> = { A: 45, B: 50, C: 55, D: 60 }
 
 /**
  * 震央地名・気象庁以外の印・最大震度の列を確かめる。**添字が範囲の外なら年ごと弾く** ——

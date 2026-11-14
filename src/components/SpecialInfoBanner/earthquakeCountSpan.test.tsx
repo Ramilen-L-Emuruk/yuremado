@@ -10,8 +10,9 @@
 // ように見える。
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import { EarthquakeCountDetail } from './EarthquakeCountDetail'
+import { EarthquakeCountDetail, formatSpan } from './EarthquakeCountDetail'
 import { withTz } from '../../test-utils/withTz'
+import { en } from '../../i18n/messages/en'
 import type { JMAEarthquakeCount, JMAEarthquakeCountItem } from '../../types/earthquake'
 
 afterEach(cleanup)
@@ -75,6 +76,17 @@ describe('地震回数の区間が読めないとき', () => {
       const { container } = render(<EarthquakeCountDetail count={count([item({ startTime: '' })])} />)
       expect(container.textContent).toContain('〜1/2 12:00')
       expect(container.textContent).not.toContain('期間不明')
+    })
+  })
+
+  // 英語では範囲の記号を辞書の形（`–`）にする。片方だけ読めたときも、記号を読めない端の側に置く形は同じ
+  it('英語の範囲の記号で区間を書く', () => {
+    withTz('Asia/Tokyo', () => {
+      const range = en.formats.range
+      expect(formatSpan('2026-01-01T09:00:00+09:00', '2026-01-02T12:00:00+09:00', '?', range)).toBe('1/1 09:00–1/2 12:00')
+      expect(formatSpan('2026-01-01T09:00:00+09:00', '2026-01-01T10:00:00+09:00', '?', range)).toBe('1/1 09:00–10:00')
+      expect(formatSpan('2026-01-01T09:00:00+09:00', '', '?', range)).toBe('1/1 09:00–')
+      expect(formatSpan('', '2026-01-02T12:00:00+09:00', '?', range)).toBe('–1/2 12:00')
     })
   })
 

@@ -13,13 +13,15 @@
 import type { ReactNode } from 'react'
 
 import { toggleWaveAxis, useWaveAxes } from '../../hooks/useSeismoWaveAxes'
-import { AXIS_COLORS, AXIS_LABELS } from './paintWave'
+import { AXIS_COLORS } from './paintWave'
+import { useMessages } from '../../i18n/I18nProvider'
 
 export function WaveAxisToggles() {
   const axes = useWaveAxes()
+  const labels = useMessages().waveChart.axes
   return (
     <>
-      {AXIS_LABELS.map((label, i) => (
+      {labels.map((label, i) => (
         <ToggleChip key={label} on={axes[i] !== false} color={AXIS_COLORS[i]} onToggle={() => toggleWaveAxis(i)}>
           {label}
         </ToggleChip>

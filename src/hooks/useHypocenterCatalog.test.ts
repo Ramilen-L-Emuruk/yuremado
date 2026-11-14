@@ -240,7 +240,7 @@ describe('useHypocenterCatalog の末尾（中継の地震情報の電文）', (
     expect(last.source).toBe('telegram')
     // 終端の手前（14:59Z）は年ファイルの側にあるので入れない
     expect(last.count).toBe(1)
-    expect(last.telegramLabels?.[0].intensity).toBe('最大震度 3')
+    expect(last.telegramLabels?.[0].intensity).toEqual({ scale: 30, orAbove: false })
     expect(result.current.tail?.fromMs).toBe(END)
     expect(mockTail).toHaveBeenCalledTimes(1)
   })

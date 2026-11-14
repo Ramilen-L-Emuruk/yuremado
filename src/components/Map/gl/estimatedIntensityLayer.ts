@@ -2,7 +2,7 @@ import * as maplibregl from 'maplibre-gl'
 import type { OrderedCustomLayer } from './layerOrder'
 import { applyProjectionUniforms, createProjectionProgramCache } from './projectionProgram'
 import { guardRender } from './guardRender'
-import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure } from '../../../utils/renderHealth'
+import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure, type MapLayerName } from '../../../utils/renderHealth'
 import { log, createLogThrottle } from '../../../utils/logger'
 import { profileSpan } from '../../../utils/frameProfiler'
 import {
@@ -33,7 +33,7 @@ import type { JMAEstimatedIntensity } from '../../../types/earthquake'
 // **仕様書は docs/spec/map-rendering-spec.md §19（描き方）と quake-spec.md §9（出す条件）。**
 
 const LYR = 'quake-estimated-intensity'
-const LABEL = '推計震度分布図'
+const LABEL: MapLayerName = 'estimatedIntensity'
 
 /** 面の濃さ。観測点バッジと地形が透けて見える程度（自前の面と揃える）。 */
 const SURFACE_OPACITY = 0.62

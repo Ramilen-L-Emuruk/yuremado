@@ -8,6 +8,7 @@
 // 共通利用し、変換ロジックの二重管理を避ける。
 
 import { intensityGradeColor, measuredIntensityToGrade, type IntensityGrade } from './measuredIntensity'
+import { intensityLabel, intensityShortLabel, type IntensityWords } from './intensity'
 
 export function kyoshinIndexToJma(index: number | undefined): IntensityGrade | null {
   if (index == null) return null
@@ -43,8 +44,52 @@ export function detectionScaleLabelFromValue(value: number | null): string | nul
   return measuredIntensityToGrade(value)?.label ?? null
 }
 
-/** 震度0 未満の揺れ検知の呼び名 */
+/** 震度0 未満の揺れ検知の呼び名（日本語。通知・読み上げ・共有カード用） */
 const DETECTION_BELOW_ZERO_LABEL = '0未満'
+
+/**
+ * 画面に出す揺れ検知の札を組む語（辞書の `formats` の節が満たす形）。画面は `useMessages().formats` を渡す。
+ * 上の日本語の関数（`kyoshinIndexToLabel` 系）は通知・読み上げ・共有カードが使うので、そのまま残す。
+ */
+export type DetectionScaleWords = IntensityWords & { belowZero: string }
+
+/**
+ * 震度階級の札（言語に合わせる形）。震度0 は辞書の震度の表に無い（震度0 と 1 が同じ `scale` を持つ）ので、
+ * 段（`rank`）で見分けて「0」と出す。数字だけなのでどの言語でも同じ
+ */
+export function intensityGradeLabel(grade: IntensityGrade, w: IntensityWords): string {
+  return grade.rank === 0 ? '0' : intensityLabel(grade.scale, w)
+}
+
+/** {@link kyoshinIndexToLabel} の言語に合わせる形（画面用） */
+export function kyoshinIndexLabelText(index: number | undefined, w: IntensityWords): string | null {
+  const grade = kyoshinIndexToJma(index)
+  return grade ? intensityGradeLabel(grade, w) : null
+}
+
+/**
+ * {@link kyoshinIndexLabelText} の短い形（5+・5-）。震度の枠に入れる札に使う。英語・スペイン語・ポルトガル語の
+ * 長い形は枠からはみ出すため（2026-11-11 ユーザー選択「短い形にそろえる (Recommended)」）
+ */
+export function kyoshinIndexShortLabelText(index: number | undefined, w: IntensityWords): string | null {
+  const grade = kyoshinIndexToJma(index)
+  if (!grade) return null
+  return grade.rank === 0 ? '0' : intensityShortLabel(grade.scale, w)
+}
+
+/** {@link kyoshinDetectionScaleLabel} の言語に合わせる形（画面用） */
+export function kyoshinDetectionScaleText(index: number | undefined, w: DetectionScaleWords): string | null {
+  if (index == null || !Number.isFinite(index) || index < 0) return null
+  return kyoshinIndexLabelText(index, w) ?? w.belowZero
+}
+
+/** {@link detectionScaleLabelFromValue} の言語に合わせる形（画面用） */
+export function detectionScaleTextFromValue(value: number | null, w: DetectionScaleWords): string | null {
+  if (value === null || !Number.isFinite(value)) return null
+  if (value < 0) return w.belowZero
+  const grade = measuredIntensityToGrade(value)
+  return grade ? intensityGradeLabel(grade, w) : null
+}
 
 /**
  * 検知に入った震度0 未満の点の色。インデックス 0〜5（計測震度 −3.0〜−0.5）の 6 段で、

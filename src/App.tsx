@@ -1,7 +1,11 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
-import { useMessages } from './i18n/I18nProvider'
+import { useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
+import { useApplyLocaleSetting } from './i18n/useApplyLocaleSetting'
+import { historicalArchiveLabel } from './utils/historicalArchiveLabel'
+import { JA_MESSAGES } from './i18n/messages'
+import { LocalizedError, errorText } from './utils/localizedError'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import {
   TAB_PRIORITY, TAB_HOLD_MS, shouldAcceptAutoTab, decideFollowNow, idleRevertPriority,
@@ -215,9 +219,17 @@ export function App() {
   const { settings, updateSetting, updateSettings, replaceSettings, adoptExternalSetting } = useSettings()
   // 各画面が落ちたときの表示に出す画面の名前（ナビのボタン名と同じ辞書の語）
   const messages = useMessages()
+  // 帯に載せる地名を表示する言語へ訳す表（日本語のときはそのまま返す）
+  const placeNames = usePlaceNames()
+  // 後から呼ばれる組み立て（地震情報の通知の待ち行列）が、呼ばれた時点の言語の辞書を読むための参照
+  const messagesRef = useMessagesRef()
+  // 同じく、通知の本文の地名を呼ばれた時点の言語で訳すための参照
+  const placeNamesRef = usePlaceNamesRef()
   const tabNames = messages.nav
+  // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
+  useApplyLocaleSetting(settings.locale)
   // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
-  usePushSubscription(settings, updateSetting)
+  usePushSubscription(settings)
   // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す
   // （→ services/notifyQuietWhileOpen.ts）
   useEffect(() => { setNotifyQuietWhileOpen(settings.notifyQuietWhileOpen) }, [settings.notifyQuietWhileOpen])
@@ -1109,21 +1121,21 @@ export function App() {
   }, [settings.usageStatsEnabled])
   // 別のタブ（ブラウザで開いたものとホーム画面から開いたもの）で切り替えたら追う。追わないと、古いタブが
   // 許可を外した後も識別子を持ったまま送り、設定を保存したときに古い「オン」を書き戻す。
-  // プッシュ通知の購読も同じ（古いタブが「オン」を書き戻すと、消した購読をそのタブが作り直す）
+  // 「通知を表示」も同じ（プッシュ通知の購読はこれで決まる。古いタブが「オン」を書き戻すと、消した購読をそのタブが作り直す）
   const usageEnabledRef = useRef(settings.usageStatsEnabled)
   usageEnabledRef.current = settings.usageStatsEnabled
-  const pushEnabledRef = useRef(settings.pushNotifyEnabled)
-  pushEnabledRef.current = settings.pushNotifyEnabled
+  const notifyEnabledRef = useRef(settings.notifyEnabled)
+  notifyEnabledRef.current = settings.notifyEnabled
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== SETTINGS_STORAGE_KEY || e.newValue === null) return
-      let other: { usageStatsEnabled?: unknown; pushNotifyEnabled?: unknown }
+      let other: { usageStatsEnabled?: unknown; notifyEnabled?: unknown }
       try { other = JSON.parse(e.newValue) as typeof other } catch { return }
       if (typeof other.usageStatsEnabled === 'boolean' && other.usageStatsEnabled !== usageEnabledRef.current) {
         adoptExternalSetting('usageStatsEnabled', other.usageStatsEnabled)
       }
-      if (typeof other.pushNotifyEnabled === 'boolean' && other.pushNotifyEnabled !== pushEnabledRef.current) {
-        adoptExternalSetting('pushNotifyEnabled', other.pushNotifyEnabled)
+      if (typeof other.notifyEnabled === 'boolean' && other.notifyEnabled !== notifyEnabledRef.current) {
+        adoptExternalSetting('notifyEnabled', other.notifyEnabled)
       }
     }
     window.addEventListener('storage', onStorage)
@@ -1321,10 +1333,10 @@ export function App() {
         return
       }
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
-        alert('先に「通知を許可する」を押してください。')
+        alert(messages.alertText.permissionFirst(messages.settings.permission.request))
         return
       }
-      showTestBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
+      showTestBrowserNotification(messages.alertText.testTitle, messages.alertText.testBody, 'test-notification')
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity, simulateNoIntensityQuake,
@@ -1335,7 +1347,7 @@ export function App() {
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
-    settings.notifyEnabled,
+    settings.notifyEnabled, messages,
   ])
   // 設定の窓のテストボタンは、押した回数を使用状況データに数える（許可している間だけ。→ `countUsage`）
   const countedTestHandlers = useMemo(() => withUsageCount('test', testHandlers), [testHandlers])
@@ -1846,6 +1858,7 @@ export function App() {
         cancel,
         whole,
         notifyMinScale: notifyMinScaleRef.current,
+        m: messagesRef.current,
         show: showQuakeNotification,
       }).catch((err: unknown) => {
         log.error(`[notify] 地震情報の取消の通知を出せず（${target.eventKey ?? target.id}）`, err)
@@ -1880,6 +1893,8 @@ export function App() {
           reportKeys,
           notifyMinScale: notifyMinScaleRef.current,
           areaPrefIndex: index,
+          m: messagesRef.current,
+          place: placeNamesRef.current,
           show: showQuakeNotification,
         }).catch((err: unknown) => {
           log.error(`[notify] 地震の通知を出せず（${card.eventKey ?? card.id}・最大震度 ${card.earthquake.maxScale}）`, err)
@@ -1901,7 +1916,7 @@ export function App() {
   const onlyCancelledShown = tsunamis.length > 0 && tsunamis.every(t => t.cancelled || !!t.cancelledAt)
   if (!onlyCancelledShown) tsunamiForecastOnlyRef.current = isTsunamiForecastOnly(tsunamis)
   const tsunamiForecastOnly = tsunamiForecastOnlyRef.current
-  const alertTitleText = resolveAlertTitle(title.alertTitle, tsunamiForecastOnly)
+  const alertTitleText = resolveAlertTitle(title.alertTitle, tsunamiForecastOnly, messages)
   // 読み直し（新しい版の適用・毎朝 5 時の定期の読み直し）の段取り。発表中・再生中・入力中は待つ
   // （→ hooks/useReloadSchedule.ts）。
   const reloadSchedule = useReloadSchedule({
@@ -1916,12 +1931,11 @@ export function App() {
     if (alertTitleText) {
       document.title = alertTitleText
     } else if (reloadCountdown !== null) {
-      const verb = reloadCountdownReason === 'periodic' ? '再読み込みします' : '更新します'
-      document.title = `${reloadCountdown}秒後に${verb} — ${DEFAULT_TITLE}`
+      document.title = messages.alertText.titleReloadCountdown(reloadCountdown, reloadCountdownReason === 'periodic', DEFAULT_TITLE)
     } else {
       document.title = DEFAULT_TITLE
     }
-  }, [alertTitleText, reloadCountdown, reloadCountdownReason])
+  }, [alertTitleText, reloadCountdown, reloadCountdownReason, messages])
 
   // アプリ時計とログのタイムスタンプをリプレイ時刻に追従させる
   // （clock はライブ時サーバー同期、リプレイ時は setReplayOffset で絶対制御）
@@ -2298,8 +2312,10 @@ export function App() {
       const verdict = uncollectedFetchVerdict(historicalArchives, from, to, purpose)
       if (verdict.kind === 'empty') return Promise.resolve(emptyReplayFetchResult())
       if (verdict.kind === 'reject') {
-        return Promise.reject(new Error(
-          `ローカル履歴アーカイブ「${verdict.archive.label}」は、この日の電文を収録していません`,
+        // 帯は画面の言語の地震の名前で、ログと記録に残る `message` は日本語の名前で組む
+        return Promise.reject(new LocalizedError(
+          errorText('localArchiveNoDay', historicalArchiveLabel(verdict.archive, messagesRef.current.settings.replay.archives)),
+          JA_MESSAGES.errorText.localArchiveNoDay(historicalArchiveLabel(verdict.archive, JA_MESSAGES.settings.replay.archives)),
         ))
       }
       const covering = findCoveringArchiveSync(historicalArchives, from, to)
@@ -2310,8 +2326,9 @@ export function App() {
       // 通常どおりのフォールバックへ進む）。
       const justEnded = findArchiveJustEndedSync(historicalArchives, from, REPLAY_WINDOW_MS)
       if (justEnded) {
-        return Promise.reject(new Error(
-          `ローカル履歴アーカイブ「${justEnded.label}」の収録範囲の終端に達しました。これ以降は再生できません`,
+        return Promise.reject(new LocalizedError(
+          errorText('localArchiveEnded', historicalArchiveLabel(justEnded, messagesRef.current.settings.replay.archives)),
+          JA_MESSAGES.errorText.localArchiveEnded(historicalArchiveLabel(justEnded, JA_MESSAGES.settings.replay.archives)),
         ))
       }
       // 「試験報を受信（検証用）」はライブだけでなく再生にも効かせる。**設定の文面は
@@ -2378,13 +2395,14 @@ export function App() {
             period: settings.heatmapPeriod,
             startLabel: formatHeatmapDate(heatWindowStartMs),
             replay: replayTimeOffset !== null,
-            note: heatmapCompletenessNote(heatCompleteness),
+            note: heatmapCompletenessNote(heatCompleteness, messages),
+            text: messages.map.legend.periodRange(formatHeatmapDate(heatWindowStartMs), replayTimeOffset !== null),
           },
-    [heatWindowStartMs, settings.heatmapPeriod, replayTimeOffset, heatCompleteness],
+    [heatWindowStartMs, settings.heatmapPeriod, replayTimeOffset, heatCompleteness, messages],
   )
   const legendBlocks = useMemo(
-    () => withHeatmapPeriod(buildLegendBlocks(legendSources), heatLegendPeriod),
-    [legendSources, heatLegendPeriod],
+    () => withHeatmapPeriod(buildLegendBlocks(legendSources, messages), heatLegendPeriod),
+    [legendSources, heatLegendPeriod, messages],
   )
   const changeHeatmapPeriod = useCallback((period: HeatmapPeriod) => {
     updateSetting('heatmapPeriod', period)
@@ -2871,12 +2889,12 @@ export function App() {
     if (home && prefectureShapes && homePrefCode === null) log.warn('[帯] 登録地点の座標がどの都道府県にも入らず 5 km 以内にも無いので、津波の帯に登録地点の段を出さない')
   }, [home, prefectureShapes, homePrefCode])
   const dockEews = useMemo(
-    () => (activeTab === 'realtime' ? [] : buildEewDockItems(eewListNoCancelled, swaveArrival)),
-    [activeTab, eewListNoCancelled, swaveArrival],
+    () => (activeTab === 'realtime' ? [] : buildEewDockItems(eewListNoCancelled, swaveArrival, messages, placeNames)),
+    [activeTab, eewListNoCancelled, swaveArrival, messages, placeNames],
   )
   const dockTsunami = useMemo(
-    () => (activeTab === 'tsunami' ? null : buildTsunamiDockItem(tsunamis, homePrefCode, TSUNAMI_ZONE_PREFECTURES)),
-    [activeTab, tsunamis, homePrefCode],
+    () => (activeTab === 'tsunami' ? null : buildTsunamiDockItem(tsunamis, homePrefCode, TSUNAMI_ZONE_PREFECTURES, messages, placeNames)),
+    [activeTab, tsunamis, homePrefCode, messages, placeNames],
   )
   // 登録地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。

@@ -153,6 +153,17 @@ function collectCodepoints() {
   // 区域 192（subregions.json の name）
   const subs = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'data', 'subregions.json'), 'utf8'))
   for (const s of subs) add(s.name)
+  // 県名・区域名の訳（地図のラベルを訳す言語＝ src/i18n/placeNames.ts の MAP_LABEL_LOCALES。.mjs は .ts を
+  // import できないためソースから一覧を取り出す。読めなければ止める——読めないまま進むと、訳の字が欠けて
+  // 空白の混ざったラベルになるのに検査は通ってしまう）
+  const placeNamesSrc = fs.readFileSync(path.join(ROOT, 'src', 'i18n', 'placeNames.ts'), 'utf8')
+  const localesMatch = placeNamesSrc.match(/MAP_LABEL_LOCALES:[^=]*=\s*\[([^\]]*)\]/)
+  const labelLocales = localesMatch ? [...localesMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : []
+  if (labelLocales.length === 0) throw new Error('placeNames.ts から MAP_LABEL_LOCALES を読み取れなかった')
+  for (const locale of labelLocales) {
+    const table = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'data', 'place-names', `${locale}.json`), 'utf8'))
+    for (const kind of ['pref', 'area']) Object.values(table[kind]).forEach(add)
+  }
   // ASCII 基本ラテン（数字・記号の保険）
   for (let c = 0x20; c < 0x7f; c++) cps.add(c)
   return cps

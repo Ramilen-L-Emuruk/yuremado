@@ -11,7 +11,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { QuakeSeismoWave, wavePaintScheduler } from './QuakeSeismoWave'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import { paintCompositeColumns, paintWaveColumns, type PaintableColumns } from '../SeismoWaveChart/paintWave'
-import { COMPRESSED_VERTICAL_NOTE, LINEAR_VERTICAL, type VerticalMap } from '../SeismoWaveChart/verticalMap'
+import { LINEAR_VERTICAL, type VerticalMap } from '../SeismoWaveChart/verticalMap'
+import { ja } from '../../i18n/messages/ja'
 import { PUBLIC_WAVE_UNIT, SEISMO_WAVE_UNIT, type WaveUnit } from '../SeismoWaveChart/waveUnit'
 import type { WaveHistoryColumn } from '../../services/seismoWaveHistory'
 
@@ -178,6 +179,6 @@ describe('地震カードの公開観測点の縦の範囲', () => {
   it('ホバーの一言は公開観測点の段だけに付く', () => {
     const { container } = renderCard([waveOf('HOME', 1, SEISMO_WAVE_UNIT), waveOf('NEAR', 100, PUBLIC_WAVE_UNIT)], 'composite')
     const titled = [...container.querySelectorAll('span.font-mono')].map((el) => el.getAttribute('title'))
-    expect(titled).toEqual([null, COMPRESSED_VERTICAL_NOTE])
+    expect(titled).toEqual([null, ja.waveChart.compressedNote])
   })
 })

@@ -2466,5 +2466,27 @@ export interface TelegramLogEntry {
    * 結合待ちの断片の行には付けない。
    */
   rawBytes?: Uint8Array
+  /**
+   * 本文の代わりに置いた要約の鍵と値（二進電文の行だけ。→ `utils/telegramBodyNote.ts`）。画面はこれを辞書で文にする。
+   * この欄の無い行（本文を持つ行と、欄を足す前に積んだ行）は `rawBody` をそのまま出す
+   */
+  bodyNote?: TelegramBodyNote
   errorMessage?: string
 }
+
+/** 電文ログの行で、本文の代わりに置く要約の種類と値（二進電文＝推計震度分布図の BUFR）。`bytes` は長さ（バイト） */
+export type TelegramBodyNote =
+  /** 結合した電文（読めなかったもの） */
+  | { readonly kind: 'bufr'; readonly bytes: number }
+  /** 結合しない断片（再生で電文ログにだけ積むもの） */
+  | { readonly kind: 'bufrFragment'; readonly bytes: number }
+  /** 揃うのを待っている断片 */
+  | { readonly kind: 'bufrFragmentWaiting'; readonly bytes: number }
+  /** 結合した試験報（本文の電文の種類を添える） */
+  | { readonly kind: 'bufrKind'; readonly bytes: number; readonly telegramKind: number }
+  /** 読めた推計震度分布図（セルの数を添える） */
+  | { readonly kind: 'bufrCells'; readonly bytes: number; readonly cells: number }
+  /** 本文を取らない断片（当日経路） */
+  | { readonly kind: 'bufrFragmentSkipped' }
+  /** テストボタンが流した電文（ファイルの名前を添える） */
+  | { readonly kind: 'bufrFile'; readonly file: string }

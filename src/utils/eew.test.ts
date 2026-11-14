@@ -1982,28 +1982,28 @@ describe('緊急地震速報の通知の本文と出し直し', () => {
     makeEEW({ forecastMaxScale: scale as IntensityScale, ...(lpgm !== undefined && { forecastMaxLpgmClass: lpgm as LpgmClass }), ...over })
 
   it('本文: 震度と長周期地震動階級の予想を添える（承認された形）', () => {
-    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(withForecast(45, 2)), ''))
+    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(withForecast(45, 2)), '', ja))
       .toBe('石川県能登地方 最大震度5弱予想 長周期地震動階級2予想')
   })
 
   it('本文: 長周期の予想が無ければ添えない・震度を伝えられない報では階級も添えない', () => {
-    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(45)), '')).toBe('日向灘 最大震度5弱予想')
-    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(0, 2)), '')).toBe('日向灘')
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(45)), '', ja)).toBe('日向灘 最大震度5弱予想')
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(0, 2)), '', ja)).toBe('日向灘')
   })
 
   // 2026-10-30 に足した（ユーザー選択「最大震度0予想 (Recommended)」「震度と並べて出す (Recommended)」）
   it('本文: 最大予想震度 0 の報は「最大震度0予想」、電文が階級 0 と言い切れば「長周期地震動階級0予想」も添える', () => {
-    expect(eewNotificationBody('八丈島東方沖', eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true })), ''))
+    expect(eewNotificationBody('八丈島東方沖', eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true })), '', ja))
       .toBe('八丈島東方沖 最大震度0予想')
     expect(eewNotificationBody('八丈島東方沖', eewNotifiedForecast(makeEEW({
       forecastMaxScaleBelow1: true, forecastMaxLpgmBelowClass1: true,
-    })), '')).toBe('八丈島東方沖 最大震度0予想 長周期地震動階級0予想')
-    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(45, undefined, { forecastMaxLpgmBelowClass1: true })), ''))
+    })), '', ja)).toBe('八丈島東方沖 最大震度0予想 長周期地震動階級0予想')
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(45, undefined, { forecastMaxLpgmBelowClass1: true })), '', ja))
       .toBe('日向灘 最大震度5弱予想 長周期地震動階級0予想')
   })
 
   it('対照: 予想震度なしの報（印の無い 0）は今までどおり震度も階級も添えない', () => {
-    expect(eewNotificationBody('日向灘', eewNotifiedForecast(makeEEW({ forecastMaxLpgmBelowClass1: true })), '')).toBe('日向灘')
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(makeEEW({ forecastMaxLpgmBelowClass1: true })), '', ja)).toBe('日向灘')
   })
 
   it('正: 震度か階級が上がれば出し直す（「程度以上」が付いたのも上がった扱い）', () => {
@@ -2094,9 +2094,9 @@ describe('isEewScaleZeroForecast: 電文が最大予想震度を 0 と言い切�
 // 規模を添える（2026-11-09 ユーザー選択「規模と最終報を足し、変わったら静かに差し替え (Recommended)」）
 describe('eewNotificationBody の規模', () => {
   it('規模は震央地名の後ろに添え、空なら添えない', () => {
-    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(makeEEW({ forecastMaxScale: 55 as IntensityScale })), 'M6.3'))
+    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(makeEEW({ forecastMaxScale: 55 as IntensityScale })), 'M6.3', ja))
       .toBe('石川県能登地方 M6.3 最大震度6弱予想')
-    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(makeEEW({ forecastMaxScale: 55 as IntensityScale })), ''))
+    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(makeEEW({ forecastMaxScale: 55 as IntensityScale })), '', ja))
       .toBe('石川県能登地方 最大震度6弱予想')
   })
 })

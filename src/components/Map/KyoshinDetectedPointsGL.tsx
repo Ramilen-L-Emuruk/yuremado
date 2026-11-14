@@ -6,6 +6,7 @@ import { useMapGL } from './mapGLContext'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import { addOrderedLayer } from './gl/layerOrder'
 import { ensureKyoshinDetectedIcons } from './gl/kyoshinDetectedIcons'
+import { useMessages } from '../../i18n/I18nProvider'
 import { buildDetectedFC } from './gl/kyoshinDetectedFeatures'
 import { MISSING_HOLD_OPACITY } from '../../utils/kyoshinMissingHold'
 
@@ -47,11 +48,15 @@ export function KyoshinDetectedPointsGL({ confirmedPoints, unconfirmedPoints, ic
   // 直近に setData した内容の署名。points は kyoshinView が indices tick（毎秒）で作り直されるため
   // 検知フットプリントが不変でも参照だけ変わる。同一内容の再 setData（＝geojson-vt 再タイル化）を避ける。
   const lastSigRef = useRef<string | null>(null)
+  // 丸の中の字（震度の札）は言語に合わせる。層を作る effect は [map] 依存なので、作るときは ref 越しに読む
+  const formats = useMessages().formats
+  const formatsRef = useRef(formats)
+  formatsRef.current = formats
 
   // source + layer を一度だけ作る。
   useEffect(() => {
     if (!map) return
-    ensureKyoshinDetectedIcons(map)
+    ensureKyoshinDetectedIcons(map, formatsRef.current)
     map.addSource(SRC, { type: 'geojson', data: EMPTY_FC })
     // 初回 effect で必ず setData が走るよう null 起点にする（マウント直後の props.iconScale は
     // 1 固定ではないため事前 sig を書いても一致しないケースが出る。空 FC への 1 回の setData は
@@ -88,6 +93,11 @@ export function KyoshinDetectedPointsGL({ confirmedPoints, unconfirmedPoints, ic
       lastSigRef.current = null
     }
   }, [map])
+
+  // 言語を変えたら丸の字を焼き直す（字の変わる丸だけ。→ `ensureKyoshinDetectedIcons`）
+  useEffect(() => {
+    if (map) ensureKyoshinDetectedIcons(map, formats)
+  }, [map, formats])
 
   // データ／倍率変化のたびに丸ごと差し替える。内容が前回と同一ならスキップして再タイル化を避ける。
   // MAP-2: 非表示中は setData を止める（visible=false 中は lastSigRef を維持し、表示に戻った瞬間

@@ -15,11 +15,25 @@ export type RenderFailureKind =
   /** 掴めない（クリック・ホバーの判定が働かない）。描画自体は出ている。 */
   | 'interact'
 
+/**
+ * 描画物の名前の鍵。画面に出す名前は辞書の `map.layerName` が持つ（言語が変わっても記録を取り直さずに済むよう、
+ * 記録には鍵だけを置く）。
+ */
+export type MapLayerName =
+  | 'eewEpicenters'
+  | 'quakeHypocenters'
+  | 'tsunamiSource'
+  | 'catalog'
+  | 'psWave'
+  | 'estimatedIntensity'
+  | 'subThreshold'
+  | 'dayNight'
+
 export interface RenderHealth {
   /** 描けていない描画物の表示名。登録順。 */
-  broken: readonly string[]
+  broken: readonly MapLayerName[]
   /** 掴めない描画物の表示名。登録順。 */
-  uninteractive: readonly string[]
+  uninteractive: readonly MapLayerName[]
 }
 
 const EMPTY: RenderHealth = { broken: [], uninteractive: [] }
@@ -34,7 +48,7 @@ const EMPTY: RenderHealth = { broken: [], uninteractive: [] }
  * 「描けない」と「掴めない」を別々に抱えることがあり、ID だけで持つと後から来た方が
  * 前を消す。しかも描けない側は毎フレーム報告するので、必ず掴めない側が消える。
  */
-const failures = new Map<string, { label: string; kind: RenderFailureKind }>()
+const failures = new Map<string, { name: MapLayerName; kind: RenderFailureKind }>()
 
 /**
  * 記録の鍵。ID だけだと 2 種類を同時に持てないので種別を足す。
@@ -59,14 +73,14 @@ let snapshot: RenderHealth = EMPTY
  * `useSyncExternalStore` は参照で変化を見るため、毎回作ると描画のたびに再描画が走る。
  */
 function publish(): void {
-  const broken: string[] = []
-  const uninteractive: string[] = []
-  for (const { label, kind } of failures.values()) {
+  const broken: MapLayerName[] = []
+  const uninteractive: MapLayerName[] = []
+  for (const { name, kind } of failures.values()) {
     const target = kind === 'draw' ? broken : uninteractive
     // **同じ名前は 1 度だけ。** 1 つの描画物が別々の理由で 2 件報告することがある
     //（レイヤー自身が気づいた不調と、`gl/guardRender.ts` が受け止めた例外は鍵を分けてある）。
     // 利用者に同じ名前を 2 つ並べても伝わる情報は増えない。
-    if (!target.includes(label)) target.push(label)
+    if (!target.includes(name)) target.push(name)
   }
   const same =
     snapshot.broken.length === broken.length &&
@@ -82,15 +96,15 @@ function publish(): void {
  * 描画物の不調を記録する。同じ ID で繰り返し呼んでよい（1 件に畳む）。
  *
  * @param id レイヤー ID。解除（{@link clearRenderFailure}）と対で使う。種別ごとに別の記録になる
- * @param label 利用者に見せる名前。**呼ぶ側が持つ**——ここに対応表を置くと、
- *   レイヤーを増やしたときに更新を忘れて ID がそのまま画面に出る
+ * @param name 利用者に見せる名前の鍵。**呼ぶ側が持つ**——名前は辞書の `map.layerName` が鍵ごとに持ち、
+ *   鍵を足せば辞書にも足すことを型が求める
  * @param kind 描けていないのか、掴めないのか
  */
-export function reportRenderFailure(id: string, label: string, kind: RenderFailureKind): void {
+export function reportRenderFailure(id: string, name: MapLayerName, kind: RenderFailureKind): void {
   const key = keyOf(id, kind)
   const prev = failures.get(key)
-  if (prev && prev.label === label) return
-  failures.set(key, { label, kind })
+  if (prev && prev.name === name) return
+  failures.set(key, { name, kind })
   publish()
 }
 

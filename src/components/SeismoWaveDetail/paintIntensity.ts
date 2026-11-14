@@ -12,17 +12,17 @@ import { intensityGradeColor, measuredIntensityToGrade } from '../../utils/measu
 import type { WaveMark } from '../SeismoWaveChart/paintWave'
 import type { ViewRange } from './detailView'
 
-/** 階級の境目（計測震度）と、その上の階級の名前。 */
-const GRADE_EDGES: readonly { value: number; label: string }[] = [
-  { value: 0.5, label: '1' },
-  { value: 1.5, label: '2' },
-  { value: 2.5, label: '3' },
-  { value: 3.5, label: '4' },
-  { value: 4.5, label: '5弱' },
-  { value: 5.0, label: '5強' },
-  { value: 5.5, label: '6弱' },
-  { value: 6.0, label: '6強' },
-  { value: 6.5, label: '7' },
+/** 階級の境目（計測震度）と、その上の階級（震度の値。札の字は描くときに辞書から引く）。 */
+const GRADE_EDGES: readonly { value: number; scale: number }[] = [
+  { value: 0.5, scale: 10 },
+  { value: 1.5, scale: 20 },
+  { value: 2.5, scale: 30 },
+  { value: 3.5, scale: 40 },
+  { value: 4.5, scale: 45 },
+  { value: 5.0, scale: 50 },
+  { value: 5.5, scale: 55 },
+  { value: 6.0, scale: 60 },
+  { value: 6.5, scale: 70 },
 ]
 
 const LABEL_FONT_PX = 9
@@ -53,12 +53,14 @@ export function intensityYRange(values: readonly number[]): { min: number; max: 
  * @param range 横の物差し。**波形の段と同じ範囲を渡すこと**（ずれると線と波形の位置が合わない）
  * @param segments 線を切った後の点の並び（→ `seriesSegments`）
  * @param marks 到達の線・最大の線（比は `range` に対するもの）
+ * @param edgeLabel 境目の横線に添える階級の名前（震度の値 → 「震度5弱」。言語に合わせて呼び出し側が組む）
  */
 export function paintIntensitySeries(
   canvas: HTMLCanvasElement,
   range: ViewRange,
   segments: readonly (readonly { atMs: number; value: number }[])[],
   marks: readonly WaveMark[],
+  edgeLabel: (scale: number) => string,
 ): void {
   const ctx = canvas.getContext('2d')
   // **取れなかったことは記録へ残す**（`paintWave.ts` と同じ。黙って戻ると「推移が無い」のと
@@ -99,7 +101,7 @@ export function paintIntensitySeries(
     ctx.stroke()
     ctx.setLineDash([])
     ctx.fillStyle = 'rgba(255,255,255,0.45)'
-    ctx.fillText(`震度${edge.label}`, 2 * dpr, y - dpr)
+    ctx.fillText(edgeLabel(edge.scale), 2 * dpr, y - dpr)
   }
 
   // 線。**区間ごとに、終点の値の階級の色で塗る。**

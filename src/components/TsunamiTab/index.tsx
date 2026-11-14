@@ -1,13 +1,13 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatHypocenterSource, formatMagnitude, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { depthText, formatDateTimeMin, formatNameFromMark, formatTimeMin, hasDepth, magnitudeConditionText, magnitudeText } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
 import { linkTsunamiSources, shownTsunamiSource } from '../../utils/tsunamiSourceLinks'
 import { getGradeStyle, type GradeStyle } from '../../utils/tsunamiGradeStyle'
 import { groupAreasForCardDisplay, splitAreasByKindName, tsunamiLiftedAreas, matchesArea, observationBadgeKeys, observationHeight, observationArrivalUnknown, observationMaxHeightTime, estimationBadgeKeys, estimationHeight, GRADES_IN_CARD_ORDER, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, tideStationKey, arrivalConditionBadge, arrivalConditionKey, type ObsUpdateMark, type ObsUpdateField, type TsunamiValueMarks, type EstimationUpdateField } from '../../utils/tsunami'
 import { TSUNAMI_MISSING_COLOR as MISSING_COLOR } from '../../utils/tsunamiStyle'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
 import { UPDATE_MARK_COLOR, type UpdateMark } from '../../utils/updateMark'
 import { mapChunksToRefs, planFollowScroll, followViewHasRoom, hasFollowContext, type FollowRect, type SpeechFollowSession, type SpeechRef } from '../../utils/ttsFollow'
@@ -207,7 +207,8 @@ function SourceEarthquakeLine({ eq, link }: {
   eq: NonNullable<JMATsunami['sourceEarthquakes']>[number]
   link: React.ReactNode
 }) {
-  const tm = useMessages().tsunami
+  const { tsunami: tm, formats: fw } = useMessages()
+  const place = usePlaceNames()
   const quakeTime = sourceEarthquakeTime(eq)
   // 日時として読めなければ句ごと落とす（→ `formatters.ts` の `readDateTime`）。震源名・規模・
   // 深さが並ぶ行の付随情報なので、「地震発現時刻」の語だけが残るより出さないほうがよい。
@@ -215,24 +216,24 @@ function SourceEarthquakeLine({ eq, link }: {
   // 規模の記号は電文の種別（`Mj7.6`）。地震カードと同じ `formatMagnitude` を通す（2026-10-29 ユーザー承認
   // 「地震カードと同じく出す (Recommended)」「Mj7.6 の形 (Recommended)」）。規模が数値で無いときは気象庁が添えた説明を出す
   // （「Ｍ８を超える巨大地震」）。ここを空にすると、最大級の地震ほど震源名だけの薄い表示になる。
-  const magnitudeText = eq.magnitude !== undefined
-    ? formatMagnitude(eq.magnitude, eq.magnitudeType)
-    : eq.magnitudeCondition ? formatMagnitudeCondition(eq.magnitudeCondition) : null
+  const magnitude = eq.magnitude !== undefined
+    ? magnitudeText(eq.magnitude, eq.magnitudeType, fw)
+    : eq.magnitudeCondition ? magnitudeConditionText(eq.magnitudeCondition, fw) : null
   // 深さ。**遠地地震による津波では、震源の深さがこの電文にしか無い**（対応する地震情報が発表されないことがある）。
   // `0` は「ごく浅い」という有効値なので `hasDepth` で弾く。**値によらず「深さ」を前置する** —— 地震カード・地図・
   // 共有カードもそう出しており、ここだけ省くとアプリの中で表記が割れる。
-  const depthText = eq.depth !== undefined && hasDepth(eq.depth) ? tm.depth(formatDepth(eq.depth, eq.depthAtLeast === true)) : null
+  const depth = eq.depth !== undefined && hasDepth(eq.depth) ? tm.depth(depthText(eq.depth, eq.depthAtLeast === true, fw)) : null
   // 震央地名を大きく、規模と深さを次に大きく（2026-11-04 ユーザー選択「B1 帯は等級だけ (Recommended)」の見本）。
   // 値のかたまりの途中では折り返さず、入らなければかたまりごと次の行へ送る。
   return (
     <div data-source-line="" className="flex flex-wrap items-baseline gap-x-3.5 gap-y-0.5" style={{ marginBottom: 4 }}>
-      <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 4px)' }}>{eq.hypocenterName}</span>
-      {magnitudeText && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{magnitudeText}</span>}
-      {depthText && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{depthText}</span>}
+      <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 4px)' }}>{place('epi', eq.hypocenterName)}</span>
+      {magnitude && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{magnitude}</span>}
+      {depth && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{depth}</span>}
       {/* 地震の時刻は `sourceEarthquakeTime` を通す（**発現時刻を先に採る**）。発生時刻を出すと、
           同じ地震が地震カードと津波カードで 1 分違って見える。理由と実電文で測った数字は
           `docs/spec/tsunami-spec.md` §4 が正。 */}
-      {quakeHm && <span className="text-secondary whitespace-nowrap" style={{ fontSize: 'var(--qk-fs)' }}>{QUAKE_ARRIVAL_TIME_LABEL} {quakeHm}</span>}
+      {quakeHm && <span className="text-secondary whitespace-nowrap" style={{ fontSize: 'var(--qk-fs)' }}>{fw.arrivalTime} {quakeHm}</span>}
       {link}
       {/* 震央補助表現（「御前崎の北東40km付近」）と震源決定機関（「ＰＴＷＣ」等）。
           前者は震央地名より具体的に場所が分かり、後者は誰が決めた値かを示す。
@@ -240,7 +241,7 @@ function SourceEarthquakeLine({ eq, link }: {
           後者は**気象庁以外の機関が決めた震源を採用したときだけ**入る（Ⅱ.13 2-3-2）ので、
           機関名だけでは含意（気象庁の決定ではない）が伝わらない。ラベルに書く。 */}
       {eq.nameFromMark && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatNameFromMark(eq.nameFromMark)}</div>}
-      {eq.source && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatHypocenterSource(eq.source)}</div>}
+      {eq.source && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{fw.hypocenterSource(eq.source)}</div>}
     </div>
   )
 }
@@ -288,6 +289,8 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
   /** 押すと地図がその観測点へ寄る。押せない行は undefined。 */
   onActivate?: () => void
 }) {
+  const spaceSep = useMessages().formats.spaceSep()
+  const place = usePlaceNames()
   return (
     <div
       ref={rowRef}
@@ -301,7 +304,7 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
     >
       <div className="min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={nameWeight === 'bold' ? 'font-bold' : 'font-semibold'} style={{ fontSize: 'var(--qk-f)', color: nameColor }}>{name}</span>
+          <span className={nameWeight === 'bold' ? 'font-bold' : 'font-semibold'} style={{ fontSize: 'var(--qk-f)', color: nameColor }}>{place('tsunamiStation', name)}</span>
           {chips}
         </div>
         {timeParts.length > 0 && (
@@ -310,7 +313,7 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
               // **区切りの空白は色を当てる範囲の外に置く。** 中へ入れると、動いた項目の
               // 手前の空白まで塗られて色の帯が項目からずれる。値の途中では折り返さない。
               <Fragment key={pi}>
-                {pi > 0 ? '　' : ''}
+                {pi > 0 ? spaceSep : ''}
                 <span className="whitespace-nowrap" style={part.color ? { color: part.color, fontWeight: 600 } : undefined}>{part.text}</span>
               </Fragment>
             ))}
@@ -329,7 +332,10 @@ function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, hei
   )
 }
 
-/** 観測点の札（実測・欠測・到達確認など。語は `observationBadges` が決める）。 */
+/**
+ * 観測点の札（実測・欠測・到達確認など。語は `observationBadges` が決める）。
+ * 札が列の幅より長いとき（英語などの長い語）は札の中で折り返す。折り返さないと右の波高の列に重なる。
+ */
 function ObservationChips({ obs, tint }: { obs: TsunamiObservation; tint: { bg: string; fg: string } }) {
   const tm = useMessages().tsunami
   return (
@@ -337,7 +343,7 @@ function ObservationChips({ obs, tint }: { obs: TsunamiObservation; tint: { bg: 
       {observationBadgeKeys(obs).map(key => (
         <span
           key={key}
-          className="font-bold px-1.5 rounded-[3px] whitespace-nowrap"
+          className="font-bold px-1.5 rounded-[3px] max-w-full"
           style={{ fontSize: 'var(--qk-fs)', ...(key === 'missing'
             ? { background: `${MISSING_COLOR}26`, color: MISSING_COLOR }
             : { background: tint.bg, color: tint.fg }) }}
@@ -363,6 +369,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
   // 延べ 3,874 区域＝到達状況のある 5,288 区域の約 7 割がこの形）。以前は実測行で代わると見て出さず、語を本文へ
   // 戻していた。
   const tm = useMessages().tsunami
+  const place = usePlaceNames()
   const arrivalBadgeLabel = arrivalConditionLabel(area.firstHeight?.condition, tm)
   // 時刻が日時として読めないときは、時刻そのものが無い電文と同じ扱いにする（「到達予想 」とラベルだけ残さない）。
   const areaArrivalHm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
@@ -444,7 +451,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
               },
             } : {})}
           >
-            {area.name}
+            {place('tsunamiArea', area.name)}
           </span>
           {arrivalText && (
             <span className="block mt-0.5" style={{ fontSize: 'var(--qk-fs)', color: style.arrivalColor }}>
@@ -608,7 +615,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
  * 画面が示せない状態になる。
  */
 function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerSpeechRow, obsUpdateStatus }: { obs: TsunamiObservation; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: ReadonlyMap<string, ObsUpdateMark> }) {
-  const tm = useMessages().tsunami
+  const { tsunami: tm, formats } = useMessages()
   const clickable = !!onObservationClick && canFocusObs(obs.name)
   // 日時として読めない到達時刻は、時刻が無い電文と同じ落とし先（下の fallback 群）へ回す。
   const arrivalHm = obs.arrivalTime ? formatTimeMin(obs.arrivalTime) : null
@@ -627,7 +634,7 @@ function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerS
     { text: maxHeightTimeText, color: fieldColor('maxHeightTime') },
     // 特殊観測機器（「ＧＮＳＳ波浪計」「水圧計」）。沖合の観測点だけが持つ。電文の語をそのまま出す ——
     // 言い換えると、どちらの計器が測った値か分からなくなる。**括弧で括る** —— 素で並べると地名や別の値と読める。
-    { text: obs.sensor ? `（${obs.sensor}）` : '' },
+    { text: obs.sensor ? formats.paren(obs.sensor).trimStart() : '' },
   ].filter(p => p.text)
   const heightText = observationHeightLabel(obs, tm)
   return (
@@ -773,6 +780,7 @@ function TsunamiCancelledCard({ areas, observations, onObservationClick, canFocu
  */
 function TsunamiCancelledRow({ area, style, onAreaFocus, isChanged, isTop, registerRow, registerSpeechRow }: { area: TsunamiArea; style: GradeStyle; onAreaFocus?: (name: string) => (() => void) | undefined; isChanged: boolean; isTop: boolean; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void }) {
   const tm = useMessages().tsunami
+  const place = usePlaceNames()
   // **解除された区域名も押すと地図が寄る**（2026-10-21 ユーザー選択「押すと寄る (Recommended)」。海岸線は描かず
   // 場所だけ寄せる —— 地図は解除された区域の海岸線を描かない）。押せるのは境界を引ける区域だけ（等級カードの行と同じ）。
   const areaFocus = onAreaFocus?.(area.name)
@@ -796,7 +804,7 @@ function TsunamiCancelledRow({ area, style, onAreaFocus, isChanged, isTop, regis
               },
             } : {})}
           >
-            {area.name}
+            {place('tsunamiArea', area.name)}
           </span>
           {/* 等級の呼び名は読み上げと共有する（`TSUNAMI_GRADE_NAME`）。**前回の等級を読めない区域は「解除」とだけ
               出す**（2026-10-21 ユーザー選択「「解除」とだけ出す」。全期間 19,906 区域で 0 件）。 */}
@@ -854,7 +862,8 @@ function TsunamiCommentBody({ endText, bodyText, comments, freeText, borderColor
 }
 
 export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEarthquakeLink, onObservationClick, onFocusMap, focusedDistrict, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, speechSession, speakingTelegramText, isVisible, speechFollowEnabled, autoShowTick }: Props) {
-  const tm = useMessages().tsunami
+  const { tsunami: tm, formats: fw } = useMessages()
+  const spaceSep = fw.spaceSep()
   // 行をクリックできるかは「地図がその観測点へ寄れるか」で決める。
   //
   // 座標表（`tsunami-obs-coords.json`）に無い観測点は地図に印が出ず、`FocusObsGL` も寄せ先を
@@ -1629,7 +1638,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 // 語は「失効」の 2 文字（気象庁の要素名は「失効時刻」。読み上げは「失効時刻」と言う → `utils/ttsText.ts`）。
                 expiryText && tm.expires(expiryText),
               ].filter((s): s is string => !!s).map((s, i) => (
-                <Fragment key={s}>{i > 0 && '　'}<span className="whitespace-nowrap">{s}</span></Fragment>
+                <Fragment key={s}>{i > 0 && spaceSep}<span className="whitespace-nowrap">{s}</span></Fragment>
               ))}
             </div>
           )}
@@ -1739,7 +1748,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
           {(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && (
             <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)', padding: '6px 12px 8px' }}>
               {[active[0].infoName, ...officeLabels(active[0].issue, tm)].filter((s): s is string => !!s).map((s, i) => (
-                <Fragment key={s}>{i > 0 && '　'}<span className="whitespace-nowrap">{s}</span></Fragment>
+                <Fragment key={s}>{i > 0 && spaceSep}<span className="whitespace-nowrap">{s}</span></Fragment>
               ))}
             </div>
           )}
@@ -1882,6 +1891,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
  */
 function EstimationRow({ est, mark }: { est: TsunamiEstimation; mark: UpdateMark<EstimationUpdateField> | undefined }) {
   const tm = useMessages().tsunami
+  const place = usePlaceNames()
   const heightInfo = estimationHeight(est)
   const heightText = heightInfo === null ? '' : heightInfo.kind === 'height' ? tm.height(heightInfo.description, false) : tm.estimating
   const markColor = mark ? UPDATE_MARK_COLOR[mark.status] : undefined
@@ -1895,7 +1905,7 @@ function EstimationRow({ est, mark }: { est: TsunamiEstimation; mark: UpdateMark
       style={{ borderLeft: `3px solid ${markColor ?? 'transparent'}` }}>
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2 flex-wrap min-w-0">
-          <span className="text-white text-[0.9375rem] truncate">{est.name}</span>
+          <span className="text-white text-[0.9375rem] truncate">{place('tsunamiArea', est.name)}</span>
           {estimationBadgeKeys(est).map(key => (
             <span key={key} className="text-xs font-bold px-1.5 py-0.5 rounded-sm"
               style={{ background: 'rgba(29,78,216,0.3)', color: '#93c5fd' }}>

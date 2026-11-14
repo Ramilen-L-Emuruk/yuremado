@@ -11,6 +11,7 @@ import type { TelegramLogEntry, TelegramOrigin } from '../types/earthquake'
 import { telegramKindOfHeadType, telegramKindOfPayload } from './dmdataTelegramPayload'
 import { serverDate } from '../utils/clock'
 import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
+import { bodyNoteFields, type TelegramBodyNote } from '../utils/telegramBodyNote'
 
 /**
  * 行の識別子に添える通し番号。
@@ -33,8 +34,13 @@ export interface ReplayLogEntryInput {
    * **任意（`?`）にしない。** 経路を足したときに渡し忘れると、その経路の行だけ見出しが黙って欠ける。
    */
   rawHead: unknown
-  /** 画面と書き出しに出す本文。XML はそのまま、二進電文は要約の文字列。 */
+  /** 画面と書き出しに出す本文。XML はそのまま。二進電文は `bodyNote` を渡し、ここは `null` にする */
   rawBody: unknown
+  /**
+   * 二進電文の、本文の代わりに置く要約の鍵と値（→ `utils/telegramBodyNote.ts`）。渡すと行の `rawBody` はその日本語の文になる。
+   * 二進電文でなければ `null`。**任意（`?`）にしない**（経路を足したときに渡し忘れると、その経路の行だけ画面の言語に合わない）
+   */
+  bodyNote: TelegramBodyNote | null
   /**
    * 二進電文（推計震度分布図）の、断片を結合した元の電文。ダウンロードはこれを落とす
    * （2026-11-04 ユーザー選択「残して落とせる (Recommended)」）。二進でない電文と、結合待ちの断片は `null`。
@@ -56,7 +62,9 @@ export interface ReplayLogEntryInput {
 
 /** 電文ログの行を 1 つ組む（リプレイ・テストボタン用）。 */
 export function makeReplayLogEntry(input: ReplayLogEntryInput): TelegramLogEntry {
-  const { headType, origin, rawHead, rawBody, rawBytes, payload, errorMessage, isTest } = input
+  const { headType, origin, rawHead, rawBytes, payload, errorMessage, isTest } = input
+  const noted = input.bodyNote !== null ? bodyNoteFields(input.bodyNote) : null
+  const rawBody = noted !== null ? noted.rawBody : input.rawBody
   const status: TelegramLogEntry['status'] = payload ? 'parsed' : errorMessage !== null ? 'error' : 'filtered'
   return {
     id: `${Date.now()}-${seq++}`,
@@ -77,6 +85,7 @@ export function makeReplayLogEntry(input: ReplayLogEntryInput): TelegramLogEntry
     kind: payload ? telegramKindOfPayload(payload) : telegramKindOfHeadType(headType),
     rawHead,
     rawBody,
+    ...(noted !== null ? { bodyNote: noted.bodyNote } : {}),
     ...(rawBytes !== null ? { rawBytes } : {}),
     ...(errorMessage !== null && !payload ? { errorMessage } : {}),
   }

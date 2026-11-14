@@ -21,6 +21,8 @@ import {
 } from './useAlertTitle'
 import { isTsunamiForecastOnly, findEndedTsunami } from '../utils/tsunami'
 import type { EEWAlert, JMATsunami, TsunamiGrade } from '../types/earthquake'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
 
 function makeEEW(): EEWAlert {
   return {
@@ -230,21 +232,25 @@ describe('津波が終わったときのタイトル', () => {
 
 describe('resolveAlertTitle（発表中の名乗り）', () => {
   it('予報だけなら「津波予報 発表中」', () => {
-    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, true)).toBe('津波予報 発表中')
+    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, true, ja)).toBe('津波予報 発表中')
   })
   it('警報・注意報があれば「津波警報・注意報 発表中」', () => {
-    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, false)).toBe('津波警報・注意報 発表中')
+    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, false, ja)).toBe('津波警報・注意報 発表中')
   })
-  // App が描くときの組み合わせ（`resolveAlertTitle(title.alertTitle, isTsunamiForecastOnly(tsunamis))`）
+  // App が描くときの組み合わせ（`resolveAlertTitle(title.alertTitle, isTsunamiForecastOnly(tsunamis), messages)`）
   it('描く時点の津波から名乗りを決める（予報だけ → 予報、注意報が混じる → 警報・注意報）', () => {
-    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, isTsunamiForecastOnly([makeTsunami(['Forecast'])])))
+    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, isTsunamiForecastOnly([makeTsunami(['Forecast'])]), ja))
       .toBe('津波予報 発表中')
-    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, isTsunamiForecastOnly([makeTsunami(['Forecast', 'Watch'])])))
+    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, isTsunamiForecastOnly([makeTsunami(['Forecast', 'Watch'])]), ja))
       .toBe('津波警報・注意報 発表中')
   })
   it('文字列と null はそのまま返す', () => {
-    expect(resolveAlertTitle('津波予報 失効', true)).toBe('津波予報 失効')
-    expect(resolveAlertTitle(null, true)).toBeNull()
+    expect(resolveAlertTitle('津波予報 失効', true, ja)).toBe('津波予報 失効')
+    expect(resolveAlertTitle(null, true, ja)).toBeNull()
+  })
+  it('英語の辞書なら英語で名乗る', () => {
+    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, true, en)).toBe('Tsunami forecast in effect')
+    expect(resolveAlertTitle(TSUNAMI_ACTIVE_TITLE, false, en)).toBe('Tsunami warnings in effect')
   })
 })
 

@@ -3,13 +3,16 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE } from '../../utils/lpgm'
-import { getIntensityLabel } from '../../utils/intensity'
+import { getLpgmClassColor, lpgmClassLabel, getLpgmClassRadius, lpgmPeriodRows, lpgmPeriodSeconds } from '../../utils/lpgm'
+import { intensityLabel } from '../../utils/intensity'
 import type { LpgmMarker } from '../../hooks/useQuakeLayerData'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
-import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
+import { withNonJmaMark } from '../../utils/formatters'
 import { ensureLpgmIcons, lpgmIconId, LPGM_ICON_BASE_RADIUS } from './gl/lpgmIcons'
 
 // 長周期地震動観測点を階級ラベル付き四角バッジで描画する MapLibre 版。
@@ -65,16 +68,16 @@ function buildFC(markers: LpgmMarker[], iconScale: number): FeatureCollection<Po
  * **気象庁以外が運用する観測点には `＊` を付ける**（→ `withNonJmaMark`）。ホバーと
  * クリックの両方がこれを通るので、同じ観測点が場所によって違う名前で出ることはない。
  */
-export function lpgmPointPopupTitle(f: MapGeoJSONFeature): string {
-  return withNonJmaMark(String(f.properties?.name ?? ''), Boolean(f.properties?.nonJma))
+export function lpgmPointPopupTitle(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  return withNonJmaMark(place('station', String(f.properties?.name ?? '')), Boolean(f.properties?.nonJma))
 }
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+function hoverHtml(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
-    `<span style="font-weight:600">${escapeHtml(lpgmPointPopupTitle(f))}</span></div>`
+    `<span style="font-weight:600">${escapeHtml(lpgmPointPopupTitle(f, place))}</span></div>`
   )
 }
 
@@ -85,7 +88,7 @@ function hoverHtml(f: MapGeoJSONFeature): string {
  * 階級 0 の帯も出す —— 0 は「その周期帯では該当なし」で、落とすと
  * 「短い周期だけ強く出た」形が「短い周期しか観測していない」ように見える。
  */
-export function lpgmPeriodsHtml(json: string): string {
+export function lpgmPeriodsHtml(json: string, m: Messages): string {
   if (!json) return ''
   let bands: { band: number; lgInt?: number; sva?: number }[]
   try {
@@ -95,7 +98,12 @@ export function lpgmPeriodsHtml(json: string): string {
   }
   if (!Array.isArray(bands) || bands.length === 0) return ''
   // 行の中身はカードの観測点の行と共有する（→ `lpgmPeriodRows`）。
-  const rows = lpgmPeriodRows(bands).map(r => {
+  // 周期の名前・見出し・読み方はカードと同じ辞書の語（`quake`）で組む。
+  const periodLabel = (band: number) => {
+    const sec = lpgmPeriodSeconds(band)
+    return sec === null ? m.quake.lpgmPeriodUnknown : m.quake.lpgmPeriod(sec)
+  }
+  const rows = lpgmPeriodRows(bands, periodLabel).map(r => {
     const chip = r.lgInt !== null
       ? badgeHtml(String(r.lgInt), getLpgmClassColor(r.lgInt))
       : `<span style="display:inline-block;width:16px;text-align:center;color:#64748b">−</span>`
@@ -111,15 +119,15 @@ export function lpgmPeriodsHtml(json: string): string {
   // 数字は残したうえで、読み方を一行添える。
   return (
     `<div style="margin-top:8px;border-top:1px solid #334155;padding-top:6px">` +
-    `<div style="font-size:10px;color:#94a3b8;margin-bottom:2px">${escapeHtml(LPGM_PERIODS_HEADING)}</div>` +
+    `<div style="font-size:10px;color:#94a3b8;margin-bottom:2px">${escapeHtml(m.quake.lpgmPeriodsHeading)}</div>` +
     `<div style="font-size:11px">${rows}</div>` +
-    `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${escapeHtml(LPGM_PERIODS_NOTE)}</div></div>`
+    `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${escapeHtml(m.quake.lpgmPeriodsNote)}</div></div>`
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
-  const pref = String(f.properties?.pref ?? '')
+  const pref = place('pref', String(f.properties?.pref ?? ''))
   const int = Number(f.properties?.int ?? -1)
   const sva = Number(f.properties?.sva ?? -1)
   // 気象庁以外が運用する観測点。震度側の吹き出しと同じ扱い（→ `withNonJmaMark`）。
@@ -127,24 +135,24 @@ function clickHtml(f: MapGeoJSONFeature): string {
   return (
     `<div style="min-width:170px">` +
     `<div style="font-weight:700;font-size:13px"` +
-      (nonJma ? ` title="${escapeHtml(NON_JMA_MARK_TITLE)}"` : '') +
-      `>${escapeHtml(lpgmPointPopupTitle(f))}</div>` +
+      (nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
+      `>${escapeHtml(lpgmPointPopupTitle(f, place))}</div>` +
     (pref ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(pref)}</div>` : '') +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
-    `<span style="color:#cbd5e1">長周期地震動${escapeHtml(getLpgmClassLabel(lgInt))}</span></div>` +
+    `<span style="color:#cbd5e1">${m.map.popup.lpgm(escapeHtml(lpgmClassLabel(lgInt, m.formats)))}</span></div>` +
     // **震度も併せて出す。** 震度は小さいのに階級が高い観測点があることが長周期地震動の
     // 要点で、片方だけ出すとその差が見えない。
     (int >= 0
-      ? `<div style="margin-top:4px;font-size:12px;color:#cbd5e1">震度 ${escapeHtml(getIntensityLabel(int))}</div>`
+      ? `<div style="margin-top:4px;font-size:12px;color:#cbd5e1">${m.map.popup.intensity(escapeHtml(intensityLabel(int, m.formats)))}</div>`
       : '') +
     // 絶対速度応答スペクトルの最大値。語をそのまま出しても伝わらないので、
     // 「揺れの大きさ」と書いて単位を添える（値は電文のまま）。
     (sva >= 0
-      ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">揺れの大きさ 最大 ${escapeHtml(sva.toFixed(1))} cm/s</div>`
+      ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${m.map.popup.maxShaking(escapeHtml(sva.toFixed(1)))}</div>`
       : '') +
-    lpgmPeriodsHtml(String(f.properties?.periodsJson ?? '')) +
-    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
+    lpgmPeriodsHtml(String(f.properties?.periodsJson ?? ''), m) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
     `</div>`
   )
 }
@@ -153,6 +161,8 @@ export function LpgmPointsGL({ markers, iconScale, visible }: Props) {
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -178,8 +188,8 @@ export function LpgmPointsGL({ markers, iconScale, visible }: Props) {
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'lgInt',
-      buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildHoverHtml: (f) => hoverHtml(f, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

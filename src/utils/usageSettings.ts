@@ -29,8 +29,7 @@ export type UsageSettingRule =
 /** 管理の画面の節。並びは設定の窓の節の順 */
 export const USAGE_SETTING_GROUPS = {
   connection: '接続',
-  notification: 'ブラウザ通知',
-  push: 'プッシュ通知',
+  notification: '通知',
   sound: '音と読み上げ',
   timeSignal: '時報',
   voicevox: 'VOICEVOX',
@@ -117,9 +116,9 @@ export const USAGE_TOP_LEVEL_SPECS = {
   dmdataApiKey: present('connection', 'APIキー'),
   forecastKey: present('connection', '予報キー'),
   dmdataTestDelivery: bool('connection', '試験報を受信（検証用）', false),
-  // ブラウザ通知
+  // 通知
   notifyEnabled: bool('notification', '通知を表示', true),
-  notifyQuietWhileOpen: bool('notification', 'アプリを開いている間は通知しない', false),
+  notifyQuietWhileOpen: bool('notification', 'アプリを開いている間は通知しない', true),
   notifyQuake: bool('notification', '地震情報の通知', true),
   notifyMinScale: choice('notification', '通知する最低震度', INTENSITY_SCALES, 30),
   notifyDetection: bool('notification', '揺れ検知通知', false),
@@ -129,7 +128,6 @@ export const USAGE_TOP_LEVEL_SPECS = {
   notifyNankaiRoutine: bool('notification', '定例の解説情報の通知', false),
   notifyQuakeNotice: bool('notification', 'お知らせの通知', false),
   notifyPrefectures: { group: 'notification', label: '通知する地域（選んだ都道府県の数。0 は全国）', rule: { kind: 'count', max: 47 }, default: '0' },
-  pushNotifyEnabled: bool('push', 'プッシュ通知', false),
   // 音と読み上げ
   soundEnabled: bool('sound', '通知音', true),
   soundVolume: num('sound', '音量', 0, 1, 1),
@@ -166,6 +164,8 @@ export const USAGE_TOP_LEVEL_SPECS = {
   timeSignalVolume: num('timeSignal', '時報の音量（null は通知音と同じ）', 0, 1, null, true),
   timeSignalSpeakerId: num('timeSignal', '時報の声（null は読み上げと同じ）', 0, 100000, null, true),
   // 表示設定
+  // 値の並びは i18n/messages.ts の LOCALE_SETTINGS と同じ（このファイルは中継へ写すので import しない。食い違いは usageSettings.test.ts が落とす）
+  locale: choice('display', '言語', ['auto', 'ja', 'en', 'zh-Hans', 'zh-Hant', 'ko', 'pt-BR', 'es'], 'auto'),
   uiScale: num('display', 'UI 倍率', 0.5, 3, 1),
   mapIconScale: num('display', '地図アイコンの倍率', 0.5, 3, 1),
   hypocenterDepthScale: num('display', '震源の深さの強調', 1, 20, 1),
@@ -246,6 +246,48 @@ export const USAGE_SETTING_SPECS: Readonly<Record<string, UsageSettingSpec>> = {
 
 /** 送る項目の数（中継が 1 回に書ける件数の上限 250 と比べる） */
 export const USAGE_SETTING_COUNT = Object.keys(USAGE_SETTING_SPECS).length
+
+/**
+ * 外した設定の項目名。前の版のアプリはまだ送ってくるので、中継は記録せず、知らない名前としても数えずに捨てる
+ * （2026-11-13 ユーザー選択「取り下げた項目として黙って捨てる (Recommended)」）。仕様の一覧（USAGE_SETTING_SPECS）と重ねない
+ */
+export const USAGE_RETIRED_SETTINGS: readonly string[] = [
+  // 通知の設定へまとめて外した（プッシュ通知は「通知を表示」と通知の許可で決まる）
+  'pushNotifyEnabled',
+]
+
+/**
+ * 既定が変わった項目の、変わる前の既定。`throughVersion` の版まで（その版を含む）は `value` が既定だった。
+ * 管理の画面が「既定から変えた人」を、記録した端末の版の既定で数えるのに使う（2026-11-13 ユーザー選択「記録の版ごとの既定で比べる (Recommended)」）。
+ * 古い順に並べる
+ */
+export const USAGE_DEFAULT_HISTORY: Readonly<Record<string, readonly { readonly throughVersion: string; readonly value: string }[]>> = {
+  // 既定を切から入へ変えた（6.15.0 までの版は切）
+  notifyQuietWhileOpen: [{ throughVersion: '6.15.0', value: '0' }],
+}
+
+/** 版の文字列（`6.15.0`）を比べる。a が古ければ負、同じなら 0、新しければ正。読めない版は 0（比べない） */
+function compareVersion(a: string, b: string): number {
+  const pa = /^(\d+)\.(\d+)\.(\d+)$/.exec(a)
+  const pb = /^(\d+)\.(\d+)\.(\d+)$/.exec(b)
+  if (!pa || !pb) return 0
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(pa[i]) - Number(pb[i])
+    if (d !== 0) return d
+  }
+  return 0
+}
+
+/** その版のアプリでの、項目の既定。版が読めない（空・形が違う）ときは今の既定 */
+export function usageDefaultAt(name: string, version: string): string | undefined {
+  const spec = USAGE_SETTING_SPECS[name]
+  if (!spec) return undefined
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return spec.default
+  for (const h of USAGE_DEFAULT_HISTORY[name] ?? []) {
+    if (compareVersion(version, h.throughVersion) <= 0) return h.value
+  }
+  return spec.default
+}
 
 /** 小数を 3 桁に丸めて文字列にする（`0.1 + 0.2` のような端数で値が割れないように） */
 function numberText(v: number): string {

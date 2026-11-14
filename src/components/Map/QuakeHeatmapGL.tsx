@@ -3,12 +3,15 @@ import type { ExpressionSpecification, GeoJSONSource, MapGeoJSONFeature } from '
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
 import { heatMagnitudeColorValue, heatMagnitudeLabel, heatMagnitudeRank, type HeatPoint } from '../../utils/quakeHeatmap'
-import { formatDepth, formatDateTimeMin } from '../../utils/formatters'
+import { depthText, formatDateTimeMin } from '../../utils/formatters'
 import { getMagnitudeColor } from '../../utils/intensity'
 import { heatmapColorExpression } from './gl/heatmapRamp'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // 地震活動ヒートマップを描画する MapLibre 版（Leaflet 版 QuakeHeatmapLayer 相当）。期間は凡例で選ぶ（`useQuakeHeatmap`）。
 // Leaflet は leaflet.heat（Canvas）だったが、MapLibre はネイティブの heatmap レイヤーで描く。
@@ -137,9 +140,9 @@ function buildFC(points: readonly HeatPoint[]): FeatureCollection<Point> {
 }
 
 /** 震源地名。DMDSS の GD Earthquake List は名前を返さないことがある。 */
-function titleOf(f: MapGeoJSONFeature): string {
+function titleOf(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const name = String(f.properties?.name ?? '').trim()
-  return name || '震源地不明'
+  return name ? place('epi', name) : m.map.popup.epicenterUnknown
 }
 
 /** 地物から読んだ規模の説明。地図の地物は `null` の欄を落とすことがあるので、文字列以外は「なし」。 */
@@ -149,10 +152,10 @@ function conditionOf(f: MapGeoJSONFeature): string | null {
 }
 
 /** 規模の札（「M3.2」「M8を超える巨大地震」「不明」）。中身の決め方は quakeHeatmap.ts。 */
-function magnitudeBadge(f: MapGeoJSONFeature): string {
-  const m = Number(f.properties?.magnitude ?? -1)
+function magnitudeBadge(f: MapGeoJSONFeature, m: Messages): string {
+  const mag = Number(f.properties?.magnitude ?? -1)
   const c = conditionOf(f)
-  return badgeHtml(heatMagnitudeLabel(m, c), getMagnitudeColor(heatMagnitudeColorValue(m, c)))
+  return badgeHtml(heatMagnitudeLabel(mag, c, m.formats), getMagnitudeColor(heatMagnitudeColorValue(mag, c)))
 }
 
 /** 格子にまとめた点（`gridHeatPoints`）なら、まとめた地震の数。1 つの地震の点なら `null`。 */
@@ -162,50 +165,50 @@ function groupCountOf(f: MapGeoJSONFeature): number | null {
 }
 
 // 格子にまとめた点の吹き出し（2026-10-25 ユーザー選択「A 件数・最大・最新 (Recommended)」）。
-function groupHoverHtml(f: MapGeoJSONFeature, count: number): string {
+function groupHoverHtml(f: MapGeoJSONFeature, count: number, m: Messages): string {
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${magnitudeBadge(f)}` +
-    `<span style="font-weight:600">この付近 ${count.toLocaleString('ja-JP')} 件</span></div>`
+    `${magnitudeBadge(f, m)}` +
+    `<span style="font-weight:600">${m.map.popup.nearbyCount(count)}</span></div>`
   )
 }
 
-function groupClickHtml(f: MapGeoJSONFeature, count: number): string {
+function groupClickHtml(f: MapGeoJSONFeature, count: number, m: Messages): string {
   const time = String(f.properties?.time ?? '')
   const timeText = time ? formatDateTimeMin(time) : null
   return (
     `<div style="min-width:160px">` +
-    `<div style="font-weight:700;font-size:13px">この付近の地震 ${count.toLocaleString('ja-JP')} 件</div>` +
+    `<div style="font-weight:700;font-size:13px">${m.map.popup.nearbyTitle(count)}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-    `<span style="color:#cbd5e1">最大</span>${magnitudeBadge(f)}</div>` +
-    (timeText ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">最新 ${escapeHtml(timeText)}</div>` : '') +
+    `<span style="color:#cbd5e1">${m.map.popup.largest}</span>${magnitudeBadge(f, m)}</div>` +
+    (timeText ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${m.map.popup.latest(escapeHtml(timeText))}</div>` : '') +
     `</div>`
   )
 }
 
-export function hoverHtml(f: MapGeoJSONFeature): string {
+export function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const count = groupCountOf(f)
-  if (count !== null) return groupHoverHtml(f, count)
+  if (count !== null) return groupHoverHtml(f, count, m)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${magnitudeBadge(f)}` +
-    `<span style="font-weight:600">${escapeHtml(titleOf(f))}</span></div>`
+    `${magnitudeBadge(f, m)}` +
+    `<span style="font-weight:600">${escapeHtml(titleOf(f, m, place))}</span></div>`
   )
 }
 
-export function clickHtml(f: MapGeoJSONFeature): string {
+export function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const count = groupCountOf(f)
-  if (count !== null) return groupClickHtml(f, count)
+  if (count !== null) return groupClickHtml(f, count, m)
   const depth = Number(f.properties?.depth ?? -1)
   const time = String(f.properties?.time ?? '')
   // 日時として読めなければ行ごと落とす（時刻が無い点と同じ扱い）。
   const timeText = time ? formatDateTimeMin(time) : null
   return (
     `<div style="min-width:160px">` +
-    `<div style="font-weight:700;font-size:13px">${escapeHtml(titleOf(f))}</div>` +
+    `<div style="font-weight:700;font-size:13px">${escapeHtml(titleOf(f, m, place))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-    `${magnitudeBadge(f)}` +
-    `<span style="color:#cbd5e1">深さ ${escapeHtml(formatDepth(depth, f.properties?.depthAtLeast === true))}</span></div>` +
+    `${magnitudeBadge(f, m)}` +
+    `<span style="color:#cbd5e1">${m.map.popup.depth(escapeHtml(depthText(depth, f.properties?.depthAtLeast === true, m.formats)))}</span></div>` +
     (timeText ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${escapeHtml(timeText)}</div>` : '') +
     `</div>`
   )
@@ -215,6 +218,8 @@ export function QuakeHeatmapGL({ points, iconScale, intensityScale, visible }: P
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
   // レイヤー構築は [map] 依存のため、構築時は ref 経由で最新の倍率を読む
   // （クロージャが握った初期値のままだと、構築前に倍率を変えた場合に旧値で組まれる）。
   const iconScaleRef = useRef(iconScale)
@@ -276,8 +281,8 @@ export function QuakeHeatmapGL({ points, iconScale, intensityScale, visible }: P
       priority: 'heat',
       tolPx: HIT_TOL_PX,
       rankKey: 'rank',
-      buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

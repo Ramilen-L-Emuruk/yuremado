@@ -1,6 +1,6 @@
 // 気象庁が書いた文の内訳が、設定の窓に全部出ること。
 //
-// ラベルの対応表（`TELEGRAM_TEXT_BLOCK_LABELS`）は `Record<TelegramTextBlockKey, string>` なので
+// ラベルの対応表（辞書の `settings.textBlocks.labels`）は `Record<TelegramTextBlockKey, string>` なので
 // 書き忘れると型検査が止める。**しかしグループ分け（`TELEGRAM_TEXT_BLOCK_GROUPS`）は配列なので
 // 型では守れない** —— ここから漏れたキーは画面に出ず、既定のまま二度と触れなくなる。
 //
@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { TELEGRAM_TEXT_BLOCK_KEYS } from '../../utils/ttsText'
+import { ja } from '../../i18n/messages/ja'
 
 const source = readFileSync('src/components/SettingsTab/index.tsx', 'utf8')
 
@@ -32,8 +33,8 @@ describe('設定の窓に出す「気象庁が書いた文」の内訳', () => {
 
   // 安全弁: ラベルも全キーぶんある（型で守られているが、対応表を配列へ変えたときに気付けるように）
   it('全ブロックに表示名がある', () => {
-    const labels = blockOf('TELEGRAM_TEXT_BLOCK_LABELS')
-    const missing = TELEGRAM_TEXT_BLOCK_KEYS.filter(key => !labels.includes(`${key}:`))
+    const labels: Record<string, string> = ja.settings.textBlocks.labels
+    const missing = TELEGRAM_TEXT_BLOCK_KEYS.filter(key => !labels[key])
     expect(missing, `表示名が無いブロック: ${missing.join(', ')}`).toEqual([])
   })
 

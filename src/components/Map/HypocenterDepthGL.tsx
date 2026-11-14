@@ -4,16 +4,19 @@ import { useMapGL } from './mapGLContext'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPointLayer } from './gl/depthPointLayer'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { getIntensityColor, getIntensityLabelWithOrAbove } from '../../utils/intensity'
+import { getIntensityColor, intensityLabelWithOrAbove } from '../../utils/intensity'
 import { readableTextColor } from '../../utils/contrast'
-import { formatMagnitudeWithCondition, formatDepth, hasDepth } from '../../utils/formatters'
+import { magnitudeWithConditionText, depthText, hasDepth } from '../../utils/formatters'
 import { log } from '../../utils/logger'
-import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 import type { JMAQuake } from '../../types/earthquake'
 import type { PrefIntensity } from '../../hooks/useQuakeLayerData'
 import { UNRECEIVED_COLOR } from './gl/intensityIcons'
 import { popupCodeHtml } from './gl/popupHtml'
 import type { LatLng } from '../../utils/stationCoords'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // 地震モードの震源（× 印）を、**深さを持つ点**として地下へ描く。
 //
@@ -27,7 +30,7 @@ import type { LatLng } from '../../utils/stationCoords'
 
 const LYR = 'hypocenter-depth'
 /** 不調を知らせるときに画面へ出す名前（`utils/renderHealth.ts`）。 */
-const LABEL = '地震の震源'
+const LABEL: MapLayerName = 'quakeHypocenters'
 
 // 旧 EpicenterGL の SVG（× 印）と同じ色・大きさ。
 const CROSS_COLOR: readonly [number, number, number] = [255 / 255, 34 / 255, 34 / 255]
@@ -58,7 +61,7 @@ const POPUP_PREF_LIMIT = 6
  * export はテスト向け（実行時はこのファイルの中からしか呼ばない）。**「未入電あり」の印が
  * 出るかは画面でしか分からない** —— 深さ方向に描く点なので、クリックで開くのが難しい。
  */
-export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]): string {
+export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[], m: Messages, place: PlaceNameLookup): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const hc = quake.earthquake.hypocenter
   const omitted = prefIntensities.length - POPUP_PREF_LIMIT
@@ -68,12 +71,12 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
       // 観測値が 1 件も無い県は、震度階級色を借りずに無彩色で出し、語も断定形にしない
       // （→ docs/spec/quake-spec.md §4）。地図の未入電の印と同じ色・同じ語。
       const color = unreceived ? UNRECEIVED_COLOR : getIntensityColor(scale)
-      const label = getIntensityLabelWithOrAbove(scale, unreceived)
+      const label = intensityLabelWithOrAbove(scale, unreceived, m.formats)
       // **観測できた県にも「未入電あり」を出す。** 値そのものは確かでも、その県にはもっと強い
       // 地点があるかもしれない。カードの行と同じ語・同じ条件にする（聞いた語・見た語で探せる）。
       // 値が推定の県（`unreceived`）には重ねない —— 「5弱以上」が既にそれを言っている。
       const mark = hasUnreceived
-        ? `<span style="font-size:10px;font-weight:700;color:${UNRECEIVED_COLOR}">未入電あり</span>`
+        ? `<span style="font-size:10px;font-weight:700;color:${UNRECEIVED_COLOR}">${m.map.popup.someUnreceived}</span>`
         : ''
       return (
         `<div style="display:flex;align-items:center;gap:8px;font-size:12px">` +
@@ -81,20 +84,23 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
         // （観測値の 1 文字ラベルの見え方は従来どおり）。
         `<span style="display:inline-block;min-width:20px;padding:0 3px;text-align:center;font-weight:700;border-radius:3px;` +
         `color:${readableTextColor(color)};font-size:10px;background:${color}">${esc(label)}</span>` +
-        `<span style="color:#cbd5e1">${esc(pref)}</span>${mark}</div>`
+        `<span style="color:#cbd5e1">${esc(place('pref', pref))}</span>${mark}</div>`
       )
     })
     .join('') +
     (omitted > 0
-      ? `<div style="font-size:12px;color:#cbd5e1">ほか ${omitted} 都道府県</div>`
+      ? `<div style="font-size:12px;color:#cbd5e1">${m.map.popup.morePrefectures(omitted)}</div>`
       : '')
   return (
     `<div class="text-sm" style="min-width:160px">` +
-    `<div class="font-bold" style="margin-bottom:4px">${esc(hc.name)}</div>` +
-    `<div class="text-xs" style="color:#94a3b8">${esc(formatMagnitudeWithCondition(hc.magnitude, hc.magnitudeCondition, hc.magnitudeType))} / 深さ ${esc(formatDepth(hc.depth, hc.depthAtLeast === true))}</div>` +
+    `<div class="font-bold" style="margin-bottom:4px">${esc(place('epi', hc.name))}</div>` +
+    `<div class="text-xs" style="color:#94a3b8">${m.map.popup.magnitudeDepth(
+      esc(magnitudeWithConditionText(hc.magnitude, hc.magnitudeCondition, hc.magnitudeType, m.formats)),
+      esc(depthText(hc.depth, hc.depthAtLeast === true, m.formats)),
+    )}</div>` +
     (rows ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:2px">${rows}</div>` : '') +
     // 震央地名コード（`Area/Code`）。詳細震央地名を持つ国外の地震では詳細のコードを添える
-    popupCodeHtml(hc.detailedCode || hc.code) +
+    popupCodeHtml(hc.detailedCode || hc.code, m) +
     `</div>`
   )
 }
@@ -106,6 +112,8 @@ export function HypocenterDepthGL({ quake, epicenter, prefIntensities, iconScale
   // クロージャに古い quake を閉じ込めないよう ref を経由する）。
   const contentRef = useRef({ quake, prefIntensities, epicenter })
   contentRef.current = { quake, prefIntensities, epicenter }
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -157,7 +165,7 @@ export function HypocenterDepthGL({ quake, epicenter, prefIntensities, iconScale
             properties: {},
           } as unknown as MapGeoJSONFeature
         },
-        buildClickHtml: () => buildPopupHtml(contentRef.current.quake, contentRef.current.prefIntensities),
+        buildClickHtml: () => buildPopupHtml(contentRef.current.quake, contentRef.current.prefIntensities, mRef.current, placeRef.current),
       })
     } catch (err) {
       log.error('[HypocenterDepthGL] 吹き出しの元データを登録できなかった', err)

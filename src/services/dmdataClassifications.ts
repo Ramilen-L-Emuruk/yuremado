@@ -244,16 +244,15 @@ export function hasQuakeTelegrams(classifications: readonly DmdataClassification
   return classifications.includes('telegram.earthquake')
 }
 
-/** DMDATA の購入区分名。設定の窓の「受信している区分」に出す。 */
-const CLASSIFICATION_LABELS: Record<DmdataClassification, string> = {
-  'eew.forecast': '緊急地震（予報）',
-  'eew.warning': '緊急地震（警報）',
-  'telegram.earthquake': '地震・津波関連',
-}
-
-/** 区分を購入区分名で「・」に繋ぐ。並びは区分の定義順に固定する（申し込みの順に依らない）。 */
-export function classificationLabel(classifications: readonly DmdataClassification[]): string {
-  return ALL_CLASSIFICATIONS.filter((c) => classifications.includes(c)).map((c) => CLASSIFICATION_LABELS[c]).join('・')
+/**
+ * 区分を購入区分名で繋ぐ（設定の窓の「受信している区分」）。名前と区切りは辞書（`settings.classifications`）が持つ。
+ * 並びは区分の定義順に固定する（申し込みの順に依らない）。
+ */
+export function classificationLabel(
+  classifications: readonly DmdataClassification[],
+  words: { labels: Record<DmdataClassification, string>; separator: string },
+): string {
+  return ALL_CLASSIFICATIONS.filter((c) => classifications.includes(c)).map((c) => words.labels[c]).join(words.separator)
 }
 
 /**

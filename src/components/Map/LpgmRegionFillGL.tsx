@@ -3,14 +3,17 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point, Polygon } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, type LpgmStationRow } from '../../utils/lpgm'
-import { getIntensityLabel } from '../../utils/intensity'
-import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
+import { getLpgmClassColor, lpgmClassLabel, getLpgmClassRadius, type LpgmStationRow } from '../../utils/lpgm'
+import { intensityLabel } from '../../utils/intensity'
+import { withNonJmaMark } from '../../utils/formatters'
 import type { LpgmRegionAggregate } from '../../hooks/useQuakeLayerData'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { ensureLpgmIcons, lpgmIconId, LPGM_ICON_BASE_RADIUS } from './gl/lpgmIcons'
 
 // 長周期地震動のズームアウト時、一次細分区域ごとの最大階級を塗る MapLibre 版
@@ -87,7 +90,7 @@ export const POPUP_STATION_LIMIT = 8
  * カードで区域の行を開いたときと同じ顔ぶれ・同じ順（→ `lpgmStationsByArea`）。
  * 作りは地震の区域塗りの吹き出しの市町村の行（`regionCityRowsHtml`）に揃える。
  */
-export function regionStationRowsHtml(stations: readonly LpgmStationRow[]): string {
+export function regionStationRowsHtml(stations: readonly LpgmStationRow[], m: Messages, place: PlaceNameLookup): string {
   if (stations.length === 0) return ''
   const omitted = stations.length - POPUP_STATION_LIMIT
   const rows = stations
@@ -95,28 +98,28 @@ export function regionStationRowsHtml(stations: readonly LpgmStationRow[]): stri
     .map((s) =>
       `<div style="display:flex;align-items:center;gap:8px;font-size:12px">` +
       `${badgeHtml(String(s.lgInt), getLpgmClassColor(s.lgInt))}` +
-      `<span style="color:#cbd5e1"` + (s.nonJma ? ` title="${escapeHtml(NON_JMA_MARK_TITLE)}"` : '') +
-      `>${escapeHtml(withNonJmaMark(s.name, s.nonJma === true))}</span>` +
+      `<span style="color:#cbd5e1"` + (s.nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
+      `>${escapeHtml(withNonJmaMark(place('station', s.name), s.nonJma === true))}</span>` +
       (s.int !== undefined
-        ? `<span style="color:#94a3b8">震度 ${escapeHtml(getIntensityLabel(s.int))}</span>`
+        ? `<span style="color:#94a3b8">${m.map.popup.intensity(escapeHtml(intensityLabel(s.int, m.formats)))}</span>`
         : '') +
       `</div>`)
     .join('')
-  const more = omitted > 0 ? `<div style="font-size:12px;color:#cbd5e1">ほか ${omitted} 観測点</div>` : ''
+  const more = omitted > 0 ? `<div style="font-size:12px;color:#cbd5e1">${m.map.popup.moreStations(omitted)}</div>` : ''
   return `<div style="margin-top:8px;display:flex;flex-direction:column;gap:2px">${rows}${more}</div>`
 }
 
-function clickHtml(f: MapGeoJSONFeature, stationsByRegion: ReadonlyMap<string, readonly LpgmStationRow[]>): string {
+function clickHtml(f: MapGeoJSONFeature, stationsByRegion: ReadonlyMap<string, readonly LpgmStationRow[]>, m: Messages, place: PlaceNameLookup): string {
   const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
   const name = String(f.properties?.name ?? '')
   const int = Number(f.properties?.int ?? -1)
   return (
-    `<div class="text-sm" style="min-width:160px"><div class="font-bold">${escapeHtml(name)}</div>` +
-    `<div class="text-xs" style="color:#94a3b8">長周期地震動 ${escapeHtml(getLpgmClassLabel(lgInt))}` +
-    (int >= 0 ? `　震度 ${escapeHtml(getIntensityLabel(int))}` : '') +
+    `<div class="text-sm" style="min-width:160px"><div class="font-bold">${escapeHtml(place('area', name))}</div>` +
+    `<div class="text-xs" style="color:#94a3b8">` +
+    m.map.popup.lpgmRegion(escapeHtml(lpgmClassLabel(lgInt, m.formats)), int >= 0 ? escapeHtml(intensityLabel(int, m.formats)) : null) +
     `</div>` +
-    regionStationRowsHtml(stationsByRegion.get(name) ?? []) +
-    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
+    regionStationRowsHtml(stationsByRegion.get(name) ?? [], m, place) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
     `</div>`
   )
 }
@@ -125,6 +128,8 @@ export function LpgmRegionFillGL({ regionAggregates, iconScale, visible }: Props
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
   // 吹き出しの登録は [map] 依存で 1 回だけなので、観測点は ref 越しに最新を読む（QuakeRegionFillGL と同じ）。
   const stationsByRegionRef = useRef<ReadonlyMap<string, readonly LpgmStationRow[]>>(new Map())
   stationsByRegionRef.current = new Map(regionAggregates.map((r) => [r.name, r.stations]))
@@ -168,7 +173,7 @@ export function LpgmRegionFillGL({ regionAggregates, iconScale, visible }: Props
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'lgInt',
-      buildClickHtml: (f) => clickHtml(f, stationsByRegionRef.current),
+      buildClickHtml: (f) => clickHtml(f, stationsByRegionRef.current, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

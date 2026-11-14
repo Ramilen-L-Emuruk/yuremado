@@ -3,14 +3,17 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getIntensityLabelWithOrAbove } from '../../utils/intensity'
+import { intensityLabelWithOrAbove } from '../../utils/intensity'
 import type { IntensityMarker } from '../../hooks/useQuakeLayerData'
 import type { LatLng } from '../../utils/stationCoords'
 import { haversineKm } from '../../utils/geo'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
-import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
+import { withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, UNRECEIVED_ICON_ID, UNRECEIVED_COLOR, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
 // 震度が届いていない観測点（「震度５弱以上未入電」）を無彩色の丸で描く。
@@ -75,6 +78,8 @@ function buildFC(
       iconSizeRatio: radius / INTENSITY_ICON_BASE_RADIUS,
       scale: UNRECEIVED_SORT_LEVEL,
       addr: m.addr,
+      // 名前が区域か観測点か（訳を引く表を選ぶため）
+      isArea: m.isArea,
       pref: m.pref,
       region: m.region ?? '',
       nonJma: m.nonJma ?? false,
@@ -91,48 +96,52 @@ function buildFC(
 }
 
 /** 吹き出しの見出し。気象庁以外が運用する観測点には `＊` を戻す（観測値のドットと同じ扱い）。 */
-function popupTitle(f: MapGeoJSONFeature): string {
-  return withNonJmaMark(String(f.properties?.addr ?? ''), Boolean(f.properties?.nonJma))
+function popupTitle(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  const addr = String(f.properties?.addr ?? '')
+  return withNonJmaMark(place(f.properties?.isArea ? 'area' : 'station', addr), Boolean(f.properties?.nonJma))
 }
 
 /**
  * 断定形にしないこと。**この地点の震度は観測できていない**ので、「震度5弱」と書くと嘘になる。
  * 語はカード・読み上げと揃える（気象庁の「未入電」をそのまま使う → docs/spec/quake-spec.md §4）。
  */
-const UNRECEIVED_BADGE_LABEL = getIntensityLabelWithOrAbove(UNRECEIVED_SORT_LEVEL, true)
+function unreceivedBadgeLabel(m: Messages): string {
+  return intensityLabelWithOrAbove(UNRECEIVED_SORT_LEVEL, true, m.formats)
+}
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${badgeHtml(UNRECEIVED_BADGE_LABEL, UNRECEIVED_COLOR)}` +
-    `<span style="font-weight:600">${escapeHtml(popupTitle(f))}</span></div>`
+    `${badgeHtml(unreceivedBadgeLabel(m), UNRECEIVED_COLOR)}` +
+    `<span style="font-weight:600">${escapeHtml(popupTitle(f, place))}</span></div>`
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
-  const pref = String(f.properties?.pref ?? '')
-  const region = String(f.properties?.region ?? '')
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
+  const pref = place('pref', String(f.properties?.pref ?? ''))
+  const region = place('area', String(f.properties?.region ?? ''))
   const distanceKm = Number(f.properties?.distanceKm ?? -1)
   const nonJma = Boolean(f.properties?.nonJma)
   const sub = [pref, region].filter(Boolean).join(' / ')
+  const label = unreceivedBadgeLabel(m)
 
   return (
     `<div style="min-width:150px">` +
     `<div style="font-weight:700;font-size:13px"` +
-      (nonJma ? ` title="${escapeHtml(NON_JMA_MARK_TITLE)}"` : '') +
-      `>${escapeHtml(popupTitle(f))}</div>` +
+      (nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
+      `>${escapeHtml(popupTitle(f, place))}</div>` +
     (sub ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(sub)}</div>` : '') +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-      `${badgeHtml(UNRECEIVED_BADGE_LABEL, UNRECEIVED_COLOR)}` +
-      `<span style="color:#cbd5e1">震度 ${escapeHtml(UNRECEIVED_BADGE_LABEL)}</span></div>` +
+      `${badgeHtml(label, UNRECEIVED_COLOR)}` +
+      `<span style="color:#cbd5e1">${m.map.popup.intensity(escapeHtml(label))}</span></div>` +
     // **推定したのは気象庁**であることを書く。このアプリは自前で計算した値にも「推定」を
     // 使っており（リアルタイムタブの到達時間）、主語が無いと「アプリが推定した値」と取り違えられる。
     `<div style="margin-top:4px;font-size:11px;color:#9ca3af">` +
-      `気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）</div>` +
+      `${m.map.popup.unreceivedNote}</div>` +
     (distanceKm >= 0
-      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">震源から約 ${distanceKm}km</div>`
+      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${m.map.popup.distance(distanceKm)}</div>`
       : '') +
-    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
     `</div>`
   )
 }
@@ -141,10 +150,13 @@ export function QuakeUnreceivedPointsGL({ markers, iconScale, visible, epicenter
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
-    ensureIntensityIcons(map)
+    // 使うのは字の無い未入電の丸だけだが、震度の丸もまとめて登録される（字は言語に合わせる）
+    ensureIntensityIcons(map, mRef.current.formats)
     map.addSource(SRC, { type: 'geojson', data: EMPTY_FC })
     addOrderedLayer(map, {
       id: LYR,
@@ -164,8 +176,8 @@ export function QuakeUnreceivedPointsGL({ markers, iconScale, visible, epicenter
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
-      buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {

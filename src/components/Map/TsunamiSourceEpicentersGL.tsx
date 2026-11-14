@@ -2,15 +2,18 @@ import { useEffect, useRef } from 'react'
 import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import type { TsunamiSourceEarthquake } from '../../types/earthquake'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDepth, formatMagnitude, formatMagnitudeCondition, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { depthText, magnitudeText, magnitudeConditionText, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { hasKnownEpicenter, normalizeEpicenterLng } from '../../utils/geo'
 import { sourceEarthquakeTime } from '../../utils/tsunami'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer } from './gl/depthPointLayer'
 import { escapeHtml } from './gl/popupHtml'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 import { log } from '../../utils/logger'
-import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
+import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor, type MapLayerName } from '../../utils/renderHealth'
 
 // 津波タブの地図に、**その津波の原因地震の震源**を×印で出す（2026-10-22 ユーザー選択「原因地震の震源を出す
 // (Recommended)」）。地震カードで選んだ地震ではなく、津波電文が名乗る原因地震（`sourceEarthquakes`）。
@@ -24,7 +27,7 @@ const LYR = 'tsunami-source-epicenters'
 /** 震央の経度を寄せる中心（地震情報・EEW の震源と同じ値。`useQuakeLayerData`・`useEewLayerData` の同名の定数）。 */
 const JAPAN_CENTER_LNG = 137.7
 /** 不調を知らせるときに画面へ出す名前（`utils/renderHealth.ts`）。 */
-const LABEL = '津波の原因地震の震源'
+const LABEL: MapLayerName = 'tsunamiSource'
 
 /** ×印の色・大きさ。地震情報の震源（HypocenterDepthGL）・EEW の震源と揃える。 */
 const CROSS_COLOR: readonly [number, number, number] = [255 / 255, 34 / 255, 34 / 255]
@@ -65,16 +68,16 @@ export function buildSourcePoints(
  * 整形はカードの行と同じ `formatMagnitude`）。規模が数値で無ければ気象庁の説明（「Ｍ８を超える巨大地震」）を出し、
  * どちらも無ければ・深さが判らなければ・時刻が読めなければ、その項目を落とす（カードの行と同じ）。
  */
-export function sourcePopupHtml(s: TsunamiSourceEarthquake): string {
-  const mag = s.magnitude !== undefined ? formatMagnitude(s.magnitude, s.magnitudeType) : s.magnitudeCondition ? formatMagnitudeCondition(s.magnitudeCondition) : ''
-  const depth = s.depth !== undefined && hasDepth(s.depth) ? `深さ ${formatDepth(s.depth, s.depthAtLeast === true)}` : ''
+export function sourcePopupHtml(s: TsunamiSourceEarthquake, m: Messages, place: PlaceNameLookup): string {
+  const mag = s.magnitude !== undefined ? magnitudeText(s.magnitude, s.magnitudeType, m.formats) : s.magnitudeCondition ? magnitudeConditionText(s.magnitudeCondition, m.formats) : ''
+  const depth = s.depth !== undefined && hasDepth(s.depth) ? m.map.popup.depth(depthText(s.depth, s.depthAtLeast === true, m.formats)) : ''
   const quakeTime = sourceEarthquakeTime(s)
   const hm = quakeTime ? formatTimeMin(quakeTime) : null
-  const detail = [mag, depth].filter(Boolean).join('　')
+  const detail = [mag, depth].filter(Boolean).join(m.formats.spaceSep())
   return (
-    `<div class="text-sm"><div class="font-bold">${escapeHtml(s.hypocenterName)}</div>` +
+    `<div class="text-sm"><div class="font-bold">${escapeHtml(place('epi', s.hypocenterName))}</div>` +
     (detail ? `<div class="text-xs" style="color:#e5e7eb">${escapeHtml(detail)}</div>` : '') +
-    (hm ? `<div class="text-xs" style="color:#94a3b8">${escapeHtml(`${QUAKE_ARRIVAL_TIME_LABEL} ${hm}`)}</div>` : '') +
+    (hm ? `<div class="text-xs" style="color:#94a3b8">${escapeHtml(`${m.formats.arrivalTime} ${hm}`)}</div>` : '') +
     `</div>`
   )
 }
@@ -89,6 +92,8 @@ export function TsunamiSourceEpicentersGL({ sources, iconScale }: Props) {
   const layerRef = useRef<DepthPointLayer | null>(null)
   const ownersRef = useRef<number[]>([])
   const placedRef = useRef<ReturnType<typeof placeableSources>>([])
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -133,7 +138,7 @@ export function TsunamiSourceEpicentersGL({ sources, iconScale }: Props) {
         },
         buildClickHtml: (feature) => {
           const s = placedRef.current[Number(feature.properties?.index)]
-          return s ? sourcePopupHtml(s) : ''
+          return s ? sourcePopupHtml(s, mRef.current, placeRef.current) : ''
         },
       })
     } catch (err) {

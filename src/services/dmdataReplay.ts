@@ -38,6 +38,8 @@ import { createSkipCounter, sumSkippedByDay, UNKNOWN_SKIP_DAY } from '../utils/t
 import { fetchDmdataEewEventList, fetchLatestEewReport, type DmdataEewListEvent, type LatestEewReport } from './dmdata'
 import { makeReplayLogEntry } from './telegramLogEntry'
 import { TELEGRAM_LOG_ERROR } from '../utils/telegramLogErrorMark'
+import type { TelegramBodyNote } from '../utils/telegramBodyNote'
+import { LocalizedError, errorText } from '../utils/localizedError'
 
 /**
  * 履歴を 1 回で読む窓の幅（日）。起動時の初回ロードと「もっと見る」1 回ぶんで共通。
@@ -715,11 +717,11 @@ async function listArchives(
       { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: endpoint.apiHeaders() } },
       async (res) => {
         endpoint.observe(res.status, res.headers ?? null)
-        if (!res.ok) throw new Error(`アーカイブの一覧を取得できなかった: ${res.status}`)
+        if (!res.ok) throw new LocalizedError(errorText('archiveListHttp', res.status))
         return (await res.json()) as { status: string; items: ArchiveItem[]; nextToken?: string }
       },
     )
-    if (listJson.status !== 'ok') throw new Error('アーカイブの一覧が成功（ok）を返さなかった')
+    if (listJson.status !== 'ok') throw new LocalizedError(errorText('archiveListNotOk'))
     items.push(...listJson.items)
     if (!listJson.nextToken) break
     cursorToken = listJson.nextToken
@@ -728,10 +730,7 @@ async function listArchives(
   // ログだけにすると、打ち切られた不完全な目録が正常な戻り値として流れ、`failedArchiveUrls`
   // にも計上されないまま「部分成功」に見える。
   if (page >= ARCHIVE_LIST_MAX_PAGES) {
-    throw new Error(
-      `アーカイブの一覧が途中で切れた: ページ上限（${ARCHIVE_LIST_MAX_PAGES}）に達した`
-      + ` 範囲=${startDate}~${endDate} 件数=${items.length}`,
-    )
+    throw new LocalizedError(errorText('archiveListCutOff', ARCHIVE_LIST_MAX_PAGES, startDate, endDate, items.length))
   }
   return items
 }
@@ -1107,14 +1106,16 @@ async function fetchReplayEvents(
         }
         const headType = entry.head.type
         /** この電文を電文ログにだけ積む（地図・カードへは流さない）。行の形はライブに揃える（→ `isReplayLogOnly`）。 */
+        /** `body` は本文の文字列か、二進電文の要約の鍵と値（→ `utils/telegramBodyNote.ts`）。本文を持てない行は `null` */
         const pushLogOnly = (
-          rawBody: unknown, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean },
+          body: string | TelegramBodyNote | null, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean },
         ): void => {
+          const note = typeof body === 'object' && body !== null ? body : null
           logOnlyEntries.push({
             replayTime: entryTime,
             logEntry: makeReplayLogEntry({
-              headType, origin: 'replay', rawHead: entry.head, rawBody, rawBytes: opts.rawBytes,
-              payload: null, errorMessage: opts.errorMessage, isTest: opts.isTest,
+              headType, origin: 'replay', rawHead: entry.head, rawBody: note === null ? body : null, bodyNote: note,
+              rawBytes: opts.rawBytes, payload: null, errorMessage: opts.errorMessage, isTest: opts.isTest,
             }),
           })
         }
@@ -1135,7 +1136,7 @@ async function fetchReplayEvents(
             }
             // 二進電文は結合しない（1 断片が最大 512KB ある。ライブも試験報の断片は結合せずに積む）
             pushLogOnly(
-              isBinaryTelegramType(headType) ? `（BUFR の断片 ${bytes.length} バイト）` : dec.decode(bytes),
+              isBinaryTelegramType(headType) ? { kind: 'bufrFragment', bytes: bytes.length } : dec.decode(bytes),
               { rawBytes: null, errorMessage: null, isTest },
             )
           } catch (e) {
@@ -1178,7 +1179,7 @@ async function fetchReplayEvents(
             // アーカイブの後続エントリに入っており、揃った時点で 1 通として積まれる。
             // 電文ログには積む（ライブと同じ文。本文は入れない —— 1 断片が最大 512KB ある）
             if (!joined) {
-              pushLogOnly(`（BUFR の断片 ${binBytes.length} バイト・結合待ち）`, { rawBytes: null, errorMessage: null, isTest: entry.head.test === true })
+              pushLogOnly({ kind: 'bufrFragmentWaiting', bytes: binBytes.length }, { rawBytes: null, errorMessage: null, isTest: entry.head.test === true })
               continue
             }
             const binPayload = buildBinaryPayload(headType, joined, entry.id, entry.head.time)
@@ -1189,7 +1190,7 @@ async function fetchReplayEvents(
             if (binPayload && isFilteredBinaryTelegram(binPayload, includeTest)) {
               log.info(`[replay] 二進電文の試験報を流しません id=${entry.id} type=${headType}`)
               pushLogOnly(
-                `（BUFR ${joined.length} バイト・電文の種類 ${binPayload.data.telegramKind}）`,
+                { kind: 'bufrKind', bytes: joined.length, telegramKind: binPayload.data.telegramKind },
                 { rawBytes: joined, errorMessage: null, isTest: true },
               )
               continue
@@ -1203,7 +1204,7 @@ async function fetchReplayEvents(
                 // 結合した元の二進は `rawBytes` に持たせる（ダウンロードはこちらを落とす）
                 logEntry: makeReplayLogEntry({
                   headType, origin: 'replay', rawHead: entry.head,
-                  rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`, rawBytes: joined,
+                  rawBody: null, bodyNote: { kind: 'bufrCells', bytes: joined.length, cells: binPayload.data.count }, rawBytes: joined,
                   payload: binPayload, errorMessage: null, isTest: entry.head.test === true,
                 }),
               })
@@ -1211,7 +1212,7 @@ async function fetchReplayEvents(
               log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${entry.id} type=${headType}`)
               windowSkips.add(item.date)
               // ライブと同じ形の `error` の行（取りこぼしに数えることとは別に積む）
-              pushLogOnly(`（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: TELEGRAM_LOG_ERROR.bufrDecodeFailed, isTest: entry.head.test === true })
+              pushLogOnly({ kind: 'bufr', bytes: joined.length }, { rawBytes: joined, errorMessage: TELEGRAM_LOG_ERROR.bufrDecodeFailed, isTest: entry.head.test === true })
             }
             continue
           }
@@ -1233,7 +1234,7 @@ async function fetchReplayEvents(
               payload,
               replayTime: entryTime,
               logEntry: makeReplayLogEntry({
-                headType, origin: 'replay', rawHead: entry.head, rawBody: xml, rawBytes: null,
+                headType, origin: 'replay', rawHead: entry.head, rawBody: xml, bodyNote: null, rawBytes: null,
                 payload, errorMessage: null, isTest: entry.head.test === true,
               }),
             })
@@ -1320,7 +1321,7 @@ async function fetchReplayEvents(
   // 全部が見送りだった場合は下の記録で手がかりを残す。
   const sourceDays = targets.length + liveDates.length - rateLimitedSources.length
   if (sourceDays > 0 && failedSourceDays === sourceDays) {
-    throw new Error(`アーカイブを取得できなかった: 取得元${sourceDays}件すべてを読み取れませんでした`)
+    throw new LocalizedError(errorText('archiveAllFailed', sourceDays))
   }
   if (rateLimitedSources.length > 0) {
     log.info(
@@ -3002,7 +3003,7 @@ export async function fetchDmdataQuakeHistory(
   // 兄弟関数（`fetchDmdataReplayEvents` の `sourceDays`）と同じ形に揃える。
   const judgedDays = usedDays - rateLimitedSources.length
   if (!stoppedEarly && judgedDays > 0 && failedArchiveUrls.length === judgedDays) {
-    throw new Error(`アーカイブを取得できなかった: 取得元${judgedDays}件すべてを読み取れませんでした`)
+    throw new LocalizedError(errorText('archiveAllFailed', judgedDays))
   }
   // **見送りは例外にしない**（待てば取れる）。ただし全部が見送りだと画面は
   // 「静かな期間だった」と見えるので、手がかりを残す。

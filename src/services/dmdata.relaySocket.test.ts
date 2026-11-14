@@ -15,6 +15,7 @@ vi.mock('../utils/logger', async (importOriginal) => ({
 
 import { DmdataWebSocket, type DmdataEvent, type RelayActiveEew, type RelayUpstreamStatus } from './dmdata'
 import { RelayTokenError, type RelayTokenStore } from './relayEndpoint'
+import { errorText } from '../utils/localizedError'
 import { resetNotifyQuietWhileOpenForTest, setNotifyQuietWhileOpen, setPushQuietBinding } from './notifyQuietWhileOpen'
 
 async function drain() {
@@ -286,7 +287,7 @@ describe('DmdataWebSocket: 中継へ繋ぐ', () => {
   // 安全弁: 札が取れなくても止めず、張り直しと同じ間隔で取り直す
   it('札が取れなければ切断にして取り直す', async () => {
     const tokens = fakeTokens()
-    tokens.ensure.mockRejectedValueOnce(new RelayTokenError('中継の札を受け取れませんでした（HTTP 429）', 429))
+    tokens.ensure.mockRejectedValueOnce(new RelayTokenError(errorText('relayTokenHttp', 429), 429))
     const { ws, statuses } = setup(tokens)
     try {
       ws.connect()

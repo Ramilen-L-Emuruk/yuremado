@@ -1,4 +1,5 @@
 import type { JMAEarthquakeCount } from '../../types/earthquake'
+import { useMessages } from '../../i18n/I18nProvider'
 
 /**
  * 地震回数に関する情報（VXSE60）の帯を開いたときの中身。
@@ -11,7 +12,7 @@ import type { JMAEarthquakeCount } from '../../types/earthquake'
  * ここへ渡ることはない。理由は取消の表示（`CancelBand`・`utils/specialInfoCancelBand.ts`）と読み上げ
  * （`ttsText.ts` の `earthquakeCountToText`）が出す。お知らせ（VZSE40）も同じ構造（→ `docs/spec/data-sources-spec.md` §2）。
  * 防御のつもりで分岐を置くと、次に触る人へ「取消も描ける」という誤った保証を与える
- * （`utils/earthquakeCountSummary.ts` の `earthquakeCountHeadline` と同じ理由）。
+ * （`utils/earthquakeCountSummary.ts` の `earthquakeCountHeadlineText` と同じ理由）。
  */
 const fmt = new Intl.DateTimeFormat('ja-JP', {
   month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -25,7 +26,7 @@ const fmtTimeOnly = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: 
  * 数字ばかりになって回数のほうが読み取りにくくなる。**日をまたぐ区間では省かない** ——
  * 累積区間は初めの地震から現在までを指すので、何日ぶんの数字かが分からなくなる。
  */
-export function formatSpan(startTime: string, endTime: string): string {
+export function formatSpan(startTime: string, endTime: string, unknown: string, range: (from: string, to: string) => string): string {
   const start = new Date(startTime)
   const end = new Date(endTime)
   const startOk = Number.isFinite(start.getTime())
@@ -36,14 +37,15 @@ export function formatSpan(startTime: string, endTime: string): string {
   //
   // **片方だけ読めたら、読めた側を出す**（2026-10-22 ユーザー選択「読めた側を出す (Recommended)」、
   // 形は 2026-10-24 選択「この形でよい (Recommended)」）。相手の端が無いので日付は省かない。
-  // 「〜」を読めない端の側に置いて、区間が閉じていないことを見せる。
-  if (startOk && !endOk) return `${fmt.format(start)}〜`
-  if (!startOk && endOk) return `〜${fmt.format(end)}`
-  if (!startOk || !endOk) return '期間不明'
+  // 「〜」を読めない端の側に置いて、区間が閉じていないことを見せる。範囲の記号は言語ごと（`range`。辞書の `formats.range`）で、
+  // 読めない端は空の文字列として渡す。
+  if (startOk && !endOk) return range(fmt.format(start), '')
+  if (!startOk && endOk) return range('', fmt.format(end))
+  if (!startOk || !endOk) return unknown
   const sameDay = start.getFullYear() === end.getFullYear()
     && start.getMonth() === end.getMonth()
     && start.getDate() === end.getDate()
-  return `${fmt.format(start)}〜${sameDay ? fmtTimeOnly.format(end) : fmt.format(end)}`
+  return range(fmt.format(start), sameDay ? fmtTimeOnly.format(end) : fmt.format(end))
 }
 
 /** 回数を桁区切りで出す。**発表なし（`null`）は「—」**（開いた表のセルと同じ）。 */
@@ -52,6 +54,7 @@ function formatCount(n: number | null): string {
 }
 
 export function EarthquakeCountDetail({ count }: { count: JMAEarthquakeCount }) {
+  const { specialInfo: si, formats } = useMessages()
   return (
     <div className="px-3 pb-2">
       {/* 回数を伴わない発表報は本文（`Body/Text`）だけを運ぶ。改行は保つ */}
@@ -68,11 +71,11 @@ export function EarthquakeCountDetail({ count }: { count: JMAEarthquakeCount }) 
           <table className="w-full text-xs border-collapse">
             <thead>
               <tr className="text-white/60">
-                <th className="text-left font-normal py-0.5 pr-2 whitespace-nowrap">区間</th>
-                <th className="text-left font-normal py-0.5 pr-2 whitespace-nowrap">期間</th>
-                <th className="text-right font-normal py-0.5 pr-2 whitespace-nowrap">回数</th>
+                <th className="text-left font-normal py-0.5 pr-2 whitespace-nowrap">{si.countTable.interval}</th>
+                <th className="text-left font-normal py-0.5 pr-2 whitespace-nowrap">{si.countTable.period}</th>
+                <th className="text-right font-normal py-0.5 pr-2 whitespace-nowrap">{si.countTable.count}</th>
                 {/* 「有感」だけでは何を数えた列か初見で伝わらないので、表の下に一言添える */}
-                <th className="text-right font-normal py-0.5 whitespace-nowrap">うち有感</th>
+                <th className="text-right font-normal py-0.5 whitespace-nowrap">{si.countTable.felt}</th>
               </tr>
             </thead>
             <tbody>
@@ -90,7 +93,7 @@ export function EarthquakeCountDetail({ count }: { count: JMAEarthquakeCount }) 
                       気象庁が区間をどう区切ったかが伝わらなくなる */}
                   <td className="py-0.5 pr-2 text-white whitespace-nowrap">{item.type}</td>
                   <td className="py-0.5 pr-2 text-white/70 whitespace-nowrap">
-                    {formatSpan(item.startTime, item.endTime)}
+                    {formatSpan(item.startTime, item.endTime, si.countPeriodUnknown, formats.range)}
                   </td>
                   <td className="py-0.5 pr-2 text-white text-right tabular-nums whitespace-nowrap">
                     {formatCount(item.number)}
@@ -102,7 +105,7 @@ export function EarthquakeCountDetail({ count }: { count: JMAEarthquakeCount }) 
               ))}
             </tbody>
           </table>
-          <p className="text-white/60 text-[0.6875rem] mt-1">「うち有感」は震度1以上を観測した地震の数</p>
+          <p className="text-white/60 text-[0.6875rem] mt-1">{si.countFeltNote}</p>
         </div>
       )}
 

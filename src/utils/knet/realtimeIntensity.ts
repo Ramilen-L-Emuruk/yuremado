@@ -16,6 +16,8 @@
 // （強震モニタの実データでも 60〜63 秒保たれてから落ちる。2026-10-04 に大地震 4 本で確認）。
 
 import { DURATION_THRESHOLD_SEC, durationThresholdIndex, stepSamplesForSeconds } from './intensityCommon'
+// 失敗は日本語の文に辞書の鍵と引数を添えて投げる（自作地震計のホストも読むので辞書は読まない。→ `utils/keyedError.ts`）
+import { keyedError } from '../keyedError'
 
 /** 0.3 秒の判定を行う窓（秒）。**論文の定義なので動かさない**（2008 年版 §2）。 */
 export const REALTIME_JUDGE_WINDOW_SEC = 60
@@ -251,20 +253,21 @@ export class RealtimeIntensityCalculator {
 
   constructor(sampleRateHz: number) {
     if (!(sampleRateHz > 0) || !Number.isFinite(sampleRateHz)) {
-      throw new Error('sampleRateHz は正の数で指定すること')
+      throw keyedError('sampleRateHz は正の数で指定すること', 'knetSampleRate')
     }
     const stages = realtimeFilterStages(sampleRateHz)
     const unstable = stages.findIndex((s) => !isStableStage(s))
     if (unstable >= 0) {
-      throw new Error(
+      throw keyedError(
         `毎秒 ${sampleRateHz} 回では近似フィルタの ${unstable + 1} 段目が発散する（サンプリング周波数が低すぎる）`,
+        'knetFilterDiverges', sampleRateHz, unstable + 1,
       )
     }
     this.filters = [new RealtimeFilter(stages), new RealtimeFilter(stages), new RealtimeFilter(stages)]
     const capacity = Math.max(1, Math.round(REALTIME_JUDGE_WINDOW_SEC * sampleRateHz))
     this.thresholdIndex = durationThresholdIndex(sampleRateHz)
     if (this.thresholdIndex < 0 || this.thresholdIndex >= capacity) {
-      throw new Error(`${DURATION_THRESHOLD_SEC} 秒の判定ができない（毎秒 ${sampleRateHz} 回）`)
+      throw keyedError(`${DURATION_THRESHOLD_SEC} 秒の判定ができない（毎秒 ${sampleRateHz} 回）`, 'knetDurationUnjudgeable', DURATION_THRESHOLD_SEC, sampleRateHz)
     }
     this.amplitudes = new Float64Array(capacity)
     this.scratch = new Float64Array(capacity)
@@ -285,7 +288,7 @@ export class RealtimeIntensityCalculator {
    */
   push(a: number, b: number, c: number): void {
     if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c)) {
-      throw new Error(`有限でないサンプルが混じっている: 位置 ${this.total}`)
+      throw keyedError(`有限でないサンプルが混じっている: 位置 ${this.total}`, 'knetNonFiniteSample', this.total)
     }
     this.total++
     if (this.offset === null) {
@@ -346,7 +349,7 @@ export function computeRealtimeIntensityTimeSeries(
   sampleRateHz: number,
   stepSec: number,
 ): RealtimeIntensityPoint[] {
-  if (!(stepSec > 0)) throw new Error('stepSec は正の数で指定すること')
+  if (!(stepSec > 0)) throw keyedError('stepSec は正の数で指定すること', 'knetStepSecPositive')
   const calc = new RealtimeIntensityCalculator(sampleRateHz)
   const len = Math.min(ns.length, ew.length, ud.length)
   // 刻みの丸め方はホストの流し込み（`seismo-host/src/intensity/intensityStream.ts`）と共有する。

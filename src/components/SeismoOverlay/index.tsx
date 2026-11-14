@@ -11,6 +11,7 @@ import type { SeismoStationState } from '../../hooks/useSeismoStation'
 import { readableTextColor } from '../../utils/contrast'
 
 import { seismoOverlayRows } from './seismoOverlayRows'
+import { useMessages } from '../../i18n/I18nProvider'
 
 interface Props {
   readonly stations: readonly SeismoStationState[]
@@ -25,7 +26,8 @@ const ROW_CLASS =
 const BADGE_CLASS = 'font-bold leading-none rounded-[3px] px-1.5 py-1 min-w-5 text-center shrink-0'
 
 export function SeismoOverlay({ stations }: Props) {
-  const rows = seismoOverlayRows(stations)
+  const messages = useMessages()
+  const rows = seismoOverlayRows(stations, messages)
   // **行が 1 つも無ければ出さない**（震度が 1 件も届いておらず、猶予を過ぎた「未着」も無い）。接続の状態では判定しない ——
   // 短い切断なら状態層が 5 秒は値を保つので消えず、長い切断なら消える。
   // ここで別に接続を見ると、同じ事実に判定が 2 つできる。

@@ -4,8 +4,7 @@
 // **ここは全ソースを順に回す唯一の場所**なので、1 つが投げるとどのレイヤーもクリックに
 // 応じなくなる（どこを押しても区域名を出す最後の受け皿まで巻き添えになる）。
 // 背景は docs/spec/map-rendering-spec.md §16「描けているかを画面に出す」。
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { muteConsoleError } from '../../../test-utils/muteConsoleError'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'import { muteConsoleError } from '../../../test-utils/muteConsoleError'
 import type { MapGeoJSONFeature } from 'maplibre-gl'
 
 /** 吹き出しは DOM を触るだけなので、置き換えて中身を見ない。 */
@@ -67,7 +66,7 @@ describe('popupRegistry の判定の封じ込め', () => {
     const later = vi.fn(() => FEATURE)
     const buildClickHtml = vi.fn(() => '<p>x</p>')
     registerPopupSource(map, {
-      layerId: 'boom', priority: 'point', tolPx: 0, label: '壊れた方',
+      layerId: 'boom', priority: 'point', tolPx: 0, label: 'quakeHypocenters',
       pick: () => { throw new Error('boom') },
       buildClickHtml: () => '',
     })
@@ -84,12 +83,12 @@ describe('popupRegistry の判定の封じ込め', () => {
   it('判定が投げたら「掴めない」として記録する', () => {
     const { map, click } = makeMap()
     registerPopupSource(map, {
-      layerId: 'boom', priority: 'point', tolPx: 0, label: '震源カタログ',
+      layerId: 'boom', priority: 'point', tolPx: 0, label: 'catalog' as const,
       pick: () => { throw new Error('boom') },
       buildClickHtml: () => '',
     })
     click()
-    expect(getRenderHealth().uninteractive).toEqual(['震源カタログ'])
+    expect(getRenderHealth().uninteractive).toEqual(['catalog'])
   })
 
   // 対照: 名前を渡していないソースは記録だけで画面に出さない
@@ -110,12 +109,12 @@ describe('popupRegistry の判定の封じ込め', () => {
     const { map, click } = makeMap()
     let broken = true
     registerPopupSource(map, {
-      layerId: 'boom', priority: 'point', tolPx: 0, label: '震源カタログ',
+      layerId: 'boom', priority: 'point', tolPx: 0, label: 'catalog' as const,
       pick: () => { if (broken) throw new Error('boom'); return null },
       buildClickHtml: () => '',
     })
     click()
-    expect(getRenderHealth().uninteractive).toEqual(['震源カタログ'])
+    expect(getRenderHealth().uninteractive).toEqual(['catalog'])
     broken = false
     click()
     expect(getRenderHealth().uninteractive).toEqual([])
@@ -126,12 +125,12 @@ describe('popupRegistry の判定の封じ込め', () => {
   it('登録を外したら画面から消える', () => {
     const { map, click } = makeMap()
     const handle = registerPopupSource(map, {
-      layerId: 'boom', priority: 'point', tolPx: 0, label: '震源カタログ',
+      layerId: 'boom', priority: 'point', tolPx: 0, label: 'catalog' as const,
       pick: () => { throw new Error('boom') },
       buildClickHtml: () => '',
     })
     click()
-    expect(getRenderHealth().uninteractive).toEqual(['震源カタログ'])
+    expect(getRenderHealth().uninteractive).toEqual(['catalog'])
     handle.remove()
     expect(getRenderHealth().uninteractive).toEqual([])
   })
@@ -141,25 +140,25 @@ describe('popupRegistry の判定の封じ込め', () => {
   it('貼り直したら同じ失敗をもう一度報告する', () => {
     const { map, click } = makeMap()
     const source = {
-      layerId: 'boom', priority: 'point' as const, tolPx: 0, label: '震源カタログ',
+      layerId: 'boom', priority: 'point' as const, tolPx: 0, label: 'catalog' as const,
       pick: () => { throw new Error('boom') },
       buildClickHtml: () => '',
     }
     registerPopupSource(map, source).remove()
     registerPopupSource(map, { ...source })
     click()
-    expect(getRenderHealth().uninteractive).toEqual(['震源カタログ'])
+    expect(getRenderHealth().uninteractive).toEqual(['catalog'])
   })
 
   // 安全弁: 同じ失敗を繰り返しても記録は 1 件（ホバーのたびに走る）。
   it('繰り返し失敗しても 1 件のまま', () => {
     const { map, click } = makeMap()
     registerPopupSource(map, {
-      layerId: 'boom', priority: 'point', tolPx: 0, label: '震源カタログ',
+      layerId: 'boom', priority: 'point', tolPx: 0, label: 'catalog' as const,
       pick: () => { throw new Error('boom') },
       buildClickHtml: () => '',
     })
     for (let i = 0; i < 20; i++) click()
-    expect(getRenderHealth().uninteractive).toEqual(['震源カタログ'])
+    expect(getRenderHealth().uninteractive).toEqual(['catalog'])
   })
 })

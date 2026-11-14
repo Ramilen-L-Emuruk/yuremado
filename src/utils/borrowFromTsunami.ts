@@ -2,6 +2,7 @@ import type { JMAQuake, JMATsunami, Hypocenter, BorrowedFromTsunami, TsunamiSour
 import { compareReportAge, extractQuakeEventId, isHypocenterPending } from './quakeMerge'
 import { tsunamiMaxGrade, tsunamiEventIds } from './tsunami'
 import { linkTsunamiSources } from './tsunamiSourceLinks'
+import type { Messages } from '../i18n/messages'
 
 /**
  * 同じ地震の津波電文が伝えている値を、地震カードへ借りる。**震源要素と津波区分の 2 つ**が対象。
@@ -341,13 +342,21 @@ function tsunamiToBorrowGradeFrom(eventId: string, tsunamis: readonly JMATsunami
  */
 const BORROWABLE_GRADES: ReadonlySet<TsunamiGrade> = new Set<TsunamiGrade>(['MajorWarning', 'Warning', 'Watch'])
 
+/**
+ * 借りた値の出どころの情報名を画面に出す語。電文の名乗りはそのまま、名乗りを読めなかった電文は辞書の語（「津波情報」）。
+ * 名乗りを空で持つ前に積んだカードは「津波情報」の字が入っているので、そのまま出る
+ */
+export function borrowedInfoName(src: Pick<BorrowedFromTsunami, 'infoName'>, m: Pick<Messages, 'alertText'>): string {
+  return src.infoName || m.alertText.tsunamiInfo
+}
+
 /** 借りた値の出どころを組む（震源と津波区分で同じ形）。 */
 function sourceOf(tsunami: JMATsunami): BorrowedFromTsunami {
   return {
     shortLabel: TSUNAMI_SOURCE_SHORT_LABEL,
-    // 名乗りを読めない電文では短い語をそのまま使う。`infoName` は `Head/Title` で
-    // 実電文には必ず入るため、これは読めなかったときの受け皿。
-    infoName: tsunami.infoName || TSUNAMI_SOURCE_SHORT_LABEL,
+    // 電文の名乗り（`Head/Title`）。実電文には必ず入るが、読めなかった電文では空のまま持ち、画面が辞書の語
+    // （`alertText.tsunamiInfo`）で補う（→ {@link borrowedInfoName}）
+    infoName: tsunami.infoName ?? '',
     reportTime: tsunami.time,
   }
 }

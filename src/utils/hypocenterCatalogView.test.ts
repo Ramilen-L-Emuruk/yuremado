@@ -750,7 +750,14 @@ describe('日本時間の暦日', () => {
     const ms = fromDateInputValue('2020-03-14', 'start')
     expect(ms).not.toBeNull()
     expect(toDateInputValue(ms!)).toBe('2020-03-14')
-    expect(formatJstDate(ms!)).toBe('2020年3月14日')
+    expect(formatJstDate(ms!, ja.formats)).toBe('2020年3月14日')
+  })
+
+  // 正: ほかの言語でも JST の日で出す（端末の時差で前後の日へずれない）。英語の辞書の書き方で 3 月 14 日を名乗る
+  it('日付はほかの言語でも JST の暦日を名乗る', () => {
+    const ms = fromDateInputValue('2020-03-14', 'start')!
+    expect(formatJstDate(ms, en.formats)).toContain('March 14')
+    expect(formatJstDate(fromDateInputValue('2020-03-14', 'end')!, en.formats)).toContain('March 14')
   })
 
   // 正: 終わり側はその日の最後の瞬間。
@@ -1174,7 +1181,7 @@ describe('catalogPeriodBounds', () => {
   it('既定の期間を収めると「2017年1月1日 〜 2026年10月16日（3,576日ぶん）」', () => {
     const { minMs, maxMs } = catalogPeriodBounds(index, null)
     const r = clampPeriodToRange({ fromMs: jstYearStartMs(2017), toMs: jstYearEndMs(2026) }, minMs, maxMs)
-    const text = `${formatJstDate(r.fromMs)} 〜 ${formatJstDate(r.toMs)}（${periodDayCount(r.fromMs, r.toMs).toLocaleString('ja-JP')}日ぶん）`
+    const text = `${formatJstDate(r.fromMs, ja.formats)} 〜 ${formatJstDate(r.toMs, ja.formats)}（${periodDayCount(r.fromMs, r.toMs).toLocaleString('ja-JP')}日ぶん）`
     expect(text).toBe('2017年1月1日 〜 2026年10月16日（3,576日ぶん）')
   })
 
@@ -1229,39 +1236,39 @@ describe('preliminaryNote', () => {
 
   // 正: 速報値の年に掛かれば、最初の速報値の年の元日から速報値だと添える。
   it('速報値の年に掛かれば「2025年1月1日以降は速報値」', () => {
-    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), null, ja.catalog)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), null, ja.catalog, ja.formats)).toBe('2025年1月1日以降は速報値')
   })
 
   it('期間が速報値の年の途中から始まっても、境目の日付を出す', () => {
-    expect(preliminaryNote(index, period('2026-03-01', '2026-10-16'), null, ja.catalog)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2026-03-01', '2026-10-16'), null, ja.catalog, ja.formats)).toBe('2025年1月1日以降は速報値')
   })
 
   // 対照: 確定値の年だけなら出さない。
   it('確定値の年だけなら出さない', () => {
-    expect(preliminaryNote(index, period('2023-01-01', '2024-12-31'), null, ja.catalog)).toBeNull()
+    expect(preliminaryNote(index, period('2023-01-01', '2024-12-31'), null, ja.catalog, ja.formats)).toBeNull()
   })
 
   // 安全弁: 開始と終了を逆に置いても掛かりを見落とさない（年ファイルの取得と同じく両端を正規化）。
   it('開始と終了が逆でも掛かりを見る', () => {
     const p = period('2023-01-01', '2025-02-01')
-    expect(preliminaryNote(index, { fromMs: p.toMs, toMs: p.fromMs }, null, ja.catalog)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, { fromMs: p.toMs, toMs: p.fromMs }, null, ja.catalog, ja.formats)).toBe('2025年1月1日以降は速報値')
   })
 
   // 正: 末尾に掛かれば 2 つ目の文を続ける（2026-11-06 ユーザー選択「2 つ目の文を続ける (Recommended)」）。
   it('末尾に掛かれば「…以降は地震情報の電文から（無感の地震は載らない）」を続ける', () => {
     const tailFrom = fromDateInputValue('2026-10-17', 'start')!
-    expect(preliminaryNote(index, period('2017-01-01', '2026-10-18'), tailFrom, ja.catalog))
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-18'), tailFrom, ja.catalog, ja.formats))
       .toBe('2025年1月1日以降は速報値。2026年10月17日以降は地震情報の電文から（無感の地震は載らない）')
   })
 
   // 対照: 期間が末尾より前で終わるなら続けない。
   it('期間が末尾より前で終わるなら、2 つ目の文は出さない', () => {
     const tailFrom = fromDateInputValue('2026-10-17', 'start')!
-    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), tailFrom, ja.catalog)).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), tailFrom, ja.catalog, ja.formats)).toBe('2025年1月1日以降は速報値')
   })
 
   it('速報値の年が無い索引では出さない', () => {
-    expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'), null, ja.catalog)).toBeNull()
+    expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'), null, ja.catalog, ja.formats)).toBeNull()
   })
 })
 

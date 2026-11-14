@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { MapMode } from '../components/Map/mapTypes'
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
-import { ATTRIBUTION_SOURCES, EEW_NOTICE } from './shareCard'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
+import { JA_PLACE_NAMES } from '../i18n/placeNames'
+
+const ATTRIBUTION_SOURCES = ja.shareImage.sourceNames
+const EEW_NOTICE = ja.shareImage.eewNotice
 import { buildShareCardContent, type ShareCardContent, type ShareCardContentInput } from './shareCardContent'
 // テスト本体で初めて読むと、並列実行のときだけ解決と変換の待ちが 1 件目の時間に乗って 5 秒を超える。
 // 先頭で読んでおけば待ちはファイル読み込み時へ移る（CLAUDE.md「テスト本体の中で対象モジュールを初めて読まないこと」）。
@@ -54,7 +59,7 @@ const APP_URL = 'https://example.test/'
 
 /** 見出しと出典を見るテストは URL を気にしないので、既定の URL で包んで呼ぶ。 */
 function build(i: ShareCardContentInput): ShareCardContent {
-  return buildShareCardContent(i, APP_URL)
+  return buildShareCardContent(i, APP_URL, ja, JA_PLACE_NAMES)
 }
 
 function tsunami(over: { grade?: string; areaName?: string } = {}): JMATsunami {
@@ -719,5 +724,46 @@ describe('buildShareCardContent — 複数の緊急地震速報・深さ・揺�
   it('安全弁: 緊急地震速報が発表中なら、揺れ検知より緊急地震速報を見出しにする', () => {
     const c = build(input({ mode: 'kyoshin', eews: [eew()], kyoshinDetection: { state: 'confirmed', maxIndex: 30 } }))
     expect(c.header.title).not.toBe('揺れ検知')
+  })
+})
+
+// 段 9b: 画像と共有の本文は、いま出している言語の辞書で組む。震源名は地名の表で訳す（ここでは表を素通しにして辞書の語だけを見る）
+describe('buildShareCardContent — 英語の辞書', () => {
+  const buildEn = (i: ShareCardContentInput): ShareCardContent => buildShareCardContent(i, APP_URL, en, JA_PLACE_NAMES)
+
+  it('見出し・副見出し・時刻の名前・出典を英語で組む', () => {
+    const c = buildEn(input({ mode: 'quake', quake: quake() }))
+    expect(c.header.title.startsWith('Max intensity ')).toBe(true)
+    expect(c.header.subtitle).toBe('日向灘  M5.2  Depth 30 km')
+    expect(c.header.meta?.startsWith('Shaking onset time ')).toBe(true)
+    expect(c.notices[c.notices.length - 1].startsWith('Source: ')).toBe(true)
+    expect(c.shareText.split('\n')[0]).toBe(`${c.header.title}  ${c.header.subtitle}`)
+  })
+
+  it('規模・深さが不明なら M unknown・Depth unknown と焼く', () => {
+    const c = buildEn(input({ mode: 'quake', quake: quake({ magnitude: NaN, depth: -1 }) }))
+    expect(c.header.subtitle).toBe('日向灘  M unknown  Depth unknown')
+  })
+
+  // 原因地震・緊急地震速報を並べる区切りも英語の形（` / `）にする
+  it('複数の原因地震・緊急地震速報を「 / 」で並べる', () => {
+    const t = {
+      ...tsunami(),
+      sourceEarthquakes: [
+        { hypocenterName: '石川県能登地方', magnitude: 7.6 },
+        { hypocenterName: '佐渡付近', magnitude: 6.1 },
+      ],
+    } as unknown as JMATsunami
+    const tsunamiSubtitle = buildEn(input({ mode: 'tsunami', tsunamis: [t] })).header.subtitle ?? ''
+    expect(tsunamiSubtitle.startsWith('石川県能登地方  M7.6  Depth unknown / 佐渡付近  M6.1  Depth unknown')).toBe(true)
+    expect(tsunamiSubtitle).not.toContain('／')
+    const eewSubtitle = buildEn(input({ mode: 'kyoshin', eews: [eew({ name: '福島県沖', scaleTo: 30 }), eew({ name: '日向灘', severity: 'Warning', scaleTo: 55 })] })).header.subtitle ?? ''
+    expect(eewSubtitle).toContain(' / 福島県沖')
+    expect(eewSubtitle).not.toContain('／')
+  })
+
+  // 対照: 日本語の辞書では今までの字面のまま
+  it('日本語の辞書では全角の空きで並べる', () => {
+    expect(build(input({ mode: 'quake', quake: quake() })).header.subtitle).toBe('日向灘　M5.2　深さ 30km')
   })
 })

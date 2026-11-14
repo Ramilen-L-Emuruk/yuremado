@@ -1,5 +1,5 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
-import { getIntensityColor, getIntensityLabel } from '../../../utils/intensity'
+import { getIntensityColor, intensityShortLabel, type IntensityWords } from '../../../utils/intensity'
 import { readableTextColor } from '../../../utils/contrast'
 
 // 震度観測点の丸バッジを Canvas2D で事前ラスタライズし、symbol レイヤーの icon-image として登録する。
@@ -26,7 +26,7 @@ const UNRECEIVED_RING_RATIO = 1 / 3
 // shadow のにじみ分の余白。
 const PADDING = 8
 
-// getIntensityLabel が定義している震度スケールの全種類（utils/intensity.ts の INTENSITY_LABELS キー）。
+// 震度の札が定義している震度スケールの全種類（utils/intensity.ts の INTENSITY_LABELS キー）。
 const SCALES = [-1, 10, 20, 30, 40, 45, 50, 55, 60, 70]
 
 export function intensityIconId(scale: number): string {
@@ -97,7 +97,13 @@ function drawBadge(fill: string, label: string | null, ringRatio = DEFAULT_RING_
   // 以前は "Noto Sans JP" を先頭に指定していたが、@font-face 登録は一度も無く、同名フォントの同梱も
   // 撤去済みのため実態どおり sans-serif のみにする。通常の閲覧環境では描画は変わらない（ただし OS に
   // 同名フォントを手動インストールしている端末では、これまでそちらが使われていたぶん字形が変わる）。
-  ctx.font = `700 ${label.length > 1 ? r * 0.85 : r * 1.15}px sans-serif`
+  const fontPx = label.length > 1 ? r * 0.85 : r * 1.15
+  ctx.font = `700 ${fontPx}px sans-serif`
+  // 丸に収まらない長い札（ほかの言語の「不明」など）だけ字を縮める。日本語の 2 文字（幅は字の大きさの 2 倍 ≒ 1.7r）は
+  // この幅に収まるので、今の大きさのまま
+  const maxWidth = r * 1.8
+  const width = ctx.measureText(label).width
+  if (width > maxWidth) ctx.font = `700 ${(fontPx * maxWidth) / width}px sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(label, cx, cy)
@@ -105,15 +111,33 @@ function drawBadge(fill: string, label: string | null, ringRatio = DEFAULT_RING_
   return ctx.getImageData(0, 0, size, size)
 }
 
+/** 地図ごとに、いま焼いてある丸の字（画像の id → 字）。言語を変えたときに字の違う丸だけ焼き直すのに使う */
+const bakedLabels = new WeakMap<MapLibreMap, Map<string, string>>()
+
 /**
- * map インスタンスへ震度バッジ画像を一括登録する（既に登録済みなら何もしない）。
- * 未入電バッジも同じ家族なのでここでまとめて登録する。
+ * map インスタンスへ震度バッジ画像を一括登録する。丸の中の字は言語に合わせた短い札（{@link intensityShortLabel}）。
+ *
+ * **画像の id は言語によらず同じにし、字が変わった丸だけ `updateImage` で焼き直す。** id に言語を含めると、
+ * 地物の `iconId` まで言語ごとに組み直すことになり、地震を選び直さない限り古い言語の丸が残る。
+ * 字が同じ丸（日本語どうし・数字だけの階級）は焼き直さない。未入電バッジは字を持たないので 1 回だけ登録する。
  */
-export function ensureIntensityIcons(map: MapLibreMap): void {
+export function ensureIntensityIcons(map: MapLibreMap, w: IntensityWords): void {
+  let baked = bakedLabels.get(map)
+  if (!baked) {
+    baked = new Map()
+    bakedLabels.set(map, baked)
+  }
   for (const scale of SCALES) {
     const id = intensityIconId(scale)
-    if (map.hasImage(id)) continue
-    map.addImage(id, drawBadge(getIntensityColor(scale), getIntensityLabel(scale)))
+    const label = intensityShortLabel(scale, w)
+    if (map.hasImage(id)) {
+      // 焼いた字の控えが無いのは、この部品の外で登録された画像。字が分からないので焼き直す
+      if (baked.get(id) === label) continue
+      map.updateImage(id, drawBadge(getIntensityColor(scale), label))
+    } else {
+      map.addImage(id, drawBadge(getIntensityColor(scale), label))
+    }
+    baked.set(id, label)
   }
   if (!map.hasImage(UNRECEIVED_ICON_ID)) {
     map.addImage(UNRECEIVED_ICON_ID, drawBadge(UNRECEIVED_COLOR, null, UNRECEIVED_RING_RATIO))

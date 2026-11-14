@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { log } from '../utils/logger'
 import { consumeSettingsHandoff } from '../utils/settingsHandoff'
+import { LOCALE_SETTINGS, type LocaleSetting } from '../i18n/messages'
 import { isValidIntensityScale } from '../utils/intensity'
 import { isObservedLpgmClass } from '../utils/lpgm'
 import {
@@ -95,6 +96,12 @@ export interface AppSettings extends QuakeListSettings {
    * 既定は行わない（2026-10-31 ユーザー選択「設定を足し既定オフ」）。
    */
   kyoshinDetectSpeech: boolean
+  /**
+   * 画面とブラウザの通知の言語。`auto` は端末（ブラウザ）の言語に合わせる（→ `i18n/messages.ts` の `resolveLocale`）。
+   * 既定は `auto`。この項目を持たない保存済みの設定（言語の設定ができる前から使っている端末）は日本語で読む
+   * （{@link migrateLocale}。2026-11-12 ユーザー選択「新しい人だけ端末に合わせる (Recommended)」）。
+   */
+  locale: LocaleSetting
   uiScale: number           // UI 倍率 (1 = 100%)
   mapIconScale: number      // 地図アイコンの倍率 (1 = 100%、UI 倍率とは独立)
   // 地図を傾けたとき、震源をどれだけ深く見せるか (1 = 実際の深さ)。水平方向は常に実スケール。
@@ -127,14 +134,13 @@ export interface AppSettings extends QuakeListSettings {
   notifyNankaiRoutine: boolean     // 南海トラフ地震関連解説情報の定例解説のブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
   notifyQuakeNotice: boolean       // 地震・津波に関するお知らせのブラウザ通知。既定はオフ（2026-11-09 ユーザー選択「新設・既定オフ」）
   /**
-   * アプリを閉じている間も中継からプッシュ通知を受け取る（docs/relay-server-design.md §6.7）。既定はオフ
-   * （2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）。入れた端末だけが中継へ送り先と通知の設定の写しを登録する
-   */
-  pushNotifyEnabled: boolean
-  /**
-   * アプリが画面に出ている間は、通知（プッシュ通知を含む）を出さない。画面の表示・通知音・読み上げは止めない。既定はオフ
+   * アプリが画面に出ている間は、通知（プッシュ通知を含む）を出さない。画面の表示・通知音・読み上げは止めない
    * （2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」「受け取りを待って送る (Recommended)」）。
-   * 判定と止める場所は `services/notifyQuietWhileOpen.ts`
+   * 既定はオン（2026-11-12 ユーザー発言「アプリを開いている間通知しないをオンにしていいと思います」。保存した値のある人はその値のまま＝
+   * 同日ユーザー選択「開いている間は今の値のまま (Recommended)」）。判定と止める場所は `services/notifyQuietWhileOpen.ts`。
+   *
+   * プッシュ通知だけを入り切りする設定は持たない。通知を許可していて「通知を表示」が入っていれば購読する
+   * （2026-11-12 ユーザー発言「プッシュ通知オンオフを別途設定できるようにする必要は無いと思います。」。`hooks/usePushSubscription.ts`）
    */
   notifyQuietWhileOpen: boolean
   /**
@@ -159,7 +165,7 @@ export interface AppSettings extends QuakeListSettings {
   forecastKey: string
   dmdataApiKey: string             // DMDATA.JP APIキー（空文字 = 未設定。未設定なら中継から受ける）
   /**
-   * 鍵の入れ直しの案内を出すか（→ `utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）。古い URL の橋渡しのページが、
+   * 鍵の入れ直しの案内を出すか（→ 辞書の `quake.list.keyReentry`）。古い URL の橋渡しのページが、
    * 前の設定に鍵があったときだけ立てて渡す。鍵を入れるか、地震タブの帯を［×］で閉じると下ろす
    */
   dmdataKeyReentryNotice: boolean
@@ -366,6 +372,7 @@ export const DEFAULTS: AppSettings = {
   // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   quakeNoticeAlerts: false,
   kyoshinDetectSpeech: false,
+  locale: 'auto',
   uiScale: 1,
   mapIconScale: 1,
   hypocenterDepthScale: 1,
@@ -401,8 +408,7 @@ export const DEFAULTS: AppSettings = {
   notifyNankai: true,
   notifyNankaiRoutine: false,
   notifyQuakeNotice: false,
-  pushNotifyEnabled: false,
-  notifyQuietWhileOpen: false,
+  notifyQuietWhileOpen: true,
   notifyPrefectures: [],
   homeLat: null,
   homeLng: null,
@@ -690,6 +696,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     quakeNoticeBanner: ensureBool(partial.quakeNoticeBanner, DEFAULTS.quakeNoticeBanner),
     quakeNoticeAlerts: ensureBool(partial.quakeNoticeAlerts, DEFAULTS.quakeNoticeAlerts),
     kyoshinDetectSpeech: ensureBool(partial.kyoshinDetectSpeech, DEFAULTS.kyoshinDetectSpeech),
+    locale: ensureOneOf(partial.locale, LOCALE_SETTINGS, DEFAULTS.locale),
     uiScale: clampNumber(partial.uiScale, 0.5, 3, DEFAULTS.uiScale),
     mapIconScale: clampNumber(partial.mapIconScale, 0.5, 3, DEFAULTS.mapIconScale),
     hypocenterDepthScale: clampNumber(partial.hypocenterDepthScale, 1, 20, DEFAULTS.hypocenterDepthScale),
@@ -716,7 +723,6 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
     notifyNankaiRoutine: ensureBool(partial.notifyNankaiRoutine, DEFAULTS.notifyNankaiRoutine),
     notifyQuakeNotice: ensureBool(partial.notifyQuakeNotice, DEFAULTS.notifyQuakeNotice),
-    pushNotifyEnabled: ensureBool(partial.pushNotifyEnabled, DEFAULTS.pushNotifyEnabled),
     notifyQuietWhileOpen: ensureBool(partial.notifyQuietWhileOpen, DEFAULTS.notifyQuietWhileOpen),
     notifyPrefectures: ensurePrefectureCodes(partial.notifyPrefectures),
     homeLat: clampNumberOrNull(partial.homeLat, -90, 90),
@@ -1039,7 +1045,38 @@ export function migrateScaleToggles(stored: Partial<AppSettings>, settings: AppS
  * -1 を消す `migrateScaleToggles` より先に掛ける。
  */
 export function migrateStoredSettings(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
-  return migrateLegacyTts(stored, migrateScaleToggles(stored, migrateDetachedNotifications(stored, settings)))
+  return migrateLocale(stored, migrateLegacyTts(stored, migrateScaleToggles(stored, migrateDetachedNotifications(stored, settings))))
+}
+
+/**
+ * 言語の設定ができる前に保存された設定（`locale` を持たない）は、日本語で読む。それまで画面は日本語だけだったので、
+ * 更新しただけで画面の言語が変わらないようにする（2026-11-12 ユーザー選択「新しい人だけ端末に合わせる (Recommended)」）。
+ * 端末に合わせるのは、設定を保存していない新しい端末だけ。読み込みで変えた値は保存しない（`migrateDetachedNotifications` と同じ）。
+ *
+ * **`sanitize()` の中では行わない**（理由は `migrateDetachedNotifications` と同じ）。
+ */
+export function migrateLocale(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
+  return stored.locale === undefined ? { ...settings, locale: 'ja' } : settings
+}
+
+/**
+ * 起動の前に、保存された言語の設定だけを読む（`main.tsx` が最初の画面を描く前に辞書を読むため）。
+ * 旧アドレスから渡された設定があれば先に受け取る（受け取った設定も「言語の設定ができる前の設定」として日本語で読む）。
+ * 読めなければ既定（端末に合わせる）。
+ */
+export function readStoredLocaleSetting(): LocaleSetting {
+  receiveSettingsHandoff()
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return DEFAULTS.locale
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') return DEFAULTS.locale
+    const stored = parsed as Partial<AppSettings>
+    return stored.locale === undefined ? 'ja' : ensureOneOf(stored.locale, LOCALE_SETTINGS, DEFAULTS.locale)
+  } catch (e) {
+    log.warn('[settings] 起動の前に言語の設定を読めず、端末に合わせる', e)
+    return DEFAULTS.locale
+  }
 }
 
 /** 読み上げの入り切りを `voicevoxEnabled` で持っていた頃の設定。VOICEVOX だけで読んでいたので、入なら声は VOICEVOX */

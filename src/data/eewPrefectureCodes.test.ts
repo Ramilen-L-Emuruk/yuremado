@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { EEW_PREFECTURE_CODES } from './eewPrefectureCodes'
+import { EEW_PREFECTURE_CODES, eewPrefDisplayName } from './eewPrefectureCodes'
+import { JA_PLACE_NAMES, type PlaceNameLookup } from '../i18n/placeNames'
 
 // 緊急地震速報の控えの全期間（警報 VXSE43 の 69 日分・予報 VXSE45 の 1,552 日分）にあった府県予報区の名前と符号の組（56 種）
 const OBSERVED: ReadonlyArray<readonly [string, number]> = [
@@ -77,5 +78,25 @@ describe('EEW_PREFECTURE_CODES', () => {
     expect(EEW_PREFECTURE_CODES.has('熊本県')).toBe(false)
     expect(EEW_PREFECTURE_CODES.has('北海道')).toBe(false)
     expect(EEW_PREFECTURE_CODES.has('沖縄')).toBe(false)
+  })
+})
+
+describe('eewPrefDisplayName', () => {
+  const en: PlaceNameLookup = (kind, name) => (kind === 'pref' ? ({ 熊本県: 'Kumamoto Prefecture', 東京都: 'Tokyo Metropolis', 北海道: 'Hokkaido Prefecture' } as Record<string, string>)[name] ?? name : name)
+
+  it('正: 都道府県と同じ範囲の府県予報区（「県」が付かない名前）は、その都道府県の訳で出す', () => {
+    expect(eewPrefDisplayName('熊本', en)).toBe('Kumamoto Prefecture')
+    expect(eewPrefDisplayName('東京', en)).toBe('Tokyo Metropolis')
+  })
+
+  it('対照: 都道府県を分けた府県予報区は電文の名前のまま（都道府県の訳に広げない）', () => {
+    expect(eewPrefDisplayName('北海道道央', en)).toBe('北海道道央')
+    expect(eewPrefDisplayName('伊豆諸島', en)).toBe('伊豆諸島')
+    expect(eewPrefDisplayName('沖縄本島', en)).toBe('沖縄本島')
+  })
+
+  it('安全弁: 日本語の画面では電文の名前を書き換えない（「熊本」を「熊本県」にしない）。表に無い名前もそのまま', () => {
+    expect(eewPrefDisplayName('熊本', JA_PLACE_NAMES)).toBe('熊本')
+    expect(eewPrefDisplayName('知らない予報区', en)).toBe('知らない予報区')
   })
 })

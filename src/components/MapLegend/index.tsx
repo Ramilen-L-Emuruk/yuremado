@@ -1,8 +1,9 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { DisclosureCaret, INNER_GROW_MS, prefersReducedMotion } from '../EarthquakeTab/quakeMotion'
 import { readableTextColor } from '../../utils/contrast'
-import { heatmapPeriodText, representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
+import { representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
 import { HEATMAP_PERIODS, type HeatmapPeriod } from '../../utils/quakeHeatmap'
+import { useMessages } from '../../i18n/I18nProvider'
 
 // 地図へ重ねる凡例。中身を決めるのは legendBlocks.ts で、ここは描くだけ。
 //
@@ -222,11 +223,12 @@ function HeatmapPeriodControl({
   m: Metrics
   onChange: (period: HeatmapPeriod) => void
 }) {
+  const w = useMessages().map.legend
   const index = Math.max(0, HEATMAP_PERIODS.findIndex((p) => p.key === value.period))
   return (
     <div style={{ width }} className="mt-[0.2rem]">
       <div className={`text-secondary ${m.title}`}>
-        {heatmapPeriodText(value)}
+        {value.text}
       </div>
       <input
         type="range"
@@ -234,9 +236,9 @@ function HeatmapPeriodControl({
         max={HEATMAP_PERIODS.length - 1}
         step={1}
         value={index}
-        aria-label="期間"
-        aria-valuetext={HEATMAP_PERIODS[index].label}
-        title={HEATMAP_PERIODS[index].label}
+        aria-label={w.period}
+        aria-valuetext={w.heatmapPeriod[HEATMAP_PERIODS[index].key]}
+        title={w.heatmapPeriod[HEATMAP_PERIODS[index].key]}
         onChange={(e) => {
           const next = HEATMAP_PERIODS[Number(e.target.value)]
           if (next) onChange(next.key)

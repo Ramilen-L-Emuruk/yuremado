@@ -28,13 +28,9 @@ import type { VerticalMap } from './verticalMap'
  */
 export const AXIS_COLORS = ['#4ade80', '#e879f9', '#facc15'] as const
 
-/**
- * 3 成分の名前。**並びはホストが送ってくる `gal` の並び（東・北・上）に合わせる。**
- * ホストは補正の後の波形を共通座標 ENU（X＝東・Y＝北・Z＝上）で出す
- * （`seismo-host/README.md`「共通座標は ENU」）。**こちらで並べ替えない** —— 受け取る口で
- * 入れ替えると、口が増えるたびに入れ替え忘れの経路ができる。
- */
-export const AXIS_LABELS = ['東西', '南北', '上下'] as const
+// 3 成分の名前は辞書の `waveChart.axes`。**並びはホストが送ってくる `gal` の並び（東・北・上）に合わせる**（上の色と同じ並び）。
+// ホストは補正の後の波形を共通座標 ENU（X＝東・Y＝北・Z＝上）で出す（`seismo-host/README.md`「共通座標は ENU」）。
+// **こちらで並べ替えない** —— 受け取る口で入れ替えると、口が増えるたびに入れ替え忘れの経路ができる。
 
 /**
  * 成分の段に重ねる「正側・負側の平均の線」の色。**成分の色の明るい版**（緑・赤紫・黄の 200 番台）。
@@ -286,6 +282,8 @@ export interface CompositePaintOptions {
   readonly ticks?: (widthCssPx: number) => readonly TimeTick[]
   /** 重ねる線（合成を前後 1 秒で均した線）。縦の物差しは合成と同じ。 */
   readonly overlays?: (columnCount: number) => readonly WaveOverlay[]
+  /** 縦の表示「0〜上端」の範囲の書き方（辞書の `formats.range`。言語で区切りが変わる）。 */
+  readonly range: (from: string, to: string) => string
 }
 
 /**
@@ -311,7 +309,7 @@ export function paintCompositeColumnsAt(
   stale: boolean,
   options: CompositePaintOptions,
 ): string | null {
-  const { minScale, unit, marks = [], ticks: buildTicks, overlays, vertical } = options
+  const { minScale, unit, marks = [], ticks: buildTicks, overlays, vertical, range } = options
   const ctx = canvas.getContext('2d')
   if (ctx === null) {
     throttledNoContext(() => log.error('[seismo] 波形を描く 2D コンテキストを取れなかった'))
@@ -382,7 +380,7 @@ export function paintCompositeColumnsAt(
   for (const overlay of overlays?.(w) ?? []) strokeOverlay(ctx, overlay, yOf, dpr * 2, stale ? 0.3 : 1)
 
   paintMarks(ctx, marks, w, plotH, dpr)
-  return `0〜${formatGal(scaleGal)} ${unit}`
+  return `${range('0', formatGal(scaleGal))} ${unit}`
 }
 
 /** 重ねる線を 1 本引く。**値の無い列で線を切る**（`lineTo` に NaN を渡しても何もしないので、自分で切る）。 */

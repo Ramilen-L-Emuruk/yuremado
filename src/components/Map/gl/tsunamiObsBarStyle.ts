@@ -8,20 +8,25 @@
 // 津波予報の色と値まで同じだが、こちらは「観測された高さ」で、あちらは「発表された等級」。
 // 凡例でも別のブロックへ分け、形も棒（観測棒）と線（海岸線）で変えている。
 
-/** 1 段ぶんの定義。`minM` はその色になる下限（m）。 */
+import type { Messages } from '../../../i18n/messages'
+
+/**
+ * 1 段ぶんの定義。`minM` はその色になる下限（m）。凡例の札は辞書の `formats.tsunamiObsLegend` の `legendKey` の語
+ * （日本語は「3m以上」「1m以上」「0.2m以上」「0.2m未満」）。
+ */
 export interface TsunamiObsHeightStep {
   minM: number
-  label: string
+  legendKey: keyof Messages['formats']['tsunamiObsLegend']
   color: string
 }
 
 /** 高い順。判定は上から「`minM` 以上か」で当てる。 */
 export const TSUNAMI_OBS_HEIGHT_STEPS: TsunamiObsHeightStep[] = [
-  { minM: 3, label: '3m以上', color: '#a855f7' },
-  { minM: 1, label: '1m以上', color: '#ef4444' },
-  { minM: 0.2, label: '0.2m以上', color: '#f97316' },
+  { minM: 3, legendKey: 'm3', color: '#a855f7' },
+  { minM: 1, legendKey: 'm1', color: '#ef4444' },
+  { minM: 0.2, legendKey: 'm02', color: '#f97316' },
   // 引き波で負の値が来ても最も低い段に入れる（数値として読めない値は下の関数で拾う）。
-  { minM: Number.NEGATIVE_INFINITY, label: '0.2m未満', color: '#22d3ee' },
+  { minM: Number.NEGATIVE_INFINITY, legendKey: 'under02', color: '#22d3ee' },
 ]
 
 /** 観測した高さ（m）に対応する棒の色。 */

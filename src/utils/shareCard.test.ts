@@ -6,11 +6,13 @@ import {
   shareCardMapHeight,
   layoutSubtitleLines,
   layoutNoticeLines,
-  EEW_NOTICE,
   SHARE_CARD_FORMATS,
   SUBTITLE_MAX_LINES,
   shareOrDownloadImage,
+  wrapNoteLines,
 } from './shareCard'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
 
 // 地図に割ける高さは「カード全体 − 見出し帯 − 出典帯」で決まり、撮影側（useShareCard）と
 // 合成側（composeShareCard）の両方が同じ計算を通す。ここが崩れると、撮った地図が貼るときに
@@ -52,17 +54,17 @@ describe('attributionLine', () => {
   // 境界線や活断層は元データを変換して使う（加工にあたる）が、海底地形は配信されるタイルを
   // そのまま描いている。まとめて括ると、加工していないものまで加工したと述べることになる。
   it('加工したものだけを「を加工して作成」で括る', () => {
-    const line = attributionLine({ derived: ['気象庁'], asIs: ['GEBCO'] })
-    expect(line).toBe('出典: GEBCO／気象庁 を加工して作成')
+    const line = attributionLine({ derived: ['jma'], asIs: ['bathymetry'] }, ja.shareImage)
+    expect(line).toBe('出典: GEBCO・NOAA NCEI（Esri のタイルサービス経由）／気象庁 を加工して作成')
   })
 
   it('加工していないものが無ければ、加工の句だけを出す', () => {
-    expect(attributionLine({ derived: ['気象庁'], asIs: [] })).toBe('出典: 気象庁 を加工して作成')
+    expect(attributionLine({ derived: ['jma'], asIs: [] }, ja.shareImage)).toBe('出典: 気象庁 を加工して作成')
   })
 
   it('加工したものが無ければ、加工の句を出さない', () => {
-    const line = attributionLine({ derived: [], asIs: ['GEBCO'] })
-    expect(line).toBe('出典: GEBCO')
+    const line = attributionLine({ derived: [], asIs: ['bathymetry'] }, ja.shareImage)
+    expect(line).toBe('出典: GEBCO・NOAA NCEI（Esri のタイルサービス経由）')
     expect(line).not.toContain('加工')
   })
 })
@@ -237,6 +239,27 @@ describe('layoutSubtitleLines', () => {
     expect(subtitle).toContain(last.slice(0, -1).trim())
   })
 
+  // 日本語・中国語以外は、項目どうしを「 / 」、値どうしを半角の空き 2 つでつなぐ（辞書の formats.slashSpaced・shareImage.joinParts）
+  it('正: 英語の副見出しも項目と値の境目で折り、値の中の空きでは割らない', () => {
+    const subtitle = [en.shareImage.joinParts(['Noto', 'M7.6', 'Depth 10 km']), en.shareImage.joinParts(['Joetsu', 'M5.0'])]
+      .join(en.formats.slashSpaced)
+    expect(layoutSubtitleLines(measure, subtitle, 26)).toEqual(['Noto  M7.6  Depth 10 km /', 'Joetsu  M5.0'])
+  })
+
+  it('対照: 前後に空きの無い「/」（5-/5+ など）では割らない', () => {
+    expect(layoutSubtitleLines(measure, 'Max 5-/5+  M6.8', 10)).toEqual(['Max 5-/5+', 'M6.8'])
+  })
+
+  it('安全弁: 英語でも上限を超えて切るときは項目の境目で切り、数値の途中で切らない', () => {
+    const subtitle = ['Noto  M7.6', 'Joetsu  M5.0', 'Chiba  M4.8', 'Hyuga  M4.2'].join(en.formats.slashSpaced)
+    const lines = layoutSubtitleLines(measure, subtitle, 13)
+    expect(lines).toHaveLength(SUBTITLE_MAX_LINES)
+    const last = lines[SUBTITLE_MAX_LINES - 1]
+    expect(last.endsWith('…')).toBe(true)
+    expect(last).not.toMatch(/M\d(\.\d)?…$/)
+    expect(measure(last)).toBeLessThanOrEqual(13)
+  })
+
   it('正: 副見出しの行が増えるぶん地図が縮む', () => {
     const format = SHARE_CARD_FORMATS.wide16x9
     expect(shareCardMapHeight(format, 1, 1) - shareCardMapHeight(format, 1, 2)).toBe(30)
@@ -260,11 +283,44 @@ describe('layoutNoticeLines', () => {
     expect(layoutNoticeLines(measure, ['出典: 気象庁', '注意文'], 40)).toEqual(['出典: 気象庁', '注意文'])
   })
 
+  it('正: かな・漢字の無い注意文（英語）は語の境で折り、語の途中で切らない', () => {
+    const lines = layoutNoticeLines(measure, [en.shareImage.eewNotice], 30)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines.join(' ')).toBe(en.shareImage.eewNotice)
+    for (const l of lines) expect(measure(l)).toBeLessThanOrEqual(30)
+  })
+
   it('正: 緊急地震速報の注意文は、幅 1080 では 2 行・16:9 では 1 行（全角 15px として数える）', () => {
     const wide = (t: string) => [...t].length * 15
-    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).length).toBe(2)
-    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1600 - 72).length).toBe(1)
-    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).join('')).toBe(EEW_NOTICE)
+    expect(layoutNoticeLines(wide, [ja.shareImage.eewNotice], 1080 - 72).length).toBe(2)
+    expect(layoutNoticeLines(wide, [ja.shareImage.eewNotice], 1600 - 72).length).toBe(1)
+    expect(layoutNoticeLines(wide, [ja.shareImage.eewNotice], 1080 - 72).join('')).toBe(ja.shareImage.eewNotice)
+  })
+})
+
+// 凡例の完全性の注記は言語ごとに訳した文が入る。日本語・中国語は 1 文字ずつ詰め、空白で語を区切る言語は語の境で折る。
+describe('wrapNoteLines', () => {
+  const measure = (t: string) => [...t].length
+
+  it('正: 英語の文は語の途中で切らない', () => {
+    const text = 'Going back to 2000, the record is complete only for M 3.0 and above.'
+    const lines = wrapNoteLines(measure, text, 20)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines.join(' ')).toBe(text)
+    for (const l of lines) expect(measure(l)).toBeLessThanOrEqual(20)
+  })
+
+  it('対照: 日本語の文は今までどおり 1 文字ずつ詰める（空白でも切らない）', () => {
+    const text = '2000 年まで遡ると、記録が揃うのは M 3.0 以上です。'
+    const lines = wrapNoteLines(measure, text, 10)
+    expect(lines.join('')).toBe(text)
+    for (const l of lines.slice(0, -1)) expect(measure(l)).toBe(10)
+  })
+
+  it('安全弁: 幅を超える 1 語は文字で割って、文を落とさない', () => {
+    const lines = wrapNoteLines(measure, 'abcdefghijklmnop qr', 5)
+    expect(lines.join('').replace(/ /g, '')).toBe('abcdefghijklmnopqr')
+    for (const l of lines) expect(measure(l)).toBeLessThanOrEqual(5)
   })
 })
 
@@ -276,5 +332,13 @@ describe('SHARE_CARD_FORMATS', () => {
   })
   it('安全弁: どの寸法でも地図に高さが残る（出典 2 行・副見出し上限でも）', () => {
     for (const f of Object.values(SHARE_CARD_FORMATS)) expect(shareCardMapHeight(f, 2, SUBTITLE_MAX_LINES)).toBeGreaterThan(400)
+  })
+})
+
+// 段 9b: 出典の行は言語ごとの書き方で組む（名前も辞書の語）
+describe('attributionLine（英語）', () => {
+  it('加工したものとそのまま描くものを英語の句で分ける', () => {
+    expect(attributionLine({ derived: ['jma', 'activeFaults'], asIs: ['bathymetry'] }, en.shareImage))
+      .toBe('Source: GEBCO, NOAA NCEI (via Esri tile service) / Created by processing data from JMA, AIST Active Fault Database')
   })
 })

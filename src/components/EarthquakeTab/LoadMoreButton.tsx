@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { loadMoreDrainsAt } from '../../services/dmdataRequestGates'
 import { relayThrottleRemainingMs } from '../../services/relayEndpoint'
-import { formatLoadMoreThrottleLabel } from '../../utils/telegramLoss'
+import { formatLoadMoreThrottleLeft } from '../../utils/telegramLoss'
+import { useMessages } from '../../i18n/I18nProvider'
 
 /**
  * 残り時間を読み直す間隔。**表示が秒単位なので 1 秒より細かくしない。**
@@ -24,7 +25,7 @@ interface Props {
  * 地震一覧の末尾の「もっと見る」。
  *
  * **押した後、配信元の上限で待たされている間は残り時間を出す**（例「取得制限中（あと 2:15）」）。
- * 一覧の上の帯（`FETCH_THROTTLED_NOTICE`）は、ボタンを押した位置からは見えないため。
+ * 一覧の上の帯（`fetchThrottledNotice`）は、ボタンを押した位置からは見えないため。
  * 押す前には出さない（文言・押した後だけ出すこととも 2026-10-06 ユーザー承認）。
  *
  * **部品を分けているのは、毎秒の描き直しをこのボタンだけに閉じるため。** 一覧（`EarthquakeTab`）で
@@ -38,10 +39,11 @@ interface Props {
  * 待ちが解けたあとの読み込み・反映はまだ続くので、そこは従来どおり「取得中…」に戻る。
  */
 export function LoadMoreButton({ onLoadMore, isLoadingMore, watchThrottle }: Props) {
+  const w = useMessages().quake.list
   const remainingMs = useThrottleRemaining(watchThrottle && isLoadingMore)
   const label = !isLoadingMore
-    ? 'もっと見る'
-    : remainingMs !== null ? formatLoadMoreThrottleLabel(remainingMs) : '取得中…'
+    ? w.loadMore
+    : remainingMs !== null ? w.throttled(formatLoadMoreThrottleLeft(remainingMs)) : w.fetching
   return (
     <button
       onClick={onLoadMore}

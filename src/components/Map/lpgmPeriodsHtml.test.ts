@@ -4,13 +4,14 @@
 // 周期帯ごとの値をここで見せる。壊れた入力で吹き出しごと消えないことも固定する。
 import { describe, it, expect } from 'vitest'
 import { lpgmPeriodsHtml } from './LpgmPointsGL'
+import { JA_MESSAGES } from '../../i18n/messages'
 
 describe('lpgmPeriodsHtml', () => {
   it('正: 帯ごとの階級と絶対速度応答スペクトルを中心周期の見出しで並べる', () => {
     const html = lpgmPeriodsHtml(JSON.stringify([
       { band: 1, lgInt: 4, sva: 268.5 },
       { band: 2, lgInt: 3, sva: 250 },
-    ]))
+    ]), JA_MESSAGES)
     expect(html).toContain('2秒')
     expect(html).toContain('3秒')
     expect(html).toContain('268.5')
@@ -19,15 +20,15 @@ describe('lpgmPeriodsHtml', () => {
   })
 
   it('安全弁: 階級 0 の帯も行として出す（「該当なし」であって「観測していない」ではない）', () => {
-    const html = lpgmPeriodsHtml(JSON.stringify([{ band: 5, lgInt: 0, sva: 1.2 }]))
+    const html = lpgmPeriodsHtml(JSON.stringify([{ band: 5, lgInt: 0, sva: 1.2 }]), JA_MESSAGES)
     expect(html).toContain('6秒')
     expect(html).toContain('1.2')
   })
 
   it('対照: 中身が無い・壊れているときは何も出さない（吹き出しごと消さない）', () => {
-    expect(lpgmPeriodsHtml('')).toBe('')
-    expect(lpgmPeriodsHtml('{')).toBe('')
-    expect(lpgmPeriodsHtml('[]')).toBe('')
-    expect(lpgmPeriodsHtml('{"band":1}')).toBe('')
+    expect(lpgmPeriodsHtml('', JA_MESSAGES)).toBe('')
+    expect(lpgmPeriodsHtml('{', JA_MESSAGES)).toBe('')
+    expect(lpgmPeriodsHtml('[]', JA_MESSAGES)).toBe('')
+    expect(lpgmPeriodsHtml('{"band":1}', JA_MESSAGES)).toBe('')
   })
 })

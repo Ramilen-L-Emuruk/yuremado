@@ -1,4 +1,7 @@
 // K-NET/KiK-net ASCII形式（防災科研 強震観測網）の波形ファイルのパーサー。
+//
+// 読めないファイルの失敗は、日本語の文に辞書の鍵と引数を添えて投げる（`keyedError`。画面は設定の窓の取り込みの失敗の欄で
+// 言語の辞書から組む）。生成スクリプトも読むので、辞書は読まない。
 // 仕様: https://www.kyoshin.bosai.go.jp/ja/knetascii/
 //
 // ヘッダーは17行の「キー・値」形式で、18行目以降に1行8列の符号付き整数（生カウント値）が
@@ -11,6 +14,8 @@
 // 2018年北海道胆振東部地震の実ファイル（本震、観測点FKS007）で以下を確認済み:
 //   "Sampling Freq(Hz) 100Hz"（"(Hz)"と"100Hz"の間は空白1個のみ）
 //   "Origin Time       2018/09/06 03:08:00"（短いキーなので空白多数）
+
+import { keyedError } from '../keyedError'
 
 export type KnetComponent = 'NS' | 'EW' | 'UD'
 /** KiK-netは地表(surface)・地中(borehole)の2深度を持つ。K-NETはsurfaceのみ。 */
@@ -51,33 +56,33 @@ function matchField(line: string, ...keys: string[]): string | null {
 /** ファイル名の拡張子から成分・深度を判定する（K-NET: .NS/.EW/.UD、KiK-net: .NS1/.EW1/.UD1=地中、.NS2/.EW2/.UD2=地表）。 */
 export function resolveComponentFromFileName(fileName: string): { component: KnetComponent; depthKind: KnetDepthKind } {
   const m = /\.(NS|EW|UD)([12])?$/i.exec(fileName)
-  if (!m) throw new Error(`ファイル名から成分(NS/EW/UD)を判定できません: "${fileName}"`)
+  if (!m) throw keyedError(`ファイル名から成分(NS/EW/UD)を判定できません: "${fileName}"`, 'knetComponentFromName', fileName)
   const component = m[1].toUpperCase() as KnetComponent
   const depthKind: KnetDepthKind = m[2] === '1' ? 'borehole' : 'surface'
   return { component, depthKind }
 }
 
-/** "3920(gal)/8388608" 形式のスケールファクタを分数に分解する。 */
-function parseScaleFactor(value: string, ctx: string): { numerator: number; denominator: number } {
+/** "3920(gal)/8388608" 形式のスケールファクタを分数に分解する。`fileName` は失敗の文に添えるファイル名（ヘッダーの欄の失敗として言う） */
+function parseScaleFactor(value: string, fileName: string): { numerator: number; denominator: number } {
   const m = /^([\d.]+)\s*\([^)]*\)\s*\/\s*([\d.]+)$/.exec(value)
-  if (!m) throw new Error(`${ctx}: Scale Factor の形式が不明です "${value}"`)
+  if (!m) throw keyedError(`${fileName} ヘッダー: Scale Factor の形式が不明です "${value}"`, 'knetScaleFactorFormat', fileName, value)
   const numerator = parseFloat(m[1])
   const denominator = parseFloat(m[2])
-  if (!(denominator > 0)) throw new Error(`${ctx}: Scale Factor の分母が不正です "${value}"`)
+  if (!(denominator > 0)) throw keyedError(`${fileName} ヘッダー: Scale Factor の分母が不正です "${value}"`, 'knetScaleFactorDenominator', fileName, value)
   return { numerator, denominator }
 }
 
 /** "100Hz" のような値から数値だけを取り出す。 */
-function parseSamplingHz(value: string, ctx: string): number {
+function parseSamplingHz(value: string, fileName: string): number {
   const n = parseFloat(value)
-  if (!Number.isFinite(n) || n <= 0) throw new Error(`${ctx}: Sampling Freq を解釈できません "${value}"`)
+  if (!Number.isFinite(n) || n <= 0) throw keyedError(`${fileName} ヘッダー: Sampling Freq を解釈できません "${value}"`, 'knetSamplingFreq', fileName, value)
   return n
 }
 
 /** "2018/09/06 03:08:04"（JST）をUTCのDateへ変換する。 */
-function parseJstDateTime(value: string, ctx: string): Date {
+function parseJstDateTime(value: string, fileName: string): Date {
   const m = /^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/.exec(value)
-  if (!m) throw new Error(`${ctx}: 日時の形式が不明です "${value}"`)
+  if (!m) throw keyedError(`${fileName} ヘッダー: 日時の形式が不明です "${value}"`, 'knetDateFormat', fileName, value)
   const [, y, mo, d, h, mi, s] = m.map(Number) as unknown as number[]
   return new Date(Date.UTC(y, mo - 1, d, h, mi, s) - 9 * 3600_000)
 }
@@ -89,12 +94,13 @@ function parseJstDateTime(value: string, ctx: string): Date {
 export function parseKnetAsciiFile(text: string, fileName: string): KnetAsciiFile {
   const lines = text.split(/\r\n|\r|\n/)
   if (lines.length <= HEADER_LINE_COUNT) {
-    throw new Error(`${fileName}: ヘッダー行数(${HEADER_LINE_COUNT}行)に満たないデータです`)
+    throw keyedError(`${fileName}: ヘッダー行数(${HEADER_LINE_COUNT}行)に満たないデータです`, 'knetTooShort', fileName, HEADER_LINE_COUNT)
   }
   if (!lines[HEADER_LINE_COUNT - 1].startsWith('Memo.')) {
-    throw new Error(
+    throw keyedError(
       `${fileName}: ${HEADER_LINE_COUNT}行目が"Memo."で始まっていません`
       + '（ヘッダー行数の前提が実ファイルと食い違っている可能性があります）',
+      'knetNoMemo', fileName, HEADER_LINE_COUNT,
     )
   }
 
@@ -108,26 +114,26 @@ export function parseKnetAsciiFile(text: string, fileName: string): KnetAsciiFil
 
   for (let i = 0; i < HEADER_LINE_COUNT; i++) {
     const line = lines[i]
-    const ctx = `${fileName} ヘッダー`
     let v: string | null
     if ((v = matchField(line, 'Station Code')) !== null) stationCode = v
     else if ((v = matchField(line, 'Station Lat.', 'Station Lat')) !== null) latitude = parseFloat(v)
     else if ((v = matchField(line, 'Station Long.', 'Station Lon.')) !== null) longitude = parseFloat(v)
-    else if ((v = matchField(line, 'Sampling Freq(Hz)', 'Sampling Freq (Hz)')) !== null) samplingHz = parseSamplingHz(v, ctx)
-    else if ((v = matchField(line, 'Scale Factor')) !== null) scaleFactor = parseScaleFactor(v, ctx)
-    else if ((v = matchField(line, 'Record Time')) !== null) recordStartTime = parseJstDateTime(v, ctx)
-    else if ((v = matchField(line, 'Origin Time')) !== null) originTime = parseJstDateTime(v, ctx)
+    else if ((v = matchField(line, 'Sampling Freq(Hz)', 'Sampling Freq (Hz)')) !== null) samplingHz = parseSamplingHz(v, fileName)
+    else if ((v = matchField(line, 'Scale Factor')) !== null) scaleFactor = parseScaleFactor(v, fileName)
+    else if ((v = matchField(line, 'Record Time')) !== null) recordStartTime = parseJstDateTime(v, fileName)
+    else if ((v = matchField(line, 'Origin Time')) !== null) originTime = parseJstDateTime(v, fileName)
     // 他の行（Lat.・Long.・Depth.・Mag.・Station Height・Duration Time・Dir.・
     // Max. Acc.・Last Correction・Memo.）はこの用途では使わないため素通しする。
   }
 
-  if (stationCode === null) throw new Error(`${fileName}: Station Code が見つかりません`)
-  if (latitude === null || !Number.isFinite(latitude)) throw new Error(`${fileName}: Station Lat. が見つかりません`)
-  if (longitude === null || !Number.isFinite(longitude)) throw new Error(`${fileName}: Station Long. が見つかりません`)
-  if (samplingHz === null) throw new Error(`${fileName}: Sampling Freq(Hz) が見つかりません`)
-  if (scaleFactor === null) throw new Error(`${fileName}: Scale Factor が見つかりません`)
-  if (recordStartTime === null) throw new Error(`${fileName}: Record Time が見つかりません`)
-  if (originTime === null) throw new Error(`${fileName}: Origin Time が見つかりません`)
+  const missing = (field: string) => keyedError(`${fileName}: ${field} が見つかりません`, 'knetFieldMissing', fileName, field)
+  if (stationCode === null) throw missing('Station Code')
+  if (latitude === null || !Number.isFinite(latitude)) throw missing('Station Lat.')
+  if (longitude === null || !Number.isFinite(longitude)) throw missing('Station Long.')
+  if (samplingHz === null) throw missing('Sampling Freq(Hz)')
+  if (scaleFactor === null) throw missing('Scale Factor')
+  if (recordStartTime === null) throw missing('Record Time')
+  if (originTime === null) throw missing('Origin Time')
 
   const rawCounts: number[] = []
   for (let i = HEADER_LINE_COUNT; i < lines.length; i++) {
@@ -135,11 +141,13 @@ export function parseKnetAsciiFile(text: string, fileName: string): KnetAsciiFil
     if (line === '') continue
     for (const token of line.split(/\s+/)) {
       const n = Number(token)
-      if (!Number.isFinite(n)) throw new Error(`${fileName}: データ行に数値でないトークンがあります ("${token}", 行${i + 1})`)
+      if (!Number.isFinite(n)) {
+        throw keyedError(`${fileName}: データ行に数値でないトークンがあります ("${token}", 行${i + 1})`, 'knetNonNumericToken', fileName, token, i + 1)
+      }
       rawCounts.push(n)
     }
   }
-  if (rawCounts.length === 0) throw new Error(`${fileName}: データが0件です`)
+  if (rawCounts.length === 0) throw keyedError(`${fileName}: データが0件です`, 'knetNoData', fileName)
 
   const { component, depthKind } = resolveComponentFromFileName(fileName)
 

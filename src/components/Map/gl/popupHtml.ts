@@ -1,4 +1,5 @@
 import { readableTextColor } from '../../../utils/contrast'
+import type { Messages } from '../../../i18n/messages'
 
 // maplibregl.Popup の本文を組み立てる際に各レイヤーで共有する小道具。
 // エスケープ処理と震度／階級バッジは複数のレイヤーが同じものを必要とするため、
@@ -23,9 +24,9 @@ export function escapeHtml(s: string): string {
  * 吹き出しの末尾に添える、電文のコード（潮位観測点・津波予報区などの番号）の行。「コード 32002」の形で小さく出す
  * （2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」。読み上げには足さない）。コードが無ければ空文字。
  */
-export function popupCodeLineHtml(code: string | undefined): string {
+export function popupCodeLineHtml(code: string | undefined, m: Messages): string {
   if (!code) return ''
-  return `<div style="color:#6b7280;font-size:10px;margin-top:2px">コード ${escapeHtml(code)}</div>`
+  return `<div style="color:#6b7280;font-size:10px;margin-top:2px">${m.map.popup.code(escapeHtml(code))}</div>`
 }
 
 /** 見出し＋補足の2段組み本文（活断層・プレート境界・津波海岸線などの共通形）。 */
@@ -41,8 +42,8 @@ export function twoLinePopupHtml(title: string, subtitle: string): string {
  * 小さく末尾に置き、読み上げには入れない（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」、
  * 長周期地震動の吹き出しは同日「長周期にも添える (Recommended)」。2026-10-21 の「画面に出さない」を覆した）。
  */
-export function popupCodeHtml(code: string | undefined): string {
-  return code ? `<div style="margin-top:4px;font-size:10px;color:#64748b">コード ${escapeHtml(code)}</div>` : ''
+export function popupCodeHtml(code: string | undefined, m: Messages): string {
+  return code ? `<div style="margin-top:4px;font-size:10px;color:#64748b">${m.map.popup.code(escapeHtml(code))}</div>` : ''
 }
 
 /**
@@ -56,6 +57,6 @@ export function badgeHtml(label: string, color: string): string {
   return (
     `<span style="display:inline-block;min-width:20px;padding:0 5px;text-align:center;font-weight:700;` +
     `border-radius:3px;color:${readableTextColor(color)};font-size:10px;line-height:16px;` +
-    `white-space:nowrap;background:${color}">${escapeHtml(label)}</span>`
+    `white-space:nowrap;flex-shrink:0;background:${color}">${escapeHtml(label)}</span>`
   )
 }

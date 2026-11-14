@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { ja } from '../../i18n/messages/ja'
 import { forecastConnectionLabel, keyForecastConnectionLabel, telegramConnectionLabel } from './connectionLabel'
 import { log } from '../../utils/logger'
 
@@ -17,7 +18,7 @@ describe('keyForecastConnectionLabel', () => {
   // 正: 同時接続の上限は専用の文言にする。**利用者がすべきことを書く** ——
   // 実際にできるのは別のタブを閉じることだけで、枠が空けば自動で繋がる
   it('同時接続の上限は「切断」と別の文言で、閉じれば繋がることを伝える', () => {
-    const label = keyForecastConnectionLabel('crowded', KEY_OK)
+    const label = keyForecastConnectionLabel('crowded', KEY_OK, ja.settings.connection)
 
     expect(label.text).toContain('同時接続')
     expect(label.text).toContain('自動で繋がります')
@@ -29,39 +30,39 @@ describe('keyForecastConnectionLabel', () => {
   // 正: 配信元が閉じて止めた 2 つは、理由と利用者がすべきことを分けて出す（2026-10-19 ユーザー承認の文面）。
   // 「切断」のままだと、自動で繋ぎ直す切断と見分けが付かず、待っていれば戻ると読まれる
   it('解約・終了の操作で止めたときは、理由ごとの文言を出す', () => {
-    expect(keyForecastConnectionLabel('contract-ended', KEY_OK).text)
+    expect(keyForecastConnectionLabel('contract-ended', KEY_OK, ja.settings.connection).text)
       .toBe('接続を停止（受信できる区分がなくなりました。契約を確かめてから再読み込みしてください）')
-    expect(keyForecastConnectionLabel('closed-by-user', KEY_OK).text)
+    expect(keyForecastConnectionLabel('closed-by-user', KEY_OK, ja.settings.connection).text)
       .toBe('接続を停止（DMDATA.JP 側で接続が終了されました。再読み込みで繋ぎ直します）')
   })
 
   // 対照: 本当の切断は従来どおり「切断」。crowded の文言に寄せると、
   // キーや回線の問題を「タブを閉じれば直る」と誤って案内する
   it('切断は「切断」のまま', () => {
-    expect(keyForecastConnectionLabel('disconnected', KEY_OK).text).toBe('切断')
+    expect(keyForecastConnectionLabel('disconnected', KEY_OK, ja.settings.connection).text).toBe('切断')
   })
 
   // 対照: キーが未設定・不正なときは接続を試みていないので、通信の失敗と区別する
   it('キーの問題は通信の失敗と区別する', () => {
-    expect(keyForecastConnectionLabel('disconnected', { apiKeySet: false, apiKeyInvalid: false }).text).toBe('APIキー未設定')
-    expect(keyForecastConnectionLabel('disconnected', { apiKeySet: true, apiKeyInvalid: true }).text).toBe('APIキーが無効')
+    expect(keyForecastConnectionLabel('disconnected', { apiKeySet: false, apiKeyInvalid: false }, ja.settings.connection).text).toBe('APIキー未設定')
+    expect(keyForecastConnectionLabel('disconnected', { apiKeySet: true, apiKeyInvalid: true }, ja.settings.connection).text).toBe('APIキーが無効')
     // 鍵が使えないときは接続を作らない（null）
-    expect(keyForecastConnectionLabel(null, { apiKeySet: false, apiKeyInvalid: false }).text).toBe('APIキー未設定')
-    expect(keyForecastConnectionLabel(null, { apiKeySet: true, apiKeyInvalid: true }).text).toBe('APIキーが無効')
+    expect(keyForecastConnectionLabel(null, { apiKeySet: false, apiKeyInvalid: false }, ja.settings.connection).text).toBe('APIキー未設定')
+    expect(keyForecastConnectionLabel(null, { apiKeySet: true, apiKeyInvalid: true }, ja.settings.connection).text).toBe('APIキーが無効')
   })
 
   // 対照: 既存の 3 状態を巻き込んでいないこと
   it('接続中・接続試行中・再生中は従来の文言', () => {
-    expect(keyForecastConnectionLabel('connected', KEY_OK).text).toBe('接続中')
-    expect(keyForecastConnectionLabel('connecting', KEY_OK).text).toBe('接続試行中…')
-    expect(keyForecastConnectionLabel('replay', KEY_OK).text).toContain('再生中')
+    expect(keyForecastConnectionLabel('connected', KEY_OK, ja.settings.connection).text).toBe('接続中')
+    expect(keyForecastConnectionLabel('connecting', KEY_OK, ja.settings.connection).text).toBe('接続試行中…')
+    expect(keyForecastConnectionLabel('replay', KEY_OK, ja.settings.connection).text).toContain('再生中')
   })
 
   // 安全弁: **どの状態でも空文字を返さない**。空を返すと接続状態の行が消え、
   // 「状態が分からない」ことに画面からも気づけない
   it('どの状態でも文言が空にならない', () => {
     for (const s of ['connected', 'connecting', 'disconnected', 'replay', 'crowded', 'contract-ended', 'closed-by-user', null] as const) {
-      const label = keyForecastConnectionLabel(s, KEY_OK)
+      const label = keyForecastConnectionLabel(s, KEY_OK, ja.settings.connection)
       expect(label.text.length).toBeGreaterThan(0)
       expect(label.className.length).toBeGreaterThan(0)
     }
@@ -71,8 +72,8 @@ describe('keyForecastConnectionLabel', () => {
   // 繋がっているのに「APIキーが無効」と出たら、利用者は正しいキーを疑って消しにかかる
   it('接続できている状態ではキーの不正を文言に出さない', () => {
     const invalid = { apiKeySet: true, apiKeyInvalid: true }
-    expect(keyForecastConnectionLabel('connected', invalid).text).toBe('接続中')
-    expect(keyForecastConnectionLabel('crowded', invalid).text).toContain('同時接続')
+    expect(keyForecastConnectionLabel('connected', invalid, ja.settings.connection).text).toBe('接続中')
+    expect(keyForecastConnectionLabel('crowded', invalid, ja.settings.connection).text).toContain('同時接続')
   })
 
   // 安全弁: 型検査を通らない経路で未知の値が来たとき、**画面に出すだけでなく記録も残す**。
@@ -81,7 +82,7 @@ describe('keyForecastConnectionLabel', () => {
     vi.mocked(log.warn).mockClear()
 
     // 型の上では到達しない分岐。型を無視して渡す経路（型と呼び出し側の同期が崩れた場合）を再現する
-    const label = keyForecastConnectionLabel('throttled' as never, KEY_OK)
+    const label = keyForecastConnectionLabel('throttled' as never, KEY_OK, ja.settings.connection)
 
     expect(vi.mocked(log.warn)).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(log.warn).mock.calls[0][0])).toContain('未知の接続状態')
@@ -96,32 +97,32 @@ describe('telegramConnectionLabel', () => {
 
   // 正: 中継が DMDATA.JP と切れている間は「切断」と言い、切れた時刻を添える（2026-10-31 ユーザー選択の文面）
   it('中継が DMDATA.JP と切れていれば、繋がっていても切断と言い、時刻を添える', () => {
-    const label = telegramConnectionLabel('connected', { connected: false, disconnectedAtMs: at('2026-10-31T15:42:10') })
+    const label = telegramConnectionLabel('connected', { connected: false, disconnectedAtMs: at('2026-10-31T15:42:10') }, ja.settings.connection)
     expect(label.text).toBe('切断（配信サーバーが DMDATA.JP と切断中・15:42 から）')
     expect(label.className).toContain('red')
   })
 
   // 正: 中継が時刻を知らなければ時刻だけ落とす（推測で埋めない）
   it('切れた時刻が分からなければ時刻を添えない', () => {
-    expect(telegramConnectionLabel('connected', { connected: false, disconnectedAtMs: null }).text)
+    expect(telegramConnectionLabel('connected', { connected: false, disconnectedAtMs: null }, ja.settings.connection).text)
       .toBe('切断（配信サーバーが DMDATA.JP と切断中）')
   })
 
   // 対照: 中継が DMDATA.JP と繋がっている、またはまだ知らせが無いなら「接続中」
   it('中継が繋がっている・知らせがまだ無いなら接続中', () => {
-    expect(telegramConnectionLabel('connected', { connected: true, disconnectedAtMs: null }).text).toBe('接続中')
-    expect(telegramConnectionLabel('connected', null).text).toBe('接続中')
+    expect(telegramConnectionLabel('connected', { connected: true, disconnectedAtMs: null }, ja.settings.connection).text).toBe('接続中')
+    expect(telegramConnectionLabel('connected', null, ja.settings.connection).text).toBe('接続中')
   })
 
   // 安全弁: 鍵の状態を見ない（中継は鍵が無くても繋がる）。中継自体が切れていれば素の「切断」
   it('中継自体が切れていれば「切断」で、鍵の文言は出さない', () => {
-    expect(telegramConnectionLabel('disconnected', null).text).toBe('切断')
-    expect(telegramConnectionLabel('disconnected', { connected: false, disconnectedAtMs: null }).text).toBe('切断')
+    expect(telegramConnectionLabel('disconnected', null, ja.settings.connection).text).toBe('切断')
+    expect(telegramConnectionLabel('disconnected', { connected: false, disconnectedAtMs: null }, ja.settings.connection).text).toBe('切断')
   })
 
   // 安全弁: 再生中は中継の上流の状態で上書きしない（ライブ受信を止めているので）
   it('再生中は上流が切れていても再生中と出す', () => {
-    expect(telegramConnectionLabel('replay', { connected: false, disconnectedAtMs: null }).text).toContain('再生中')
+    expect(telegramConnectionLabel('replay', { connected: false, disconnectedAtMs: null }, ja.settings.connection).text).toContain('再生中')
   })
 })
 
@@ -131,19 +132,19 @@ describe('forecastConnectionLabel（「予報」の行）', () => {
   const NO_KEY = { apiKeySet: false, apiKeyInvalid: false }
 
   it('正: 中継から予報を受けていれば経路を「配信サーバー経由」と添える（鍵の接続より先に見る）', () => {
-    expect(forecastConnectionLabel({ ...base, relayForecastLive: true, keyStatus: 'connected' }, KEY).text).toBe('接続中（配信サーバー経由）')
+    expect(forecastConnectionLabel({ ...base, relayForecastLive: true, keyStatus: 'connected' }, KEY, ja.settings.connection).text).toBe('接続中（配信サーバー経由）')
   })
 
   it('正: 鍵の接続で受けていれば「APIキー」と添える', () => {
-    expect(forecastConnectionLabel({ ...base, keyStatus: 'connected' }, KEY).text).toBe('接続中（APIキー）')
+    expect(forecastConnectionLabel({ ...base, keyStatus: 'connected' }, KEY, ja.settings.connection).text).toBe('接続中（APIキー）')
   })
 
   it('対照: どちらも無ければ「APIキー未設定」', () => {
-    expect(forecastConnectionLabel(base, NO_KEY).text).toBe('APIキー未設定')
+    expect(forecastConnectionLabel(base, NO_KEY, ja.settings.connection).text).toBe('APIキー未設定')
   })
 
   it('安全弁: ほかの状態の文は今のまま（鍵の試行中・予報キーだけで中継が切れている）', () => {
-    expect(forecastConnectionLabel({ ...base, keyStatus: 'connecting' }, KEY).text).toBe('接続試行中…')
-    expect(forecastConnectionLabel({ ...base, relayStatus: 'disconnected', relayForecastAvailable: true }, NO_KEY).text).toBe('切断')
+    expect(forecastConnectionLabel({ ...base, keyStatus: 'connecting' }, KEY, ja.settings.connection).text).toBe('接続試行中…')
+    expect(forecastConnectionLabel({ ...base, relayStatus: 'disconnected', relayForecastAvailable: true }, NO_KEY, ja.settings.connection).text).toBe('切断')
   })
 })

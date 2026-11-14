@@ -4704,7 +4704,9 @@ describe('起動時に 7 日間の帯を復元する', () => {
     await h.flush()
 
     expect(h.current.earthquakeCountList).toEqual([])
-    expect(h.current.error).toBe('落ちた')
+    // エラーは文ではなく原因のまま持つ（文は画面の言語で描くときに組む。→ `EarthquakeTab` の `fetchFailureReason`）
+    expect(h.current.error?.cause).toBeInstanceOf(Error)
+    expect((h.current.error?.cause as Error).message).toBe('落ちた')
   })
 })
 

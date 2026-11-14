@@ -1,5 +1,5 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
-import { getIntensityColor } from '../../../utils/intensity'
+import { getIntensityColor, intensityShortLabel, type IntensityWords } from '../../../utils/intensity'
 import { SHINDO0_COLOR } from '../../../utils/measuredIntensity'
 import { readableTextColor } from '../../../utils/contrast'
 import { KYOSHIN_SUB_ZERO_STEP_COLORS, KYOSHIN_SUB_ZERO_STEPS, kyoshinSubZeroStepRatio } from '../../../utils/kyoshinIntensity'
@@ -19,9 +19,16 @@ const PADDING = 8
 // confirmed の白フチ幅（旧 circle 版 CONFIRMED_STROKE_WIDTH の見た目を踏襲、ベース半径基準で少し太め）。
 const CONFIRMED_RING_WIDTH = 4
 
-// kyoshinIndexToJma の rank(0〜9) と対応するラベル・代表 scale（震度0は色を別途 SHINDO0_COLOR にする）。
-const RANK_LABELS = ['0', '1', '2', '3', '4', '5弱', '5強', '6弱', '6強', '7']
+// kyoshinIndexToJma の rank(0〜9) と対応する代表 scale（震度0は色を別途 SHINDO0_COLOR にする）。
 const RANK_SCALES = [10, 10, 20, 30, 40, 45, 50, 55, 60, 70]
+
+/**
+ * rank の丸の中の字。震度0 は震度の札の表に無いので「0」を置き、ほかは地図の震度の丸と同じ短い札
+ * （{@link intensityShortLabel}。日本語は「5弱」、英語などは「5-」）。
+ */
+function rankLabel(rank: number, w: IntensityWords): string {
+  return rank === 0 ? '0' : intensityShortLabel(RANK_SCALES[rank] ?? 10, w)
+}
 
 /**
  * 検知に加わった震度0 未満の点の印（文字なし・白フチ。2026-10-29 ユーザー選択「文字なしの小さな印 (Recommended)」）。
@@ -51,7 +58,7 @@ function rankColor(rank: number): string {
   return rank === 0 ? SHINDO0_COLOR : getIntensityColor(RANK_SCALES[rank] ?? 10)
 }
 
-function drawBadge(rank: number, confirmed: boolean): ImageData {
+function drawBadge(rank: number, confirmed: boolean, label: string): ImageData {
   const r = KYOSHIN_DETECTED_ICON_BASE_RADIUS
   const size = (r + PADDING) * 2
   const canvas = document.createElement('canvas')
@@ -81,11 +88,15 @@ function drawBadge(rank: number, confirmed: boolean): ImageData {
   ctx.stroke()
   ctx.globalAlpha = 1
 
-  const label = RANK_LABELS[rank] ?? '?'
   // 文字色は丸の塗り色から決める（白固定だと震度4 の黄で 1.30:1 まで落ちる。intensityIcons.ts と同様）。
   ctx.fillStyle = readableTextColor(fill)
   // "Noto Sans JP" は @font-face 未登録で効いておらず、同梱も撤去済み（理由は intensityIcons.ts 参照）。
-  ctx.font = `700 ${label.length > 1 ? r * 0.85 : r * 1.15}px sans-serif`
+  const fontPx = label.length > 1 ? r * 0.85 : r * 1.15
+  ctx.font = `700 ${fontPx}px sans-serif`
+  // 丸に収まらない長い札だけ字を縮める（日本語の札はこの幅に収まり、今の大きさのまま。intensityIcons.ts と同じ）
+  const maxWidth = r * 1.8
+  const width = ctx.measureText(label).width
+  if (width > maxWidth) ctx.font = `700 ${(fontPx * maxWidth) / width}px sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(label, cx, cy)
@@ -121,13 +132,32 @@ function drawSubZeroBadge(step: number, confirmed: boolean): ImageData {
   return ctx.getImageData(0, 0, size, size)
 }
 
-/** map インスタンスへ揺れ検知点バッジ画像（rank 0〜9 × confirmed/candidate と、震度0 未満の 6 段の印）を一括登録する。 */
-export function ensureKyoshinDetectedIcons(map: MapLibreMap): void {
-  for (let rank = 0; rank < RANK_LABELS.length; rank++) {
+/** 地図ごとに、いま焼いてある丸の字（画像の id → 字）。言語を変えたときに字の違う丸だけ焼き直すのに使う */
+const bakedLabels = new WeakMap<MapLibreMap, Map<string, string>>()
+
+/**
+ * map インスタンスへ揺れ検知点バッジ画像（rank 0〜9 × confirmed/candidate と、震度0 未満の 6 段の印）を一括登録する。
+ * 丸の中の字は言語に合わせ、**字が変わった丸だけ同じ id のまま `updateImage` で焼き直す**（地物の `iconId` は言語によらない。
+ * 考え方は intensityIcons.ts の `ensureIntensityIcons`）。震度0 未満の印は字を持たないので 1 回だけ登録する。
+ */
+export function ensureKyoshinDetectedIcons(map: MapLibreMap, w: IntensityWords): void {
+  let baked = bakedLabels.get(map)
+  if (!baked) {
+    baked = new Map()
+    bakedLabels.set(map, baked)
+  }
+  for (let rank = 0; rank < RANK_SCALES.length; rank++) {
+    const label = rankLabel(rank, w)
     for (const confirmed of [true, false]) {
       const id = kyoshinDetectedIconId(rank, confirmed)
-      if (map.hasImage(id)) continue
-      map.addImage(id, drawBadge(rank, confirmed))
+      if (map.hasImage(id)) {
+        // 焼いた字の控えが無いのは、この部品の外で登録された画像。字が分からないので焼き直す
+        if (baked.get(id) === label) continue
+        map.updateImage(id, drawBadge(rank, confirmed, label))
+      } else {
+        map.addImage(id, drawBadge(rank, confirmed, label))
+      }
+      baked.set(id, label)
     }
   }
   for (let step = 0; step < KYOSHIN_SUB_ZERO_STEPS; step++) {

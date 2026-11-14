@@ -3,7 +3,7 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getIntensityColor, getIntensityLabel, getScaleRadius } from '../../utils/intensity'
+import { getIntensityColor, intensityLabel, getScaleRadius } from '../../utils/intensity'
 import type { IntensityMarker } from '../../hooks/useQuakeLayerData'
 import type { LatLng } from '../../utils/stationCoords'
 import { haversineKm } from '../../utils/geo'
@@ -12,7 +12,10 @@ import { whenIdle } from './gl/whenIdle'
 import { isMapStyleGone } from './gl/mapStyleGone'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
-import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
+import { useMessages, useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
+import { withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, intensityIconId, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
 // 地震情報タブの各観測点の震度を丸バッジ（震度ラベル付き）で描画する MapLibre 版。
@@ -85,8 +88,8 @@ function popupProperties(m: IntensityMarker, epicenter: LatLng | null) {
  * 震度分布モードのあいだは点を描かないので、一覧の行から押した観測点の吹き出しはこれで出す
  * （`JapanMapGL` → `FocusTargetGL`）。
  */
-export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null): string {
-  return clickHtml({ properties: popupProperties(m, epicenter) } as unknown as MapGeoJSONFeature)
+export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null, messages: Messages, place: PlaceNameLookup): string {
+  return clickHtml({ properties: popupProperties(m, epicenter) } as unknown as MapGeoJSONFeature, messages, place)
 }
 
 /**
@@ -96,24 +99,26 @@ export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null
  * **気象庁以外が運用する観測点には `＊` を付ける。** 電文が名前の末尾へ置く印を、
  * 読み取りの側では外して持っているため（→ `withNonJmaMark`）。ホバーとクリックの
  * 両方がこれを通るので、同じ観測点が場所によって違う名前で出ることはない。
+ * 地名は表示の直前で訳す（地物の `addr` は日本語のまま。一覧から押した観測点の照合に使う）。
  */
-export function quakePointPopupTitle(f: MapGeoJSONFeature): string {
-  return withNonJmaMark(String(f.properties?.addr ?? ''), Boolean(f.properties?.nonJma))
+export function quakePointPopupTitle(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  const addr = String(f.properties?.addr ?? '')
+  return withNonJmaMark(place(f.properties?.isArea ? 'area' : 'station', addr), Boolean(f.properties?.nonJma))
 }
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? -1)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${badgeHtml(getIntensityLabel(scale), getIntensityColor(scale))}` +
-    `<span style="font-weight:600">${escapeHtml(quakePointPopupTitle(f))}</span></div>`
+    `${badgeHtml(intensityLabel(scale, m.formats), getIntensityColor(scale))}` +
+    `<span style="font-weight:600">${escapeHtml(quakePointPopupTitle(f, place))}</span></div>`
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? -1)
-  const pref = String(f.properties?.pref ?? '')
-  const region = String(f.properties?.region ?? '')
+  const pref = place('pref', String(f.properties?.pref ?? ''))
+  const region = place('area', String(f.properties?.region ?? ''))
   const isArea = Boolean(f.properties?.isArea)
   const distanceKm = Number(f.properties?.distanceKm ?? -1)
 
@@ -124,26 +129,26 @@ function clickHtml(f: MapGeoJSONFeature): string {
 
   // 観測点は「都道府県 / 所属一次細分区域」、区域代表点は区分そのものを添える。
   const sub = isArea
-    ? [pref, '一次細分区域（代表点）'].filter(Boolean).join(' / ')
+    ? [pref, m.map.popup.regionRepresentative].filter(Boolean).join(' / ')
     : [pref, region].filter(Boolean).join(' / ')
 
   const rows = [
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-      `${badgeHtml(getIntensityLabel(scale), getIntensityColor(scale))}` +
-      `<span style="color:#cbd5e1">震度 ${escapeHtml(getIntensityLabel(scale))}</span></div>`,
+      `${badgeHtml(intensityLabel(scale, m.formats), getIntensityColor(scale))}` +
+      `<span style="color:#cbd5e1">${m.map.popup.intensity(escapeHtml(intensityLabel(scale, m.formats)))}</span></div>`,
     distanceKm >= 0
-      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">震源から約 ${distanceKm}km</div>`
+      ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${m.map.popup.distance(distanceKm)}</div>`
       : '',
   ].join('')
 
   return (
     `<div style="min-width:150px">` +
     `<div style="font-weight:700;font-size:13px"` +
-      (nonJma ? ` title="${escapeHtml(NON_JMA_MARK_TITLE)}"` : '') +
-      `>${escapeHtml(quakePointPopupTitle(f))}</div>` +
+      (nonJma ? ` title="${escapeHtml(m.formats.nonJmaStation)}"` : '') +
+      `>${escapeHtml(quakePointPopupTitle(f, place))}</div>` +
     (sub ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(sub)}</div>` : '') +
     rows +
-    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined, m) +
     `</div>`
   )
 }
@@ -152,10 +157,12 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
-    ensureIntensityIcons(map)
+    ensureIntensityIcons(map, mRef.current.formats)
     map.addSource(SRC, { type: 'geojson', data: EMPTY_FC })
     addOrderedLayer(map, {
       id: LYR,
@@ -177,8 +184,8 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
       priority: 'point',
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
-      buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
     })
     addedRef.current = true
     return () => {
@@ -189,6 +196,13 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
       addedRef.current = false
     }
   }, [map])
+
+  // 言語を変えたら丸の字を焼き直す（字の変わる丸だけ。→ `ensureIntensityIcons`）
+  // 描画中に読むので `useMessages()` から取る（`mRef.current` は描画の後に新しくなるので、切り替えた描画では古い）
+  const formats = useMessages().formats
+  useEffect(() => {
+    if (map) ensureIntensityIcons(map, formats)
+  }, [map, formats])
 
   // データ／倍率変化で丸ごと差し替え。**出していない間は、手の空いた時間に流し込む**（→ `whenIdle`）。
   // 引いた画では区域の塗りが代わりに出るので、地震を選ぶたびに見えない観測点（千点を超える）をその場で地図へ渡すと、

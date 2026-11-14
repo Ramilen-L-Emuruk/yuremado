@@ -1,4 +1,5 @@
 import { PREFECTURES } from './prefectureCodes'
+import type { PlaceNameLookup } from '../i18n/placeNames'
 
 /**
  * 緊急地震速報の府県予報区（`EEWRegion.pref`）→ 都道府県のコード。設定「通知する地域」で緊急地震速報の通知を絞るのに使う。
@@ -22,3 +23,18 @@ export const EEW_PREFECTURE_CODES: ReadonlyMap<string, string> = new Map([
     .map(p => [p.name.replace(/[都府県]$/, ''), p.code] as const),
   ...Object.entries(SPLIT),
 ])
+
+/**
+ * 緊急地震速報の府県予報区の名前を、出す言語の名前にする。都道府県と同じ範囲の府県予報区（「熊本」）は
+ * 都道府県の訳（「熊本県」の訳）で出し、都道府県を分けた府県予報区（北海道の 4 つ・伊豆諸島・小笠原・奄美・沖縄の 4 つ）と
+ * 表に無い名前は電文の名前のまま出す（訳の表に無い地名は日本語のまま。i18n-spec §5「地名の訳」）。
+ * 日本語の画面では電文の名前のまま（「熊本」を「熊本県」に書き換えない）
+ */
+export function eewPrefDisplayName(pref: string, place: PlaceNameLookup): string {
+  if (pref in SPLIT) return pref
+  const code = EEW_PREFECTURE_CODES.get(pref)
+  const full = code ? PREFECTURES.find(p => p.code === code)?.name : undefined
+  if (!full) return pref
+  const translated = place('pref', full)
+  return translated === full ? pref : translated
+}

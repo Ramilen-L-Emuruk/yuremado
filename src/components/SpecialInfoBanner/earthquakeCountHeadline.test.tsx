@@ -8,9 +8,13 @@
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { EarthquakeCountDetail } from './EarthquakeCountDetail'
-import { earthquakeCountHeadline } from '../../utils/earthquakeCountSummary'
+import { earthquakeCountHeadlineText } from '../../utils/earthquakeCountSummary'
 import { withTz } from '../../test-utils/withTz'
+import { ja } from '../../i18n/messages/ja'
 import type { JMAEarthquakeCount, JMAEarthquakeCountItem } from '../../types/earthquake'
+
+/** 日本語の辞書で組んだ見出し（帯・ウィンドウの題名・通知が同じ関数を通す） */
+const earthquakeCountHeadline = (c: JMAEarthquakeCount): string => earthquakeCountHeadlineText(c, ja.specialInfo)
 
 const item = (over: Partial<JMAEarthquakeCountItem> = {}): JMAEarthquakeCountItem => ({
   type: '累積地震回数',

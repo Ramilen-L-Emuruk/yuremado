@@ -10,6 +10,9 @@ import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
+import { useMessagesRef, usePlaceNamesRef } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 // EEW 対象地域の予想最大震度を区域塗りで表示する MapLibre 版（Leaflet の eew-region-fill 相当）。
 // 警報域（種別コードで判定。→ `isEewWarningKindCode`）は fillOpacity 0.55・枠 weight2 で強調、予報域は 0.3・weight1。
@@ -70,20 +73,21 @@ function buildFC(areaFills: EewAreaFill[]): FeatureCollection<Polygon> {
 // 上限が定まらない区域（「震度4程度以上」）はバッジにも語を出す。塗り色は下限の階級色のままで、
 // 色を変える手立ては無いため、断定に見えないよう文字側で補う。下限と上限が違う区域は「3〜4」と
 // 幅で出す（色は上限のまま。→ `getEewAreaIntensityLabel`）。
-function scaleLabelOf(f: MapGeoJSONFeature): string {
+function scaleLabelOf(f: MapGeoJSONFeature, m: Messages): string {
   return getEewAreaIntensityLabel(
     Number(f.properties?.scaleFrom ?? -1),
     Number(f.properties?.scale ?? 0),
     Boolean(f.properties?.scaleOrAbove),
+    m.formats,
   )
 }
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+function hoverHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? 0)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${badgeHtml(scaleLabelOf(f), getIntensityColor(scale))}` +
-    `<span style="font-weight:600">${escapeHtml(String(f.properties?.name ?? ''))}</span></div>`
+    `${badgeHtml(scaleLabelOf(f, m), getIntensityColor(scale))}` +
+    `<span style="font-weight:600">${escapeHtml(regionName(f, place))}</span></div>`
   )
 }
 
@@ -94,11 +98,11 @@ function hoverHtml(f: MapGeoJSONFeature): string {
  * よって到達が変わるため。**気象庁がこの値をどう算出しているかは確かめていない**ので、
  * 算出の方法には踏み込まない（区域の代表点に対する値だ、とは書けない）。
  */
-function arrivalRowHtml(f: MapGeoJSONFeature): string {
+function arrivalRowHtml(f: MapGeoJSONFeature, m: Messages): string {
   const kind = String(f.properties?.arrivalKind ?? 'none')
   if (kind === 'none') return ''
   if (kind === 'arrived') {
-    return `<div style="margin-top:4px;font-size:12px;font-weight:700;color:#94a3b8">主要動 到達済み</div>`
+    return `<div style="margin-top:4px;font-size:12px;font-weight:700;color:#94a3b8">${m.map.popup.mainShakingArrived}</div>`
   }
   // **属性の値をそのまま信じない。** GeoJSON の属性は何でも入りうるうえ、到達の情報が無い区域は
   // `-1` が入る（原始値しか持てないので「無い」を数値で表している）。有限で正の値だけ通す。
@@ -107,25 +111,30 @@ function arrivalRowHtml(f: MapGeoJSONFeature): string {
   // 残り秒数の丸めは `eewArrivalEtaSecFromMs` の 1 箇所に任せる（出す先が 3 つあるため）。
   const etaSec = eewArrivalEtaSecFromMs(arrivalMs, serverNow())
   if (etaSec === null) return ''
-  const text = etaSec > 0 ? `主要動の到達まで 約${etaSec}秒` : '主要動 到達済み'
+  const text = etaSec > 0 ? m.map.popup.mainShakingIn(etaSec) : m.map.popup.mainShakingArrived
   const color = etaSec > 0 ? '#fca5a5' : '#94a3b8'
   return `<div style="margin-top:4px;font-size:12px;font-weight:700;color:${color}">${text}</div>`
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
+/** 区域名（緊急地震速報の区域は地震情報の一次細分区域と同じ名前の集まりなので、区域の表で訳す） */
+function regionName(f: MapGeoJSONFeature, place: PlaceNameLookup): string {
+  return place('area', String(f.properties?.name ?? ''))
+}
+
+function clickHtml(f: MapGeoJSONFeature, m: Messages, place: PlaceNameLookup): string {
   const scale = Number(f.properties?.scale ?? 0)
   const isWarning = Boolean(f.properties?.isWarning)
   // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。表示も実態に合わせる
-  const kind = isWarning ? '警報' : '地震動予報'
+  const kind = isWarning ? m.map.popup.eewKind.warning : m.map.popup.eewKind.forecast
   const kindColor = isWarning ? '#f87171' : '#fbbf24'
   return (
     `<div style="min-width:160px">` +
-    `<div style="font-weight:700;font-size:13px">${escapeHtml(String(f.properties?.name ?? ''))}</div>` +
+    `<div style="font-weight:700;font-size:13px">${escapeHtml(regionName(f, place))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-    `${badgeHtml(scaleLabelOf(f), getIntensityColor(scale))}` +
-    `<span style="color:#cbd5e1">予想震度 ${escapeHtml(scaleLabelOf(f))}</span>` +
+    `${badgeHtml(scaleLabelOf(f, m), getIntensityColor(scale))}` +
+    `<span style="color:#cbd5e1">${m.map.popup.forecastIntensity(escapeHtml(scaleLabelOf(f, m)))}</span>` +
     `<span style="color:${kindColor};font-weight:700">${kind}</span></div>` +
-    arrivalRowHtml(f) +
+    arrivalRowHtml(f, m) +
     `</div>`
   )
 }
@@ -134,6 +143,8 @@ export function EewRegionFillGL({ areaFills, visible }: Props) {
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
+  const mRef = useMessagesRef()
+  const placeRef = usePlaceNamesRef()
 
   useEffect(() => {
     if (!map) return
@@ -157,8 +168,8 @@ export function EewRegionFillGL({ areaFills, visible }: Props) {
       priority: 'fill',
       tolPx: HIT_TOL_PX,
       rankKey: 'scale',
-      buildHoverHtml: hoverHtml,
-      buildClickHtml: clickHtml,
+      buildHoverHtml: (f) => hoverHtml(f, mRef.current, placeRef.current),
+      buildClickHtml: (f) => clickHtml(f, mRef.current, placeRef.current),
       refreshMs: REFRESH_MS,
     })
     addedRef.current = true

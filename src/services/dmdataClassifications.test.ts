@@ -1,5 +1,6 @@
 // 購読区分の取り決め（dmdataClassifications.ts）を固定する。
 // 応えの文はすべて 2026-10-14 の実測に合わせてある（docs/spec/data-sources-spec.md §2）。
+import { ja } from '../i18n/messages/ja'
 import { describe, expect, it } from 'vitest'
 import {
   readSocketRejection, nextClassifications, negotiateClassifications, eewHeadTypeFor,
@@ -159,8 +160,8 @@ describe('区分から決まるもの', () => {
   })
 
   it('購入区分名を定義順に「・」で繋ぐ', () => {
-    expect(classificationLabel(['telegram.earthquake', 'eew.warning'])).toBe('緊急地震（警報）・地震・津波関連')
-    expect(classificationLabel(['eew.forecast', 'telegram.earthquake'])).toBe('緊急地震（予報）・地震・津波関連')
+    expect(classificationLabel(['telegram.earthquake', 'eew.warning'], ja.settings.classifications)).toBe('緊急地震（警報）・地震・津波関連')
+    expect(classificationLabel(['eew.forecast', 'telegram.earthquake'], ja.settings.classifications)).toBe('緊急地震（予報）・地震・津波関連')
   })
 
   it('応えの classifications を読み、読めなければ申し込んだ区分を返す', () => {

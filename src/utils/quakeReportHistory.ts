@@ -224,7 +224,8 @@ function tsunamiStepsFor(inputs: QuakeHistoryInputs): readonly TsunamiFactStep[]
   if (mine.length > 0) return mine
   const src = card.hypocenterSource ?? card.domesticTsunamiSource ?? card.appliedTsunamiSource?.mark
   if (!src || !related(inputs.tsunamis)) return []
-  return [{ time: src.reportTime, label: src.infoName, tsunamis: inputs.tsunamis }]
+  // 名乗りを読めなかった電文は空で持つ（→ `borrowFromTsunami.ts` の `borrowedInfoName`）。記録の札は記録と同じ日本語の語で補う
+  return [{ time: src.reportTime, label: src.infoName || '津波情報', tsunamis: inputs.tsunamis }]
 }
 
 const NO_TSUNAMIS: readonly JMATsunami[] = []
@@ -353,19 +354,6 @@ function walk(
     if (!heldBack) shown = next
   }
   return { entries, view }
-}
-
-/**
- * 捨てた報の行に添えるホバーの文（2026-11-07 ユーザー選択「末尾をそろえた 3 つ (Recommended)」）。
- * 完全版の後の速報・種別として劣る報・震源要素更新の後の報は、どれもカードの種別の並び（`QUAKE_ISSUE_PRIORITY`）で
- * 下にある報なので同じ文にする。
- */
-export const HELD_BACK_TEXT: Record<QuakeHoldBackReason, string> = {
-  superseded: '下位電文のため、カードに反映していません。',
-  lowerPriority: '下位電文のため、カードに反映していません。',
-  amendment: '下位電文のため、カードに反映していません。',
-  olderReport: '発表時刻が前後しているため、カードに反映していません。',
-  noTime: '発表時刻が無いため、カードに反映していません。',
 }
 
 /** 当て直しが 1 通も残さなかったとき（取り下げ済みの報を飛ばした結果など）。前の姿のまま進め、記録を残す。 */

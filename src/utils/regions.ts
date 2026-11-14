@@ -26,6 +26,16 @@
 // **この配列を増減したら地名ラベル用グリフを焼き直すこと**（node scripts/build-glyphs.mjs）。
 // build-glyphs.mjs はこのファイルを単一情報源として名前を読む。
 
+import type { Messages } from '../i18n/messages'
+
+/**
+ * 地方名を画面の言語に合わせる（辞書の `map.regionName`。鍵は下の `name`）。表に無い名前はそのまま。
+ * 訳の字も焼いた字形（`scripts/build-glyphs.mjs`）に入っていなければ地図に描けない。
+ */
+export function regionLabel(name: string, w: Pick<Messages['map'], 'regionName'>): string {
+  return Object.prototype.hasOwnProperty.call(w.regionName, name) ? w.regionName[name] : name
+}
+
 export interface Region {
   name: string
   lat: number

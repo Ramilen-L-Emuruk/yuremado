@@ -16,6 +16,11 @@
 import type { SeismoStationState } from '../../hooks/useSeismoStation'
 import { intensityGradeColor, measuredIntensityToGrade } from '../../utils/measuredIntensity'
 import { formatMeasured } from '../../utils/measuredIntensityRounding'
+import { intensityGradeLabel } from '../../utils/kyoshinIntensity'
+import type { Messages } from '../../i18n/messages'
+
+/** 出どころの札の語（辞書の `map.seismo`）。 */
+type SeismoWords = Messages['map']['seismo']
 
 export interface SeismoOverlayRow {
   readonly stationId: string
@@ -50,7 +55,7 @@ export interface SeismoOverlayRow {
  *   名乗らない** —— 選ぶ相手がいないのに最大と書くと、震度欄の `—` と食い違って
  *   見える（センサーは届いているが震度がまだ出せない起動直後に起きる）。
  */
-function sourceText(source: SeismoStationState['source'], hasValue: boolean): string {
+function sourceText(source: SeismoStationState['source'], hasValue: boolean, w: SeismoWords): string {
   if (source.kind === 'station') {
     // **普段の形なので名乗らない**（2026-10-27 ユーザー選択「「合成」だけ消す (Recommended)」）。
     // 単独の値は名乗るので、無印の行は合成と読める。
@@ -67,16 +72,16 @@ function sourceText(source: SeismoStationState['source'], hasValue: boolean): st
     // **震度は出ていないが、波形は届いている**（上を解けない観測点）。灰色のまま、何が届いているかを
     // 名乗る（2026-10-12 ユーザー承認）。何も書かないと、起動直後の「震度をまだ出せない」行と
     // 見分けが付かない。
-    return '波形のみ'
+    return w.waveOnly
   }
   if (source.kind === 'unseen') {
     // **割り当ててあるのに一度も何も届いていない**（猶予の後。→ `useSeismoStation` の `UNSEEN_GRACE_MS`）。
     // 行は途絶と同じく赤くし、途絶と見分けられるよう「未着」と名乗る（2026-10-24 ユーザー選択「「未着」でよい (Recommended)」）。
-    return '未着'
+    return w.unseen
   }
   // **1 本しか無いことは言い切る。** 「単独 1本の最大」は最大と呼べる相手がいない。
-  if (source.sensorCount <= 1) return '単独（裏付けなし）'
-  return hasValue ? `単独 ${source.sensorCount}本の最大` : `単独 ${source.sensorCount}本`
+  if (source.sensorCount <= 1) return w.singleUnverified
+  return hasValue ? w.maxOfSensors(source.sensorCount) : w.sensors(source.sensorCount)
 }
 
 /**
@@ -85,20 +90,22 @@ function sourceText(source: SeismoStationState['source'], hasValue: boolean): st
  */
 export function seismoOverlayRows(
   stations: readonly SeismoStationState[],
+  m: Messages,
 ): readonly SeismoOverlayRow[] {
   return stations.map((station) => {
     const grade = station.intensity === null ? null : measuredIntensityToGrade(station.intensity)
     return {
       stationId: station.stationId,
       displayName: station.displayName,
-      gradeLabel: grade?.label ?? null,
+      // 札は辞書の語で（`grade.label` は日本語の字。自作地震計のホストの管理画面と共有なので、そちらは触らない）
+      gradeLabel: grade === null ? null : intensityGradeLabel(grade, m.formats),
       gradeColor: grade === null ? null : intensityGradeColor(grade),
       // **階級を引けなかった値は数字も出さない。** 非有限の値をそのまま
       // 「計測震度」として見せると、壊れていることが読み取れない
       // （`measuredIntensityToGrade` が `null` を返すのはその場合だけ）。
       valueText:
         grade === null || station.intensity === null ? null : formatMeasured(station.intensity),
-      sourceText: sourceText(station.source, grade !== null),
+      sourceText: sourceText(station.source, grade !== null, m.map.seismo),
       // **`intensity === null` では代われない。** あちらは「センサーは届いているが
       // 震度を出せない」（非有限の値・起動直後）でも真になるので、途絶えていない行まで
       // 赤くしてしまう。見るのは出どころの種類だけ。

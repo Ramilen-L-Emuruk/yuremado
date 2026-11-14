@@ -12,6 +12,7 @@
 import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchJsonOutcome, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { log } from '../utils/logger'
+import { errorText, jaErrorText, type ErrorText } from '../utils/localizedError'
 
 /** 中継の Worker の土台（末尾の `/` なし） */
 export const RELAY_ORIGIN = 'https://relay.yuremado.com'
@@ -41,9 +42,10 @@ export function isRelayPrivateUrl(url: string): boolean {
  */
 const REFRESH_MARGIN_MS = 5 * 60_000
 
+/** 中継の札を取れなかった失敗。文は鍵と引数（`errorText`）で持ち、`message` は日本語の文（→ `utils/localizedError.ts`） */
 export class RelayTokenError extends Error {
-  constructor(message: string, readonly status: number | null) {
-    super(message)
+  constructor(readonly errorText: ErrorText, readonly status: number | null) {
+    super(jaErrorText(errorText))
     this.name = 'RelayTokenError'
   }
 }
@@ -186,16 +188,16 @@ export function createRelayTokenStore(opts: {
       },
       (res) => res.ok,
     )
-    if (!outcome.ok) throw new RelayTokenError(`中継の札を受け取れませんでした（HTTP ${outcome.status}）`, outcome.status)
-    if (!outcome.body || 'error' in outcome.body) throw new RelayTokenError('中継の札の応答を読めませんでした', outcome.status)
+    if (!outcome.ok) throw new RelayTokenError(errorText('relayTokenHttp', outcome.status), outcome.status)
+    if (!outcome.body || 'error' in outcome.body) throw new RelayTokenError(errorText('relayTokenUnreadable'), outcome.status)
     const body = outcome.body.value as TokenResponse
     const expiresMs = typeof body.expiresAt === 'string' ? Date.parse(body.expiresAt) : Number.NaN
     if (body.status !== 'ok' || typeof body.token !== 'string' || body.token === '' || !Number.isFinite(expiresMs)) {
-      throw new RelayTokenError('中継の札の応答の形が想定と違います', outcome.status)
+      throw new RelayTokenError(errorText('relayTokenMalformed'), outcome.status)
     }
     const relayNow = Date.parse(outcome.headers?.get('Date') ?? '')
     const remaining = expiresMs - (Number.isFinite(relayNow) ? relayNow : wallNowMs())
-    if (remaining <= REFRESH_MARGIN_MS) throw new RelayTokenError('中継の札の期限が短すぎます', outcome.status)
+    if (remaining <= REFRESH_MARGIN_MS) throw new RelayTokenError(errorText('relayTokenShort'), outcome.status)
     // 取りに行っている間に使用状況データの識別子が変わった（許可を切り替えた）。古い識別子の札は渡さず取り直す
     // ——渡すと、許可を外した後もその札の接続に古い識別子が付いたままになる
     // 自分で取り直さず、まとめた取得に相乗りする（setUsage が前の取得を外しているので、新しい識別子の取得は 1 本で済む）
@@ -350,7 +352,7 @@ export function relayThrottleRemainingMs(): number | null {
 /** 札の見出し。札が無いなら投げる（見出しを作る前に `prepare` で用意する決まり） */
 function bearer(store: RelayTokenStore): Record<string, string> {
   const t = store.current()
-  if (t === null) throw new RelayTokenError('中継の札を用意する前に見出しを作ろうとしました', null)
+  if (t === null) throw new RelayTokenError(errorText('relayTokenNotReady'), null)
   return { Authorization: `Bearer ${t}` }
 }
 

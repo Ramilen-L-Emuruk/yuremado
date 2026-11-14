@@ -1,6 +1,9 @@
 // 長周期地震動階級のラベル・配色ユーティリティ（JMA公式色）と、カードの行の組み立て
 import type { IntensityScale, JMALpgm, LpgmClass, LpgmPeriodBand, LpgmPoint, LpgmPref, LpgmRegion } from '../types/earthquake'
 import { log } from './logger'
+import type { Messages } from '../i18n/messages'
+import type { PlaceNameLookup } from '../i18n/placeNames'
+import { ja } from '../i18n/messages/ja'
 // 階級 0 は「階級1以上を観測していない」観測値。気象庁の配色に当たる色が無いので、
 // 階級 1〜4 の色の外の灰色にする（2026-10-24 ユーザー選択「この形でよい (Recommended)」）。
 const LPGM_COLORS: Record<number, string> = {
@@ -43,9 +46,20 @@ export function isObservedLpgmClass(v: number): boolean {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4
 }
 
+/** 長周期地震動階級の札の日本語。**読み上げ・通知・中継の文面用。** 画面は {@link lpgmClassLabel} を使う */
 export function getLpgmClassLabel(cls: number): string {
+  return lpgmClassLabel(cls, ja.formats)
+}
+
+/** 長周期地震動階級の札（言語に合わせる形） */
+export function lpgmClassLabel(cls: number, w: Messages['formats']): string {
   // 0 は観測情報にだけ現れる（予測の側は 1〜4 だけを通してから呼ぶ）
-  return isObservedLpgmClass(cls) ? `階級${cls}` : '階級不明'
+  return isObservedLpgmClass(cls) ? w.lpgmClass(cls) : w.lpgmClassUnknown
+}
+
+/** 地震タブ・速報の札の短い形（「長周期3」）。読めない階級は「長周期不明」 */
+export function lpgmShortLabel(cls: number, w: Messages['formats']): string {
+  return isObservedLpgmClass(cls) ? w.lpgmShort(cls) : w.lpgmShortUnknown
 }
 
 /**
@@ -59,8 +73,13 @@ export function getLpgmClassLabel(cls: number): string {
  * 「階級不明」に語を足しても意味を成さないので、その場合は付けない。
  */
 export function getLpgmClassLabelWithApproxAbove(cls: number, over: boolean): string {
-  const label = getLpgmClassLabel(cls)
-  return over && isValidLpgmClass(cls) ? `${label}程度以上` : label
+  return lpgmClassLabelWithApproxAbove(cls, over, ja.formats)
+}
+
+/** {@link getLpgmClassLabelWithApproxAbove} の言語に合わせる形（画面用） */
+export function lpgmClassLabelWithApproxAbove(cls: number, over: boolean, w: Messages['formats']): string {
+  const label = lpgmClassLabel(cls, w)
+  return over && isValidLpgmClass(cls) ? w.approxAbove(label) : label
 }
 
 export function getLpgmClassColor(cls: number): string {
@@ -101,13 +120,13 @@ export function getLpgmClassBgColor(cls: number): string {
  *
  * @returns 分類が無い・読めないときは空文字
  */
-export function lpgmCategoryNote(category: number | undefined): string {
-  if (category === 2 || category === 4) return '震度が小さくても高層階が大きく揺れた地域があります'
+export function lpgmCategoryNote(category: number | undefined, w: Messages['quake']): string {
+  if (category === 2 || category === 4) return w.lpgmCategory.highFloors
   // 1・3 は「数える地域がどこも震度5弱以上」。**数える地域の階級の下限を書く** —— 縮めて
   // 「高層階が揺れた地域は」と書くと、種類 3 で階級 1・2 の地域まで含めて言うことになり誤りになる。
   // （2026-10-22 ユーザー選択「1・3 にも一文を出す (Recommended)」、文面は 2026-10-24 選択「この文面でよい (Recommended)」）
-  if (category === 1) return '長周期地震動階級1以上を観測した地域は、いずれも震度5弱以上です'
-  if (category === 3) return '長周期地震動階級3以上を観測した地域は、いずれも震度5弱以上です'
+  if (category === 1) return w.lpgmCategory.class1
+  if (category === 3) return w.lpgmCategory.class3
   return ''
 }
 
@@ -148,13 +167,14 @@ const warnedHeadlines = new Set<string>()
 /**
  * 「観測情報の種類」の一文に、見出し文の地域名を括弧で添える
  * （例「震度が小さくても高層階が大きく揺れた地域があります（長野県中部）」。読み上げには足さない。
- * 2026-10-30 ユーザー選択「一文に地域名を添える (Recommended)」）。
+ * 2026-10-30 ユーザー選択「一文に地域名を添える (Recommended)」）。地域名は細分区域の名前なので、
+ * 表示の言語の訳（`place('area', …)`）に直して添える。
  */
-export function lpgmCategoryNoteWithRegions(category: number | undefined, headline: string | undefined): string {
-  const note = lpgmCategoryNote(category)
+export function lpgmCategoryNoteWithRegions(category: number | undefined, headline: string | undefined, w: Messages['quake'], place: PlaceNameLookup): string {
+  const note = lpgmCategoryNote(category, w)
   if (!note) return ''
   const regions = category === 2 || category === 4 ? lpgmHeadlineRegions(headline) : []
-  return regions.length > 0 ? `${note}（${regions.join('・')}）` : note
+  return regions.length > 0 ? w.lpgmCategoryRegions(note, regions.map(r => place('area', r))) : note
 }
 
 
@@ -166,18 +186,24 @@ export function lpgmCategoryNoteWithRegions(category: number | undefined, headli
  * 周期が長い帯ほど高い建物が大きく揺れる。
  */
 export function lpgmPeriodLabel(band: number): string {
-  if (!Number.isInteger(band) || band < 1 || band > 7) return '周期不明'
-  return `${band + 1}秒`
+  const sec = lpgmPeriodSeconds(band)
+  return sec === null ? ja.quake.lpgmPeriodUnknown : ja.quake.lpgmPeriod(sec)
+}
+
+/** 周期帯の番号の中心周期（秒）。1〜7 の外は null。画面の語は呼ぶ側の辞書で付ける（→ {@link lpgmPeriodRows}） */
+export function lpgmPeriodSeconds(band: number): number | null {
+  if (!Number.isInteger(band) || band < 1 || band > 7) return null
+  return band + 1
 }
 
 /** 周期ごとの内訳の見出し。地図の観測点の吹き出しとカードの観測点の行で同じ文を出す。 */
-export const LPGM_PERIODS_HEADING = '揺れの周期ごと（階級・揺れの大きさ）'
+export const LPGM_PERIODS_HEADING = ja.quake.lpgmPeriodsHeading
 /** 周期ごとの内訳の読み方。見出しと同じく 2 か所で共有する。 */
-export const LPGM_PERIODS_NOTE = '周期が長いほど、高い建物が大きく揺れます'
+export const LPGM_PERIODS_NOTE = ja.quake.lpgmPeriodsNote
 
 /** 周期ごとの内訳の 1 行（{@link lpgmPeriodRows}）。 */
 export interface LpgmPeriodRow {
-  /** 中心周期の表示（`2秒` … `8秒`。→ {@link lpgmPeriodLabel}） */
+  /** 中心周期の表示（日本語なら `2秒` … `8秒`。→ {@link lpgmPeriodLabel}。言語の語は呼ぶ側が `labelOf` で決める） */
   label: string
   /**
    * 階級（0〜4）。**階級 0 も「0」と出す**（2026-10-30 ユーザー選択「「0」と出す (Recommended)」。
@@ -199,9 +225,9 @@ export interface LpgmPeriodRow {
  * 階級 0 の帯も行として残す —— 0 は「その周期帯では該当なし」で、落とすと
  * 「短い周期だけ強く出た」形が「短い周期しか観測していない」ように見える（→ quake-spec.md §8）。
  */
-export function lpgmPeriodRows(bands: readonly LpgmPeriodBand[]): LpgmPeriodRow[] {
+export function lpgmPeriodRows(bands: readonly LpgmPeriodBand[], labelOf: (band: number) => string): LpgmPeriodRow[] {
   return bands.map(b => ({
-    label: lpgmPeriodLabel(b.band),
+    label: labelOf(b.band),
     lgInt: typeof b.lgInt === 'number' && isObservedLpgmClass(b.lgInt) ? b.lgInt : null,
     sva: typeof b.sva === 'number' && Number.isFinite(b.sva) ? `${b.sva.toFixed(1)} cm/s` : '',
   }))

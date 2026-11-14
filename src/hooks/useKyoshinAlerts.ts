@@ -4,7 +4,8 @@ import type { TabId } from '../components/IconNav'
 import type { AppSettings } from './useSettings'
 import type { AlertTitleApi } from './useAlertTitle'
 import { playAlertSound, playKyoshinUpdateSound, kyoshinLevel, ttsDelayFor, kyoshinUpdateSoundLengthMs } from '../utils/alertSound'
-import { kyoshinDetectionScaleLabel } from '../utils/kyoshinIntensity'
+import { kyoshinDetectionScaleText } from '../utils/kyoshinIntensity'
+import { useMessagesRef } from '../i18n/I18nProvider'
 import { showBrowserNotification } from '../utils/notifications'
 import { OPEN_REALTIME } from '../utils/notificationOpen'
 import { hasDepth } from '../utils/formatters'
@@ -879,6 +880,8 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     activeEEWsRef, defaultTabRef, setActiveTab, revertToDefaultTab, onShakeFocus, reonset,
     detectedPoints, speakDetection,
   } = deps
+  // 通知の文とウィンドウの題名を組む辞書（効果の中でも、呼ばれた時点の言語で組む）
+  const messagesRef = useMessagesRef()
   // 読み上げは確定の効果より後の効果で予約するので、点列と口は最新を ref で読む
   const detectedPointsRef = useRef(detectedPoints)
   detectedPointsRef.current = detectedPoints
@@ -994,7 +997,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
       shocksBeforeStallRef.current = []
       log.info(`[tab] realtime を要求 (揺れ検知${resumed ? '再開' : '開始'} V3 confirmed)`)
       setActiveTab('realtime')
-      title.setOngoingTitle('揺れ検知')
+      title.setOngoingTitle(messagesRef.current.alertText.titleShakingDetected)
       // 抑えるのは音と通知だけ。画面（タブ・タイトル）は従来どおり、検知が落ちた時点で一度既定へ
       // 戻り、ここで復帰する（結果が空の間まで「揺れ検知」を出し続けると、判っていない状態を
       // 判っているように見せることになる）。
@@ -1014,9 +1017,10 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
           playAlertSound('kyoshin')
         }
         if (sound && notificationAllowed(settings, 'detection')) {
-          const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
+          const m = messagesRef.current
+          const label = kyoshinDetectionScaleText(effectiveKyoshinMaxIndex, m.formats) ?? '?'
           // 呼び名は「最大リアルタイム震度」（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」）。強まったとき・別地点の通知も同じ
-          showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}`, 'kyoshin-detection', false, OPEN_REALTIME)
+          showBrowserNotification(m.alertText.kyoshinDetected, m.alertText.kyoshinMax(label), 'kyoshin-detection', false, OPEN_REALTIME)
           notifiedLevelRef.current = kyoshinLevel(effectiveKyoshinMaxIndex)
         }
         // 読み上げは確定の立ち上がりで 1 回だけ（2026-10-31 ユーザー選択「地名だけ・1回 (Recommended)」。
@@ -1086,7 +1090,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     if (candidate && !prevCandidateRef.current && !confirmed) {
       log.info('[tab] realtime を要求 (揺れの可能性 V3 likely)')
       setActiveTab('realtime')
-      title.setOngoingTitle('揺れの可能性')
+      title.setOngoingTitle(messagesRef.current.alertText.titlePossibleShaking)
       if (settings.soundEnabled) {
         playAlertSound('kyoshinCandidate')
       }
@@ -1123,8 +1127,9 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     // 通知を出していない揺れ（この揺れで出していない・前の段と同じ）には出さない（→ `notifiedLevelRef`）
     const level = kyoshinLevel(effectiveKyoshinMaxIndex)
     if (notifiedLevelRef.current < 0 || level <= notifiedLevelRef.current) return
-    const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
-    showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}`, 'kyoshin-detection', false, OPEN_REALTIME)
+    const m = messagesRef.current
+    const label = kyoshinDetectionScaleText(effectiveKyoshinMaxIndex, m.formats) ?? '?'
+    showBrowserNotification(m.alertText.kyoshinDetected, m.alertText.kyoshinMax(label), 'kyoshin-detection', false, OPEN_REALTIME)
     notifiedLevelRef.current = level
   }
   useEffect(() => {
@@ -1207,8 +1212,9 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     if (settings.soundEnabled) playAlertSound('kyoshin')
     if (notificationAllowed(settings, 'detection')) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
-      const label = kyoshinDetectionScaleLabel(alert.index) ?? '?'
-      showBrowserNotification('別の地点で揺れを検知', `最大リアルタイム震度 ${label}`, 'kyoshin-detection-new', false, OPEN_REALTIME)
+      const m = messagesRef.current
+      const label = kyoshinDetectionScaleText(alert.index, m.formats) ?? '?'
+      showBrowserNotification(m.alertText.kyoshinOtherPlace, m.alertText.kyoshinMax(label), 'kyoshin-detection-new', false, OPEN_REALTIME)
     }
     // 読み上げは別地点の地域ごとに 1 回（地域は一度鳴ったら二度と鳴らない。→ `stepAlertRegions`）。
     // 「茨城県南部でも揺れを検知。」（2026-10-31 ユーザー選択「境を直してから読む (Recommended)」）。
@@ -1310,8 +1316,9 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     if (signal.focus) requestShakeFocus(signal.focus)
     if (settings.soundEnabled) playAlertSound('kyoshin')
     if (notificationAllowed(settings, 'detection')) {
-      const label = (signal.index !== null ? kyoshinDetectionScaleLabel(signal.index) : null) ?? '?'
-      showBrowserNotification('同じ場所で再び揺れを検知', `最大リアルタイム震度 ${label}`, 'kyoshin-detection-reonset', false, OPEN_REALTIME)
+      const m = messagesRef.current
+      const label = (signal.index !== null ? kyoshinDetectionScaleText(signal.index, m.formats) : null) ?? '?'
+      showBrowserNotification(m.alertText.kyoshinReonset, m.alertText.kyoshinMax(label), 'kyoshin-detection-reonset', false, OPEN_REALTIME)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 合図の印だけを駆動キーにし他は最新を ref で読む
   }, [reonset?.key])

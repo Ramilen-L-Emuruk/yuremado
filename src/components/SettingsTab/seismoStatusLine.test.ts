@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ja } from '../../i18n/messages/ja'
 import { seismoStatusLine, SEISMO_STATUS_TONE_CLASS, type SeismoUiStatus } from './seismoStatusLine'
 
 describe('seismoStatusLine', () => {
@@ -10,7 +11,7 @@ describe('seismoStatusLine', () => {
       stations: [{ stationId: 'home', displayName: '自宅', lat: 35, lon: 139 }],
       sensorCount: 9,
       assignedStationCount: null,
-    })
+    }, ja.settings.seismoStatus)
     expect(line.tone).toBe('ok')
     expect(line.text).toContain('観測点 1')
     expect(line.text).toContain('センサー 9')
@@ -20,19 +21,19 @@ describe('seismoStatusLine', () => {
     // **これがトグルを持つ形にした代償の手当て。** 1 つの「繋がりません」へ潰すと、
     // 利用者は何を直せばよいか分からない。
     const texts = (['disabled', 'no-url', 'invalid'] as const).map(
-      (kind) => seismoStatusLine({ kind }).text,
+      (kind) => seismoStatusLine({ kind }, ja.settings.seismoStatus).text,
     )
-    texts.push(seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' }).text)
+    texts.push(seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' }, ja.settings.seismoStatus).text)
     expect(new Set(texts).size).toBe(4)
   })
 
   it('対照: 通信する手前で決まる状態は赤で騒がない', () => {
     // トグルが切れている・URL が空は「まだ設定していない」だけで、異常ではない。
-    expect(seismoStatusLine({ kind: 'disabled' }).tone).toBe('muted')
-    expect(seismoStatusLine({ kind: 'no-url' }).tone).toBe('muted')
-    expect(seismoStatusLine({ kind: 'checking' }).tone).toBe('muted')
+    expect(seismoStatusLine({ kind: 'disabled' }, ja.settings.seismoStatus).tone).toBe('muted')
+    expect(seismoStatusLine({ kind: 'no-url' }, ja.settings.seismoStatus).tone).toBe('muted')
+    expect(seismoStatusLine({ kind: 'checking' }, ja.settings.seismoStatus).tone).toBe('muted')
     // URL の形が違うのは直せる誤りなので赤で出す。
-    expect(seismoStatusLine({ kind: 'invalid' }).tone).toBe('problem')
+    expect(seismoStatusLine({ kind: 'invalid' }, ja.settings.seismoStatus).tone).toBe('problem')
   })
 
   // **観測点の数は設定の割り当てから数える**（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
@@ -41,26 +42,26 @@ describe('seismoStatusLine', () => {
     const home = { stationId: 'home', displayName: '自宅', lat: 35, lon: 139 }
 
     it('正: 割り当てがあり、センサーから 1 つも届いていなければ「まだ届いていない」', () => {
-      const line = seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: 2 })
+      const line = seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: 2 }, ja.settings.seismoStatus)
       expect(line.text).toBe('接続済み: 観測点 2・まだ届いていない')
       expect(line.tone).toBe('ok')
     })
 
     it('正: ふだんは観測点の数を割り当てから、センサーの数は届いているものから出す', () => {
       // 届いた観測点は 1 つでも、割り当ては 2 つ。
-      const line = seismoStatusLine({ kind: 'ok', stations: [home], sensorCount: 9, assignedStationCount: 2 })
+      const line = seismoStatusLine({ kind: 'ok', stations: [home], sensorCount: 9, assignedStationCount: 2 }, ja.settings.seismoStatus)
       expect(line.text).toBe('接続済み: 観測点 2・センサー 9')
     })
 
     it('対照: 割り当てが 0 なら、届いたものがあっても「未設定」', () => {
-      expect(seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 3, assignedStationCount: 0 }).text)
+      expect(seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 3, assignedStationCount: 0 }, ja.settings.seismoStatus).text)
         .toBe('接続済み: 観測点は未設定')
     })
 
     it('安全弁: 割り当てを返さない古いホストでは、届いたセンサーから組んだ観測点で数える', () => {
-      expect(seismoStatusLine({ kind: 'ok', stations: [home], sensorCount: 3, assignedStationCount: null }).text)
+      expect(seismoStatusLine({ kind: 'ok', stations: [home], sensorCount: 3, assignedStationCount: null }, ja.settings.seismoStatus).text)
         .toBe('接続済み: 観測点 1・センサー 3')
-      expect(seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null }).text)
+      expect(seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null }, ja.settings.seismoStatus).text)
         .toBe('接続済み: 観測点は未設定')
     })
   })
@@ -68,14 +69,14 @@ describe('seismoStatusLine', () => {
   it('正: 観測点が 0 件のときは別の文にする', () => {
     // **「接続済み: 観測点 0・センサー 0」では成功か異常か判らない。**
     // ホストは動いているが設定がまだ、という状態なので、それを名指しする。
-    const line = seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null })
+    const line = seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null }, ja.settings.seismoStatus)
     expect(line.tone).toBe('ok')
     expect(line.text).toContain('観測点は未設定')
     expect(line.text).not.toContain('観測点 0')
   })
 
   it('安全弁: 到達できないときは何を確かめるかを書く', () => {
-    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' })
+    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' }, ja.settings.seismoStatus)
     expect(line.text).toContain('起動')
     expect(line.tone).toBe('problem')
   })
@@ -83,7 +84,7 @@ describe('seismoStatusLine', () => {
   it('対照: 確認事項を 2 つ詰めない', () => {
     // ホーム画面から開く前提は、この行の上にある常時表示の但し書きが受け持つ。
     // 両方に書くと狭いパネルで折り返して読みにくくなる。
-    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' })
+    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' }, ja.settings.seismoStatus)
     expect(line.text).not.toContain('ホーム画面')
   })
 
@@ -101,21 +102,21 @@ describe('seismoStatusLine', () => {
       { kind: 'http-error', status: 503 },
       { kind: 'unreadable', detail: 'x' },
     ]
-    for (const s of all) expect(seismoStatusLine(s).text).not.toMatch(/[（(]/)
+    for (const s of all) expect(seismoStatusLine(s, ja.settings.seismoStatus).text).not.toMatch(/[（(]/)
   })
 
   it('安全弁: 失敗の詳細を画面へ出さない', () => {
     // `fetch` が返す文面（`Failed to fetch` 等）は利用者の行動に繋がらない。
     // 詳細は記録へ出る（`seismoStream.ts`）。
-    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' })
+    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' }, ja.settings.seismoStatus)
     expect(line.text).not.toContain('Failed to fetch')
-    const unreadable = seismoStatusLine({ kind: 'unreadable', detail: 'sensors が無い' })
+    const unreadable = seismoStatusLine({ kind: 'unreadable', detail: 'sensors が無い' }, ja.settings.seismoStatus)
     expect(unreadable.text).not.toContain('sensors')
   })
 
   it('安全弁: HTTP の状態コードだけは内訳として出す', () => {
     // あちらはこちらの言葉ではなく相手が名乗った番号で、調べる手掛かりになる。
-    expect(seismoStatusLine({ kind: 'http-error', status: 503 }).text).toContain('503')
+    expect(seismoStatusLine({ kind: 'http-error', status: 503 }, ja.settings.seismoStatus).text).toContain('503')
   })
 
   it('安全弁: 色調の表は 3 種すべてを持つ', () => {
@@ -124,19 +125,19 @@ describe('seismoStatusLine', () => {
 
   describe('繋がらない理由を分ける（2026-10-24 ユーザー選択「3 つともその文でよい (Recommended)」）', () => {
     it('正: 時間切れ・混在コンテンツ・オフラインはそれぞれの文', () => {
-      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'timeout' }).text).toBe(
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'timeout' }, ja.settings.seismoStatus).text).toBe(
         '応答がない: 5秒待って打ち切った。ホストが起動しているか確かめてください',
       )
-      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'mixed-content' }).text).toBe(
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'mixed-content' }, ja.settings.seismoStatus).text).toBe(
         '繋げない: このページは https なので http のホストへは繋げない。https:// のURLを入力してください',
       )
-      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'offline' }).text).toBe(
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'offline' }, ja.settings.seismoStatus).text).toBe(
         '繋げない: この端末がオフライン。ネットワークに繋いでください',
       )
     })
 
     it('対照: 理由が分からなければ従来の文', () => {
-      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'unknown' }).text).toBe(
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'unknown' }, ja.settings.seismoStatus).text).toBe(
         '応答がない。ホストが起動しているか確かめてください',
       )
     })

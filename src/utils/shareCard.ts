@@ -2,7 +2,9 @@ import type { MapCaptureResult } from '../components/Map/gl/captureMap'
 import { log } from './logger'
 import { readableTextColor } from './contrast'
 import { countUsage } from '../services/usageStats'
-import { heatmapPeriodText, type LegendBlock, type LegendChip } from '../components/MapLegend/legendBlocks'
+import type { LegendBlock, LegendChip } from '../components/MapLegend/legendBlocks'
+import type { Messages } from '../i18n/messages'
+import type { ShareCardFormatId } from '../i18n/messageKeys'
 
 // 共有カードの合成と書き出し。地図の撮影は components/Map/gl/captureMap.ts の担当で、
 // ここは「撮れた地図に見出しと出典を足して 1 枚の画像にする」ところだけを持つ。
@@ -27,8 +29,8 @@ export interface ShareCardFormat {
   height: number
 }
 
-/** 設定で選べる寸法の識別子（`AppSettings.shareCardFormat`）。 */
-export type ShareCardFormatId = 'wide16x9' | 'square1x1' | 'portrait4x5'
+/** 設定で選べる寸法の識別子（`AppSettings.shareCardFormat`）。辞書も鍵に使うので型は i18n/messageKeys.ts に置く */
+export type { ShareCardFormatId }
 
 /**
  * 選べる寸法。**追加するときは全体の比率で定義すること**（地図の比率ではない）。
@@ -81,29 +83,13 @@ const NOTICE_FONT = `400 15px ${FONT_STACK}`
  * **地図へ新しいデータのレイヤーを足したら、ここへ出典を足し、載せる条件も見直すこと。**
  * 出典の実体は各ローダーの冒頭コメント（`utils/activeFaults.ts`・`utils/plateBoundaries.ts` など）。
  */
-export const ATTRIBUTION_SOURCES = {
-  jma: '気象庁',
-  /**
-   * 海底地形。**配信元のサービスが求める帰属表示をそのまま採る**——ArcGIS Online の
-   * サービスメタデータ（`?f=json` の `copyrightText`）は
-   * 「General Bathymetric Chart of the Oceans (GEBCO); NOAA National Centers for Environmental
-   * Information (NCEI)」と定めており、GEBCO だけでは足りない。
-   */
-  bathymetry: 'GEBCO・NOAA NCEI（Esri のタイルサービス経由）',
-  activeFaults: '産総研 活断層データベース',
-  plateBoundaries: 'PB2002 (Bird, 2003)',
-  /**
-   * 公開観測点の印（`docs/public-waveform-design.md` §0。2026-10-15 ユーザー承認）。網の運用者は気象庁で、
-   * そちらは上の `jma` が既に挙げている。CC BY 4.0 は運用者と配信した施設の両方を挙げることを求める。
-   */
-  earthScope: 'EarthScope',
-} as const
+export type AttributionSourceId = 'jma' | 'bathymetry' | 'activeFaults' | 'plateBoundaries' | 'earthScope'
 
 export interface AttributionParts {
   /** 自前のデータへ変換して使っているもの。「加工して作成」が掛かる。 */
-  derived: readonly string[]
+  derived: readonly AttributionSourceId[]
   /** 配信されるものをそのまま描いているもの。**加工していないので同じ句で括らない。** */
-  asIs: readonly string[]
+  asIs: readonly AttributionSourceId[]
 }
 
 /**
@@ -117,30 +103,9 @@ export interface AttributionParts {
  * （加工にあたる）が、海底地形は配信されるタイルをそのまま描いている。まとめて括ると、
  * 加工していないものまで加工したと述べることになる。
  */
-export function attributionLine({ derived, asIs }: AttributionParts): string {
-  const segments: string[] = []
-  if (asIs.length > 0) segments.push(asIs.join('、'))
-  if (derived.length > 0) segments.push(`${derived.join('、')} を加工して作成`)
-  return `出典: ${segments.join('／')}`
+export function attributionLine({ derived, asIs }: AttributionParts, w: Messages['shareImage']): string {
+  return w.attribution(asIs.map(id => w.sourceNames[id]), derived.map(id => w.sourceNames[id]))
 }
-
-/**
- * 緊急地震速報を含むカードに足す注意文。
- *
- * 気象庁・DM-D.S.S が利用者へ示すべきとしている注意事項を、画像 1 枚に収まる長さでまとめたもの。
- * **「震源に近い場所では間に合わないことがある」を落とさないこと**——精度の話だけを残すと、
- * 速報が届く前に揺れが来る場合があるという、行動に直結する留保が伝わらない。
- */
-export const EEW_NOTICE =
-  '緊急地震速報は地震発生直後の推定情報です。誤報や震源・規模・予想震度の誤差を伴うことがあり、震源に近い場所では強い揺れに間に合わないことがあります。'
-/**
- * 地図が揃いきる前に撮ったことを示す注記。
- *
- * **出典帯ではなく地図の隅へ重ねる。** 出典の行数は撮影前に確定していないと地図の高さを決め
- * られないが、撮り切れたかどうかは撮影して初めて判る。行を増やす形にすると寸法の計算が
- * 循環する。
- */
-const INCOMPLETE_NOTICE = '一部の地図データは読み込み中に撮影されました'
 
 export interface ShareCardHeader {
   /** 見出し（例: 「最大震度 4」）。 */
@@ -166,6 +131,12 @@ export interface ShareCardOptions {
    * DOM の凡例は WebGL のキャンバスに写らないので、ここで 2D で描き直す。空配列なら描かない。
    */
   legend?: LegendBlock[]
+  /**
+   * 地図が揃いきる前に撮ったことを示す注記の文（辞書の `shareImage.incomplete`）。**出典帯ではなく地図の隅へ重ねる** ——
+   * 出典の行数は撮影前に確定していないと地図の高さを決められないが、撮り切れたかどうかは撮影して初めて判る。
+   * 行を増やす形にすると寸法の計算が循環する。
+   */
+  incompleteNotice: string
 }
 
 /** 出典帯の高さ（論理 px）。行が無ければ帯ごと出さない。行数は折り返した後の数（{@link shareCardNoticeLines}）。 */
@@ -217,8 +188,20 @@ function wrapAtSeparators(measure: (text: string) => number, text: string, maxWi
   return lines
 }
 
-/** 副見出しの区切り（全角の空き・「／」と、その前後の半角の空き）。 */
-const SUBTITLE_TOKEN = /[^　／]+[　／ ]*|[　／ ]+/g
+/**
+ * 副見出しの区切り。項目どうしは辞書の `formats.slashSpaced`（日本語・中国語は「 ／ 」、ほかは「 / 」）、
+ * 項目の中の値どうしは `shareImage.joinParts`（日本語・中国語は全角の空き、ほかは半角の空き 2 つ）でつなぐ。
+ * 半角の空き 1 つと、前後に空きの無い「/」は区切りにしない（値の中の空き「10 km」・「5-/5+」で割らない）。
+ */
+const SUBTITLE_SEPARATOR = '(?:[　／]| {2,}| / )'
+/** 副見出しの 1 つの塊とその後ろの区切り（区切りの前後の半角の空きも塊に付ける）。 */
+const SUBTITLE_TOKEN = new RegExp(`(?:(?!${SUBTITLE_SEPARATOR})[^])+(?:${SUBTITLE_SEPARATOR}| )*|(?:${SUBTITLE_SEPARATOR}| )+`, 'g')
+/** 行の中で最後の区切りの位置（無ければ -1）。上限を超えた行を項目の境目で切るために使う */
+function lastSubtitleSeparatorAt(text: string): number {
+  let at = -1
+  for (const match of text.matchAll(new RegExp(SUBTITLE_SEPARATOR, 'g'))) at = match.index
+  return at
+}
 /** 注意文・出典の区切り（読点・句点・「／」）。**文の途中で切らずに折る**ためだけに使う（文は全部描く）。 */
 const NOTICE_TOKEN = /[^、。／]+[、。／]*|[、。／]+/g
 
@@ -237,7 +220,7 @@ export function layoutSubtitleLines(measure: (text: string) => number, subtitle:
   // 画像は後から訂正できない）。区切りが 1 つも無い行だけは文字の途中で切る。
   let cut = kept[SUBTITLE_MAX_LINES - 1]
   while (cut && measure(`${cut}…`) > maxWidth) {
-    const at = Math.max(cut.lastIndexOf('　'), cut.lastIndexOf('／'))
+    const at = lastSubtitleSeparatorAt(cut)
     cut = at > 0 ? cut.slice(0, at).replace(/[　／ ]+$/, '') : cut.slice(0, -1)
   }
   kept[SUBTITLE_MAX_LINES - 1] = `${cut}…`
@@ -250,7 +233,8 @@ export function layoutSubtitleLines(measure: (text: string) => number, subtitle:
  * 緊急地震速報の注意文が 1 行に収まらない（16:9 の 1600 では収まる）。
  */
 export function layoutNoticeLines(measure: (text: string) => number, notices: readonly string[], maxWidth: number): string[] {
-  return notices.flatMap(n => wrapAtSeparators(measure, n, maxWidth, NOTICE_TOKEN))
+  // かな・漢字を含まない文（英語・韓国語など）は読点・句点を持たないので、語の境で折る（語の途中で切らない）
+  return notices.flatMap(n => wrapAtSeparators(measure, n, maxWidth, CJK_CHAR.test(n) ? NOTICE_TOKEN : WORD_TOKEN))
 }
 
 /** 注意文・出典の行数（撮影の前に地図の高さを決めるため。合成と同じ字体・幅で数える）。 */
@@ -335,7 +319,7 @@ export async function composeShareCard(opts: ShareCardOptions): Promise<Blob> {
   if (opts.legend && opts.legend.length > 0) {
     drawLegend(ctx, opts.legend, format.width, headerH + mapHeight)
   }
-  if (capture.timedOut) drawIncompleteNotice(ctx, headerH + mapHeight)
+  if (capture.timedOut) drawIncompleteNotice(ctx, headerH + mapHeight, opts.incompleteNotice)
   if (noticeLines > 0) drawNotices(ctx, notices, format.width, headerH + mapHeight)
 
   return await canvasToPngBlob(out)
@@ -414,19 +398,37 @@ function legendPeriodLines(ctx: CanvasRenderingContext2D, block: LegendBlock, ma
   const period = block.heatmapPeriod
   if (!period) return []
   ctx.font = `400 13px ${FONT_STACK}`
-  const out: { text: string; note: boolean }[] = [{ text: heatmapPeriodText(period), note: false }]
+  const out: { text: string; note: boolean }[] = [{ text: period.text, note: false }]
   if (period.note) {
-    let line = ''
-    for (const ch of period.note) {
-      if (line !== '' && ctx.measureText(line + ch).width > maxWidth) {
-        out.push({ text: line, note: true })
-        line = ''
-      }
-      line += ch
+    for (const text of wrapNoteLines((t) => ctx.measureText(t).width, period.note, maxWidth)) {
+      out.push({ text, note: true })
     }
-    if (line !== '') out.push({ text: line, note: true })
   }
   return out
+}
+
+/** かな・漢字を含む文か（語を空白で区切らない文。日本語・中国語）。 */
+const CJK_CHAR = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/
+/** 空白で区切った語（語の後ろの空白を含む）。 */
+const WORD_TOKEN = /\S+\s*|\s+/g
+
+/**
+ * 凡例の注記を枠の幅で折る。かな・漢字の文（日本語・中国語）は 1 文字ずつ詰めて折り、
+ * 語を空白で区切る言語（英語・韓国語など）は語の境で折る（語の途中で切らない）。
+ */
+export function wrapNoteLines(measure: (text: string) => number, text: string, maxWidth: number): string[] {
+  if (!CJK_CHAR.test(text)) return wrapAtSeparators(measure, text, maxWidth, WORD_TOKEN)
+  const lines: string[] = []
+  let line = ''
+  for (const ch of text) {
+    if (line !== '' && measure(line + ch) > maxWidth) {
+      lines.push(line)
+      line = ''
+    }
+    line += ch
+  }
+  if (line !== '') lines.push(line)
+  return lines
 }
 
 /** 色の升目 1 つの幅。文字の幅に合わせて伸ばす。 */
@@ -648,17 +650,17 @@ function drawNotices(ctx: CanvasRenderingContext2D, notices: string[], width: nu
  * 欠けた画像が「正常に撮れたもの」として共有されるのを防ぐための注記。共有した先からは
  * 取り消せないため、画像そのものに残す。
  */
-function drawIncompleteNotice(ctx: CanvasRenderingContext2D, mapBottom: number): void {
+function drawIncompleteNotice(ctx: CanvasRenderingContext2D, mapBottom: number, text: string): void {
   ctx.font = `400 15px ${FONT_STACK}`
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
-  const textWidth = ctx.measureText(INCOMPLETE_NOTICE).width
+  const textWidth = ctx.measureText(text).width
   const boxLeft = PADDING_X
   const boxBottom = mapBottom - 14
   ctx.fillStyle = 'rgba(10, 12, 16, 0.72)'
   ctx.fillRect(boxLeft - 6, boxBottom - 26, textWidth + 20, 30)
   ctx.fillStyle = TEXT_MUTED
-  ctx.fillText(INCOMPLETE_NOTICE, boxLeft + 4, boxBottom - 6)
+  ctx.fillText(text, boxLeft + 4, boxBottom - 6)
 }
 
 /**

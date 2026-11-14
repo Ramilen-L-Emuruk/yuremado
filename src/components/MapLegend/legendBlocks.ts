@@ -15,9 +15,9 @@
 // （`kyoshinIntensityColor` / `kyoshinDetectedIcons` / `EewRegionFillGL` がいずれも
 // `getIntensityColor` を通る）。別ブロックにすると同じ色列が画面に 2 度並ぶ。
 
-import { INTENSITY_COLORS, INTENSITY_LABELS } from '../../utils/intensity'
+import { INTENSITY_COLORS, INTENSITY_LABELS, intensityShortLabel } from '../../utils/intensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
-import { getLpgmClassColor, getLpgmClassLabel } from '../../utils/lpgm'
+import { getLpgmClassColor } from '../../utils/lpgm'
 import { TSUNAMI_STYLE, TSUNAMI_MISSING_COLOR } from '../../utils/tsunamiStyle'
 import { TSUNAMI_OBS_HEIGHT_STEPS } from '../Map/gl/tsunamiObsBarStyle'
 import { UNRECEIVED_COLOR } from '../Map/gl/intensityIcons'
@@ -25,6 +25,7 @@ import { ARRIVAL_COLOR } from '../Map/gl/tsunamiArrivalMarker'
 import { S_WAVE_COLOR, P_WAVE_COLOR } from '../Map/gl/psWaveStyle'
 import { HEATMAP_DENSITY_STOPS } from '../Map/gl/heatmapRamp'
 import type { HeatmapPeriod } from '../../utils/quakeHeatmap'
+import type { Messages } from '../../i18n/messages'
 import {
   FAULT_COLOR,
   SUBDUCTION_COLOR,
@@ -43,6 +44,12 @@ import {
   type CatalogColorBy,
   type Ramp,
 } from '../../utils/hypocenterCatalogView'
+
+/** 凡例の語（辞書の `map.legend`）。 */
+type LegendWords = Messages['map']['legend']
+
+/** 書式の語（辞書の `formats`）。震度の札・深さの単位に使う */
+type FormatWords = Messages['formats']
 
 /** 凡例の 1 ブロックを表す鍵。並び順とテストの参照に使う。 */
 export type LegendKey =
@@ -113,14 +120,13 @@ export interface LegendHeatmapPeriod {
   replay: boolean
   /** 観測網の疎な時代に掛かるときの注記。掛からなければ `null`。 */
   note: string | null
+  /**
+   * 期間の行の文（「期間 2026/09/25 〜 いま」。`map.legend.periodRange`）。**画面の凡例と共有カードの画像が
+   * 同じ文を出すよう、組んだ文を持たせる。**
+   */
+  text: string
 }
 
-/**
- * 期間の行の文（「期間 2026/09/25 〜 いま」）。**画面の凡例と共有カードの画像が同じ文を出すよう、ここで組む。**
- */
-export function heatmapPeriodText(period: LegendHeatmapPeriod): string {
-  return `期間 ${period.startLabel} 〜 ${period.replay ? '再生時刻' : 'いま'}`
-}
 
 export interface LegendBlock {
   key: LegendKey
@@ -227,13 +233,16 @@ export const EMPTY_LEGEND_SOURCES: MapLegendSources = {
   catalogExternal: false,
 }
 
-/** 気象庁の震度階級（不明を除く）を階級値の昇順で。 */
-function intensityCells(): LegendCell[] {
+/**
+ * 気象庁の震度階級（不明を除く）を階級値の昇順で。札は地図の震度の丸と同じ短い形（{@link intensityShortLabel}。
+ * 日本語は「5弱」、英語などは「5-」）—— 凡例の升は丸と同じく狭く、丸の字と見比べて読むため。
+ */
+function intensityCells(f: FormatWords): LegendCell[] {
   return Object.keys(INTENSITY_LABELS)
     .map(Number)
     .filter((scale) => scale >= 0)
     .sort((a, b) => a - b)
-    .map((scale) => ({ label: INTENSITY_LABELS[scale], color: INTENSITY_COLORS[scale] }))
+    .map((scale) => ({ label: intensityShortLabel(scale, f), color: INTENSITY_COLORS[scale] }))
 }
 
 /** 0〜1 の RGB を持つ色の段を CSS の色へ。 */
@@ -250,9 +259,9 @@ function rampStops(ramp: Ramp): LegendStop[] {
  * **位置は `depthRampT` で求める。** 色は平方根で浅い側へ寄せてあるので（`DEPTH_RAMP_MAX_KM`）、
  * km を等間隔に置くと目盛りと色がずれる。
  */
-function depthTicks(): LegendTick[] {
+function depthTicks(f: FormatWords): LegendTick[] {
   const km = [0, 30, 120, 270, 750]
-  return km.map((v, i) => ({ at: depthRampT(v), label: i === km.length - 1 ? `${v}km` : String(v) }))
+  return km.map((v, i) => ({ at: depthRampT(v), label: i === km.length - 1 ? f.depth(v) : String(v) }))
 }
 
 function magnitudeTicks(): LegendTick[] {
@@ -282,12 +291,6 @@ function yearTicks(range: { lo: number; hi: number }): LegendTick[] {
 /** 気象庁以外の機関の震源を示す輪の見本の色。輪の実際の色は点ごとの色分けに従うので、見本は中立の灰色にする。 */
 const EXTERNAL_RING_HEX = '#d1d5db'
 
-const CATALOG_TITLES: Record<CatalogColorBy, { title: string; shortTitle: string }> = {
-  depth: { title: '震源の深さ', shortTitle: '深さ' },
-  magnitude: { title: 'マグニチュード', shortTitle: 'M' },
-  time: { title: '発生年', shortTitle: '発生年' },
-}
-
 /**
  * 震源カタログの色帯。
  *
@@ -295,15 +298,15 @@ const CATALOG_TITLES: Record<CatalogColorBy, { title: string; shortTitle: string
  * 見出しだけ新しく色帯は発生年のまま、という食い違いが型検査を通ってしまう（見出しの表は
  * `Record<CatalogColorBy, …>` なので追加を強制される）。
  */
-function catalogBlock(sources: MapLegendSources): LegendBlock | null {
+function catalogBlock(sources: MapLegendSources, w: LegendWords, f: FormatWords): LegendBlock | null {
   const colorBy = sources.catalogColorBy
   if (!colorBy) return null
-  const { title, shortTitle } = CATALOG_TITLES[colorBy]
+  const { title, short: shortTitle } = w.catalog[colorBy]
   const base = { key: 'catalog' as const, title, shortTitle }
   // 気象庁以外の機関の震源は、色分けによらず輪で描く。描かれているときだけ見本を添える
   // （2026-10-25 ユーザー選択「足す (Recommended)」）。輪の色は点ごとに違うので、見本は中立の灰色。
   const externalChip: LegendChip[] = sources.catalogExternal
-    ? [{ label: '気象庁以外の機関の震源', color: EXTERNAL_RING_HEX, shape: 'ring' }]
+    ? [{ label: w.externalHypocenter, color: EXTERNAL_RING_HEX, shape: 'ring' }]
     : []
   const withChips = (chips: LegendChip[]) => (chips.length > 0 ? { chips } : {})
   switch (colorBy) {
@@ -311,16 +314,16 @@ function catalogBlock(sources: MapLegendSources): LegendBlock | null {
       // **深さ不明の点が描かれているときだけ添える**（2026-10-25 ユーザー選択「足す (Recommended)」）。
       // 灰色で塗るのは深さで色を付けているときだけなので、見本もこの枝だけに置く。色は点を塗る側と同じ定数。
       const chips: LegendChip[] = [
-        ...(sources.catalogUnknownDepth ? [{ label: '深さ不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' as const }] : []),
+        ...(sources.catalogUnknownDepth ? [{ label: w.depthUnknown, color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' as const }] : []),
         ...externalChip,
       ]
-      return { ...base, swatch: { kind: 'ramp', stops: rampStops(DEPTH_RAMP), ticks: depthTicks(), ...withChips(chips) } }
+      return { ...base, swatch: { kind: 'ramp', stops: rampStops(DEPTH_RAMP), ticks: depthTicks(f),...withChips(chips) } }
     }
     case 'magnitude': {
       // **M 不明の点が描かれているときだけ添える**（2026-10-18 ユーザー選択「灰色＋凡例「M 不明」」）。
       // 色は点を塗る側と同じ定数から採る。
       const chips: LegendChip[] = [
-        ...(sources.catalogUnknownMagnitude ? [{ label: 'M 不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' as const }] : []),
+        ...(sources.catalogUnknownMagnitude ? [{ label: w.magnitudeUnknown, color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' as const }] : []),
         ...externalChip,
       ]
       return {
@@ -347,19 +350,19 @@ function catalogBlock(sources: MapLegendSources): LegendBlock | null {
  * **「震度」と「リアルタイム震度」を混ぜない。** 前者は気象庁の発表値、後者は強震モニタの値（計測震度を実時間で近似したもの）で、
  * 同じ配色でも意味が違う（リアルタイム震度は発表震度より高く振れる）。
  */
-function intensityTitle(sources: MapLegendSources): string {
+function intensityTitle(sources: MapLegendSources, w: LegendWords): string {
   const names: string[] = []
-  if (sources.quakeIntensity) names.push('震度')
-  if (sources.realtimeIntensity) names.push('リアルタイム震度')
-  if (sources.eewIntensity) names.push('緊急地震速報の予想')
-  return names.join('・')
+  if (sources.quakeIntensity) names.push(w.intensity)
+  if (sources.realtimeIntensity) names.push(w.realtimeIntensity)
+  if (sources.eewIntensity) names.push(w.eewForecast)
+  return names.join(w.nameSeparator)
 }
 
-function lpgmTitle(sources: MapLegendSources): string {
+function lpgmTitle(sources: MapLegendSources, w: LegendWords): string {
   const names: string[] = []
-  if (sources.lpgm) names.push('長周期地震動階級')
-  if (sources.eewLpgm) names.push('緊急地震速報の予想')
-  return names.join('・')
+  if (sources.lpgm) names.push(w.lpgmClass)
+  if (sources.eewLpgm) names.push(w.eewForecast)
+  return names.join(w.nameSeparator)
 }
 
 /** ヒートマップ欄に期間を載せる。ヒートマップ欄が無ければそのまま返す。 */
@@ -368,10 +371,13 @@ export function withHeatmapPeriod(blocks: LegendBlock[], period: LegendHeatmapPe
   return blocks.map((b) => (b.key === 'heatmap' ? { ...b, heatmapPeriod: period } : b))
 }
 
-/** 観測網の疎な時代に掛かるときの注記。文はカタログタブの注記と同じ。 */
-export function heatmapCompletenessNote(completeness: { fromYear: number; minMagnitude: number } | null): string | null {
+/** 観測網の疎な時代に掛かるときの注記。意味はカタログタブの注記と同じ（`map.legend.completeness`）。 */
+export function heatmapCompletenessNote(
+  completeness: { fromYear: number; minMagnitude: number } | null,
+  m: Messages,
+): string | null {
   if (!completeness) return null
-  return `${completeness.fromYear} 年まで遡ると、記録が揃うのは M ${completeness.minMagnitude.toFixed(1)} 以上です。それより小さい地震は少なく見えます。`
+  return m.map.legend.completeness(completeness.fromYear, completeness.minMagnitude.toFixed(1))
 }
 
 /**
@@ -379,19 +385,20 @@ export function heatmapCompletenessNote(completeness: { fromYear: number; minMag
  *
  * 並べる順は「いま起きていること（震度・津波）→ 背景（カタログ・密度・線）」。
  */
-export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
+export function buildLegendBlocks(sources: MapLegendSources, m: Messages): LegendBlock[] {
+  const w = m.map.legend
   const blocks: LegendBlock[] = []
 
   const showsIntensity = sources.quakeIntensity || sources.realtimeIntensity || sources.eewIntensity
   if (showsIntensity) {
-    const cells = intensityCells()
+    const cells = intensityCells(m.formats)
     // リアルタイム震度だけが震度0 を描く（`kyoshinIntensityColor` が `SHINDO0_COLOR` を返す）。
     // 発表値の震度に震度0 の色は無い。
     if (sources.realtimeIntensity) cells.unshift({ label: '0', color: SHINDO0_COLOR })
     blocks.push({
       key: 'intensity',
-      title: intensityTitle(sources),
-      shortTitle: sources.quakeIntensity ? '震度' : 'リアルタイム震度',
+      title: intensityTitle(sources, w),
+      shortTitle: sources.quakeIntensity ? w.intensity : w.realtimeIntensity,
       swatch: { kind: 'scale', cells },
     })
   }
@@ -399,24 +406,25 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
   if (sources.unreceived) {
     blocks.push({
       key: 'unreceived',
-      title: '震度を入手していない地点',
-      shortTitle: '未入電',
-      swatch: { kind: 'chips', chips: [{ label: '未入電', color: UNRECEIVED_COLOR, shape: 'dot' }] },
+      title: w.unreceivedTitle,
+      shortTitle: w.unreceived,
+      swatch: { kind: 'chips', chips: [{ label: w.unreceived, color: UNRECEIVED_COLOR, shape: 'dot' }] },
     })
   }
 
   if (sources.lpgm || sources.eewLpgm) {
     blocks.push({
       key: 'lpgm',
-      title: lpgmTitle(sources),
-      shortTitle: '長周期階級',
+      title: lpgmTitle(sources, w),
+      shortTitle: w.lpgmClassShort,
       swatch: {
         kind: 'scale',
         // 観測でも緊急地震速報の予想でも 0 から並べる。予想も電文が階級 0 と言い切った区域を灰色で塗る
         // （2026-10-30 ユーザー決定「全部出す」。それまでの「予想は 1〜4 だけ」（2026-10-24 ユーザー選択
         // 「この形でよい (Recommended)」）を覆した）
         cells: [0, 1, 2, 3, 4]
-          .map((cls) => ({ label: getLpgmClassLabel(cls).replace('階級', ''), color: getLpgmClassColor(cls) })),
+          // 升の中は階級の数だけ（「階級」の語は見出しが言っている）
+          .map((cls) => ({ label: String(cls), color: getLpgmClassColor(cls) })),
       },
     })
   }
@@ -424,13 +432,13 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
   if (sources.psWave) {
     blocks.push({
       key: 'psWave',
-      title: '緊急地震速報の予報円',
-      shortTitle: '予報円',
+      title: w.psWave,
+      shortTitle: w.psWaveShort,
       swatch: {
         kind: 'chips',
         chips: [
-          { label: 'P波', color: P_WAVE_COLOR, shape: 'line' },
-          { label: 'S波', color: S_WAVE_COLOR, shape: 'line' },
+          { label: w.pWave, color: P_WAVE_COLOR, shape: 'line' },
+          { label: w.sWave, color: S_WAVE_COLOR, shape: 'line' },
         ],
       },
     })
@@ -441,11 +449,11 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
     const grades = ['MajorWarning', 'Warning', 'Watch', 'Forecast'] as const
     blocks.push({
       key: 'tsunamiGrade',
-      title: '津波',
-      shortTitle: '津波',
+      title: w.tsunami,
+      shortTitle: w.tsunami,
       swatch: {
         kind: 'chips',
-        chips: grades.map((g) => ({ label: TSUNAMI_STYLE[g].label, color: TSUNAMI_STYLE[g].color, shape: 'line' as const })),
+        chips: grades.map((g) => ({ label: m.map.popup.tsunamiGrade[g], color: TSUNAMI_STYLE[g].color, shape: 'line' as const })),
       },
     })
   }
@@ -455,37 +463,37 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
     // 同じ色なので、同じブロックへ並べると観測値を発表された等級と読み違える。
     blocks.push({
       key: 'tsunamiObsHeight',
-      title: '観測した津波の高さ',
-      shortTitle: '観測波高',
+      title: w.tsunamiObsHeight,
+      shortTitle: w.tsunamiObsHeightShort,
       swatch: {
         kind: 'chips',
-        chips: TSUNAMI_OBS_HEIGHT_STEPS.map((s) => ({ label: s.label, color: s.color, shape: 'bar' as const })),
+        chips: TSUNAMI_OBS_HEIGHT_STEPS.map((s) => ({ label: m.formats.tsunamiObsLegend[s.legendKey], color: s.color, shape: 'bar' as const })),
       },
     })
   }
 
   if (sources.tsunamiArrival || sources.tsunamiMissing) {
     const chips: LegendChip[] = []
-    if (sources.tsunamiArrival) chips.push({ label: '到達確認', color: ARRIVAL_COLOR, shape: 'dot' })
-    if (sources.tsunamiMissing) chips.push({ label: '欠測', color: TSUNAMI_MISSING_COLOR, shape: 'dot' })
-    blocks.push({ key: 'tsunamiStation', title: '潮位観測点', shortTitle: '観測点', swatch: { kind: 'chips', chips } })
+    if (sources.tsunamiArrival) chips.push({ label: w.arrivalConfirmed, color: ARRIVAL_COLOR, shape: 'dot' })
+    if (sources.tsunamiMissing) chips.push({ label: w.missing, color: TSUNAMI_MISSING_COLOR, shape: 'dot' })
+    blocks.push({ key: 'tsunamiStation', title: w.tideStations, shortTitle: w.tideStationsShort, swatch: { kind: 'chips', chips } })
   }
 
-  const catalog = catalogBlock(sources)
+  const catalog = catalogBlock(sources, w, m.formats)
   if (catalog) blocks.push(catalog)
 
   if (sources.heatmap) {
     blocks.push({
       key: 'heatmap',
       // 期間は下の行とスライダーで示すので、見出しには書かない（2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。
-      title: '地震活動の密度',
-      shortTitle: '地震活動の密度',
+      title: w.density,
+      shortTitle: w.density,
       swatch: {
         kind: 'ramp',
         stops: HEATMAP_DENSITY_STOPS.map((s) => ({ at: s.at, color: s.color })),
         ticks: [
-          { at: 0, label: '少' },
-          { at: 1, label: '多' },
+          { at: 0, label: w.few },
+          { at: 1, label: w.many },
         ],
       },
     })
@@ -493,15 +501,15 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
 
   if (sources.activeFaults || sources.plateBoundaries) {
     const chips: LegendChip[] = []
-    if (sources.activeFaults) chips.push({ label: '活断層', color: FAULT_COLOR, shape: 'line' })
+    if (sources.activeFaults) chips.push({ label: w.activeFaults, color: FAULT_COLOR, shape: 'line' })
     if (sources.plateBoundaries) {
       // 7 分類を 4 系統にまとめて出す（2026-10-25 ユーザー承認「B の案でよい (Recommended)」）。
-      chips.push({ label: 'プレート境界（沈み込み帯）', color: SUBDUCTION_COLOR, shape: 'line' })
-      chips.push({ label: 'プレート境界（収束）', color: PLATE_CONVERGENT_COLOR, shape: 'line' })
-      chips.push({ label: 'プレート境界（拡大・リフト）', color: PLATE_DIVERGENT_COLOR, shape: 'line' })
-      chips.push({ label: 'プレート境界（トランスフォーム断層）', color: PLATE_TRANSFORM_COLOR, shape: 'line' })
+      chips.push({ label: w.plateSubduction, color: SUBDUCTION_COLOR, shape: 'line' })
+      chips.push({ label: w.plateConvergent, color: PLATE_CONVERGENT_COLOR, shape: 'line' })
+      chips.push({ label: w.plateDivergent, color: PLATE_DIVERGENT_COLOR, shape: 'line' })
+      chips.push({ label: w.plateTransform, color: PLATE_TRANSFORM_COLOR, shape: 'line' })
     }
-    blocks.push({ key: 'lines', title: '線', shortTitle: '線', swatch: { kind: 'chips', chips } })
+    blocks.push({ key: 'lines', title: w.lines, shortTitle: w.lines, swatch: { kind: 'chips', chips } })
   }
 
   return sortByPrimary(blocks, sources.primary)

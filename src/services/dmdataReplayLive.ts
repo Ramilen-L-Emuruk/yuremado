@@ -34,6 +34,15 @@ import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
 import { makeReplayLogEntry } from './telegramLogEntry'
 import { TELEGRAM_LOG_ERROR } from '../utils/telegramLogErrorMark'
+import type { TelegramBodyNote } from '../utils/telegramBodyNote'
+import { LocalizedError, errorText } from '../utils/localizedError'
+
+/** 電文ログにだけ積む行の口。`body` は本文の文字列か、二進電文の要約の鍵と値。本文を持てない行は `null` */
+type LogOnlyPush = (
+  item: TelegramListItem,
+  body: string | TelegramBodyNote | null,
+  opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean },
+) => void
 
 /** 一覧 API の 1 ページあたりの取得件数（API の上限）。 */
 const LIST_LIMIT = 100
@@ -157,7 +166,7 @@ export function enumerateJstDates(from: Date, to: Date): string[] {
   // 数えられないまま消える。現在の呼び出し元はいずれも数日以内の期間しか渡さないため、
   // ここに達すること自体が呼び出し側の異常を意味する。
   if (last - first + 1 > MAX_ENUMERATED_DAYS) {
-    throw new Error(`当日経路の対象期間が広すぎます（${last - first + 1} 日 / 上限 ${MAX_ENUMERATED_DAYS} 日）: ${from.toISOString()}〜${to.toISOString()}`)
+    throw new LocalizedError(errorText('sameDayRangeTooLong', last - first + 1, MAX_ENUMERATED_DAYS, from.toISOString(), to.toISOString()))
   }
   const days: string[] = []
   for (let i = first; i <= last; i++) {
@@ -1012,15 +1021,15 @@ export async function fetchLiveReplayEntriesWith(
 
   const entries: ReplayEntry[] = []
   const logOnlyEntries: ReplayLogOnlyEntry[] = []
-  const pushLogOnly = (
-    item: TelegramListItem, rawBody: unknown, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean },
-  ): void => {
+  /** `body` は本文の文字列か、二進電文の要約の鍵と値（→ `utils/telegramBodyNote.ts`）。本文を持てない行は `null` */
+  const pushLogOnly: LogOnlyPush = (item, body, opts) => {
+    const note = typeof body === 'object' && body !== null ? body : null
     logOnlyEntries.push({
       // 再生時刻は窓の判定と同じ値（二進電文は最後の断片の受信時刻 → `liveEntryTimes`）
       replayTime: times.get(item) ?? new Date(item.receivedTime),
       logEntry: makeReplayLogEntry({
-        headType: item.head.type, origin: 'replay', rawHead: item.head, rawBody, rawBytes: opts.rawBytes,
-        payload: null, errorMessage: opts.errorMessage, isTest: opts.isTest,
+        headType: item.head.type, origin: 'replay', rawHead: item.head, rawBody: note === null ? body : null, bodyNote: note,
+        rawBytes: opts.rawBytes, payload: null, errorMessage: opts.errorMessage, isTest: opts.isTest,
       }),
     })
   }
@@ -1039,14 +1048,14 @@ export async function fetchLiveReplayEntriesWith(
         const accepted = binaries.accept(item, bytes)
         if (accepted === 'pending') {
           // まだ揃っていない断片。**本文は電文ログへ入れない**（ライブと同じ —— 1 断片が最大 512KB ある）
-          pushLogOnly(item, `（BUFR の断片 ${bytes.length} バイト・結合待ち）`, { rawBytes: null, errorMessage: null, isTest: item.head.test === true })
+          pushLogOnly(item, { kind: 'bufrFragmentWaiting', bytes: bytes.length }, { rawBytes: null, errorMessage: null, isTest: item.head.test === true })
           return
         }
         const { joined, payload: binPayload } = accepted
         if (binPayload === null) {
           log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${item.id} type=${headType}`)
           skipCounter.add(skipDayOf(item.receivedTime))
-          pushLogOnly(item, `（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: TELEGRAM_LOG_ERROR.bufrDecodeFailed, isTest: item.head.test === true })
+          pushLogOnly(item, { kind: 'bufr', bytes: joined.length }, { rawBytes: joined, errorMessage: TELEGRAM_LOG_ERROR.bufrDecodeFailed, isTest: item.head.test === true })
           return
         }
         // **試験報は取りこぼしに数えない**（正常な配信。非 XML 電文は `item.head.test` で
@@ -1058,7 +1067,7 @@ export async function fetchLiveReplayEntriesWith(
         if (isFilteredBinaryTelegram(binPayload, includeTest)) {
           log.info(`[replay] 二進電文の試験報を流しません id=${item.id} type=${headType}`)
           pushLogOnly(
-            item, `（BUFR ${joined.length} バイト・電文の種類 ${binPayload.data.telegramKind}）`,
+            item, { kind: 'bufrKind', bytes: joined.length, telegramKind: binPayload.data.telegramKind },
             { rawBytes: joined, errorMessage: null, isTest: true },
           )
           return
@@ -1070,7 +1079,7 @@ export async function fetchLiveReplayEntriesWith(
           // 本文は要約だけ（ライブと同じ文。1 断片が最大 512KB ある）。結合した元の二進は `rawBytes` に持たせる
           logEntry: makeReplayLogEntry({
             headType, origin: 'replay', rawHead: item.head,
-            rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`, rawBytes: joined,
+            rawBody: null, bodyNote: { kind: 'bufrCells', bytes: joined.length, cells: binPayload.data.count }, rawBytes: joined,
             payload: binPayload, errorMessage: null, isTest: item.head.test === true,
           }),
         })
@@ -1091,7 +1100,7 @@ export async function fetchLiveReplayEntriesWith(
         payload,
         replayTime: new Date(item.receivedTime),
         logEntry: makeReplayLogEntry({
-          headType, origin: 'replay', rawHead: item.head, rawBody: xml, rawBytes: null,
+          headType, origin: 'replay', rawHead: item.head, rawBody: xml, bodyNote: null, rawBytes: null,
           payload, errorMessage: null, isTest: item.head.test === true,
         }),
       })
@@ -1157,11 +1166,11 @@ export const REPLAY_LOG_ONLY_FETCH_FAILED = TELEGRAM_LOG_ERROR.fetchFailed
 async function collectLogOnlyTelegram(
   item: TelegramListItem,
   endpoint: DmdataEndpoint,
-  push: (item: TelegramListItem, rawBody: unknown, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean }) => void,
+  push: LogOnlyPush,
 ): Promise<void> {
   const isTest = item.head.test === true
   if (isBinaryTelegramType(item.head.type)) {
-    push(item, '（BUFR の断片・本文は取りません）', { rawBytes: null, errorMessage: null, isTest })
+    push(item, { kind: 'bufrFragmentSkipped' }, { rawBytes: null, errorMessage: null, isTest })
     return
   }
   // 取得だけを try に入れる（行の組み立てが投げたときに「取れなかった」と取り違えて 2 行積まない）

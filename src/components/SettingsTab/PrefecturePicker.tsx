@@ -3,13 +3,17 @@ import { createPortal } from 'react-dom'
 
 import { PREFECTURES } from '../../data/prefectureCodes'
 import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
+import { useMessages, usePlaceNames } from '../../i18n/I18nProvider'
+import type { Messages } from '../../i18n/messages'
+import type { PlaceNameLookup } from '../../i18n/placeNames'
 
 /** 選んだ都道府県の一言。何も選んでいなければ「全国」（2026-11-03 ユーザー選択「通知する地域」の説明で決めた表示） */
-export function prefectureSummary(codes: readonly string[]): string {
-  if (codes.length === 0) return '全国'
-  const names = PREFECTURES.filter(p => codes.includes(p.code)).map(p => p.name)
-  if (names.length === 0) return '全国'
-  return names.length === 1 ? names[0] : `${names[0]}ほか ${names.length - 1}`
+export function prefectureSummary(codes: readonly string[], words: Messages['settings']['prefecture'], place: PlaceNameLookup): string {
+  if (codes.length === 0) return words.nationwide
+  // 選んだ県はコードで持つ。訳すのは出す名前だけ
+  const names = PREFECTURES.filter(p => codes.includes(p.code)).map(p => place('pref', p.name))
+  if (names.length === 0) return words.nationwide
+  return names.length === 1 ? names[0] : words.summary(names[0], names.length - 1)
 }
 
 /**
@@ -21,6 +25,8 @@ export function prefectureSummary(codes: readonly string[]): string {
  * 閉じるので、移さないと Esc で設定の窓ごと閉じる。閉じたら押しボタンへ戻す。
  */
 export function PrefecturePicker({ value, onChange }: { value: readonly string[]; onChange: (codes: string[]) => void }) {
+  const w = useMessages().settings.prefecture
+  const place = usePlaceNames()
   const [open, setOpen] = useState(false)
   const openerRef = useRef<HTMLButtonElement | null>(null)
   const closeRef = useRef<HTMLButtonElement | null>(null)
@@ -57,7 +63,7 @@ export function PrefecturePicker({ value, onChange }: { value: readonly string[]
         aria-expanded={open}
         onClick={() => setOpen(true)}
       >
-        {prefectureSummary(value)}
+        {prefectureSummary(value, w, place)}
       </button>
       {open && createPortal(
         <div
@@ -73,24 +79,26 @@ export function PrefecturePicker({ value, onChange }: { value: readonly string[]
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="通知する地域"
+            aria-label={w.title}
             className="max-h-full overflow-y-auto rounded-md border border-border bg-panel p-4 shadow-[0_3px_8px_rgba(0,0,0,.55)]"
           >
             <div className="mb-3 flex items-center justify-between gap-4">
-              <span className="text-sm text-white">通知する地域</span>
-              <span className="text-xs text-secondary">{prefectureSummary(value)}</span>
+              <span className="text-sm text-white">{w.title}</span>
+              <span className="text-xs text-secondary">{prefectureSummary(value, w, place)}</span>
             </div>
             <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 text-xs text-secondary">
               {PREFECTURES.map(p => (
-                <label key={p.code} className="flex cursor-pointer items-center gap-1 whitespace-nowrap">
-                  <input type="checkbox" checked={value.includes(p.code)} onChange={() => toggle(p.code)} />
-                  {p.name}
+                // 訳した県名（「Hokkaido Prefecture」）は 3 列に入りきらないので、列の幅の中で折り返す
+                // （2026-11-13 ユーザー選択「B 案: 3 列で 2 行に折る (Recommended)」。日本語の名前は今までどおり 1 行に収まる）
+                <label key={p.code} className="flex min-w-0 cursor-pointer items-start gap-1">
+                  <input type="checkbox" className="mt-px shrink-0" checked={value.includes(p.code)} onChange={() => toggle(p.code)} />
+                  {place('pref', p.name)}
                 </label>
               ))}
             </div>
             <div className="mt-4 flex justify-end">
               <button ref={closeRef} type="button" className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white whitespace-nowrap transition-colors motion-reduce:transition-none hover:bg-white/10" onClick={() => setOpen(false)}>
-                閉じる
+                {w.close}
               </button>
             </div>
           </div>

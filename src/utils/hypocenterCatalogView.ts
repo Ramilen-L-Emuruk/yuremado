@@ -6,6 +6,7 @@ import type { HypocenterIndex, HypocenterYear, TelegramPointLabels } from './hyp
 import { completeMinMagnitude } from './hypocenterCatalog'
 import { depthPointShapeId, type DepthPointColumns } from '../components/Map/gl/depthPointLayer'
 import type { Messages } from '../i18n/messages'
+import type { CatalogColorBy } from '../i18n/messageKeys'
 
 /** 震源カタログの語（日本語なら `ja.catalog`）。見出しを組む関数は、いま出している言語の辞書を受け取る */
 export type CatalogWords = Messages['catalog']
@@ -19,8 +20,8 @@ export type CatalogWords = Messages['catalog']
  */
 export const CATALOG_REBUILD_DEBOUNCE_MS = 150
 
-/** 点の色を何で決めるか。 */
-export type CatalogColorBy = 'depth' | 'magnitude' | 'time'
+/** 点の色を何で決めるか（辞書も鍵に使うので i18n/messageKeys.ts に置く）。 */
+export type { CatalogColorBy }
 
 /** 点の大きさを何で決めるか。 */
 export type CatalogSizeBy = 'fixed' | 'magnitude'
@@ -497,6 +498,8 @@ export function preliminaryNote(
   /** 中継の地震情報の電文から作った末尾の始まり（＝カタログの終端）。末尾を足していなければ null */
   tailFromMs: number | null,
   w: CatalogWords,
+  /** 境目の日付の書き方（辞書の `formats`） */
+  f: FullDateWords,
 ): string | null {
   const notes: string[] = []
   const firstPreliminary = index.years.find((y) => index.quality[String(y)] === 'preliminary')
@@ -504,12 +507,12 @@ export function preliminaryNote(
     const lo = Math.min(jstYearOf(period.fromMs), jstYearOf(period.toMs))
     const hi = Math.max(jstYearOf(period.fromMs), jstYearOf(period.toMs))
     const touches = index.years.some((y) => y >= lo && y <= hi && index.quality[String(y)] === 'preliminary')
-    if (touches) notes.push(w.preliminaryFrom(formatJstDate(jstYearStartMs(firstPreliminary))))
+    if (touches) notes.push(w.preliminaryFrom(formatJstDate(jstYearStartMs(firstPreliminary), f)))
   }
   // 末尾に掛かるときだけ 2 つ目の文を続ける（2026-11-06 ユーザー選択「2 つ目の文を続ける (Recommended)」）。
   // 地震情報は震度 1 以上の地震などにしか出ないので、末尾の件数が少なく出る理由もここで伝える
   if (tailFromMs !== null && Math.max(period.fromMs, period.toMs) >= tailFromMs) {
-    notes.push(w.telegramTailFrom(formatJstDate(tailFromMs)))
+    notes.push(w.telegramTailFrom(formatJstDate(tailFromMs, f)))
   }
   return notes.length > 0 ? w.joinNotes(notes) : null
 }
@@ -535,10 +538,16 @@ export function periodFromDateChange(
   return { fromMs: hi < period.fromMs ? lo : period.fromMs, toMs: hi }
 }
 
-/** 日本時間の暦日を「2016年3月14日」の形で。 */
-export function formatJstDate(ms: number): string {
+/** 年・月・日の書き方（辞書の `formats.calendarDate`。曜日は付けない）。画面は `useMessages().formats` を渡す */
+export type FullDateWords = Pick<Messages['formats'], 'calendarDate'>
+
+/**
+ * 日本時間の暦日を、辞書の年・月・日の書き方で（日本語は「2016年3月14日」）。
+ * 辞書の書き方は端末の時刻として日付を読むので、JST の年・月・日の数から端末の時刻の `Date` を作って渡す
+ */
+export function formatJstDate(ms: number, w: FullDateWords): string {
   const d = new Date(ms + JST_OFFSET_MS)
-  return `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
+  return w.calendarDate(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 }
 
 /** 期間に含まれる日数（両端を含む）。両端が日の境界にそろっている前提。 */

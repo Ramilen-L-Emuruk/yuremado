@@ -8,7 +8,9 @@
 // で見ている。あちらは React を動かすため jsdom 環境で走るので、DOM 非依存のこちらとは
 // ファイルを分けている（同居させると、この純粋関数のテストまで jsdom に引きずられる）。
 import { describe, it, expect } from 'vitest'
-import { createSessionGuard, createEmptyLoss, addLoss, addFailedPrefetch, formatLossNotice } from './useReplayController'
+import { createSessionGuard, createEmptyLoss, addLoss, addFailedPrefetch, formatLossNotice, replayTargetProblemText } from './useReplayController'
+import { ja } from '../i18n/messages/ja'
+import { en } from '../i18n/messages/en'
 
 /** テスト用: 日ごとの取りこぼしを合計する（実装が日ごとに持つようになったため）。 */
 function skips(count: number, day = '2026-08-10'): Map<string, number> {
@@ -200,11 +202,11 @@ describe('addLoss', () => {
 
 describe('formatLossNotice', () => {
   it('何も欠けていなければ出さない', () => {
-    expect(formatLossNotice(createEmptyLoss())).toBeNull()
+    expect(formatLossNotice(createEmptyLoss(), ja)).toBeNull()
   })
 
   it('電文の取りこぼしを件数付きで知らせる', () => {
-    const msg = formatLossNotice(addLoss(createEmptyLoss(), lossOf(3, [])))
+    const msg = formatLossNotice(addLoss(createEmptyLoss(), lossOf(3, [])), ja)
     expect(msg).toMatch(/電文3件/)
     // 失敗と誤読されないよう、再生が続いていることを必ず添える
     expect(msg).toMatch(/継続中/)
@@ -213,13 +215,13 @@ describe('formatLossNotice', () => {
   // アーカイブ丸ごとの失敗は「その日に何通あったか」が分からないため電文数に合算できない。
   // 黙らせると「1 日分まるごと欠けた再生」を成功と見分けられなくなる。
   it('アーカイブ単位の失敗も知らせる', () => {
-    const msg = formatLossNotice(addLoss(createEmptyLoss(), lossOf(0, ['https://x/a', 'https://x/b'])))
+    const msg = formatLossNotice(addLoss(createEmptyLoss(), lossOf(0, ['https://x/a', 'https://x/b'])), ja)
     expect(msg).toMatch(/取得元2件/)
     expect(msg).toMatch(/継続中/)
   })
 
   it('両方欠けたときは両方を並べる', () => {
-    const msg = formatLossNotice(addLoss(createEmptyLoss(), lossOf(5, ['https://x/a'])))
+    const msg = formatLossNotice(addLoss(createEmptyLoss(), lossOf(5, ['https://x/a'])), ja)
     expect(msg).toMatch(/取得元1件/)
     expect(msg).toMatch(/電文5件/)
   })
@@ -227,9 +229,30 @@ describe('formatLossNotice', () => {
   // 先読みは失敗した区間を読み直さない（同上の理由）。件数を出さないと、その 1 時間ぶんが
   // 欠けたまま「静かな時間帯だった」ようにしか見えなくなる。
   it('先読みの失敗も区間数で知らせる', () => {
-    const msg = formatLossNotice(addFailedPrefetch(createEmptyLoss()))
+    const msg = formatLossNotice(addFailedPrefetch(createEmptyLoss()), ja)
     expect(msg).toMatch(/先読み1区間/)
     expect(msg).toMatch(/継続中/)
+  })
+
+  it('日本語は前と同じ字面、英語の辞書なら英語で組む', () => {
+    const loss = addFailedPrefetch(addLoss(createEmptyLoss(), lossOf(5, ['https://x/a'])))
+    expect(formatLossNotice(loss, ja)).toBe('取得元1件・電文5件・先読み1区間を取り込めず（再生は継続中・詳細はコンソール）')
+    expect(formatLossNotice(loss, en)).toBe('Could not load 1 source, 5 telegrams, 1 prefetch block (replay continues; see the console for details)')
+  })
+})
+
+// 再生の帯の文（始められない理由・取得の失敗）。日本語は前と同じ字面
+describe('再生の帯の文', () => {
+  it('始められない理由', () => {
+    expect(replayTargetProblemText({ kind: 'unreadable' }, ja.replayBanner)).toBe('再生する日時として読み取れません')
+    expect(replayTargetProblemText({ kind: 'tooEarly', year: 2016 }, ja.replayBanner)).toBe('2016 年より前は再生できません（どの取得元にもデータがありません）')
+    expect(replayTargetProblemText({ kind: 'future' }, ja.replayBanner)).toBe('未来の時刻は再生できません')
+    expect(replayTargetProblemText({ kind: 'tooEarly', year: 2016 }, en.replayBanner)).toBe('Cannot replay before 2016 (no source has data)')
+  })
+  it('取得の失敗と先読みの失敗', () => {
+    expect(ja.replayBanner.prefetchLost('2026/11/11 12:00:00', '取得失敗')).toBe('先読みに失敗しました。2026/11/11 12:00:00 からの 1 時間ぶんは再生されません: 取得失敗')
+    expect(en.replayBanner.prefetchRetrying('2026/11/11 12:00:00', 'x')).toBe('Prefetch failed. The hour from 2026/11/11 12:00:00 is being reloaded: x')
+    expect(en.replayBanner.archiveFailed('x')).toBe('x (earthquake and tsunami telegrams will not be replayed; real-time intensity continues)')
   })
 })
 

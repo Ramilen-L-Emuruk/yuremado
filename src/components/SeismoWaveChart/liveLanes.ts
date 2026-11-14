@@ -105,8 +105,10 @@ export function drawLanes(params: {
    * なると、揃った瞬間に絵が跳ねる）。
    */
   sharing: { readonly shared: LaneScales | null } | null
+  /** 合成の段の縦の表示「0〜上端」の範囲の書き方（辞書の `formats.range`）。 */
+  range: (from: string, to: string) => string
 }): { texts: Record<string, string | null>; compositeFellBack: boolean; ownScale: LaneScales | null } {
-  const { targets, lanes, expanded, win, stale, quietLevel, arrivals, timeline, unit, sharing } = params
+  const { targets, lanes, expanded, win, stale, quietLevel, arrivals, timeline, unit, sharing, range } = params
   const spanMs = liveSpanMs(timeline)
   const rightEdge = timeline.nowMs + timeline.leadMs
   // **描くたびに読み直す。** 押した向きは次のフレームで効く（この関数は毎秒 3 回
@@ -188,6 +190,7 @@ export function drawLanes(params: {
         vertical,
         marks: laneMarks,
         ticks,
+        range,
         // 合成の段は畳んでも展開しても 1 本なので、いつも均した線を重ねる。
         overlays: (count) => {
           const m = meansFor(count, false)

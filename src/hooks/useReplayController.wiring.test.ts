@@ -23,6 +23,15 @@ import {
 import type { ReplayEntry, ReplayFetchResult, ReplayQuakeHistoryResult } from '../types/replay'
 import type { JMAQuake } from '../types/earthquake'
 import { log } from '../utils/logger'
+import { createElement, type ReactNode } from 'react'
+import { I18nProvider } from '../i18n/I18nProvider'
+import { loadMessages, localeTag, type Locale } from '../i18n/messages'
+import { RelayTokenError } from '../services/relayEndpoint'
+import { FetchTimeoutError } from '../utils/fetchWithTimeout'
+import { LocalizedError, errorText } from '../utils/localizedError'
+
+// 英語の辞書はファイルの読み込み時に一度読んでおく（テスト本体で初めて読むと、並列実行の順番待ちが 1 件目に乗る）
+await loadMessages('en')
 
 
 /**
@@ -122,8 +131,9 @@ function emptyHistory(): ReplayQuakeHistoryResult {
 /**
  * @param holdHistory 履歴の完了をテスト側で握るか。**既定では即座に空で返す** —— 再生の開始は
  *   履歴を待つので、握ったまま本編・初期状態だけ解決しても `start` は終わらない。
+ * @param locale 画面の言語（渡すと `I18nProvider` で包む。辞書の読み込みは {@link waitForLocale} で待つ）。既定は日本語
  */
-function setup({ holdHistory = false }: { holdHistory?: boolean } = {}) {
+function setup({ holdHistory = false, locale }: { holdHistory?: boolean; locale?: Locale } = {}) {
   // 呼び出し順序の記録。どの state 操作が世代照合の後ろにあるかをここで見る。
   const order: string[] = []
   const fetches: Deferred<ReplayFetchResult>[] = []
@@ -163,7 +173,10 @@ function setup({ holdHistory = false }: { holdHistory?: boolean } = {}) {
   }
 
   // deps を毎レンダー新しいオブジェクトで渡すのは実際の App と同じ（Hook 側は ref 経由で読む）。
-  const view = renderHook(() => useReplayController({ ...deps, timeOffset }))
+  const wrapper = locale === undefined
+    ? undefined
+    : ({ children }: { children: ReactNode }) => createElement(I18nProvider, { locale, children })
+  const view = renderHook(() => useReplayController({ ...deps, timeOffset }), { wrapper })
 
   return {
     deps,
@@ -202,8 +215,23 @@ function setup({ holdHistory = false }: { holdHistory?: boolean } = {}) {
   }
 }
 
+/**
+ * `I18nProvider` がその言語の辞書を読み終えるのを待つ（読み終えると `<html lang>` が変わる）。
+ * 前のテストの値が残らないよう、待つ前に空へ戻す
+ */
+async function waitForLocale(locale: Locale): Promise<void> {
+  const tag = localeTag(locale)
+  // 回数ではなく時間で待つ。全件を並列で回すと辞書の読み込みが遅れ、0 秒待ちを数十回くり返す間に終わらないことがある
+  const deadline = Date.now() + 3000
+  while (document.documentElement.lang !== tag && Date.now() < deadline) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
+  }
+  expect(document.documentElement.lang).toBe(tag)
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  document.documentElement.lang = ''
 })
 
 // testing-library の自動 cleanup はグローバルの afterEach を見て登録される。この
@@ -288,6 +316,66 @@ describe('useReplayController の start', () => {
     expect(h.current.error).not.toMatch(/Failed to fetch/)
     const recorded = drainReplayEvents().events.filter(e => e.type === 'fetch' && e.phase === 'error')
     expect(recorded.some(e => 'message' in e && String(e.message).includes('Failed to fetch'))).toBe(true)
+  })
+
+  // 正: 画面の言語が英語なら、帯の文も中の理由（鍵を持つ失敗）も英語で組む。安全弁: 記録には日本語の文を残す
+  it('英語の画面では、中継の札・時間切れの失敗を英語の帯にする', async () => {
+    drainReplayEvents()
+    const h = setup({ locale: 'en' })
+    await waitForLocale('en')
+    const started = h.start(quietTarget())
+
+    h.fetches[0].reject(new RelayTokenError(errorText('relayTokenHttp', 429), 429))
+    h.fetches[1].reject(new FetchTimeoutError('https://example.invalid/a', 15_000))
+    await h.flush(started)
+
+    expect(h.current.error).toMatch(/^Could not load the replay \(from [\d/: ]+\): Could not get a relay token \(HTTP 429\)/)
+    expect(h.current.error).toContain('(earthquake and tsunami telegrams will not be replayed; real-time intensity continues)')
+    expect(h.current.error).not.toMatch(/[ぁ-んァ-ヶ一-龠]/)
+    const recorded = drainReplayEvents().events.filter(e => e.type === 'fetch' && e.phase === 'error')
+    expect(recorded.some(e => 'message' in e && String(e.message).includes('中継の札を受け取れませんでした（HTTP 429）'))).toBe(true)
+  })
+
+  it('英語の画面では、初期状態の時間切れを英語の帯にする', async () => {
+    const h = setup({ locale: 'en' })
+    await waitForLocale('en')
+    const started = h.start(quietTarget())
+
+    h.fetches[0].resolve(fetched([]))
+    h.fetches[1].reject(new FetchTimeoutError('https://example.invalid/a', 15_000))
+    await h.flush(started)
+
+    expect(h.current.error).toMatch(/^Could not load the starting state \(past 24 hours\): Loading did not finish within 15 s: https:\/\/example\.invalid\/a/)
+  })
+
+  it('英語の画面では、目録の失敗で履歴を戻せないことを英語の帯にする', async () => {
+    const h = setup({ holdHistory: true, locale: 'en' })
+    await waitForLocale('en')
+    const started = h.start(quietTarget())
+
+    h.histories[0].reject(new LocalizedError(errorText('archiveListHttp', 503)))
+    h.fetches[0].resolve(fetched([]))
+    h.fetches[1].resolve(fetched([]))
+    await h.flush(started)
+
+    expect(h.current.error).toBe(
+      'Could not restore earthquake history (earthquakes before the replay start are not listed; replay continues): Could not get the archive list: 503',
+    )
+  })
+
+  // 対照: 日本語の画面は前と同じ字面
+  it('対照: 日本語の画面では、目録の失敗を前と同じ日本語の帯にする', async () => {
+    const h = setup({ holdHistory: true })
+    const started = h.start(quietTarget())
+
+    h.histories[0].reject(new LocalizedError(errorText('archiveListHttp', 503)))
+    h.fetches[0].resolve(fetched([]))
+    h.fetches[1].resolve(fetched([]))
+    await h.flush(started)
+
+    expect(h.current.error).toBe(
+      '地震カードの履歴を復元できませんでした（再生開始より前の地震が一覧に出ません。再生は継続中）: アーカイブの一覧を取得できなかった: 503',
+    )
   })
 
   it('取得に失敗した後もリセット（stop）で時計を戻せる', async () => {
@@ -378,17 +466,17 @@ describe('範囲外の時刻では取得を始めない', () => {
     })
 
     it('対照: 下限より前は理由を返す', () => {
-      expect(replayTargetProblem(new Date(REPLAY_EARLIEST_MS - 1), now)).toContain('再生できません')
-      expect(replayTargetProblem(new Date(Date.UTC(1969, 11, 30)), now)).toContain('再生できません')
+      expect(replayTargetProblem(new Date(REPLAY_EARLIEST_MS - 1), now)?.kind).toBe('tooEarly')
+      expect(replayTargetProblem(new Date(Date.UTC(1969, 11, 30)), now)?.kind).toBe('tooEarly')
     })
 
     it('対照: 未来は理由を返す（ただし時計のずれぶんは通す）', () => {
       expect(replayTargetProblem(new Date(now + REPLAY_FUTURE_MARGIN_MS - 1), now)).toBeNull()
-      expect(replayTargetProblem(new Date(now + REPLAY_FUTURE_MARGIN_MS + 1), now)).toContain('未来')
+      expect(replayTargetProblem(new Date(now + REPLAY_FUTURE_MARGIN_MS + 1), now)?.kind).toBe('future')
     })
 
     it('安全弁: 日時として読めない値も弾く', () => {
-      expect(replayTargetProblem(new Date('これは日時ではない'), now)).toContain('読み取れません')
+      expect(replayTargetProblem(new Date('これは日時ではない'), now)?.kind).toBe('unreadable')
     })
   })
 

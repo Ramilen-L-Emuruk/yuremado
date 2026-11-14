@@ -23,7 +23,8 @@ import type { RuntimeCaching } from 'workbox-build'
  * 実行時キャッシュで控える生成データ（`public/data/` からの相対パス）。
  *
  * 地図の 7 本（地図の初回表示でまとめて要求するもの）・公開観測点の表・読み上げ辞書の 3 本
- * （2026-10-14 ユーザー承認「地図 7 本＋読み上げ辞書 3 本」）・揺れ検知の平常のゆらぎの表・国際津波関連情報の震央の地名の表。
+ * （2026-10-14 ユーザー承認「地図 7 本＋読み上げ辞書 3 本」）・揺れ検知の平常のゆらぎの表・国際津波関連情報の震央の地名の表・
+ * 地名の訳の表。
  */
 export const OFFLINE_DATA_FILES = [
   // 地図
@@ -44,6 +45,14 @@ export const OFFLINE_DATA_FILES = [
   'kyoshin-quiet-tables.json',
   // 国際津波関連情報の震央の地名の表（2026-11-08 ユーザー選択「控える (Recommended)」。オフラインでも震央の地名を訳す）
   'wepa60-region-names.json',
+  // 地名の訳の表（2026-11-13 ユーザー選択「控える (Recommended)」。オフラインでも地名を訳して出す。
+  // アプリが読むのは選んだ言語の 1 本だけなので、控えに入るのもその 1 本）
+  'place-names/en.json',
+  'place-names/es.json',
+  'place-names/ko.json',
+  'place-names/pt-BR.json',
+  'place-names/zh-Hans.json',
+  'place-names/zh-Hant.json',
 ] as const
 
 /**

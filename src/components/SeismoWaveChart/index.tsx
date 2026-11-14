@@ -49,7 +49,7 @@ import { measureWindowQuietLevel, QuietLevelMemory } from '../../utils/seismoQui
 import { formatWaveTally } from './waveLabels'
 import { hasWaveChartRows } from './chartRows'
 import { useWaveAxes } from '../../hooks/useSeismoWaveAxes'
-import { AXIS_BAND_PX, AXIS_COLORS, AXIS_LABELS, COMPOSITE_COLOR, paintTicks } from './paintWave'
+import { AXIS_BAND_PX, AXIS_COLORS, COMPOSITE_COLOR, paintTicks } from './paintWave'
 import {
   drawLanes,
   laneKey,
@@ -64,24 +64,17 @@ import {
 import { WaveAxisToggles } from './WaveAxisToggles'
 import { PUBLIC_WAVE_UNIT, SEISMO_WAVE_UNIT, type WaveUnit } from './waveUnit'
 import { SharedLaneScales } from './sharedScale'
-import { COMPRESSED_VERTICAL_NOTE } from './verticalMap'
+import { useMessages } from '../../i18n/I18nProvider'
 
-/**
- * 波形が届かなくなっているときに出す語。
- *
- * **「接続断」とは書かない。** 接続は生きていて（震度は届き続けている）、
- * 波形だけが来ていない状態 —— そう書くと事実とずれる。
- *
- * **復旧すれば自動で消える**（次の巡回で `waveStale` が下りる）。止まっていた事実は
- * 絵の欠測と数え上げに残るので、この語が消えても無かったことにはならない。
- */
-const STALE_LABEL = '波形 途絶'
-
-/**
- * 公開観測点の SeedLink が続けて断られているとき（接続数の上限とみなす）に、見出しへ出す印
- * （`docs/public-waveform-design.md` §0。2026-10-15 ユーザー承認）。
- */
-const PUBLIC_REFUSED_LABEL = '公開観測点 接続数の上限'
+// 段の名前・見出しの印・ホバーの語は辞書の `waveChart`。
+//
+// - 波形が届かなくなっているときの語（`stale`）: **「接続断」とは書かない。** 接続は生きていて（震度は届き続けている）、
+//   波形だけが来ていない状態 —— そう書くと事実とずれる。**復旧すれば自動で消える**（次の巡回で `waveStale` が下りる）。
+//   止まっていた事実は絵の欠測と数え上げに残るので、この語が消えても無かったことにはならない。
+// - 公開観測点の SeedLink が続けて断られているとき（接続数の上限とみなす）に見出しへ出す印（`publicRefused`。
+//   `docs/public-waveform-design.md` §0。2026-10-15 ユーザー承認）。
+// - 合成が止まってセンサー単独を描いている間の、段の名前（`sensorLane`）と見出しの印（`compositeStopped`。2026-10-24 ユーザー選択
+//   「その案でよい (Recommended)」）。何を描いているかを書かないと、合成と単独の絵が見分けられない（`useSeismoStation` の `SeismoWaveSource`）。
 
 /**
  * 公開観測点の見出し（番号＋観測点名）。**番号の書き方は地図の印と一緒に決める**（§12。いまは選ばれた「#1 宮城丸森」の形）。
@@ -91,15 +84,6 @@ export function publicStationHeading(number: number, nameJa: string): string {
   return `#${number} ${nameJa}`
 }
 
-/** 合成の段の名前。詳細の窓の段と同じ語。 */
-const COMPOSITE_LABEL = '合成'
-
-/**
- * 合成が止まってセンサー単独を描いている間の、段の名前と見出しの印（2026-10-24 ユーザー選択「その案でよい (Recommended)」）。
- * 何を描いているかを書かないと、合成と単独の絵が見分けられない（`useSeismoStation` の `SeismoWaveSource`）。
- */
-const SENSOR_LANE_LABEL = '単独'
-const COMPOSITE_STOPPED_LABEL = '合成 途絶'
 
 /**
  * 静かさを測り直す間隔（データの時刻で ms）。**1 秒。**
@@ -236,6 +220,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
   // どれだけ揺れたかを見比べられない。揃えて線形のままだと、遠い観測点が平らになる（`verticalMap.ts`）。
   const publicScalesRef = useRef<SharedLaneScales | null>(null)
   if (publicScalesRef.current === null) publicScalesRef.current = new SharedLaneScales()
+  const ww = useMessages().waveChart
   const sources: LiveWaveSource[] = []
   for (const station of stations) {
     sources.push({
@@ -244,9 +229,9 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
       lat: station.lat,
       lon: station.lon,
       stale: station.waveStale,
-      tallyText: formatWaveTally(station.waveTally),
-      notice: station.waveSource === 'sensor' ? COMPOSITE_STOPPED_LABEL : null,
-      compositeLabel: station.waveSource === 'sensor' ? SENSOR_LANE_LABEL : COMPOSITE_LABEL,
+      tallyText: formatWaveTally(station.waveTally, ww),
+      notice: station.waveSource === 'sensor' ? ww.compositeStopped : null,
+      compositeLabel: station.waveSource === 'sensor' ? ww.sensorLane : ww.composite,
       rememberQuiet: station.waveSource === 'station',
       quietKey: station.stationId,
       unit: SEISMO_WAVE_UNIT,
@@ -267,8 +252,8 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
         stale: ps.stale,
         tallyText: null,
         // **印は公開観測点の先頭の段にだけ出す**（接続は 1 本なので、段ごとに並べても同じことしか言わない）。
-        notice: refused && i === 0 ? PUBLIC_REFUSED_LABEL : null,
-        compositeLabel: COMPOSITE_LABEL,
+        notice: refused && i === 0 ? ww.publicRefused : null,
+        compositeLabel: ww.composite,
         rememberQuiet: false,
         quietKey: ps.code,
         unit: PUBLIC_WAVE_UNIT,
@@ -345,6 +330,7 @@ function StationWave({
   paused,
 }: Omit<Props, 'stations' | 'readWave' | 'publicWaves' | 'onFocusStation' | 'onLeadRowHeightChange'> & { source: LiveWaveSource; showControls: boolean }) {
   const axes = useWaveAxes()
+  const ww = useMessages().waveChart
   const lanes = useMemo<readonly Lane[]>(() => {
     if (!expanded) return [{ kind: collapsedView }]
     const out: Lane[] = [{ kind: 'composite' }]
@@ -405,6 +391,10 @@ function StationWave({
   // 単位は観測点の種類で決まる（鍵に種類が入っているので、同じ段のまま種類が変わることは無い）。
   const unitRef = useRef(source.unit)
   unitRef.current = source.unit
+  // 合成の段の「0〜上端」の書き方。描くのは見張りの中なので、言語が変わっても次の描き直しで効くよう ref で渡す
+  const range = useMessages().formats.range
+  const rangeRef = useRef(range)
+  rangeRef.current = range
   const behindWarnMsRef = useRef(source.sampleBehindWarnMs)
   behindWarnMsRef.current = source.sampleBehindWarnMs
   const lanesRef = useRef(lanes)
@@ -527,6 +517,7 @@ function StationWave({
         arrivals: arrivalsRef.current,
         timeline: nextTimeline,
         unit: unitRef.current,
+        range: rangeRef.current,
         sharing: shared === null ? null : { shared: shared.shared() },
       })
       // 揃える前の自分の範囲を書く。**次の組み直しから**他の段（と自分）がこれを読む。
@@ -618,7 +609,7 @@ function StationWave({
   const lastLane = lanes[lanes.length - 1]
   const headScale = lanes.length === 1 ? (scaleTexts[laneKey(lanes[0])] ?? null) : null
   // 縦を揃えて圧縮する段（`drawLanes` の `sharing` が `null` でない段）だけ、範囲の字にホバーの一言を添える。
-  const compressedNote = source.sharedScales !== null ? COMPRESSED_VERTICAL_NOTE : undefined
+  const compressedNote = source.sharedScales !== null ? ww.compressedNote : undefined
 
   return (
     <div className="w-full bg-black/70 px-2 py-1">
@@ -635,11 +626,11 @@ function StationWave({
         {/* 右へ寄せる群。**途絶はいちばん右へ寄せず、数え上げと同じ列に並べる。** 起きていることの
             種類が違うだけで、どちらも「この絵をそのまま信じてよいか」の手掛かり。 */}
         <div className="ml-auto flex items-center gap-2 min-w-0">
-          {stale && <span className="text-secondary">{STALE_LABEL}</span>}
+          {stale && <span className="text-secondary">{ww.stale}</span>}
           {notice !== null && <span className="text-secondary truncate">{notice}</span>}
           {tallyText !== null && <span className="text-secondary truncate">{tallyText}</span>}
           {/* 畳んでいるときだけ縦の範囲をここへ出す（展開したら段ごとに出す）。 */}
-          {/* 縦を圧縮している段（公開観測点）だけ、ホバーで一言添える（文面と承認は `COMPRESSED_VERTICAL_NOTE`）。 */}
+          {/* 縦を圧縮している段（公開観測点）だけ、ホバーで一言添える（文面と承認は `verticalMap.ts`、語は辞書の `waveChart.compressedNote`）。 */}
           {lanes.length === 1 && (
             <span className="font-mono tabular-nums text-secondary" title={compressedNote}>
               {headScale ?? '—'}
@@ -652,7 +643,7 @@ function StationWave({
               type="button"
               onClick={onToggleExpanded}
               aria-expanded={expanded}
-              aria-label={expanded ? '波形を畳む' : '波形を展開'}
+              aria-label={expanded ? ww.collapse : ww.expand}
               className="text-secondary hover:text-white leading-none"
             >
               {expanded ? '▲' : '▼'}
@@ -670,7 +661,7 @@ function StationWave({
               {lanes.length > 1 && (
                 <div className="pointer-events-none absolute left-0 right-0 top-0 flex justify-between text-[9px] roomy:text-[10px] leading-none">
                   <span style={{ color: lane.kind === 'axis' ? AXIS_COLORS[lane.axis] : COMPOSITE_COLOR }}>
-                    {lane.kind === 'axis' ? AXIS_LABELS[lane.axis] : source.compositeLabel}
+                    {lane.kind === 'axis' ? ww.axes[lane.axis] : source.compositeLabel}
                   </span>
                   {/* 見出しの帯は押しても下の波形へ通す作りなので、ホバーを受けるこの字だけ受け取る。 */}
                   <span

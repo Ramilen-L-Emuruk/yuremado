@@ -21,8 +21,11 @@ export const JMA_COMMENT_HEADINGS = {
   free: '自由付加文',
 } as const
 
+/** 補足の中身の種類。画面の見出しは辞書（`quake.jmaNoteHeading`）から引く */
+export type JmaCommentKind = keyof typeof JMA_COMMENT_HEADINGS
+
 export interface JmaCommentGroup {
-  readonly kind: keyof typeof JMA_COMMENT_HEADINGS
+  readonly kind: JmaCommentKind
   readonly heading: string
   /** 1 文 1 行に割った文。自由付加文の表（全角空白で桁を揃えた行）は行のまま残る。 */
   readonly lines: readonly string[]

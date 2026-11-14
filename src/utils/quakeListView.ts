@@ -3,11 +3,19 @@
 // 決まったことと原文は docs/spec/quake-spec.md「地震タブの絞り込みと並び替え」（2026-11-07 ユーザー選択）。
 import type { IntensityScale, IssueType, JMAQuake } from '../types/earthquake'
 import { hasDepth, hasMagnitude } from './formatters'
-import { getIntensityLabel } from './intensity'
+import { intensityLabel } from './intensity'
 import { parseJstTimeMs } from './quakeOriginSeconds'
 import { quakeListDay } from './quakeListDay'
 import { isAreaPoint, isMaxScaleUnreceived, type AreaPrefIndex } from './quakePoints'
 import { clampPeriodRange } from './historyDays'
+import type { Messages } from '../i18n/messages'
+import type { QuakeFilterKind, QuakeSortKey } from '../i18n/messageKeys'
+
+/** 地震タブの語（`i18n/messages` の `quake`） */
+export type QuakeWords = Messages['quake']
+
+/** 書式の語（`i18n/messages` の `formats`。震度の札・日付の書き方） */
+export type FormatWords = Messages['formats']
 
 /** 下限と上限。どちらも null なら絞らない。 */
 export interface QuakeRange {
@@ -24,11 +32,11 @@ export type QuakePeriod =
   | { readonly kind: 'range'; readonly from: string; readonly to: string }
 
 /** 期間の窓に並べる「今から遡る時間」（2026-11-07 選択「24時間／3日／7日／30日／日付を指定」）。 */
-export const QUAKE_PERIOD_HOURS: readonly { readonly hours: number; readonly label: string }[] = [
-  { hours: 24, label: '24時間' },
-  { hours: 72, label: '3日' },
-  { hours: 168, label: '7日' },
-  { hours: 720, label: '30日' },
+export const QUAKE_PERIOD_HOURS: readonly { readonly hours: number }[] = [
+  { hours: 24 },
+  { hours: 72 },
+  { hours: 168 },
+  { hours: 720 },
 ]
 
 export interface QuakeListFilter {
@@ -48,7 +56,8 @@ export interface QuakeListFilter {
 /** 地域の窓で一覧と地図のどちらを出すか。 */
 export type QuakeRegionView = 'list' | 'map'
 
-export type QuakeSortKey = 'time' | 'scale' | 'magnitude' | 'depth' | 'region'
+// 並べ替えの鍵と、絞り込みの条件の種類（帯の札と窓の節）。辞書も鍵に使うので i18n/messageKeys.ts に置く
+export type { QuakeFilterKind, QuakeSortKey }
 
 export interface QuakeListSort {
   readonly key: QuakeSortKey
@@ -278,33 +287,33 @@ export interface QuakeListSection {
 }
 
 /** 深さの区切りの幅（2026-11-07 選択「並べた欄の幅ごとに区切る (Recommended)」）。 */
-function depthSection(d: number | null): QuakeListSection {
-  if (d === null) return { key: 'depth:none', label: '深さ不明' }
-  if (d < 30) return { key: 'depth:0', label: '深さ30km未満' }
-  if (d < 100) return { key: 'depth:30', label: '深さ30〜100km' }
-  if (d < 300) return { key: 'depth:100', label: '深さ100〜300km' }
-  return { key: 'depth:300', label: '深さ300km以上' }
+function depthSection(d: number | null, w: QuakeWords['section']): QuakeListSection {
+  if (d === null) return { key: 'depth:none', label: w.depthUnknown }
+  if (d < 30) return { key: 'depth:0', label: w.depthUnder30 }
+  if (d < 100) return { key: 'depth:30', label: w.depth30to100 }
+  if (d < 300) return { key: 'depth:100', label: w.depth100to300 }
+  return { key: 'depth:300', label: w.depth300plus }
 }
 
 /**
  * その地震の区切り。時刻は日付、震度は階級、規模は整数（「M5」。原文「M5.○であることが分かればいいのでM5だけでいい」）、
  * 深さは幅、地域は区切らない（2026-11-07 選択「地域順では区切らない (Recommended)」）。
  */
-export function quakeListSection(q: JMAQuake, key: QuakeSortKey): QuakeListSection | null {
+export function quakeListSection(q: JMAQuake, key: QuakeSortKey, w: QuakeWords['section'], f: FormatWords): QuakeListSection | null {
   switch (key) {
     case 'time': {
-      const day = quakeListDay(q.earthquake.time)
+      const day = quakeListDay(q.earthquake.time, f)
       return day ? { key: `day:${day.key}`, label: day.label } : null
     }
     case 'scale': {
       const s = q.earthquake.maxScale
-      return s >= 0 ? { key: `scale:${s}`, label: `震度${getIntensityLabel(s)}` } : { key: 'scale:none', label: '震度不明' }
+      return s >= 0 ? { key: `scale:${s}`, label: w.scale(intensityLabel(s, f)) } : { key: 'scale:none', label: w.scaleUnknown }
     }
     case 'magnitude': {
       const m = magnitudeOf(q)
-      return m === null ? { key: 'mag:none', label: 'M不明' } : { key: `mag:${Math.floor(m)}`, label: `M${Math.floor(m)}` }
+      return m === null ? { key: 'mag:none', label: w.magnitudeUnknown } : { key: `mag:${Math.floor(m)}`, label: w.magnitude(Math.floor(m)) }
     }
-    case 'depth': return depthSection(depthOf(q))
+    case 'depth': return depthSection(depthOf(q), w)
     case 'region': return null
   }
 }
@@ -313,46 +322,55 @@ function formatMagnitudeBound(m: number): string {
   return m.toFixed(1)
 }
 
+/** 期間の札の語（`QUAKE_PERIOD_HOURS` の時間。表に無い時間は「N時間」の形）。 */
+export function quakePeriodHoursLabel(hours: number, w: QuakeWords): string {
+  return w.filter.periodHours[hours] ?? w.filter.periodHoursOther(hours)
+}
+
 /** 帯の札の文面（2026-11-07 選択「地域と種類は数だけ」）。絞っていない札は条件の名前だけ。 */
-export function quakeFilterChipLabels(f: QuakeListFilter): Record<'scale' | 'magnitude' | 'depth' | 'region' | 'types' | 'period', string> {
+export function quakeFilterChipLabels(f: QuakeListFilter, w: QuakeWords, fw: FormatWords): Record<QuakeFilterKind, string> {
+  const c = w.filter.chip
+  const name = w.filter.section
   const s = f.scale
   const scale = s.min !== null && s.max !== null
-    ? `震度${getIntensityLabel(s.min)}〜${getIntensityLabel(s.max)}`
-    : s.min !== null ? `震度${getIntensityLabel(s.min)}以上`
-      : s.max !== null ? `震度${getIntensityLabel(s.max)}以下` : '震度'
+    ? c.scaleRange(intensityLabel(s.min, fw), intensityLabel(s.max, fw))
+    : s.min !== null ? c.scaleMin(intensityLabel(s.min, fw))
+      : s.max !== null ? c.scaleMax(intensityLabel(s.max, fw)) : name.scale
   const m = f.magnitude
   const magnitude = m.min !== null && m.max !== null
-    ? `M${formatMagnitudeBound(m.min)}〜${formatMagnitudeBound(m.max)}`
-    : m.min !== null ? `M${formatMagnitudeBound(m.min)}以上`
-      : m.max !== null ? `M${formatMagnitudeBound(m.max)}以下` : '規模'
+    ? c.magnitudeRange(formatMagnitudeBound(m.min), formatMagnitudeBound(m.max))
+    : m.min !== null ? c.magnitudeMin(formatMagnitudeBound(m.min))
+      : m.max !== null ? c.magnitudeMax(formatMagnitudeBound(m.max)) : name.magnitude
   const d = f.depth
   const depth = d.min !== null && d.max !== null
-    ? `深さ${d.min}〜${d.max}km`
-    : d.min !== null ? `深さ${d.min}km以上`
-      : d.max !== null ? `深さ${d.max}km以下` : '深さ'
-  const region = f.region.names.length > 0 ? `地域（${f.region.names.length}）` : '地域'
-  const types = f.types.length > 0 ? `種類（${f.types.length}）` : '種類'
-  let period = '期間'
+    ? c.depthRange(d.min, d.max)
+    : d.min !== null ? c.depthMin(d.min)
+      : d.max !== null ? c.depthMax(d.max) : name.depth
+  const region = f.region.names.length > 0 ? c.picked(name.region, f.region.names.length) : name.region
+  const types = f.types.length > 0 ? c.picked(name.types, f.types.length) : name.types
+  let period = name.period
   if (f.period?.kind === 'hours') {
-    const hours = f.period.hours
-    period = QUAKE_PERIOD_HOURS.find(p => p.hours === hours)?.label ?? `${hours}時間`
+    period = quakePeriodHoursLabel(f.period.hours, w)
   } else if (f.period?.kind === 'range') {
     const md = (ymd: string) => ymd.slice(5).replace('-', '/')
-    period = `${md(f.period.from)}〜${md(f.period.to)}`
+    period = fw.range(md(f.period.from), md(f.period.to))
   }
   return { scale, magnitude, depth, region, types, period }
 }
 
-/** 日本時間の `YYYY-MM-DD` を「10月31日」の形に。注記「〇〇以前は未読込みです。」「（〇〇以降を読込済み）」に使う（文面はユーザー原文「〇〇以前は未読込みです。で」）。 */
-export function quakeListDayLabel(day: string): string {
-  return `${Number(day.slice(5, 7))}月${Number(day.slice(8, 10))}日`
+/**
+ * 日本時間の `YYYY-MM-DD` を「10月31日」の形に。注記「〇〇以前は未読込みです。」「（〇〇以降を読込済み）」に使う（文面はユーザー原文「〇〇以前は未読込みです。で」）。
+ * 書き方は言語ごと（辞書の `monthDay`）。日は日本時間で決まっているので、その年月日を端末の時刻として持つ `Date` を渡す。
+ */
+export function quakeListDayLabel(day: string, f: Pick<FormatWords, 'monthDay'>): string {
+  return f.monthDay(new Date(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10))))
 }
 
-/** 期間の始まり（日本時間の「10月31日」の形）。注記「〇〇まで読み込んでいます…」に使う。 */
-export function quakeListPeriodStartLabel(period: QuakePeriod, nowMs: number): string {
+/** 期間の始まり（日本時間の「10月31日」の形）。注記「〇〇まで読み込んでいます…」に使う。書き方は {@link quakeListDayLabel} と同じ */
+export function quakeListPeriodStartLabel(period: QuakePeriod, nowMs: number, f: Pick<FormatWords, 'monthDay'>): string {
   const startMs = period.kind === 'hours' ? nowMs - period.hours * 3_600_000 : jstDayStartMs(period.from)
   const d = new Date(startMs + 9 * 3_600_000)
-  return `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
+  return f.monthDay(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 }
 
 /** 震度の窓で選べる値。 */

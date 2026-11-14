@@ -24,6 +24,9 @@ import { compressedVertical, LINEAR_VERTICAL } from './verticalMap'
 import { paintCompositeColumnsAt, paintMarks, paintWaveColumnsAt } from './paintWave'
 import { buildWaveColumns } from './waveColumns'
 
+/** 合成の段の縦の表示の書き方（日本語の辞書の `formats.range` と同じ形）。 */
+const JA_RANGE = (from: string, to: string): string => `${from}〜${to}`
+
 vi.mock('./paintWave', async (importOriginal) => {
   const orig = await importOriginal<typeof import('./paintWave')>()
   return { ...orig, paintCompositeColumnsAt: vi.fn(), paintWaveColumnsAt: vi.fn() }
@@ -61,7 +64,7 @@ function allHaveValues(lines: readonly { values: ArrayLike<number> }[] | undefin
 
 function run(lanes: readonly Lane[], expanded: boolean) {
   const win = windowOf()
-  return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT, sharing: null })
+  return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT, sharing: null, range: JA_RANGE })
 }
 
 beforeEach(() => {
@@ -321,6 +324,7 @@ describe('地図の下端の P/S 線は、まだ来ていない時刻を描か�
       timeline,
       unit: SEISMO_WAVE_UNIT,
       sharing: null,
+      range: JA_RANGE,
     })
     for (const marks of [composite.mock.calls[0][4]?.marks, overlay.mock.calls[0][4]?.marks]) {
       expect((marks ?? []).length).toBe(1)
@@ -335,7 +339,7 @@ describe('drawLanes の右端', () => {
     composite.mockImplementation((_c, _z, b) => (b(100), '0〜1.00 gal'))
     const win = windowOf()
     const timeline = timelineAtLastSample(win)
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline, unit: SEISMO_WAVE_UNIT, sharing: null })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline, unit: SEISMO_WAVE_UNIT, sharing: null, range: JA_RANGE })
     expect(build).toHaveBeenCalled()
     const args = build.mock.calls[0][0]
     expect(args.rightEdge).toBe(timeline.nowMs + timeline.leadMs)
@@ -371,7 +375,7 @@ describe('drawLanes の単位', () => {
   // 正: 公開観測点は速度の単位と、その物差しの下限で描く（gal の下限を当てない）。
   it('公開観測点は μm/s と公開観測点の下限で描く', () => {
     const win = windowOf()
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: null })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: null, range: JA_RANGE })
     const opts = composite.mock.calls[0][4]
     expect(opts.unit).toBe('μm/s')
     expect(opts.minScale).toBeCloseTo(PUBLIC_WAVE_UNIT.minScale('card', 0.2))
@@ -380,7 +384,7 @@ describe('drawLanes の単位', () => {
   // 対照: 自作地震計は gal のまま。
   it('自作地震計は gal で描く', () => {
     const win = windowOf()
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT, sharing: null })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT, sharing: null, range: JA_RANGE })
     expect(composite.mock.calls[0][4].unit).toBe('gal')
   })
 
@@ -396,7 +400,7 @@ describe('drawLanes の単位', () => {
 describe('drawLanes の縦の範囲を揃える', () => {
   function runShared(lanes: readonly Lane[], expanded: boolean, shared: LaneScales | null) {
     const win = windowOf()
-    return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: { shared } })
+    return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: { shared }, range: JA_RANGE })
   }
 
   // 正: 他の観測点の範囲が自分より大きければ、そちらで描く（合成は下限として、3 成分は縦の範囲として渡る）。
@@ -535,7 +539,7 @@ describe('sharedPaint', () => {
 describe('drawLanes の縦の圧縮', () => {
   function runShared(lanes: readonly Lane[], shared: LaneScales | null) {
     const win = windowOf()
-    return drawLanes({ targets: targetsFor(lanes), lanes, expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: { shared } })
+    return drawLanes({ targets: targetsFor(lanes), lanes, expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: { shared }, range: JA_RANGE })
   }
 
   // 正: 揃える段は曲線で描き、小さい値が線形より高く出る（遠い観測点が埋もれない）。

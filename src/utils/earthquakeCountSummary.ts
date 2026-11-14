@@ -3,7 +3,7 @@ import type { JMAEarthquakeCount, JMAEarthquakeCountItem } from '../types/earthq
 /**
  * 地震回数に関する情報（VXSE60）のうち、**畳んだ帯の見出しと読み上げで伝える 1 区間**を選ぶ。
  *
- * **見出し（`EarthquakeCountDetail.tsx` の `earthquakeCountHeadline`）と読み上げ（`ttsText.ts` の
+ * **見出し（{@link earthquakeCountHeadlineText}）と読み上げ（`ttsText.ts` の
  * `earthquakeCountToText`）は必ずこの関数を通すこと。** 別々に選ぶと、画面と声で違う区間の数字を
  * 伝える。
  *
@@ -54,20 +54,27 @@ export function pickEarthquakeCountSummaryItem(count: JMAEarthquakeCount): JMAEa
  * **取消の分岐は持たない。** 取消が自分の群発に一致すれば `applyEarthquakeCount` が帯ごと消し、
  * 一致しなければ表示中の帯はそのまま残る —— どちらの道でも取消の報がここへ渡ることはない。
  * 防御のつもりで分岐を置くと、次に触る人へ「取消も描ける」という誤った保証を与える。
+ *
+ * 語は辞書（`specialInfo`）から渡す。帯・ウィンドウの題名・通知はいまの言語の辞書、中継のプッシュ通知は日本語の辞書を渡す。
  */
-export function earthquakeCountHeadline(count: JMAEarthquakeCount): string {
+export function earthquakeCountHeadlineText(count: JMAEarthquakeCount, w: EarthquakeCountHeadlineWords): string {
   const total = pickEarthquakeCountSummaryItem(count)
-  if (!total) return '地震回数に関する情報'
+  if (!total) return w.countHeadlineNone
   const { number, feltNumber } = total
-  if (number === null && feltNumber === null) return '地震回数に関する情報'
+  if (number === null && feltNumber === null) return w.countHeadlineNone
   // 日本時間で読む。端末の時間帯で読むと、中継（UTC で動く）が送るプッシュ通知と画面の帯で時刻がずれる
   const start = new Date(new Date(total.startTime).getTime() + 9 * 60 * 60 * 1000)
   const since = Number.isFinite(start.getTime())
-    ? `${start.getUTCMonth() + 1}/${start.getUTCDate()} ${String(start.getUTCHours()).padStart(2, '0')}時から `
-    : ''
-  if (number === null) return `${since}有感 ${formatCount(feltNumber)}回`
-  if (feltNumber === null) return `${since}${formatCount(number)}回`
-  return `${since}${formatCount(number)}回（うち有感 ${formatCount(feltNumber)}回）`
+    ? { monthDay: `${start.getUTCMonth() + 1}/${start.getUTCDate()}`, hour: String(start.getUTCHours()).padStart(2, '0') }
+    : null
+  return w.countHeadline(since, number === null ? null : formatCount(number), feltNumber === null ? null : formatCount(feltNumber))
+}
+
+/** 見出しの語（辞書の `specialInfo` の一部）。 */
+export interface EarthquakeCountHeadlineWords {
+  /** `since` は区間の初め（日本時間の「月/日」と時）、`count`・`felt` は桁を区切った回数（発表なしは null。両方 null では呼ばない） */
+  countHeadline: (since: { monthDay: string; hour: string } | null, count: string | null, felt: string | null) => string
+  countHeadlineNone: string
 }
 
 /** 回数を桁区切りで出す。**発表なし（`null`）は「—」**（開いた表のセルと同じ）。 */

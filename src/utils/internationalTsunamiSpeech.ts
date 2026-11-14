@@ -1,4 +1,4 @@
-// 国際津波関連情報（WEPA60）を受けたときに読み上げる文と、通知の本文。
+// 国際津波関連情報（WEPA60）を受けたときに読み上げる文と、通知の本文を組む材料の形。
 // 型と電文の形は `types/earthquake.ts` の `JMAInternationalTsunami`。中継のプッシュ通知も同じ文を使う（中継へは写して使う）ので、
 // ブラウザにしか無いもの（画面・設定・端末の時間帯）を読まない。
 import type { InternationalTsunamiEvaluation, JMAInternationalTsunami } from '../types/earthquake'
@@ -30,6 +30,20 @@ function dayTimeJst(iso: string): string | null {
   return `${d.getUTCDate()}日${d.getUTCHours()}時${d.getUTCMinutes()}分`
 }
 
+/** 通知の本文を組む材料（辞書の `alertText.internationalTsunami` へ渡す）。欠けた要素は null か空の文字列 */
+export interface InternationalTsunamiNoticeParts {
+  /** 発生時刻（その瞬間。辞書が日本時間で書く。端末の時刻として組み直さない） */
+  readonly when: Date | null
+  /** 震源（地震カードの震源名か、震央の位置の語） */
+  readonly where: string
+  readonly depthKm: number | null
+  readonly magnitude: number | null
+  /** 評価の語（読めない報は null） */
+  readonly evaluation: string | null
+  /** 情報名（評価の無い報で「〜が発表されました」と結ぶ） */
+  readonly name: string
+}
+
 /** 「北緯13.9度、東経120.5度」。南緯・西経は電文どおり言い分ける */
 function coordinatePhrase(lat: number, lon: number): string {
   const ns = lat < 0 ? '南緯' : '北緯'
@@ -38,8 +52,9 @@ function coordinatePhrase(lat: number, lon: number): string {
 }
 
 /**
- * 名乗りの後ろの本文（「25日8時43分頃、〈震源〉で発生した…の地震について、〈評価〉と発表されました。」）。通知の本文にも使う
- * （2026-11-06 ユーザー選択「通知もそろえる (Recommended)」）。
+ * 名乗りの後ろの本文（「25日8時43分頃、〈震源〉で発生した…の地震について、〈評価〉と発表されました。」）。通知の本文は
+ * 同じ文を辞書から組む（2026-11-06 ユーザー選択「通知もそろえる (Recommended)」。→ `specialInfoNotification.ts` の
+ * `internationalTsunamiNotificationBody`。日本語の辞書はこの関数と同じ文を返す）。
  *
  * - 〈震源〉は、同じ地震の地震カードに結べたときはその日本語の震源名（`quakeName`）、結べなければ電文の座標を読む
  *   （電文の地名は英語の Flinn-Engdahl 地域名で、日本語の名は電文に無い）。どちらも無ければ震源の句ごと落とす
