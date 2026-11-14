@@ -1593,6 +1593,34 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（強震モ�
     it('補った結果が特別警報に当たれば印を立てる', () => {
       expect(supplementEewReport(yahoo, late).everSpecialWarning).toBe(true)
     })
+    // 正: 電文の名乗りと官署も電文しか運ばないので補う（強震モニタが先に着く並びでも出る）
+    it('情報名と官署を補う', () => {
+      const merged = supplementEewReport(yahoo, { ...late, infoName: '緊急地震速報（警報）', editorialOffice: '大阪管区気象台', publishingOffice: '気象庁' })
+      expect(merged.infoName).toBe('緊急地震速報（警報）')
+      expect(merged.editorialOffice).toBe('大阪管区気象台')
+      expect(merged.publishingOffice).toBe('気象庁')
+    })
+    // 対照: 表示中が電文の報で値を持つなら、古い報の値で上書きしない
+    it('表示中に情報名と官署があれば保つ', () => {
+      const merged = supplementEewReport(
+        { ...yahoo, infoName: '緊急地震速報（警報）', editorialOffice: '気象庁本庁', publishingOffice: '気象庁' },
+        { ...late, infoName: '緊急地震速報（地震動予報）', editorialOffice: '大阪管区気象台', publishingOffice: '気象庁' },
+      )
+      expect(merged.infoName).toBe('緊急地震速報（警報）')
+      expect(merged.editorialOffice).toBe('気象庁本庁')
+    })
+    // 対照: 届いた報に無ければ、表示中の値を消さない
+    it('届いた報に官署が無ければ表示中の官署を残す', () => {
+      const merged = supplementEewReport({ ...yahoo, editorialOffice: '気象庁本庁' }, late)
+      expect(merged.editorialOffice).toBe('気象庁本庁')
+      expect(merged.publishingOffice).toBeUndefined()
+    })
+    // 安全弁: どちらにも無ければ欄を作らない
+    it('どちらにも無ければ欄を作らない', () => {
+      const merged = supplementEewReport(yahoo, late)
+      expect('editorialOffice' in merged).toBe(false)
+      expect('infoName' in merged).toBe(false)
+    })
   })
 
   describe('maxScaleFromForecast（区域が古い報のものか）', () => {

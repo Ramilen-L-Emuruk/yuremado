@@ -353,8 +353,20 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   onToggleLpgm?: (eventId: string) => void
   onDeactivateLpgm?: () => void
 }) {
-  const { realtime: rt, formats: fw } = useMessages()
+  const { realtime: rt, formats: fw, quake: qm } = useMessages()
   const place = usePlaceNames()
+  // 電文を編集・発表した官署。地震カードと同じ語（「編集官署 …」「発表官署 …」）で、2 つをひと塊にして
+  // 情報名に続ける。入らなければ塊ごと下の行の右端へ落ちる（片方だけが落ちる形にしない）。
+  // （2026-11-15 ユーザー回答「別行になるならさっきのほうがマシかなぁ」）
+  const officeLabels = [
+    eew.editorialOffice && `${qm.editorialOffice} ${eew.editorialOffice}`,
+    eew.publishingOffice && `${qm.publishingOffice} ${eew.publishingOffice}`,
+  ].filter((s): s is string => !!s)
+  const officesNode = officeLabels.length > 0 && (
+    <span className="inline-flex gap-x-2 whitespace-nowrap" data-testid="eew-offices">
+      {officeLabels.map(s => <span key={s}>{s}</span>)}
+    </span>
+  )
   const { scale: maxScale, orAbove: maxScaleOrAbove } = eewMaxScaleInfo(eew)
   const scaleZero = isEewScaleZeroForecast(eew)
   const { cls: lpgmClass, over: lpgmClassOver } = eewMaxLpgmClassInfo(eew)
@@ -1136,13 +1148,15 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             {accuracyRows.map((r, i) => (
               <div key={r.key} className="flex items-start gap-2">
                 {r.label && <span className="shrink-0">{r.label}</span>}
-                {/* 最後の行だけ、電文の情報名を右端に添える（下の `eew.infoName`）。収まらなければ
-                    その行の下へ落ちる。値の折り返しは今までどおりこの枠の中で起きる。 */}
-                <div className="flex min-w-0 flex-1 flex-wrap gap-x-2 gap-y-1.5">
-                  <span className="text-white wrap-break-word">{r.value}</span>
+                {/* 最後の行だけ、電文の情報名と官署を右端に添える（下の `eew.infoName`・`officesNode`）。
+                    収まらなければその行の下へ落ちる。値の折り返しは今までどおりこの枠の中で起きる。 */}
+                {/* 値を左へ押し（`mr-auto`）、残りは右へ寄せる（`justify-end`）。下の行へ落ちたものも右端に付く。 */}
+                <div className="flex min-w-0 flex-1 flex-wrap justify-end gap-x-2 gap-y-1.5">
+                  <span className="mr-auto text-white wrap-break-word">{r.value}</span>
                   {i === accuracyRows.length - 1 && eew.infoName && (
-                    <span className="ml-auto whitespace-nowrap">{eew.infoName}</span>
+                    <span className="whitespace-nowrap">{eew.infoName}</span>
                   )}
+                  {i === accuracyRows.length - 1 && officesNode}
                 </div>
               </div>
             ))}
@@ -1152,10 +1166,12 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         {/* 電文が名乗る情報名（`Head/Title`）。見出しは区分から組み立てた語なので、電文の名乗りは
             カードの右下へ小さく添える（2026-10-30 ユーザー選択「右下に小さく出す (Recommended)」）。
             精度情報があるときは、その最後の行の右端に並べる（上。収まらなければその下へ落ちる。
-            2026-11-15 ユーザー選択「右端に寄せる (Recommended)」）。ここで出すのは精度情報の行が無いときだけ。 */}
-        {eew.infoName && !hasAccuracyText && (
-          <div className="text-right text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
-            {eew.infoName}
+            2026-11-15 ユーザー選択「右端に寄せる (Recommended)」）。ここで出すのは精度情報の行が無いときだけ。
+            官署はどちらの場合も情報名に続ける。 */}
+        {(eew.infoName || officesNode) && !hasAccuracyText && (
+          <div className="flex flex-wrap justify-end gap-x-2 gap-y-1.5 text-right text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+            {eew.infoName && <span className="whitespace-nowrap">{eew.infoName}</span>}
+            {officesNode}
           </div>
         )}
       </div>

@@ -7,7 +7,7 @@ import { useMessages } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
 import type {
   EarthquakeInfoMeta, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount,
-  TelegramOperationStatus,
+  TelegramOffices, TelegramOperationStatus,
 } from '../../types/earthquake'
 import { EarthquakeCountDetail } from './EarthquakeCountDetail'
 import { Marquee } from '../Marquee'
@@ -449,6 +449,25 @@ function InfoKindLine({ info }: { info: { earthquakeInfoType?: string; earthquak
   return <Marquee className="text-secondary text-(length:--ui-fs) leading-tight mt-0.5" text={text} testId="info-kind-line" />
 }
 
+/**
+ * 本文の最後の「発表: 日時」の行。電文を編集・発表した官署があれば、地震カードと同じ語で続ける
+ * （2026-11-15 ユーザー選択「本文の発表の行に続ける (Recommended)」）。日時と官署はそれぞれ
+ * 途中で割らない塊にし、収まらない幅では塊ごと次の行へ送る。
+ */
+function IssuedLine({ reportDateTime, offices, className = '' }: { reportDateTime: string; offices: TelegramOffices; className?: string }) {
+  const { specialInfo: si, quake: qm } = useMessages()
+  const parts = [
+    si.issued(new Date(reportDateTime).toLocaleString('ja-JP')),
+    offices.editorialOffice && `${qm.editorialOffice} ${offices.editorialOffice}`,
+    offices.publishingOffice && `${qm.publishingOffice} ${offices.publishingOffice}`,
+  ].filter((s): s is string => !!s)
+  return (
+    <p className={`flex flex-wrap gap-x-2 text-secondary text-(length:--ui-fs) ${className}`}>
+      {parts.map(s => <span key={s} className="whitespace-nowrap">{s}</span>)}
+    </p>
+  )
+}
+
 function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: JMANankai; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
   const si = useMessages().specialInfo
   // 読み上げているあいだだけ開く（自分が開いた分だけ閉じる）
@@ -486,9 +505,7 @@ function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: 
       </div>
       <BandBody open={open} subject="nankai" frameClass={`${bg} border-t-2 ${border} pt-2`}>{() => (
         <EarthquakeInfoDetail info={nankai} speakingAppendix={speaking && readsAppendix} subject="nankai" footer={
-          <p className="text-secondary text-(length:--ui-fs)">
-            {si.issued(new Date(nankai.reportDateTime).toLocaleString('ja-JP'))}
-          </p>
+          <IssuedLine reportDateTime={nankai.reportDateTime} offices={nankai} />
         } />
       )}</BandBody>
     </div>
@@ -661,9 +678,7 @@ function KohatsuBanner({ list, speaking, readsAppendix, banners }: { list: reado
       // 言い切ると、気象庁が定めた期間のように読める。注意を呼びかける期間は気象庁の本文が語っている。
       detail={(kohatsu, latest) => (
         <EarthquakeInfoDetail info={kohatsu} speakingAppendix={latest && speaking && readsAppendix} subject="kohatsu" footer={
-          <p className="text-secondary text-(length:--ui-fs)">
-            {si.issued(new Date(kohatsu.reportDateTime).toLocaleString('ja-JP'))}
-          </p>
+          <IssuedLine reportDateTime={kohatsu.reportDateTime} offices={kohatsu} />
         } />
       )}
       dismissAllLabel={si.closeAll.kohatsu}
@@ -717,9 +732,7 @@ function CommentaryBanner({ list, speaking, readsAppendix, banners }: { list: re
       )}
       detail={(commentary, latest) => (
         <EarthquakeInfoDetail info={commentary} speakingAppendix={latest && speaking && readsAppendix} subject="nankaiCommentary" footer={
-          <p className="text-secondary text-(length:--ui-fs)">
-            {si.issued(new Date(commentary.reportDateTime).toLocaleString('ja-JP'))}
-          </p>
+          <IssuedLine reportDateTime={commentary.reportDateTime} offices={commentary} />
         } />
       )}
       dismissAllLabel={si.closeAll.nankaiCommentary}
@@ -778,9 +791,7 @@ function NoticeBanner({ list, speaking, banners }: { list: readonly JMAQuakeNoti
           {notice.freeText && (
             <p className={`text-white text-(length:--ui-fs) leading-relaxed whitespace-pre-wrap mb-1 ${notice.body ? 'mt-3' : ''}`}>{notice.freeText}</p>
           )}
-          <p className="text-secondary text-(length:--ui-fs)">
-            {si.issued(new Date(notice.reportDateTime).toLocaleString('ja-JP'))}
-          </p>
+          <IssuedLine reportDateTime={notice.reportDateTime} offices={notice} />
         </div>
       )}
       dismissAllLabel={si.closeAll.quakeNotice}
@@ -830,9 +841,7 @@ function EarthquakeCountBanner({ list, speaking, banners }: { list: readonly JMA
       detail={count => (
         <>
           <EarthquakeCountDetail count={count} />
-          <p className="px-3 pb-2 text-secondary text-(length:--ui-fs)">
-            {si.issued(new Date(count.reportDateTime).toLocaleString('ja-JP'))}
-          </p>
+          <IssuedLine reportDateTime={count.reportDateTime} offices={count} className="px-3 pb-2" />
         </>
       )}
       dismissAllLabel={si.closeAll.earthquakeCount}

@@ -2436,7 +2436,14 @@ export function useEarthquakes(
             })
             const next = new Map(prev.activeEEWs)
             // 地震・津波と同じく、取消電文だけが持つ項目は名指しで移す（土台は表示中の EEW）。
-            next.set(key, { ...existing, cancelledAt: now, ...(eew.cancelText && { cancelText: eew.cancelText }) })
+            // 情報名と官署も取消電文のものを出す（取消を名乗り・編集した値。無ければ表示中の報のまま）。
+            next.set(key, {
+              ...existing, cancelledAt: now,
+              ...(eew.cancelText && { cancelText: eew.cancelText }),
+              ...(eew.infoName && { infoName: eew.infoName }),
+              ...(eew.editorialOffice && { editorialOffice: eew.editorialOffice }),
+              ...(eew.publishingOffice && { publishingOffice: eew.publishingOffice }),
+            })
             return { ...prev, activeEEWs: next, lastUpdate: now }
           }
           const existing = prev.activeEEWs.get(key)

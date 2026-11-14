@@ -2231,12 +2231,29 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
         {/* 官署（2026-11-01 ユーザー選択「官署を別の行へ (Recommended)」・2026-10-30 選択「編集官署の隣に同じ形で (Recommended)」）。
             電文を編集した官署は常に出す（2026-10-22 ユーザー承認「3-B 編集官署 …」・docs/spec/quake-spec.md §8）。 */}
-        {(issue.editorialOffice || issue.publishingOffice) && (
-          <div className="mt-4 flex flex-wrap items-center gap-x-2 text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
-            {issue.editorialOffice && <span className="whitespace-nowrap">{q.editorialOffice} {issue.editorialOffice}</span>}
-            {issue.publishingOffice && <span className="whitespace-nowrap">{q.publishingOffice} {issue.publishingOffice}</span>}
-          </div>
-        )}
+        {/* 長周期地震動の電文の官署は、その下に情報名を頭に付けて足す（2026-11-15 ユーザー選択「最後の官署の行の下に足す」）。
+            長周期の電文は地震情報と別の官署が編集することがあるので、上の行で代えない。取り消された長周期には出さない。 */}
+        {(() => {
+          const lpgmOffices = lpgm && !lpgm.cancelled && (lpgm.editorialOffice || lpgm.publishingOffice) ? lpgm : null
+          if (!issue.editorialOffice && !issue.publishingOffice && !lpgmOffices) return null
+          return (
+            <div className="mt-4 text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+              {(issue.editorialOffice || issue.publishingOffice) && (
+                <div className="flex flex-wrap items-center gap-x-2">
+                  {issue.editorialOffice && <span className="whitespace-nowrap">{q.editorialOffice} {issue.editorialOffice}</span>}
+                  {issue.publishingOffice && <span className="whitespace-nowrap">{q.publishingOffice} {issue.publishingOffice}</span>}
+                </div>
+              )}
+              {lpgmOffices && (
+                <div className="flex flex-wrap items-center gap-x-2" data-testid="lpgm-offices">
+                  <span className="whitespace-nowrap">{quakeReportNameText(lpgmOffices.infoName ?? ja.quake.infoName.lpgm, q)}</span>
+                  {lpgmOffices.editorialOffice && <span className="whitespace-nowrap">{q.editorialOffice} {lpgmOffices.editorialOffice}</span>}
+                  {lpgmOffices.publishingOffice && <span className="whitespace-nowrap">{q.publishingOffice} {lpgmOffices.publishingOffice}</span>}
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
     )
   }

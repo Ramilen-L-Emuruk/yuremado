@@ -1162,6 +1162,12 @@ export function supplementEewReport(existing: EEWAlert, incoming: EEWAlert): EEW
   const merged: EEWAlert = {
     ...existing,
     areas: incoming.areas ?? existing.areas,
+    // 電文の名乗りと官署も電文しか運ばない。表示中の報に無いときだけ補う（強震モニタが先に着く並びでは、補わないと
+    // 次の電文の報まで出ない）。表示中が新しい電文の報なら、そちらの値を保つ —— 古い報の名乗りで上書きすると、
+    // 警報の見出しに予報の名乗りが付くような食い違いになる
+    ...((existing.infoName ?? incoming.infoName) !== undefined && { infoName: existing.infoName ?? incoming.infoName }),
+    ...((existing.editorialOffice ?? incoming.editorialOffice) !== undefined && { editorialOffice: existing.editorialOffice ?? incoming.editorialOffice }),
+    ...((existing.publishingOffice ?? incoming.publishingOffice) !== undefined && { publishingOffice: existing.publishingOffice ?? incoming.publishingOffice }),
     earthquake: {
       ...existing.earthquake,
       condition: incoming.earthquake.condition,
@@ -1346,7 +1352,8 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
         hypocenter: [incoming.earthquake.hypocenter.latitude, incoming.earthquake.hypocenter.longitude],
       })
     }
-    // 強震モニタの報は予報の番号を運ぶので、警報の電文から残った系列の印と引き継いだ番号を外す（その報の番号を出す）
+    // 強震モニタの報は予報の番号を運ぶので、警報の電文から残った系列の印と引き継いだ番号を外す（その報の番号を出す）。
+    // 情報名と官署は強震モニタが運ばない電文の値なので、最後に受けた電文の報のものを保つ（区域と同じ扱い）
     const { serialSeries: _shownSeries, forecastSerial: _heldSerial, ...shown } = existing
     base = {
       ...shown,
