@@ -753,7 +753,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                   ) : (
                     // 枠の札は短い形（5+・5-）。地震タブの枠と同じ（2026-11-11 ユーザー選択「短い形にそろえる (Recommended)」）
                     <span key={f.key} className={`rounded font-black${f.className}`} style={{ fontSize: 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))', ...f.style }}>
-                      {scaleZero ? '0' : <TileScaleLabel label={intensityShortLabel(maxScale, fw)} />}
+                      {scaleZero ? '0' : <TileScaleLabel label={intensityShortLabel(maxScale, fw)} prefix="" />}
                     </span>
                   )}
                   {/* 上限が定まらない報（「震度4程度以上」等）は語を落とさず、本体より小さく添える。
@@ -1578,7 +1578,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             style={{ fontSize: 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))' }}
           >
             {/* 地震タブ・緊急地震速報の枠と同じく「弱・強・未満」を 0.55 倍で添える（2026-11-05 ユーザー選択「そろえる (Recommended)」） */}
-            {maxLabelShown === null ? '—' : <TileScaleLabel label={maxLabelShown} />}
+            {maxLabelShown === null ? '—' : <TileScaleLabel label={maxLabelShown} prefix="" />}
           </span>
         </div>
         <div className="flex flex-col gap-1.5 flex-1 min-w-0">

@@ -16,7 +16,7 @@ import { log } from '../../utils/logger'
 import { Marquee } from '../Marquee'
 import { DisclosureCaret, Reveal } from '../EarthquakeTab/quakeMotion'
 import { CHECKLIST_SOURCE_URLS, COLLAPSED_ACTION_COUNT } from '../../utils/actionChecklist'
-import { intensityLabel } from '../../utils/intensity'
+import { intensityLabel, intensityShortLabel } from '../../utils/intensity'
 import { useMessages } from '../../i18n/I18nProvider'
 import type { Messages } from '../../i18n/messages'
 import type { ChecklistScope } from '../../utils/actionChecklistTrigger'
@@ -202,10 +202,12 @@ function ScaleText({ reason, label, w }: { reason: ChecklistReason; label: strin
  * 日本語の札は数字が半角なので 4em より短く、日本語ではこの下限が幅を決める。`em` はフォントサイズ基準なので
  * UI 倍率にも追従する。
  */
-function ScaleBox({ reason, label, w, labels }: { reason: ChecklistReason; label: string; w: Messages['actionChecklist']; labels: readonly string[] }) {
+function ScaleBox({ reason, label, fullLabel, w, labels }: { reason: ChecklistReason; label: string; fullLabel: string; w: Messages['actionChecklist']; labels: readonly string[] }) {
   return (
-    <span className="inline-grid text-center min-w-[4em]">
-      <span className="col-start-1 row-start-1"><ScaleText reason={reason} label={label} w={w} /></span>
+    <span className="inline-grid text-center min-w-[4em]" title={scaleAriaText(reason, fullLabel, w)}>
+      {/* 見える札は短い形（英語「5+」）。読み上げには正式な呼び名を渡す（短い形と同じ言語では 1 つだけ） */}
+      <span className="col-start-1 row-start-1" aria-hidden={label !== fullLabel ? true : undefined}><ScaleText reason={reason} label={label} w={w} /></span>
+      {label !== fullLabel && <span className="sr-only">{scaleAriaText(reason, fullLabel, w)}</span>}
       {labels.map((l) => (
         <span key={l} className="col-start-1 row-start-1 invisible" aria-hidden="true"><ScaleText reason={reason} label={l} w={w} /></span>
       ))}
@@ -249,8 +251,10 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
   const w = m.actionChecklist
   const shown = open ? w.actions : w.actions.slice(0, COLLAPSED_ACTION_COUNT)
   // 未入電の地震は地震カードと同じく「5弱以上」と書く（実際は 5強以上だった可能性がある）
-  const scaleLabels = Object.entries(m.formats.intensity).filter(([k]) => k !== '-1').map(([, v]) => v)
-  const label = unreceived ? m.formats.orAbove(intensityLabel(scale, m.formats)) : intensityLabel(scale, m.formats)
+  // 札に出すのは地震一覧の枠と同じ短い語（英語などは「5-」「≥5-」）。読み上げ・aria には正式な呼び名を渡す
+  const scaleLabels = Object.entries(m.formats.intensityShort).filter(([k]) => k !== '-1').map(([, v]) => v)
+  const label = unreceived ? m.formats.orAboveShort(intensityShortLabel(scale, m.formats)) : intensityShortLabel(scale, m.formats)
+  const fullLabel = unreceived ? m.formats.orAbove(intensityLabel(scale, m.formats)) : intensityLabel(scale, m.formats)
 
   // 畳んだ状態。**消さずにボタンを残す** —— 余震のたびに帯が出直すのは邪魔だが、読み返したく
   // なることはある。震度を添えるのは、畳んでいる間に届いた揺れの大きさが分かるようにするため。
@@ -260,11 +264,11 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
         <button
           className="ui-text-scope pointer-events-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-950/90 border border-red-400/80 shadow-[0_3px_8px_rgba(0,0,0,.55)] text-white hover:bg-red-900/90"
           onClick={onRestore}
-          aria-label={w.openLabel(scaleAriaText(reason, label, w))}
+          aria-label={w.openLabel(scaleAriaText(reason, fullLabel, w))}
         >
           <ChecklistIcon />
           <span className="text-(length:--ui-fs) font-bold whitespace-nowrap">
-            <ScaleBox reason={reason} label={label} w={w} labels={scaleLabels} /> {w.button}
+            <ScaleBox reason={reason} label={label} fullLabel={fullLabel} w={w} labels={scaleLabels} /> {w.button}
           </span>
         </button>
       </div>
@@ -283,7 +287,7 @@ export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope,
           {/* 判定の根拠は見出しの下に 1 行だけ。仕組みの説明は設定の窓の「出す最低震度」の項目に置いてある。 */}
           <div className="min-w-0 flex-1 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
             <span className="text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] bg-red-500 shrink-0">
-              <ScaleBox reason={reason} label={label} w={w} labels={scaleLabels} />
+              <ScaleBox reason={reason} label={label} fullLabel={fullLabel} w={w} labels={scaleLabels} />
             </span>
             <Marquee className="min-w-0 flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={checklistHeadline(reason, scope, w)} />
             <Marquee className="basis-full text-secondary text-(length:--ui-fs) leading-tight" text={checklistBasisText(reason, scope, w)} />
