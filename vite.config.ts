@@ -36,6 +36,24 @@ const strings = {
   description: '気象庁の地震情報・緊急地震速報・津波情報をリアルタイムに表示します。',
 } as const
 
+// manifest の言語ごとの名前と説明（`*_localized`。端末の言語に合わせてインストールの画面などに出る）。
+// 読むのはデスクトップの Chrome・Edge 148 以降だけで、ほかのブラウザは上の日本語を出す（2026-11-15 に MDN の互換表で確かめた。
+// 出典は docs/spec/i18n-spec.md §5）。名前はどの言語もローマ字の Yuremado（2026-11-15 ユーザー選択「この文面で足す (Recommended)」）。
+// vite-plugin-pwa の型はこの欄を持たないので、広げて渡す（書き出しは manifest をそのまま JSON にする）
+const NAME_LOCALIZED = { en: 'Yuremado', 'zh-Hans': 'Yuremado', 'zh-Hant': 'Yuremado', ko: 'Yuremado', 'pt-BR': 'Yuremado', es: 'Yuremado' }
+const localizedManifestMembers = {
+  name_localized: NAME_LOCALIZED,
+  short_name_localized: NAME_LOCALIZED,
+  description_localized: {
+    en: "Shows the Japan Meteorological Agency's Earthquake Information, Earthquake Early Warnings and Tsunami Information in real time.",
+    'zh-Hans': '实时显示日本气象厅的地震信息、紧急地震警报和海啸信息。',
+    'zh-Hant': '即時顯示日本氣象局的地震訊息、緊急地震警報與海嘯訊息。',
+    ko: '일본 기상청의 지진 정보·긴급 지진 속보·지진해일 정보를 실시간으로 표시합니다.',
+    'pt-BR': 'Exibe em tempo real a informação sobre terremotos, os Alertas Urgentes de Terremoto e a informação sobre tsunami da Agência Meteorológica do Japão.',
+    es: 'Muestra en tiempo real la información de terremotos, las Alertas Tempranas de Terremoto y la información del tsunami de la Agencia Meteorológica de Japón.',
+  },
+}
+
 // dev サーバーの監視対象から外す `.claude/` の絶対パス。
 //
 // ここに置かれるのはワークツリー（別ブランチの作業コピー）・エージェントやスキルの定義・
@@ -194,6 +212,7 @@ export default defineConfig(configEnv => ({
         name: strings.title,
         short_name: strings.shortName,
         description: strings.description,
+        ...localizedManifestMembers,
         theme_color: '#12151a',
         background_color: '#0a0c10',
         display: 'standalone',

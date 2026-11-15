@@ -329,8 +329,10 @@
 次のものも辞書へ移さず、日本語のまま出す（どれも 2026-11-11 ユーザー選択）。
 
 - 電文とデータに由来する地名（震源名・区域名・観測点名・県名など）。どの画面でも同じ（「電文・データの地名 (Recommended)」）。**2026-11-13 に覆し、訳の表のある地名は訳して出す**（下の「地名の訳」）
-- 設定の窓の時報の例文（「時報の例文 (Recommended)」）
-- 起動に失敗したときの画面（`index.html` の中の文）と、アプリの名前・説明（`vite.config.ts` の `manifest`・`index.html` の `meta`）（「起動失敗の画面など (Recommended)」）
+- 設定の窓の時報の例文（「時報の例文 (Recommended)」）。例文は読み上げる文なので、読み上げが日本語のままの間は日本語で出し、読み上げを多言語にしたら読み上げる言語の文にする（2026-11-15 ユーザー発言「今は日本語でいいですが、確定ではなく読み上げを多言語対応したら変えたいです」）
+- 起動に失敗したときの画面（`index.html` の中の文）と、アプリの名前・説明（`vite.config.ts` の `manifest`・`index.html` の `meta`）（「起動失敗の画面など (Recommended)」）。**2026-11-15 に覆し、次のとおり訳す**
+  - 起動に失敗したときの画面は、設定の言語で 7 言語から選ぶ（2026-11-15 ユーザー選択「設定の言語で 7 言語から選ぶ (Recommended)」）。辞書はまだ読めていないので、文面は `index.html` の `#boot-failed-text` に置き、`public/boot-recovery.js` が設定の言語で差し替える。言語の選び方は辞書を使わず、この JS が同じ規則を持つ（保存の読み方は `readStoredLocaleSetting`、端末の言語は `localeFromLanguageTags` と同じ。旧アドレスから渡された設定はアプリ本体が受け取るので、受け取る前の保存だけを見る）。ボタンの語は辞書の `errorScreen.reload` とそろえる（`utils/bootRecovery.test.ts` が照合する）
+  - manifest には言語ごとの名前と説明（`name_localized`・`short_name_localized`・`description_localized`）を足す（2026-11-15 ユーザー選択「この文面で足す (Recommended)」）。名前はどの言語も「Yuremado」。読むのはデスクトップの Chrome・Edge 148 以降だけで、ほかのブラウザ（Android の Chrome・Safari・Firefox）は日本語の `name`・`description` を出す（2026-11-15 に MDN の互換表 [`name_localized`](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Manifest/Reference/name_localized) と Chrome の解説 [Manifest localization](https://developer.chrome.com/blog/manifest-localization) で確かめた）。`index.html` の `meta`（説明・ホーム画面の題名）は日本語のまま
 
 ### 地名の訳
 

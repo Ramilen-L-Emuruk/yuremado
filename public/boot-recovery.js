@@ -10,8 +10,8 @@
 //   読み直さずに index.html の `#boot-failed` の文面を出す（読み直しを繰り返さない）
 // - 印を書けない（sessionStorage が使えない）ときも読み直さない。数えられないまま読み直すと止まらない
 // - 文面を出したことも印に残す。利用者が［再読み込み］で起動できたら、main.tsx がそれを記録に残す
-// - 画面の文面はここに書かない。この JS は文字コードの指定なしで配られうるので、画面に出す日本語は UTF-8 と宣言した
-//   index.html に置く。コンソールへ出す文字列も \u で逃がし、実行される部分を ASCII だけにする（コメントは化けても動きに関わらない）
+// - 画面の文面はここに書かない。この JS は文字コードの指定なしで配られうるので、画面に出す文（日本語と、ほかの言語の
+//   #boot-failed-text）は UTF-8 と宣言した index.html に置く。コンソールへ出す文字列も \u で逃がし、実行される部分を ASCII だけにする（コメントは化けても動きに関わらない）
 ;(function (root) {
   'use strict'
   var KEY = 'yuremado-boot-recovery'
@@ -56,6 +56,80 @@
     try { root.console.error(msg) } catch (e) { /* 同上 */ }
   }
 
+  // 設定に保存できる言語（src/i18n/messages.ts の LOCALE_SETTINGS と同じ並び。bootRecovery.test.ts が照合する）
+  var LOCALE_SETTINGS = ['auto', 'ja', 'en', 'zh-Hans', 'zh-Hant', 'ko', 'pt-BR', 'es']
+
+  // 設定の言語（src/hooks/useSettings.ts の readStoredLocaleSetting と同じ読み方）。
+  // 言語の設定ができる前の保存（locale を持たない）は日本語、保存が無い・読めない・知らない値なら端末に合わせる。
+  // 旧アドレスから渡された設定の受け取り（receiveSettingsHandoff）はアプリ本体が動いてから行うので、ここでは受け取る前の保存だけを見る
+  function storedLocaleSetting() {
+    try {
+      var raw = root.localStorage.getItem('quake-viewer-settings')
+      if (!raw) return 'auto'
+      var v = JSON.parse(raw)
+      if (v === null || typeof v !== 'object') return 'auto'
+      if (v.locale === undefined) return 'ja'
+      return LOCALE_SETTINGS.indexOf(v.locale) !== -1 ? v.locale : 'auto'
+    } catch (e) {
+      return 'auto'
+    }
+  }
+
+  // 端末の言語の並びから選ぶ（src/i18n/messages.ts の localeFromLanguageTags と同じ。どれにも当たらなければ英語）
+  function localeFromTags(tags) {
+    for (var i = 0; i < tags.length; i++) {
+      var parts = String(tags[i]).toLowerCase().split(/[-_]/)
+      var rest = parts.slice(1)
+      switch (parts[0]) {
+        case 'ja': return 'ja'
+        case 'en': return 'en'
+        case 'ko': return 'ko'
+        case 'es': return 'es'
+        case 'pt': return 'pt-BR'
+        case 'zh':
+          if (rest.indexOf('hans') !== -1) return 'zh-Hans'
+          for (var j = 0; j < rest.length; j++) {
+            if (rest[j] === 'hant' || rest[j] === 'tw' || rest[j] === 'hk' || rest[j] === 'mo') return 'zh-Hant'
+          }
+          return 'zh-Hans'
+      }
+    }
+    return 'en'
+  }
+
+  function deviceTags() {
+    var nav = root.navigator
+    if (!nav) return []
+    if (nav.languages && nav.languages.length > 0) return nav.languages
+    return nav.language ? [nav.language] : []
+  }
+
+  function bootLocale() {
+    var setting = storedLocaleSetting()
+    return setting === 'auto' ? localeFromTags(deviceTags()) : setting
+  }
+
+  // 日本語以外なら、index.html の #boot-failed-text から文面を差し替える。読めない・無い言語なら日本語のまま
+  function localize(doc, host) {
+    var locale = bootLocale()
+    if (locale === 'ja') return
+    try {
+      var el = doc.getElementById('boot-failed-text')
+      if (el === null) return
+      var t = JSON.parse(el.textContent)[locale]
+      if (!t || typeof t.message !== 'string' || typeof t.reload !== 'string') return
+      var p = host.querySelector('p')
+      var button = host.querySelector('button')
+      if (p === null || button === null) return
+      p.textContent = t.message
+      button.textContent = t.reload
+      var box = host.firstElementChild
+      if (box !== null) box.setAttribute('lang', locale)
+    } catch (e) {
+      /* 文面を差し替えられなくても、日本語の文面とボタンは出ている */
+    }
+  }
+
   function showFailed() {
     var doc = root.document
     var put = function () {
@@ -63,6 +137,7 @@
       var tpl = doc.getElementById('boot-failed')
       if (host === null || tpl === null) return
       host.replaceChildren(tpl.content.cloneNode(true))
+      localize(doc, host)
       var button = host.querySelector('button')
       if (button !== null) button.addEventListener('click', function () { root.location.reload() })
     }
