@@ -34,8 +34,17 @@ describe('buildPlaceNameTable', () => {
   })
   it('区域は同じ名前か、同じコードの「名前＋地方」の辞書の訳を使う', () => {
     const { table } = buildPlaceNameTable(sources(), ko)
-    expect(table.area['宮城県中部']).toBe('미야기 현 중부')
-    expect(table.area['山形県庄内']).toBe('야마가타 현 쇼나이 지방')
+    // 辞書は「미야기 현 중부」。行政の接尾辞の前の空白は詰めて入れる（lib/placeNameFixes.ts）
+    expect(table.area['宮城県中部']).toBe('미야기현 중부')
+    expect(table.area['山形県庄内']).toBe('야마가타현 쇼나이 지방')
+  })
+  it('区域は震央地名と同じ直し（名前ごとの上書きも）を受け、同じ地名の訳がずれない', () => {
+    const zhHant = PLACE_NAME_LOCALES.find((l) => l.id === 'zh-Hant')!
+    // 辞書の「莊內」は lib/placeNameFixes.ts の震央地名の上書きで「庄內」になる
+    const src = sources({ epi: { '240': { japanese: '山形県庄内地方', english: '', korean: '', chinese_zt: '山形縣莊內地方' } } })
+    const { table } = buildPlaceNameTable(src, zhHant)
+    expect(table.epi['山形県庄内地方']).toBe('山形縣庄內地方')
+    expect(table.area['山形県庄内']).toBe('山形縣庄內地方')
   })
   it('辞書の無い区域・観測点は、英字の言語だけ作り、中韓は持たない（対照）', () => {
     expect(buildPlaceNameTable(sources(), en).table.area['伊豆大島']).toBe('Izuoshima')
@@ -92,16 +101,20 @@ describe('latinSeparators', () => {
 })
 
 describe('checkUntranslated', () => {
-  const report = (area: string[]): BuildReport => ({
+  const report = (area: string[], foreignChars: string[] = []): BuildReport => ({
     locale: 'en',
     counts: { epi: 0, pref: 0, city: 0, tsunamiArea: 0, area: 0, station: 0, tsunamiStation: 0 },
     romaji: { area: 0, station: 0, tsunamiStation: 0 },
     untranslated: { area, station: [], tsunamiStation: [] },
+    foreignChars,
   })
   it('対照: 日本語のまま出すと決めた名前だけなら通す', () => {
     expect(() => checkUntranslated(report([...KNOWN_UNTRANSLATED.area]))).not.toThrow()
   })
   it('正: それ以外に訳を作れない名前が出たら止める', () => {
     expect(() => checkUntranslated(report(['石狩地方北部']))).toThrow('訳を作れない名前が増えた')
+  })
+  it('正: その字体で使わない字が残った訳があれば止める', () => {
+    expect(() => checkUntranslated(report([], ['epi 伊勢湾→伊勢湾（湾）']))).toThrow('その字体で使わない字が残っている')
   })
 })
