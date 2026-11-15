@@ -108,7 +108,7 @@ const OVERLAP_CHECK_LAYER_IDS = [
   'public-stations',
 ]
 
-// ラベル（事前生成グリフのフォント＝ gl/fontStack.ts の JP_FONT_STACK）の推定文字幅・行高比率。
+// ラベル（事前生成グリフのフォント＝ gl/fontStack.ts の組。M PLUS と中韓の Noto）の推定文字幅・行高比率。
 // 全角文字はおよそ 1 文字 = フォントサイズ幅（現行フォントでも全角の advance が font-size と一致する）。
 const CHAR_WIDTH_RATIO = 1.0
 // 半角（訳したラベルの英字・アクセント付きの字・記号）。同じフォントで英葡西の県名・区域名の訳を測ると

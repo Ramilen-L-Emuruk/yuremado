@@ -104,7 +104,9 @@ describe('computeEEWTitle', () => {
       ['a', makeEEW({ id: 'a', name: '能登半島沖', severity: 'Warning', scaleTo: 40, scaleToOrAbove: true })],
       ['b', makeEEW({ id: 'b', name: '宮城県沖', severity: 'Forecast', scaleTo: 20 })],
     ])
-    const place: PlaceNameLookup = (kind, name) => (kind === 'epi' && name === '能登半島沖' ? 'Off the Coast of Noto Peninsula' : name)
+    const place: PlaceNameLookup = Object.assign((kind: string, name: string) => (kind === 'epi' && name === '能登半島沖' ? 'Off the Coast of Noto Peninsula' : name), {
+      has: (kind: string, name: string) => kind === 'epi' && name === '能登半島沖',
+    })
     expect(computeEEWTitle(eews, en, place)).toBe(`Earthquake Early Warning · Off the Coast of Noto Peninsula · Max intensity ${en.formats.approxAbove('4')} forecast · +1 more`)
   })
 

@@ -2399,7 +2399,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             供給するのは位置だけ。値そのものの出所は上の「地震・津波データ」が担う（座標の出典は
             data-sources-spec.md §6。一次出典は build-station-coords.mjs の冒頭コメント）。
             長期震源カタログを挙げるのは、あちらは位置も値もその出典自身のデータだから。
-            地名ラベルの書体（M PLUS Rounded 1c・SIL OFL 1.1）は画面での表示を求められない。
+            地名ラベルの書体（M PLUS Rounded 1c と、中韓の訳の Noto Sans SC/TC/KR。どれも SIL OFL 1.1）は画面での表示を求められない。
 
             出典の名称は配信元が求める表記をそのまま使い、言い換えない（帰属としての要件を外すため）。
             添えるものは 2 種類あり、記号で書き分ける。**（）は用途**——名称だけでは地図の何に

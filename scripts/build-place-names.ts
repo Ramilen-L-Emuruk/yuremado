@@ -6,10 +6,10 @@
  * | 種類 | 出どころ |
  * |---|---|
  * | `epi`（震央地名）・`pref`（都道府県）・`city`（市町村）・`tsunamiArea`（津波予報区） | 気象庁 多言語サイトの辞書（全言語） |
- * | `area`（地震情報の細分区域） | 同じ名前か同じコードの震央地名（「〜地方」）が辞書にあればその訳（全言語）。無い島など 28 件は英字の言語だけ下の 2 つ |
+ * | `area`（地震情報の細分区域） | 同じ名前か同じコードの震央地名（「〜地方」）が辞書にあればその訳（全言語）。無い島など 28 件は、英字の言語は下の 2 つ、中国語・韓国語は「県名の訳＋残りを作ったもの」（`cjkAreaName`） |
  * | `station`（震度観測点）・`tsunamiStation`（津波観測点） | 英字の言語（英・葡・西）: 気象庁サイトの報の英語名（`enName`）を集めたもの、無ければ読み仮名から作ったローマ字（`lib/placeNameRomaji.ts`）。中国語・韓国語: 名前の字形を変えたもの・読み仮名のハングル（`lib/placeNameCjk.ts`） |
  *
- * 中国語・韓国語は辞書に無い細分区域を持たない（画面では日本語の名前のまま出る）。辞書の訳の誤りと揺れは `lib/placeNameFixes.ts` で直してから入れる。
+ * 英字の言語でも訳さない細分区域 4 件（`KNOWN_UNTRANSLATED`）は、どの言語でも日本語の名前のまま出る。辞書の訳の誤りと揺れは `lib/placeNameFixes.ts` で直してから入れる。
  * ポルトガル語・スペイン語の観測点は英語と同じ英字の名前を使う（気象庁の辞書にも観測点は無い）。
  *
  * 入力（どれもメインの checkout の `.cache/` の控え。無い・件数が少なすぎる・読めない、のどれでも止まる。取り方は `.cache/jma-multi/README.md`）:
@@ -85,7 +85,7 @@ const ZH_UNTRANSLATED_MAX = { station: 65, tsunamiStation: 1 } as const
 /**
  * 訳を作れなかった名前が、決めた範囲を超えていたら止める。英字の言語は {@link KNOWN_UNTRANSLATED}、
  * 中国語は繋ぎ以外の仮名を含む観測点名（日本語のまま出すと決めたもの）だけを許し、韓国語は 1 件も許さない
- * （中韓の細分区域は辞書に無いものを持たないので、ここでは数えない）。中国語の訳にその字体で使わない字が残っていても止める
+ * （細分区域は全言語で {@link KNOWN_UNTRANSLATED} だけを許す）。中国語の訳にその字体で使わない字が残っていても止める
  */
 export function checkUntranslated(report: BuildReport): void {
   if (report.locale === 'zh-Hans' || report.locale === 'zh-Hant') {
@@ -96,6 +96,8 @@ export function checkUntranslated(report: BuildReport): void {
     }
   }
   const allowed = (kind: 'area' | 'station' | 'tsunamiStation', name: string) => {
+    // 細分区域は、英字の言語でも訳さない名前だけを全言語で許す
+    if (kind === 'area') return KNOWN_UNTRANSLATED.area.includes(name)
     if (report.locale === 'zh-Hans' || report.locale === 'zh-Hant') return hasNonConnectiveKana(name)
     if (report.locale === 'ko') return false
     return KNOWN_UNTRANSLATED[kind].includes(name)
@@ -128,6 +130,49 @@ const OFFSHORE = { name: /^(.+)沖([０-９]+)ｋｍ([Ａ-Ｚ]?)$/, kana: /^(.+)
 /** 「沖」で終わる津波観測点（「青森深浦沖」） */
 const ENDS_WITH_OKI = { name: /沖$/, kana: /オキ$/ }
 const halfWidth = (s: string) => s.replace(/[０-９Ａ-Ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+
+/** 韓国語の区域名で訳す語（区域名の表の既存の訳「三重県北部 → 미에현 북부」「沖縄本島近海 → 오키나와 본섬 근해」に合わせる） */
+const KO_AREA_TAIL = /^(.*?)(本島)?(中南部|北部|南部)?$/
+const KO_AREA_WORDS = {
+  本島: { kana: 'ホントウ', ko: '본섬' },
+  北部: { kana: 'ホクブ', ko: '북부' },
+  南部: { kana: 'ナンブ', ko: '남부' },
+  中南部: { kana: 'チュウナンブ', ko: '중남부' },
+} as const
+
+/**
+ * 辞書に無い細分区域（島など）の中国語・韓国語の名前を作る（2026-11-15 ユーザー選択「一覧の案で訳す (Recommended)」）。
+ * 頭の都道府県名は表の訳（中国語は続けて書き、韓国語は空白で区切る）。残りは、中国語は字形を変え、韓国語は読み仮名の
+ * 音写にして「北部・南部・中南部」「本島」だけ訳す。読みの切れ目は北海道ならホッカイドウ、県ならケンの後。作れなければ null
+ */
+export function cjkAreaName(
+  locale: string, name: string, kana: string, prefTable: Readonly<Record<string, string>>, zhOf: (s: string) => string | null,
+): string | null {
+  const ko = locale === 'ko'
+  let head = '', rest = name, restKana = kana
+  const pref = Object.keys(prefTable).find((p) => name.startsWith(p) && name.length > p.length)
+  if (pref) {
+    const cut = pref === '北海道' ? 'ホッカイドウ' : pref.endsWith('県') ? 'ケン' : null
+    const at = cut ? kana.indexOf(cut) : -1
+    if (at < 0) return null
+    head = prefTable[pref]
+    rest = name.slice(pref.length)
+    restKana = kana.slice(at + cut!.length)
+  }
+  if (!ko) {
+    const tail = zhOf(rest)
+    return tail === null ? null : head + tail
+  }
+  const m = KO_AREA_TAIL.exec(rest)!
+  const words = [m[2], m[3]].filter((w): w is keyof typeof KO_AREA_WORDS => !!w).map((w) => KO_AREA_WORDS[w])
+  for (const w of [...words].reverse()) {
+    if (!restKana.endsWith(w.kana)) return null
+    restKana = restKana.slice(0, -w.kana.length)
+  }
+  const body = m[1] ? hangulFromKana(restKana, m[1]) : ''
+  if (body === null) return null
+  return [head, body, ...words.map((w) => w.ko)].filter(Boolean).join(' ')
+}
 
 /**
  * 中国語・韓国語の震度観測点と津波観測点を作る（`lib/placeNameCjk.ts`）。
@@ -217,11 +262,19 @@ export function buildPlaceNameTable(src: PlaceNameSources, locale: (typeof PLACE
   // 辞書の訳は震央地名の項なので、直しも震央地名の種類と名前で引く（同じ地名の訳が区域と震央地名でずれないように）
   const areas = new Map<string, EqStation['region']>()
   for (const s of src.eqStations) areas.set(s.region.code, s.region)
+  const zhLocale = locale.id === 'zh-Hant' ? 'zh-Hant' : 'zh-Hans'
+  const learnedZh = locale.latin || locale.id === 'ko' ? new Map<string, string>() : learnCharMap((['epi', 'pref', 'city', 'tsunamiArea'] as const).flatMap((k) => Object.entries(table[k])))
   for (const r of areas.values()) {
     const byCode = src.epi[r.code]
     const dict = epiByName.get(r.name) ?? (byCode && byCode.japanese === `${r.name}地方` ? byCode : undefined)
     if (dict) { put(table.area, 'area', r.name, dictText(dict, 'epi', dict.japanese)); continue }
-    if (!locale.latin) continue
+    if (!locale.latin) {
+      // 英字の言語でも訳さない名前は中韓でも日本語のまま（同日ユーザー選択の一覧どおり）
+      const made = KNOWN_UNTRANSLATED.area.includes(r.name) ? null : cjkAreaName(locale.id, r.name, r.kana, table.pref, (s) => zhFromJapanese(zhLocale, s, learnedZh))
+      if (made) put(table.area, 'area', r.name, made)
+      else untranslated.area.push(r.name)
+      continue
+    }
     const collected = jmaEn.area.get(r.code)
     const made = collected ? null : areaEnFromKana(r.name, r.kana)
     if (made) romaji.area++

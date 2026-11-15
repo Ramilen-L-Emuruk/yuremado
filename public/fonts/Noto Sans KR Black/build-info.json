@@ -1,0 +1,12 @@
+{
+  "font": "NotoSansKR-Black.otf",
+  "fontSha256": "a9977a588488d2a7f544bb2b589b01bed071dca64a4655d438696301b527884b",
+  "family": "Noto Sans KR",
+  "weight": "900",
+  "sdf": {
+    "fontSize": 24,
+    "buffer": 3,
+    "radius": 8,
+    "cutoff": 0.25
+  }
+}

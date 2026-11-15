@@ -1,0 +1,12 @@
+{
+  "font": "NotoSansSC-Black.otf",
+  "fontSha256": "ccb496022356b7dd14d117538a472ae40feff8f6e8f3fe8bffc5616785d2f3f9",
+  "family": "Noto Sans SC",
+  "weight": "900",
+  "sdf": {
+    "fontSize": 24,
+    "buffer": 3,
+    "radius": 8,
+    "cutoff": 0.25
+  }
+}
