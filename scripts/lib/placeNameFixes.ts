@@ -15,6 +15,7 @@
  * 辞書を取り直して、ここに無い字体の誤りが入ったときは {@link leftoverForeignChars} が作る段で止める。
  */
 import * as OpenCC from 'opencc-js'
+import { JP_ONLY_TO_HANT, KEEP_IN_HANS, OPENCC_ARCHAIC } from './placeNameCjk'
 
 type FixLocale = 'zh-Hans' | 'zh-Hant' | 'ko'
 
@@ -26,7 +27,7 @@ export const PLACE_NAME_FIXES: Readonly<Record<FixLocale, readonly (readonly [st
     // 日本の新字体を繁体字に
     ['西伯利亜', '西伯利亞'], ['中国地方', '中國地方'], ['四国地方', '四國地方'], ['伊勢湾', '伊勢灣'], ['付近', '附近'], ['壱岐', '壹岐'], ['関東', '關東'],
     ['禦浜', '御濱'], ['浜', '濱'], ['戸', '戶'], ['隠', '隱'],
-    ['沖縄', '沖繩'], ['海峡', '海峽'], ['安芸', '安藝'], ['津軽', '津輕'], ['若狭', '若狹'], ['陸奥', '陸奧'], ['飛騨', '飛驒'],
+    ['沖縄', '沖繩'], ['海峡', '海峽'], ['安芸', '安藝'], ['津軽', '津輕'], ['若狭', '若狹'], ['陸奥', '陸奧'], ['飛騨', '飛驒'], ['内', '內'],
     // 「髙」（はしご高）は市町村の訳で「高」か「髙」を含む 40 件のうち 31 件だけに使われていて揺れているので「高」にそろえる
     ['髙', '高'],
     // 簡体から機械で戻したとみられる誤字（谷→穀・筑→築・淀→澱・里→裡・州→洲）
@@ -44,6 +45,9 @@ export const PLACE_NAME_FIXES: Readonly<Record<FixLocale, readonly (readonly [st
   ko: [
     // 県名の綴りを県名の表（가나가와현・도야마현・구마모토현・지바현）にそろえる
     ['카나강 현', '가나가와현'], ['토야마 현', '도야마현'], ['쿠마모토현', '구마모토현'], ['치바현', '지바현'],
+    // 香川も同じく平音に（「카가와」だけで置き換えると「나카가와」（中川）に当たるので、語ごとに書く。
+    // 置き換えは接尾辞の前の空白を詰める前に当たるので、辞書の「카가와 현」「히가시카가와 시」の形も書く）
+    ['카가와현', '가가와현'], ['카가와 현', '가가와현'], ['히가시카가와시', '히가시가가와시'], ['히가시카가와 시', '히가시가가와시'],
     // 「沖」を音で写した形（오키）、「内房」「外房」を字や誤った音で写した形（「쿄토부 오키」を「쿄토부」より先に当てる）
     ['쿄토부 오키', '교토부 앞바다'], ['쿄토부', '교토부'], ['우츠브사', '우치보'], ['구주쿠리·외방', '구주쿠리·소토보'],
     // 地方名を 2 語に割った形・訓読みで写した形（置賜＝오키타마、下越＝가에쓰）
@@ -78,14 +82,25 @@ export const PLACE_NAME_OVERRIDES: Readonly<Record<FixLocale, Readonly<Record<st
       千葉中央区: '지바 주오구', 千葉佐倉市: '지바 사쿠라시', 千葉稲毛区: '지바 이나게구', 千葉緑区: '지바 미도리구', 千葉美浜区: '지바 미하마구',
       千葉花見川区: '지바 하나미가와구', 千葉若葉区: '지바 와카바구', 東京利島村: '도쿄 도시마촌', 熊本美里町: '구마모토 미사토정',
     },
-    // 「県＋上」を「현상」と切った形・訓読みで写した形（上越・中越・下越は 조에쓰・주에쓰・가에쓰）
-    epi: { 新潟県上中越沖: '니가타현 조에쓰·주에쓰 오키' },
-    tsunamiArea: { 新潟県上中下越: '니가타현 조에쓰·주에쓰·가에쓰' },
+    epi: {
+      // 「県＋上」を「현상」と切った形・訓読みで写した形（上越・中越・下越は 조에쓰・주에쓰・가에쓰）
+      新潟県上中越沖: '니가타현 조에쓰·주에쓰 앞바다',
+      // 「沖」の訳が切れ目を誤った・抜けた・別の語になったもの（末尾の置き換え {@link KO_OKI} では直らない）
+      三陸沖: '산리쿠 앞바다', 北海道南西沖: '홋카이도 남서쪽 앞바다', 奄美大島北東沖: '아마미 오시마 북동쪽 앞바다',
+      能登半島沖: '노토 반도 앞바다', 東海道南方沖: '도카이도 남쪽 앞바다',
+    },
+    tsunamiArea: { 新潟県上中下越: '니가타현 조에쓰·주에쓰·가에쓰', 伊豆諸島: '이즈 제도' },
   },
 }
 
 /** 韓国語の行政の接尾辞の前の空白（「마에바시 시」→「마에바시시」）。語と語の間の空白（「미에현 북부」）は残す */
 const KO_SUFFIX_SPACE = /([가-힣]) (현|부|도|시|정|촌|구)(?=$| )/g
+
+/**
+ * 韓国語の「沖」の訳（辞書では 바다・오키・앞바다 と揺れている）を、観測点名と同じ 앞바다 にそろえる。
+ * 日本語の名前に「沖」（沖縄などの地名の字は除く）を含む訳の末尾の語だけを置き換える
+ */
+const KO_OKI = { name: /沖(?!縄|永良部|ノ鳥|の鳥)/, tail: /(^| )(바다|오키)$/ }
 
 /** 辞書の訳に直しを当てる（`kind` と `name` は表の種類と日本語の名前）。英字の言語と、直しを持たない言語はそのまま返す */
 export function fixPlaceName(locale: string, kind: string, name: string, text: string): string {
@@ -95,13 +110,16 @@ export function fixPlaceName(locale: string, kind: string, name: string, text: s
   for (const [from, to] of fixes) out = out.split(from).join(to)
   const override = PLACE_NAME_OVERRIDES[locale as FixLocale]?.[kind]?.[name]
   if (override !== undefined) out = override
+  if (locale === 'ko' && KO_OKI.name.test(name)) out = out.replace(KO_OKI.tail, '$1앞바다')
   if (locale === 'ko') out = out.replace(KO_SUFFIX_SPACE, '$1$2')
   return out
 }
 
 /**
  * その字体で使わない字を、OpenCC の変換（繁体は 日本の字体→繁体、簡体は 日本の字体→繁体→簡体）で見つける。
- * 変換で変わる字のうち、どちらの字体でも通用するので直さない字（{@link ACCEPTED_VARIANTS}）は数えない
+ * 変換で変わる字のうち、どちらの字体でも通用するので直さない字（{@link ACCEPTED_VARIANTS}）は数えない。
+ * OpenCC が変えない日本の字体（{@link JP_ONLY_TO_HANT} の字と「騨」）と、OpenCC が返す古い形（{@link OLD_FORMS}）は、変換を通さずに見つける
+ * （簡体では、繁体の形を簡体にすると同じ字に戻るもの〈「薮」「梼」は簡体字でもある〉は数えない）
  */
 const jp2t = OpenCC.Converter({ from: 'jp', to: 't' })
 const t2cn = OpenCC.Converter({ from: 't', to: 'cn' })
@@ -109,16 +127,24 @@ const ACCEPTED_VARIANTS: Readonly<Record<'zh-Hans' | 'zh-Hant', string>> = {
   'zh-Hant': '台真予萌胆糸亘並郎',
   'zh-Hans': '予萌篠郎',
 }
+/** OpenCC の 日本→繁体 が返す古い形のうち、今の繁体字でも簡体字でも使わないもの。比べる側の変換もこれでそろえる */
+const OLD_FORMS = Object.keys(OPENCC_ARCHAIC).join('')
+const jp2tModern = (s: string) => [...jp2t(s)].map((c) => OPENCC_ARCHAIC[c] ?? c).join('')
+const JP_ONLY: Readonly<Record<'zh-Hans' | 'zh-Hant', string>> = {
+  'zh-Hant': `${Object.keys(JP_ONLY_TO_HANT).join('')}騨${OLD_FORMS}`,
+  'zh-Hans': `${Object.entries(JP_ONLY_TO_HANT).filter(([jp, hant]) => t2cn(hant) !== jp).map(([jp]) => jp).join('')}騨${OLD_FORMS}`,
+}
 
 /** 直した後の訳に、その字体で使わない字が残っていれば、その字を返す（無ければ空の文字列） */
 export function leftoverForeignChars(locale: string, text: string): string {
   if (locale !== 'zh-Hant' && locale !== 'zh-Hans') return ''
-  const converted = locale === 'zh-Hant' ? jp2t(text) : t2cn(jp2t(text))
-  const accepted = ACCEPTED_VARIANTS[locale]
+  const converted = locale === 'zh-Hant' ? jp2tModern(text) : t2cn(jp2tModern(text))
+  const accepted = locale === 'zh-Hans' ? ACCEPTED_VARIANTS[locale] + KEEP_IN_HANS : ACCEPTED_VARIANTS[locale]
   const chars = [...text]
   const conv = [...converted]
   // 変換で字数が変わることは無い前提（1 字ずつの置き換え）。変われば丸ごと返して止める
   if (chars.length !== conv.length) return text
-  const hit = chars.filter((c, i) => c !== conv[i] && !accepted.includes(c))
+  // まれな字（CJK 統合漢字 拡張 A）は、OpenCC が地名の字をまれな異体字に置き換えた跡なので止める
+  const hit = chars.filter((c, i) => (c !== conv[i] && !accepted.includes(c)) || JP_ONLY[locale].includes(c) || /[㐀-䶿]/.test(c))
   return [...new Set(hit)].join('')
 }

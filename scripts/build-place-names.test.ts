@@ -46,12 +46,44 @@ describe('buildPlaceNameTable', () => {
     expect(table.epi['山形県庄内地方']).toBe('山形縣庄內地方')
     expect(table.area['山形県庄内']).toBe('山形縣庄內地方')
   })
-  it('辞書の無い区域・観測点は、英字の言語だけ作り、中韓は持たない（対照）', () => {
+  it('辞書の無い区域は、英字の言語だけ作り、中韓は持たない（対照）', () => {
     expect(buildPlaceNameTable(sources(), en).table.area['伊豆大島']).toBe('Izuoshima')
+    expect(buildPlaceNameTable(sources(), ko).table.area['伊豆大島']).toBeUndefined()
+  })
+  it('韓国語の観測点は「市町村の訳 残りのハングル」、沖合の津波観測点は「頭 앞바다 距離 記号」', () => {
     const k = buildPlaceNameTable(sources(), ko).table
-    expect(k.area['伊豆大島']).toBeUndefined()
-    expect(Object.keys(k.station)).toHaveLength(0)
-    expect(Object.keys(k.tsunamiStation)).toHaveLength(0)
+    expect(k.station['石巻市泉町']).toBe('이시노마키시 이즈미마치')
+    expect(k.tsunamiStation['石巻市鮎川']).toBe('이시노마키시 아유카와')
+    expect(k.tsunamiStation['宮城沖１５０ｋｍＡ']).toBe('미야기 앞바다 150km A')
+  })
+  it('安全弁: 名前だけが沖合の形で読みが合わない津波観測点は作らず、韓国語は 1 件でも作れなければ止める', () => {
+    const src = sources({ tsunamiStations: [{ code: '22900', name: '宮城沖１５０ｋｍＡ', kana: 'ミヤギ１５０' }] })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.tsunamiStation['宮城沖１５０ｋｍＡ']).toBeUndefined()
+    expect(report.untranslated.tsunamiStation).toEqual(['宮城沖１５０ｋｍＡ'])
+    expect(() => checkUntranslated(report)).toThrow('訳を作れない名前が増えた')
+  })
+  it('対照: 名前の頭が市町村名でも読みが市町村の読みで始まらなければ、名前全体から作る', () => {
+    const src = sources({
+      eqStations: [{ region: { code: '220', name: '宮城県中部', kana: 'ミヤギケンチュウブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: '0420239', name: '石巻市旧', kana: 'イシマキキュウ' }],
+    })
+    expect(buildPlaceNameTable(src, ko).table.station['石巻市旧']).toBe('이시마키큐')
+  })
+  it('中国語の観測点は「市町村の訳＋残りの字形」で、繋ぎ以外の仮名を含む名前は作らない', () => {
+    const zhHans = PLACE_NAME_LOCALES.find((l) => l.id === 'zh-Hans')!
+    const src = sources({
+      city: { '0420200': { japanese: '石巻市', english: '', korean: '', chinese_zs: '石卷市' } },
+      eqStations: [
+        { region: { code: '220', name: '宮城県中部', kana: 'ミヤギケンチュウブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: '0420230', name: '石巻市泉町', kana: 'イシノマキシイズミマチ' },
+        { region: { code: '220', name: '宮城県中部', kana: 'ミヤギケンチュウブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: '0420233', name: '石巻市ひより台', kana: 'イシノマキシヒヨリダイ' },
+      ],
+    })
+    const { table, report } = buildPlaceNameTable(src, zhHans)
+    expect(table.station['石巻市泉町']).toBe('石卷市泉町')
+    expect(table.station['石巻市ひより台']).toBeUndefined()
+    expect(table.tsunamiStation['宮城沖１５０ｋｍＡ']).toBe('宫城冲150km A')
+    // 仮名を含む名前は作らないと決めた範囲なので止めない
+    expect(() => checkUntranslated(report)).not.toThrow()
   })
   it('観測点は集めた英語名を * を外して先に使い、同じ名前の別のコードもそれにそろえる', () => {
     const { table, report } = buildPlaceNameTable(sources(), en)

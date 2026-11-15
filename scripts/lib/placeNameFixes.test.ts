@@ -31,7 +31,22 @@ describe('fixPlaceName', () => {
   it('正: 韓国語の県名の綴りをそろえ、行政の接尾辞の前の空白を詰める', () => {
     expect(fixPlaceName('ko', 'epi', '神奈川県東部', '카나강 현 동부')).toBe('가나가와현 동부')
     expect(fixPlaceName('ko', 'city', '前橋市', '마에바시 시')).toBe('마에바시시')
-    expect(fixPlaceName('ko', 'epi', '三重県南東沖', '미에 현 남동쪽 바다')).toBe('미에현 남동쪽 바다')
+    expect(fixPlaceName('ko', 'epi', '三重県南東沖', '미에 현 남동쪽 바다')).toBe('미에현 남동쪽 앞바다')
+  })
+  it('正: 韓国語の「沖」（바다・오키）を 앞바다 にそろえ、末尾の置き換えで直らないものは上書きで直す', () => {
+    expect(fixPlaceName('ko', 'epi', '宮城県沖', '미야기현 바다')).toBe('미야기현 앞바다')
+    expect(fixPlaceName('ko', 'epi', '釧路沖', '구시로 오키')).toBe('구시로 앞바다')
+    expect(fixPlaceName('ko', 'epi', '三陸沖', '산리 쿠바다')).toBe('산리쿠 앞바다')
+  })
+  it('正: 香川県・伊豆諸島・繁体の「内」を直す（「나카가와」（中川）の「카가와」には当てない）', () => {
+    expect(fixPlaceName('ko', 'pref', '香川県', '카가와현')).toBe('가가와현')
+    expect(fixPlaceName('ko', 'city', '中川村', '나카가와 촌')).toBe('나카가와촌')
+    expect(fixPlaceName('ko', 'tsunamiArea', '伊豆諸島', '이두제도')).toBe('이즈 제도')
+    expect(fixPlaceName('zh-Hant', 'epi', '内浦湾', '内浦灣')).toBe('內浦灣')
+  })
+  it('対照: 「沖縄」の字や「沖」を含まない名前の 바다 は変えない', () => {
+    expect(fixPlaceName('ko', 'tsunamiArea', '沖縄本島地方', '오키나와 본섬 지방')).toBe('오키나와 본섬 지방')
+    expect(fixPlaceName('ko', 'epi', '日本海中部', '일본해 중부 바다')).toBe('일본해 중부 바다')
   })
   it('正: 長い語を先に当てる（「쿄토부 오키」は「쿄토부」より先）', () => {
     expect(fixPlaceName('ko', 'epi', '京都府沖', '쿄토부 오키')).toBe('교토부 앞바다')
@@ -68,6 +83,21 @@ describe('leftoverForeignChars', () => {
     expect(leftoverForeignChars('zh-Hant', '伊勢灣')).toBe('')
     expect(leftoverForeignChars('zh-Hans', '中国地方')).toBe('')
     expect(leftoverForeignChars('zh-Hant', '台灣付近')).toBe('')
+  })
+  it('正: OpenCC が変えない日本の字体（舎・騨など）も見つける', () => {
+    expect(leftoverForeignChars('zh-Hant', '本鄉廳舎')).toBe('舎')
+    expect(leftoverForeignChars('zh-Hans', '岐阜县飞騨地方')).toBe('騨')
+    expect(leftoverForeignChars('zh-Hant', '盛岡市薮川')).toBe('薮')
+  })
+  it('対照: 簡体字でもある字（薮・梼）と、簡体で残すと決めた地名の字（摺）は簡体では数えない', () => {
+    expect(leftoverForeignChars('zh-Hans', '盛冈市薮川')).toBe('')
+    expect(leftoverForeignChars('zh-Hans', '梼原町')).toBe('')
+    expect(leftoverForeignChars('zh-Hans', '土佐清水市足摺岬')).toBe('')
+  })
+  it('正: OpenCC が返す古い形・まれな字（拡張 A）・繁体の「内」も見つける', () => {
+    expect(leftoverForeignChars('zh-Hans', '国分寺市竝木町')).toBe('竝')
+    expect(leftoverForeignChars('zh-Hans', '八丈町㭴立')).toBe('㭴')
+    expect(leftoverForeignChars('zh-Hant', '内浦灣')).toBe('内')
   })
   it('安全弁: 中国語以外は見ない', () => {
     expect(leftoverForeignChars('ko', '県')).toBe('')
