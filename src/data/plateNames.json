@@ -1,0 +1,418 @@
+{
+  "アフリカプレート": {
+    "en": "African plate",
+    "pt-BR": "Placa africana",
+    "es": "Placa africana",
+    "zh-Hans": "非洲板块",
+    "zh-Hant": "非洲板塊",
+    "ko": "아프리카판"
+  },
+  "アムールプレート": {
+    "en": "Amur plate",
+    "pt-BR": "Placa de Amur",
+    "es": "Placa amuria",
+    "zh-Hans": "阿穆尔板块",
+    "zh-Hant": "阿穆爾板塊",
+    "ko": "아무르판"
+  },
+  "南極プレート": {
+    "en": "Antarctic plate",
+    "pt-BR": "Placa da Antártica",
+    "es": "Placa antártica",
+    "zh-Hans": "南极洲板块",
+    "zh-Hant": "南極洲板塊",
+    "ko": "남극판"
+  },
+  "アルティプラノプレート": {
+    "en": "Altiplano plate",
+    "pt-BR": "Placa do Altiplano",
+    "es": "Placa del Altiplano",
+    "zh-Hans": "阿尔蒂普拉诺板块",
+    "zh-Hant": "阿爾蒂普拉諾板塊",
+    "ko": "알티플라노판"
+  },
+  "アラビアプレート": {
+    "en": "Arabian plate",
+    "pt-BR": "Placa arábica",
+    "es": "Placa arábiga",
+    "zh-Hans": "阿拉伯板块",
+    "zh-Hant": "阿拉伯板塊",
+    "ko": "아라비아판"
+  },
+  "エーゲ海プレート": {
+    "en": "Aegean Sea plate",
+    "pt-BR": "Placa Helênica",
+    "es": "Placa del mar Egeo",
+    "zh-Hans": "爱琴海板块",
+    "zh-Hant": "愛琴海板塊",
+    "ko": "에게해판"
+  },
+  "アナトリアプレート": {
+    "en": "Anatolian plate",
+    "pt-BR": "Placa da Anatólia",
+    "es": "Placa de Anatolia",
+    "zh-Hans": "安那托利亚板块",
+    "zh-Hant": "安那托利亞板塊",
+    "ko": "아나톨리아판"
+  },
+  "オーストラリアプレート": {
+    "en": "Australian plate",
+    "pt-BR": "Placa australiana",
+    "es": "Placa australiana",
+    "zh-Hans": "澳洲板块",
+    "zh-Hant": "澳洲板塊",
+    "ko": "오스트레일리아판"
+  },
+  "バーズヘッドプレート": {
+    "en": "Bird's Head plate",
+    "pt-BR": "Placa Cabeça de Pássaro",
+    "es": "Placa Cabeza de Pájaro",
+    "zh-Hans": "鸟首板块",
+    "zh-Hant": "鳥首板塊",
+    "ko": "새머리판"
+  },
+  "バルモラルリーフプレート": {
+    "en": "Balmoral Reef plate",
+    "pt-BR": "Placa do Recife Balmoral",
+    "es": "Placa del Arrecife Balmoral",
+    "zh-Hans": "巴尔莫勒尔礁板块",
+    "zh-Hant": "巴爾莫勒爾礁板塊",
+    "ko": "밸모랄 환초판"
+  },
+  "バンダ海プレート": {
+    "en": "Banda Sea plate",
+    "pt-BR": "Placa do Mar de Banda",
+    "es": "Placa del mar de Banda",
+    "zh-Hans": "班达海板块",
+    "zh-Hant": "班達海板塊",
+    "ko": "반다해판"
+  },
+  "ビルマプレート": {
+    "en": "Burma plate",
+    "pt-BR": "Placa da Birmânia",
+    "es": "Placa de Birmania",
+    "zh-Hans": "缅甸板块",
+    "zh-Hant": "緬甸板塊",
+    "ko": "버마판"
+  },
+  "カリブプレート": {
+    "en": "Caribbean plate",
+    "pt-BR": "Placa do Caribe",
+    "es": "Placa del Caribe",
+    "zh-Hans": "加勒比板块",
+    "zh-Hant": "加勒比板塊",
+    "ko": "카리브판"
+  },
+  "カロリンプレート": {
+    "en": "Caroline plate",
+    "pt-BR": "Placa das Carolinas",
+    "es": "Placa de las Carolinas",
+    "zh-Hans": "加洛林板块",
+    "zh-Hant": "加洛林板塊",
+    "ko": "캐롤라인판"
+  },
+  "ココスプレート": {
+    "en": "Cocos plate",
+    "pt-BR": "Placa de Cocos",
+    "es": "Placa de Cocos",
+    "zh-Hans": "科科斯板块",
+    "zh-Hant": "科科斯板塊",
+    "ko": "코코스판"
+  },
+  "コンウェイリーフプレート": {
+    "en": "Conway Reef plate",
+    "pt-BR": "Placa do Recife Conway",
+    "es": "Placa del Arrecife de Conway",
+    "zh-Hans": "康威礁板块",
+    "zh-Hant": "康威礁板塊",
+    "ko": "콘웨이 환초판"
+  },
+  "イースタープレート": {
+    "en": "Easter microplate",
+    "pt-BR": "Placa de Páscoa",
+    "es": "Placa de Pascua",
+    "zh-Hans": "复活节岛板块",
+    "zh-Hant": "復活節島板塊",
+    "ko": "이스터판"
+  },
+  "ユーラシアプレート": {
+    "en": "Eurasian plate",
+    "pt-BR": "Placa eurasiática",
+    "es": "Placa euroasiática",
+    "zh-Hans": "欧亚板块",
+    "zh-Hant": "歐亞板塊",
+    "ko": "유라시아판"
+  },
+  "フツナプレート": {
+    "en": "Futuna plate",
+    "pt-BR": "Placa de Futuna",
+    "es": "Placa de Futuna",
+    "zh-Hans": "富图纳板块",
+    "zh-Hant": "富圖納板塊",
+    "ko": "푸투나판"
+  },
+  "ガラパゴスプレート": {
+    "en": "Galápagos microplate",
+    "pt-BR": "Placa das Galápagos",
+    "es": "Placa de Galápagos",
+    "zh-Hans": "加拉帕戈斯板块",
+    "zh-Hant": "加拉帕戈斯板塊",
+    "ko": "갈라파고스 미판"
+  },
+  "インドプレート": {
+    "en": "Indian plate",
+    "pt-BR": "Placa indiana",
+    "es": "Placa índica",
+    "zh-Hans": "印度板块",
+    "zh-Hant": "印度板塊",
+    "ko": "인도판"
+  },
+  "フアン・デ・フカプレート": {
+    "en": "Juan de Fuca plate",
+    "pt-BR": "Placa Juan de Fuca",
+    "es": "Placa de Juan de Fuca",
+    "zh-Hans": "胡安·德富卡板块",
+    "zh-Hant": "胡安·德富卡板塊",
+    "ko": "후안데푸카판"
+  },
+  "フアン・フェルナンデスプレート": {
+    "en": "Juan Fernández plate",
+    "pt-BR": "Placa de Juan Fernández",
+    "es": "Placa de Juan Fernández",
+    "zh-Hans": "胡安·斐南迪兹板块",
+    "zh-Hant": "胡安·斐南迪茲板塊",
+    "ko": "후안페르난데스판"
+  },
+  "ケルマデックプレート": {
+    "en": "Kermadec plate",
+    "pt-BR": "Placa de Kermadec",
+    "es": "Placa de Kermadec",
+    "zh-Hans": "克马德克板块",
+    "zh-Hant": "克馬德克板塊",
+    "ko": "케르마데크판"
+  },
+  "マリアナプレート": {
+    "en": "Mariana plate",
+    "pt-BR": "Placa das Marianas",
+    "es": "Placa de las Marianas",
+    "zh-Hans": "马里亚纳板块",
+    "zh-Hant": "馬里亞納板塊",
+    "ko": "마리아나판"
+  },
+  "マヌスプレート": {
+    "en": "Manus plate",
+    "pt-BR": "Placa de Manus",
+    "es": "Placa de Manus",
+    "zh-Hans": "马努斯板块",
+    "zh-Hant": "馬努斯板塊",
+    "ko": "마누스판"
+  },
+  "マオケプレート": {
+    "en": "Maoke plate",
+    "pt-BR": "Placa de Maoke",
+    "es": "Placa de Maoke",
+    "zh-Hans": "毛克板块",
+    "zh-Hant": "毛克板塊",
+    "ko": "마오케판"
+  },
+  "モルッカ海プレート": {
+    "en": "Molucca Sea plate",
+    "pt-BR": "Placa do Mar das Molucas",
+    "es": "Placa del mar de las Molucas",
+    "zh-Hans": "摩鹿加海板块",
+    "zh-Hant": "摩鹿加海板塊",
+    "ko": "몰루카해판"
+  },
+  "北アメリカプレート": {
+    "en": "North American plate",
+    "pt-BR": "Placa norte-americana",
+    "es": "Placa norteamericana",
+    "zh-Hans": "北美洲板块",
+    "zh-Hant": "北美洲板塊",
+    "ko": "북아메리카판"
+  },
+  "北ビスマルクプレート": {
+    "en": "North Bismarck plate",
+    "pt-BR": "Placa de Bismarck do Norte",
+    "es": "Placa de Bismarck del Norte",
+    "zh-Hans": "北俾斯麦板块",
+    "zh-Hant": "北俾斯麥板塊",
+    "ko": "북비스마르크판"
+  },
+  "北アンデスプレート": {
+    "en": "North Andes plate",
+    "pt-BR": "Placa do Norte dos Andes",
+    "es": "Placa de los Andes del Norte",
+    "zh-Hans": "北安地斯板块",
+    "zh-Hant": "北安地斯板塊",
+    "ko": "북안데스판"
+  },
+  "ニューヘブリデスプレート": {
+    "en": "New Hebrides plate",
+    "pt-BR": "Placa das Novas Hébridas",
+    "es": "Placa de las Nuevas Hébridas",
+    "zh-Hans": "新赫布里底板块",
+    "zh-Hant": "新赫布里底板塊",
+    "ko": "뉴헤브리디스판"
+  },
+  "ニウアフォオウプレート": {
+    "en": "Niuafo'ou plate",
+    "pt-BR": "Placa de Niuafo'ou",
+    "es": "Placa de Niuafo'ou",
+    "zh-Hans": "纽阿福欧板块",
+    "zh-Hant": "紐阿福歐板塊",
+    "ko": "니우아포오우판"
+  },
+  "ナスカプレート": {
+    "en": "Nazca plate",
+    "pt-BR": "Placa de Nasca",
+    "es": "Placa de Nazca",
+    "zh-Hans": "纳斯卡板块",
+    "zh-Hant": "納斯卡板塊",
+    "ko": "나스카판"
+  },
+  "オホーツクプレート": {
+    "en": "Okhotsk plate",
+    "pt-BR": "Placa de Okhotsk",
+    "es": "Placa de Ojotsk",
+    "zh-Hans": "鄂霍次克板块",
+    "zh-Hant": "鄂霍次克板塊",
+    "ko": "오호츠크판"
+  },
+  "沖縄プレート": {
+    "en": "Okinawa plate",
+    "pt-BR": "Placa de Okinawa",
+    "es": "Placa de Okinawa",
+    "zh-Hans": "冲绳板块",
+    "zh-Hant": "沖繩板塊",
+    "ko": "오키나와판"
+  },
+  "太平洋プレート": {
+    "en": "Pacific plate",
+    "pt-BR": "Placa do Pacífico",
+    "es": "Placa del Pacífico",
+    "zh-Hans": "太平洋板块",
+    "zh-Hant": "太平洋板塊",
+    "ko": "태평양판"
+  },
+  "パナマプレート": {
+    "en": "Panama plate",
+    "pt-BR": "Placa do Panamá",
+    "es": "Placa de Panamá",
+    "zh-Hans": "巴拿马板块",
+    "zh-Hant": "巴拿馬板塊",
+    "ko": "파나마판"
+  },
+  "フィリピン海プレート": {
+    "en": "Philippine Sea plate",
+    "pt-BR": "Placa das Filipinas",
+    "es": "Placa filipina",
+    "zh-Hans": "菲律宾海板块",
+    "zh-Hant": "菲律賓海板塊",
+    "ko": "필리핀해판"
+  },
+  "リベラプレート": {
+    "en": "Rivera plate",
+    "pt-BR": "Placa de Rivera",
+    "es": "Placa de Rivera",
+    "zh-Hans": "里维拉板块",
+    "zh-Hant": "里維拉板塊",
+    "ko": "리베라판"
+  },
+  "南アメリカプレート": {
+    "en": "South American plate",
+    "pt-BR": "Placa Sul-Americana",
+    "es": "Placa sudamericana",
+    "zh-Hans": "南美洲板块",
+    "zh-Hant": "南美洲板塊",
+    "ko": "남아메리카판"
+  },
+  "南ビスマルクプレート": {
+    "en": "South Bismarck plate",
+    "pt-BR": "Placa de Bismarck do Sul",
+    "es": "Placa de Bismarck del Sur",
+    "zh-Hans": "南俾斯麦板块",
+    "zh-Hant": "南俾斯麥板塊",
+    "ko": "남비스마르크판"
+  },
+  "スコシアプレート": {
+    "en": "Scotia plate",
+    "pt-BR": "Placa de Scotia",
+    "es": "Placa Scotia",
+    "zh-Hans": "斯科舍板块",
+    "zh-Hant": "斯科舍板塊",
+    "ko": "스코샤판"
+  },
+  "シェトランドプレート": {
+    "en": "Shetland plate",
+    "pt-BR": "Placa de Shetland",
+    "es": "Placa de Shetland",
+    "zh-Hans": "设得兰板块",
+    "zh-Hant": "設得蘭板塊",
+    "ko": "셰틀랜드판"
+  },
+  "ソマリアプレート": {
+    "en": "Somali plate",
+    "pt-BR": "Placa Somali",
+    "es": "Placa somalí",
+    "zh-Hans": "索马里板块",
+    "zh-Hant": "索馬里板塊",
+    "ko": "소말리아판"
+  },
+  "ソロモン海プレート": {
+    "en": "Solomon Sea plate",
+    "pt-BR": "Placa do Mar de Salomão",
+    "es": "Placa del mar de Salomón",
+    "zh-Hans": "所罗门海板块",
+    "zh-Hant": "所羅門海板塊",
+    "ko": "솔로몬해판"
+  },
+  "スンダプレート": {
+    "en": "Sunda plate",
+    "pt-BR": "Placa de Sonda",
+    "es": "Placa de la Sonda",
+    "zh-Hans": "巽他板块",
+    "zh-Hant": "巽他板塊",
+    "ko": "순다판"
+  },
+  "サンドイッチプレート": {
+    "en": "South Sandwich plate",
+    "pt-BR": "Placa de Sandwich do Sul",
+    "es": "Placa de Sandwich",
+    "zh-Hans": "南桑威奇板块",
+    "zh-Hant": "南桑威奇板塊",
+    "ko": "사우스샌드위치판"
+  },
+  "ティモールプレート": {
+    "en": "Timor plate",
+    "pt-BR": "Placa de Timor",
+    "es": "Placa de Timor",
+    "zh-Hans": "帝汶板块",
+    "zh-Hant": "帝汶板塊",
+    "ko": "티모르판"
+  },
+  "トンガプレート": {
+    "en": "Tonga plate",
+    "pt-BR": "Placa de Tonga",
+    "es": "Placa de Tonga",
+    "zh-Hans": "汤加板块",
+    "zh-Hant": "湯加板塊",
+    "ko": "통가판"
+  },
+  "ウッドラークプレート": {
+    "en": "Woodlark plate",
+    "pt-BR": "Placa de Woodlark",
+    "es": "Placa Woodlark",
+    "zh-Hans": "木百灵板块",
+    "zh-Hant": "木百靈板塊",
+    "ko": "우들라크판"
+  },
+  "揚子江プレート": {
+    "en": "Yangtze plate",
+    "pt-BR": "Placa do Yangtzé",
+    "es": "Placa del Yangtsé",
+    "zh-Hans": "华南板块",
+    "zh-Hant": "華南板塊",
+    "ko": "양쯔판"
+  }
+}

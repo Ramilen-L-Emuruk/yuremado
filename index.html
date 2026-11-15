@@ -40,13 +40,28 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- 読み直しても読めなかったときに #root へ出す（boot-recovery.js）。CSS が読めていない前提で直に書く -->
+    <!--
+      読み直しても読めなかったときに #root へ出す（boot-recovery.js）。CSS が読めていない前提で直に書く。
+      日本語の本文とボタンはこのテンプレートに書き、ほかの言語は下の #boot-failed-text から設定の言語の文に差し替える
+      （辞書はまだ読めていないので、ここに置く）。ボタンの語は辞書（src/i18n/messages/*.ts）の errorScreen.reload と揃える
+      （src/utils/bootRecovery.test.ts が照合する）。本文に当たる語は辞書に無く、ここだけが持つ
+    -->
     <template id="boot-failed">
-      <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #12151a; color: #e5e7eb; font-family: system-ui, sans-serif;">
+      <div lang="ja" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #12151a; color: #e5e7eb; font-family: system-ui, sans-serif;">
         <p style="margin: 0; font-size: 16px;">画面を読み込めませんでした</p>
         <button type="button" style="padding: 8px 20px; font-size: 15px; border-radius: 6px; border: 1px solid #4b5563; background: #1f2937; color: #e5e7eb; cursor: pointer;">再読み込み</button>
       </div>
     </template>
+    <script type="application/json" id="boot-failed-text">
+      {
+        "en": { "message": "Couldn't load the screen", "reload": "Reload" },
+        "zh-Hans": { "message": "无法加载画面", "reload": "重新加载" },
+        "zh-Hant": { "message": "無法載入畫面", "reload": "重新載入" },
+        "ko": { "message": "화면을 불러오지 못했습니다", "reload": "다시 불러오기" },
+        "pt-BR": { "message": "Não foi possível carregar a tela", "reload": "Recarregar" },
+        "es": { "message": "No se pudo cargar la pantalla", "reload": "Recargar" }
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -5,7 +5,9 @@ import { PLATE_BOUNDARY_CLASSES, type PlateBoundaryClass, type PlateBoundarySegm
 import { segmentsToMultiLineFC } from './gl/geojson'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { twoLinePopupHtml } from './gl/popupHtml'
-import { useMessagesRef } from '../../i18n/I18nProvider'
+import { useLocale, useMessagesRef } from '../../i18n/I18nProvider'
+import { plateNameFor } from '../../i18n/plateNames'
+import type { Locale } from '../../i18n/messages'
 import { addOrderedLayer } from './gl/layerOrder'
 import {
   OVERLAY_LINE_SRC,
@@ -60,6 +62,10 @@ export function PlateBoundariesGL({ plateBoundaries, visible }: Props) {
   const map = useMapGL()
   const popupRef = useRef<PopupHandle | null>(null)
   const mRef = useMessagesRef()
+  // 吹き出しは押したときに組むので、言語は ref で持つ（言語を変えても線は描き直さない）
+  const locale = useLocale()
+  const localeRef = useRef<Locale>(locale)
+  localeRef.current = locale
 
   useEffect(() => {
     if (!map || !plateBoundaries) return
@@ -102,7 +108,9 @@ export function PlateBoundariesGL({ plateBoundaries, visible }: Props) {
         // 分類の表に載っている値だけ名前を添える（表に無い値は分類なしの見出しにする）
         const type = p.type as PlateBoundaryClass
         const cls = Object.prototype.hasOwnProperty.call(PLATE_BOUNDARY_CLASSES, type) ? m.map.popup.plateClass[type] : null
-        return twoLinePopupHtml(`${p.plateA ?? ''} – ${p.plateB ?? ''}`, m.map.popup.plateBoundary(cls))
+        // プレート名は押したときの言語で引く（i18n/plateNames.ts。表に無い名前は日本語のまま）
+        const name = (n: unknown) => plateNameFor(localeRef.current, String(n ?? ''))
+        return twoLinePopupHtml(`${name(p.plateA)} – ${name(p.plateB)}`, m.map.popup.plateBoundary(cls))
       },
     })
     return () => {
