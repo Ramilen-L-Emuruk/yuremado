@@ -181,6 +181,7 @@ function eewSample(): EewSample {
     warningRegions: ['北陸', '甲信'],
     addedWarningRegions: ['甲信'],
     infoName: '緊急地震速報（警報）',
+    ...offices(),
     cancelText: '取消',
     strongShakingOnly: true,
     strongShakingText: '強い揺れ',
@@ -236,6 +237,7 @@ function lpgmSample(): DeepRequired<JMALpgm> {
     reportsRevise: true,
     operationStatus: '訓練',
     infoName: '長周期地震動に関する観測情報',
+    ...offices(),
     originTime: iso(),
     maxClass: 4,
     cancelled: false,
@@ -263,8 +265,11 @@ function lpgmSample(): DeepRequired<JMALpgm> {
   }
 }
 
+const offices = () => ({ editorialOffice: '気象庁本庁', publishingOffice: '気象庁' })
+
 const infoMeta = () => ({
   summary: '要約', nextAdvisory: '次回', appendix: '参考', earthquakeInfoKind: '種類', earthquakeInfoType: '型',
+  ...offices(),
 })
 
 function nankaiSample(): DeepRequired<JMANankai> {
@@ -295,6 +300,7 @@ function kohatsuSample(): DeepRequired<JMAKohatsu> {
 
 function noticeSample(): DeepRequired<JMAQuakeNotice> {
   return {
+    ...offices(),
     id: `notice-${EVENT_ID}`, time: iso(), eventId: EVENT_ID, operationStatus: '訓練',
     headline: '見出し', body: '本文', freeText: '自由付加文', cancelled: false, reportDateTime: iso(), expireAt: iso(),
   }
@@ -302,6 +308,7 @@ function noticeSample(): DeepRequired<JMAQuakeNotice> {
 
 function countSample(): DeepRequired<JMAEarthquakeCount> {
   return {
+    ...offices(),
     id: `count-${EVENT_ID}`, time: iso(), eventId: EVENT_ID, operationStatus: '訓練',
     headline: '見出し',
     items: [{ type: '1時間', startTime: iso(), endTime: iso(), number: 3, feltNumber: 1 }],

@@ -146,7 +146,26 @@ describe('EEW カードの情報名の置き場所', () => {
   it('精度情報が無ければ右下に 1 行で出す', () => {
     renderTab({ ...makeEEW(), infoName: NAME })
     expect(accuracyBlock()).toBeNull()
-    expect(screen.getByText(NAME).className).toContain('text-right')
+    expect(screen.getByText(NAME).parentElement!.className).toContain('justify-end')
+  })
+
+  // 官署（2026-11-15）: 情報名に続けて「編集官署 …」「発表官署 …」をひと塊で置く。精度情報の有無どちらでも同じ並び。
+  it('官署を情報名の後ろにひと塊で置く', () => {
+    renderTab({ ...makeEEW({ epicenterRank: 4, depthRank: 4, magnitudeRank: 4, magnitudePoints: 5 }), infoName: NAME, editorialOffice: '気象庁本庁', publishingOffice: '気象庁' })
+    const rows = rowTexts()
+    expect(rows[rows.length - 1]).toMatch(new RegExp(`${NAME}編集官署 気象庁本庁発表官署 気象庁$`))
+    expect(screen.getByTestId('eew-offices').className).toContain('whitespace-nowrap')
+  })
+
+  it('精度情報が無くても情報名に続けて官署を置く', () => {
+    renderTab({ ...makeEEW(), infoName: NAME, editorialOffice: '大阪管区気象台', publishingOffice: '気象庁' })
+    expect(screen.getByTestId('eew-offices').parentElement!.textContent).toBe(`${NAME}編集官署 大阪管区気象台発表官署 気象庁`)
+  })
+
+  // 対照: 官署を持たない報（強震モニタから組んだ報など）では、官署の塊を出さない
+  it('官署を持たない報では官署を出さない', () => {
+    renderTab({ ...makeEEW(), infoName: NAME })
+    expect(screen.queryByTestId('eew-offices')).toBeNull()
   })
 
   // 安全弁: どちらの形でも 1 か所にしか出ない（右下の行と二重にならない）。

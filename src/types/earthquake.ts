@@ -1406,6 +1406,14 @@ export interface EEWAlert {
    */
   infoName?: string
   /**
+   * 電文を編集した官署（`Control/EditorialOffice`）と発表した官署（`Control/PublishingOffice`）。
+   * 読み取りは {@link JMAQuake.issue} の同名の欄と同じで、互いに落とさない。電文に無ければ undefined。
+   * カードの情報名に続けて「編集官署 …　発表官署 …」の形で出す（2026-11-15 ユーザー回答
+   * 「別行になるならさっきのほうがマシかなぁ」で、情報名に続けて入らなければ下の行の右端へ落とす形）。
+   */
+  editorialOffice?: string
+  publishingOffice?: string
+  /**
    * 取消しの概要（`Body/Text`）。取消電文でのみ入る。
    *
    * **地震情報・津波情報と同じ構造。** 取消電文は `Body` に `Text` しか持たないので、
@@ -1732,7 +1740,12 @@ export interface LpgmRegion {
   revise?: string
 }
 
-export interface JMALpgm {
+/**
+ * 官署（{@link TelegramOffices}）は、地震カードの最後の官署の行の下に情報名を頭に付けて出す
+ * （2026-11-15 ユーザー選択「最後の官署の行の下に足す」）。長周期の電文は地震情報と別の官署が
+ * 編集することがあるので、地震情報の官署で代えない。
+ */
+export interface JMALpgm extends TelegramOffices {
   id: string
   eventId: string     // VXSE51/52/53/62 が共有する 14 桁タイムスタンプ。lpgmByEventId の Map キー
   time: string
@@ -1961,6 +1974,16 @@ export interface LiveEventMeta {
 // 段階に関わらず「南海トラフ地震に関連する情報」で固定されており判別に使えない
 // （実電文 14 通で確認。詳細は docs/spec/data-sources-spec.md）。
 /**
+ * 電文を編集した官署（`Control/EditorialOffice`）と発表した官署（`Control/PublishingOffice`）。
+ * 読み取りは {@link JMAQuake.issue} の同名の欄と同じで、互いに落とさない。電文に無ければ undefined。
+ * 帯では開いた本文の最後の「発表: …」の行に続けて出す（2026-11-15 ユーザー選択「本文の発表の行に続ける (Recommended)」）。
+ */
+export interface TelegramOffices {
+  editorialOffice?: string
+  publishingOffice?: string
+}
+
+/**
  * 巨大地震に関する情報（南海トラフ・後発地震）が共通して持つ要素。
  *
  * **3 つの型が別々に同じ要素を持つ形にしない。** 南海トラフ臨時情報（VYSE50）・
@@ -1968,7 +1991,7 @@ export interface LiveEventMeta {
  * 電文の構造が同じで、実際に「解説情報だけが要約を読んでいて、臨時情報と後発地震は
  * 読んでいない」という非対称ができていた。
  */
-export interface EarthquakeInfoMeta {
+export interface EarthquakeInfoMeta extends TelegramOffices {
   /**
    * 見出し文（`Head/Headline/Text`）。本文（`body`）の要約で、気象庁が自分で書いたもの。
    *
@@ -2113,7 +2136,7 @@ export interface JMAKohatsu extends EarthquakeInfoMeta {
  * 構造は単純で、見出し（`Head/Headline/Text`）と自由文（`Body/Text`）に、自由付加文
  * （`Body/Comments/FreeFormComment`）が付くことがあるだけ。段階も等級も持たない。
  */
-export interface JMAQuakeNotice {
+export interface JMAQuakeNotice extends TelegramOffices {
   id: string
   time: string
   eventId: string
@@ -2233,7 +2256,7 @@ export interface JMAEarthquakeCountItem {
  * 日向灘 2 回・トカラ群発）で 0 通。型と読み取りは**気象庁公式のサンプル電文**
  * （`jmaxml_20260723_Samples.zip` の `32-35_*_VXSE60.xml`）に拠っている。
  */
-export interface JMAEarthquakeCount {
+export interface JMAEarthquakeCount extends TelegramOffices {
   id: string
   time: string
   /** 群発の始まりを指す識別子。個々の地震カードの `eventId` とは対応しない */
