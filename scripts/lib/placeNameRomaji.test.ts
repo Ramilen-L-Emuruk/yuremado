@@ -46,6 +46,13 @@ describe('areaEnFromKana', () => {
     expect(areaEnFromKana('京都府南部', 'キョウトフナンブ')).toBe('Kyoto Fu Nambu')
     expect(areaEnFromKana('大阪府北部', 'オオサカフホクブ')).toBe('Osaka Fu Hokubu')
   })
+  it('正: 県名と残りを読み仮名の上で切るので「ケン＋ミ」が m に同化しない', () => {
+    expect(areaEnFromKana('沖縄県宮古島', 'オキナワケンミヤコジマ')).toBe('Okinawa Ken Miyakojima')
+  })
+  it('正: 北海道は「Hokkaido 残り」。長音の「ウ」は北海道の側に付け、次の語の頭（オ）は食わない', () => {
+    expect(areaEnFromKana('北海道奥尻島', 'ホッカイドウオクシリトウ')).toBe('Hokkaido Okushirito')
+    expect(areaEnFromKana('北海道利尻礼文', 'ホッカイドウリシリレブン')).toBe('Hokkaido Rishirirebun')
+  })
   it('頭の語が無い名前は 1 語にする（対照）', () => {
     expect(areaEnFromKana('伊豆大島', 'イズオオシマ')).toBe('Izuoshima')
   })

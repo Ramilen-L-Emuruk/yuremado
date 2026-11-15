@@ -9,7 +9,7 @@
  * | `area`（地震情報の細分区域） | 同じ名前か同じコードの震央地名（「〜地方」）が辞書にあればその訳（全言語）。無い島など 28 件は英字の言語だけ下の 2 つ |
  * | `station`（震度観測点）・`tsunamiStation`（津波観測点） | 英字の言語（英・葡・西）だけ。気象庁サイトの報の英語名（`enName`）を集めたもの、無ければ読み仮名から作ったローマ字（`lib/placeNameRomaji.ts`） |
  *
- * 中国語・韓国語は辞書の無い種類を持たない（画面では日本語の名前のまま出る）。
+ * 中国語・韓国語は辞書の無い種類を持たない（画面では日本語の名前のまま出る）。辞書の訳の誤りと揺れは `lib/placeNameFixes.ts` で直してから入れる。
  * ポルトガル語・スペイン語の観測点は英語と同じ英字の名前を使う（気象庁の辞書にも観測点は無い）。
  *
  * 入力（どれもメインの checkout の `.cache/` の控え。無い・件数が少なすぎる・読めない、のどれでも止まる。取り方は `.cache/jma-multi/README.md`）:
@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cacheDir } from './lib/cacheDir.mjs'
 import { areaEnFromKana, cityEnFromKana, stationEnFromKana, tsunamiStationEnFromKana } from './lib/placeNameRomaji'
+import { fixPlaceName, leftoverForeignChars } from './lib/placeNameFixes'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT_DIR = resolve(HERE, '..', 'public', 'data', 'place-names')
@@ -77,11 +78,14 @@ export const KNOWN_UNTRANSLATED: Readonly<Record<'area' | 'station' | 'tsunamiSt
   tsunamiStation: [],
 }
 
-/** 訳を作れなかった名前が {@link KNOWN_UNTRANSLATED} を超えていたら止める */
+/** 訳を作れなかった名前が {@link KNOWN_UNTRANSLATED} を超えていたら止める。中国語の訳にその字体で使わない字が残っていても止める */
 export function checkUntranslated(report: BuildReport): void {
   for (const kind of ['area', 'station', 'tsunamiStation'] as const) {
     const extra = report.untranslated[kind].filter((n) => !KNOWN_UNTRANSLATED[kind].includes(n))
     if (extra.length) throw new Error(`${report.locale} の ${kind} で訳を作れない名前が増えた（${extra.length} 件: ${extra.slice(0, 10).join('・')}）。読み仮名の変換か控えを確かめる。日本語のまま出すと決めたなら KNOWN_UNTRANSLATED に足す`)
+  }
+  if (report.foreignChars.length) {
+    throw new Error(`${report.locale} の訳にその字体で使わない字が残っている（${report.foreignChars.length} 件: ${report.foreignChars.slice(0, 10).join('・')}）。辞書の誤りなら lib/placeNameFixes.ts の PLACE_NAME_FIXES に直しを足す`)
   }
 }
 
@@ -93,7 +97,11 @@ function put(table: Record<string, string>, kind: string, name: string, value: s
   table[name] = value
 }
 
-export interface BuildReport { locale: string; counts: Record<PlaceNameKind, number>; romaji: Record<'area' | 'station' | 'tsunamiStation', number>; untranslated: Record<'area' | 'station' | 'tsunamiStation', string[]> }
+export interface BuildReport {
+  locale: string; counts: Record<PlaceNameKind, number>; romaji: Record<'area' | 'station' | 'tsunamiStation', number>; untranslated: Record<'area' | 'station' | 'tsunamiStation', string[]>
+  /** 直した後もその字体で使わない字が残っている訳（中国語だけ）。1 件でもあれば止める */
+  foreignChars: string[]
+}
 
 /** 1 つの言語の表を作る。入力の読み込みはしない（テストから呼べるように） */
 export function buildPlaceNameTable(src: PlaceNameSources, locale: (typeof PLACE_NAME_LOCALES)[number]): { table: PlaceNameTable; report: BuildReport } {
@@ -101,10 +109,12 @@ export function buildPlaceNameTable(src: PlaceNameSources, locale: (typeof PLACE
   const romaji = { area: 0, station: 0, tsunamiStation: 0 }
   const untranslated = { area: [] as string[], station: [] as string[], tsunamiStation: [] as string[] }
   const f = locale.field
-  const dictText = (e: DictEntry) => (locale.latin ? latinSeparators(tidy(e[f])) : tidy(e[f]))
+  // 中国語・韓国語は辞書の誤りと揺れを直してから入れる（`lib/placeNameFixes.ts`）
+  const dictText = (e: DictEntry, kind: string, name: string) =>
+    locale.latin ? latinSeparators(tidy(e[f])) : fixPlaceName(locale.id, kind, name, tidy(e[f]))
 
   for (const [kind, dict] of [['epi', src.epi], ['pref', src.pref], ['city', src.city], ['tsunamiArea', src.tsunamiArea]] as const) {
-    for (const e of Object.values(dict)) put(table[kind], kind, e.japanese, dictText(e))
+    for (const e of Object.values(dict)) put(table[kind], kind, e.japanese, dictText(e, kind, e.japanese))
   }
 
   const epiByName = new Map(Object.values(src.epi).map((e) => [e.japanese, e]))
@@ -114,13 +124,14 @@ export function buildPlaceNameTable(src: PlaceNameSources, locale: (typeof PLACE
     station: new Map(src.enPairs.station.map((p) => [p.code, p.en])),
   }
 
-  // 細分区域: 辞書（同じ名前 → 同じコードの「名前＋地方」）→ 英字の言語だけ集めた英語名 → ローマ字
+  // 細分区域: 辞書（同じ名前 → 同じコードの「名前＋地方」）→ 英字の言語だけ集めた英語名 → ローマ字。
+  // 辞書の訳は震央地名の項なので、直しも震央地名の種類と名前で引く（同じ地名の訳が区域と震央地名でずれないように）
   const areas = new Map<string, EqStation['region']>()
   for (const s of src.eqStations) areas.set(s.region.code, s.region)
   for (const r of areas.values()) {
     const byCode = src.epi[r.code]
     const dict = epiByName.get(r.name) ?? (byCode && byCode.japanese === `${r.name}地方` ? byCode : undefined)
-    if (dict) { put(table.area, 'area', r.name, dictText(dict)); continue }
+    if (dict) { put(table.area, 'area', r.name, dictText(dict, 'epi', dict.japanese)); continue }
     if (!locale.latin) continue
     const collected = jmaEn.area.get(r.code)
     const made = collected ? null : areaEnFromKana(r.name, r.kana)
@@ -168,7 +179,14 @@ export function buildPlaceNameTable(src: PlaceNameSources, locale: (typeof PLACE
   }
 
   const counts = Object.fromEntries(PLACE_NAME_KINDS.map((k) => [k, Object.keys(table[k]).length])) as Record<PlaceNameKind, number>
-  return { table, report: { locale: locale.id, counts, romaji, untranslated } }
+  const foreignChars: string[] = []
+  for (const kind of PLACE_NAME_KINDS) {
+    for (const [name, value] of Object.entries(table[kind])) {
+      const hit = leftoverForeignChars(locale.id, value)
+      if (hit) foreignChars.push(`${kind} ${name}→${value}（${hit}）`)
+    }
+  }
+  return { table, report: { locale: locale.id, counts, romaji, untranslated, foreignChars } }
 }
 
 function readJson<T>(path: string): T {
