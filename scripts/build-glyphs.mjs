@@ -16,8 +16,8 @@
 //       その組で描く字を含む 256 ブロックだけを生成する（ラベルは既知有限集合のため軽量）。
 //
 // 組は 2 種類ある（組の名前の単一情報源は src/components/Map/gl/fontStack.ts）:
-//   - M PLUS Rounded 1c（JP_FONT_STACK）: 地方名・日本語の県名・区域名・震度の字・英字の言語の訳。
-//   - 言語ごとの組（PLACE_LABEL_FONT_STACKS。Noto Sans SC/TC/KR Black）: その言語の県名・区域名の訳だけ。
+//   - M PLUS Rounded 1c（JP_FONT_STACK）: 日本語の地方名・県名・区域名・震度の字・英字の言語の訳。
+//   - 言語ごとの組（PLACE_LABEL_FONT_STACKS。Noto Sans SC/TC/KR Black）: その言語の地方名（辞書の map.regionName）・県名・区域名の訳だけ。
 //     M PLUS に無い字（简体の县・한글など）を使うため（2026-11-15 ユーザー承認）。
 //     訳の無い名前（日本語のまま）は M PLUS の組で描くので、こちらには焼かない。
 //
@@ -220,6 +220,22 @@ function addTranslations(locale, add) {
   for (const kind of ['pref', 'area']) Object.values(table[kind]).forEach(add)
 }
 
+/**
+ * その言語の辞書（src/i18n/messages/<言語>.ts）の map.regionName から、地方名の訳を読む。.mjs は .ts を import できないので
+ * ソースを読む。地方（regions.ts の REGIONS）の数とそろわなければ止める（訳の欠けた地方が空白で描かれるのを防ぐ）
+ */
+function readRegionTranslations(locale, regionNames) {
+  const file = path.join(ROOT, 'src', 'i18n', 'messages', `${locale.replace('-', '')}.ts`)
+  const block = fs.readFileSync(file, 'utf8').match(/regionName:\s*\{([^}]*)\}/)
+  if (!block) throw new Error(`${file} から map.regionName を読み取れなかった`)
+  // 読めるのは「鍵: '値',」の形だけ。逃がし文字・二重引用符・テンプレート文字列・コメントがあれば、途中で切れた字を焼かないよう止める
+  if (/[\\"`]|\/\//.test(block[1])) throw new Error(`${file} の map.regionName に読めない書き方がある（値は ' で囲み、\\・"・\`・コメントを使わないこと）`)
+  const entries = new Map([...block[1].matchAll(/([^\s,:']+):\s*'([^']+)'/g)].map((m) => [m[1], m[2]]))
+  const missing = regionNames.filter((n) => !entries.has(n))
+  if (missing.length) throw new Error(`${file} の map.regionName に地方 ${missing.join('・')} の訳が無い`)
+  return regionNames.map((n) => entries.get(n))
+}
+
 /** 組ごとに、その組で描く Unicode コードポイント集合を集める（組の名前 → 集合）。 */
 function collectCodepoints() {
   const sets = new Map(STACKS.map((s) => [s.stack, new Set()]))
@@ -248,6 +264,8 @@ function collectCodepoints() {
     const own = LOCALE_STACK_OF.get(locale)
     if (own) {
       addTranslations(locale, adder(own))
+      // 地方名の訳（辞書の map.regionName）もその言語の組で描く（LabelsGL の regionFont）
+      readRegionTranslations(locale, regionNames).forEach(adder(own))
       continue
     }
     const foreign = new Set()

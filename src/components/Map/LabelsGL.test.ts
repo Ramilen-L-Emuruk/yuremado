@@ -22,6 +22,8 @@ import { MapGLContext } from './mapGLContext'
 import { LabelsGL, relabelTargets, type LabelTarget } from './LabelsGL'
 import { JP_FONT_STACK } from './gl/fontStack'
 import { JA_MESSAGES } from '../../i18n/messages'
+import { ko as KO_MESSAGES } from '../../i18n/messages/ko'
+import { zhHans as ZH_HANS_MESSAGES } from '../../i18n/messages/zhHans'
 import { mapLabelPlaceNames, placeNameLookup, PLACE_NAME_KINDS, type PlaceNameTable } from '../../i18n/placeNames'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 
@@ -450,12 +452,17 @@ describe('relabelTargets（言語を切り替えたときのラベルの字）',
       ...(Object.fromEntries(PLACE_NAME_KINDS.map((k) => [k, {}])) as unknown as PlaceNameTable),
       pref: { 石川県: '石川县' },
     })
-    it('正: 中国語で訳した県名はその言語の組、訳の無い区域名と地方名は M PLUS', () => {
+    it('正: 中国語で訳した県名と地方名はその言語の組、訳の無い区域名は M PLUS', () => {
       const t = targets()
-      const changed = relabelTargets(t, mapLabelPlaceNames('zh-Hans', zh), JA_MESSAGES.map, 'zh-Hans')
-      expect(t.map((x) => x.font ?? JP_FONT_STACK)).toEqual([JP_FONT_STACK, 'Noto Sans SC Black', JP_FONT_STACK])
-      // 字も組も変わらない区域名・地方名は書き戻さない
-      expect([...changed]).toEqual(['basemap-pref-labels'])
+      const changed = relabelTargets(t, mapLabelPlaceNames('zh-Hans', zh), ZH_HANS_MESSAGES.map, 'zh-Hans')
+      expect(t.map((x) => x.font ?? JP_FONT_STACK)).toEqual(['Noto Sans SC Black', 'Noto Sans SC Black', JP_FONT_STACK])
+      // 字も組も変わらない区域名は書き戻さない
+      expect([...changed].sort()).toEqual(['basemap-pref-labels', 'basemap-region-labels'])
+    })
+    it('正: 韓国語では地方名を辞書の訳で出し、韓国語の組で描く', () => {
+      const t = targets()
+      relabelTargets(t, mapLabelPlaceNames('ko', zh), KO_MESSAGES.map, 'ko')
+      expect(t[0]).toMatchObject({ text: '홋카이도', font: 'Noto Sans KR Black' })
     })
     it('正: 訳が日本語と同じ字（繁体の「石川県能登」が同じ字で表にある）でも、表にあればその言語の組', () => {
       const hant = placeNameLookup({
@@ -473,12 +480,13 @@ describe('relabelTargets（言語を切り替えたときのラベルの字）',
       relabelTargets(t, mapLabelPlaceNames('en', en), JA_MESSAGES.map, 'en')
       expect(t.map((x) => x.font ?? JP_FONT_STACK)).toEqual([JP_FONT_STACK, JP_FONT_STACK, JP_FONT_STACK])
     })
-    it('安全弁: 中国語から日本語へ戻すと、字が戻るのと一緒に組も M PLUS へ戻す', () => {
+    it('安全弁: 中国語から日本語へ戻すと、字が戻るのと一緒に組も M PLUS へ戻す（地方名も）', () => {
       const t = targets()
-      relabelTargets(t, mapLabelPlaceNames('zh-Hans', zh), JA_MESSAGES.map, 'zh-Hans')
+      relabelTargets(t, mapLabelPlaceNames('ko', zh), KO_MESSAGES.map, 'ko')
       const changed = relabelTargets(t, mapLabelPlaceNames('ja', zh), JA_MESSAGES.map, 'ja')
+      expect(t[0]).toMatchObject({ text: '北海道', font: JP_FONT_STACK })
       expect(t[1]).toMatchObject({ text: '石川県', font: JP_FONT_STACK })
-      expect([...changed]).toEqual(['basemap-pref-labels'])
+      expect([...changed].sort()).toEqual(['basemap-pref-labels', 'basemap-region-labels'])
     })
   })
 })

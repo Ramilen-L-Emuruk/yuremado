@@ -118,10 +118,9 @@ const REGION_SHIFT_EM = 1.5
 const PREF_SHIFT_EM = 1.5
 const SUB_SHIFT_EM = 2.2
 
-// symbol レイヤーの text-font。フォントスタック名は gl/fontStack.ts が単一情報源
-// （build-glyphs.mjs の出力ディレクトリ名と本値の一致はビルド時に照合される。詳細は fontStack.ts）。
-// 地方名は M PLUS だけ。県名・区域名は地物の `font`（`LabelTarget.font`）から組を選ぶ（中韓の訳は言語ごとの組）
-const JP_TEXT_FONT = [JP_FONT_STACK]
+// symbol レイヤーの text-font は、地方名・県名・区域名とも `LABEL_TEXT_FONT_EXPR`（地物の `font` から組を選ぶ。
+// 中韓の訳は言語ごとの組）。組の名前は gl/fontStack.ts が単一情報源で、build-glyphs.mjs の出力ディレクトリ名との一致は
+// ビルド時に照合される
 
 // 縁取り: ダーク地図上での視認性を確保するため、太めの halo-width＋halo-blur で背景色のソフトなグローを
 // 敷く（旧 Leaflet の三重 text-shadow 相当）。グリフ自体も ExtraBold(800)で焼いている（build-glyphs.mjs）。
@@ -257,7 +256,7 @@ export function relabelTargets(targets: LabelTarget[], labelPlace: PlaceNameLook
       ? labelPlace(t.place.kind, t.place.name)
       : t.source === REGION_SRC ? regionLabel(REGIONS[Number(t.id)]?.name ?? t.text, mapWords) : t.text
     const font = placeFont(t, labelPlace, locale)
-    // 組の無いラベル（地方名）は M PLUS と同じに見る（初めて組を決めただけで書き戻しを起こさない）
+    // 組の無いラベルは M PLUS と同じに見る（初めて組を決めただけで書き戻しを起こさない）
     if (t.text !== text || (t.font ?? JP_FONT_STACK) !== font) { t.text = text; t.font = font; changed.add(t.source) }
   }
   return changed
@@ -265,12 +264,19 @@ export function relabelTargets(targets: LabelTarget[], labelPlace: PlaceNameLook
 
 /**
  * ラベル 1 枚を描く組。県名・区域名の訳はその言語の組（`PLACE_LABEL_FONT_STACKS`）、訳の無い名前（日本語の名前の
- * まま）と地方名は M PLUS（2026-11-15 ユーザー承認）。訳したかは
+ * まま）は M PLUS（2026-11-15 ユーザー承認）。訳したかは
  * 表に訳があるか（`PlaceNameLookup.has`）で見る。字で比べると、訳が日本語と同じ字の名前（繁体の「東京都」）だけ
- * M PLUS になり、同じ地図の中で書体が混ざる
+ * M PLUS になり、同じ地図の中で書体が混ざる。地方名は、日本語以外のどの言語の辞書（`map.regionName`）にも 14 件すべての
+ * 訳があるので、日本語以外では言語の組で描く（2026-11-16 ユーザー選択「この訳で入れる (Recommended)」）
  */
 function placeFont(t: LabelTarget, lookup: PlaceNameLookup, locale: Locale): string {
+  if (t.source === REGION_SRC) return regionFont(locale)
   return placeLabelFontStack(locale, !!t.place && lookup.has(t.place.kind, t.place.name))
+}
+
+/** 地方名のラベルを描く組 */
+function regionFont(locale: Locale): string {
+  return placeLabelFontStack(locale, locale !== 'ja')
 }
 
 /** 県名・区域名のラベル 1 枚の字・元の名前・組（足すときの言語と引き方で作る） */
@@ -338,6 +344,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
       id: i,
       lngLat: [r.lng, r.lat],
       text: regionLabel(r.name, messagesRef.current.map),
+      font: regionFont(localeRef.current),
       textSize: REGION_TEXT_SIZE,
       shiftEm: REGION_SHIFT_EM,
       unboundedShift: true,
@@ -351,7 +358,8 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
       maxzoom: REGION_MAX_ZOOM,
       layout: {
         'text-field': ['get', 'name'],
-        'text-font': JP_TEXT_FONT,
+        // 中韓の地方名はその言語の組で描く（地物の `font` から選ぶ。`regionFont`）
+        'text-font': LABEL_TEXT_FONT_EXPR,
         'text-size': REGION_TEXT_SIZE * iconScaleRef.current,
         'text-letter-spacing': 0.05,
         // 地方名どうしが重なったら上下へ逃がし、バッジと重なったら全体を上下へずらす
