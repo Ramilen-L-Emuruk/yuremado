@@ -122,5 +122,6 @@ MIT License（[LICENSE](LICENSE)）。
 - 活断層データ: 「産総研 活断層データベース」（政府標準利用規約 2.0）
 - プレート境界データ: PB2002 (Bird, 2003) — データ整備: Hugo Ahlenius・Nordpil [fraxen/tectonicplates](https://github.com/fraxen/tectonicplates)（Open Data Commons Attribution License 1.0）
 - 地名ラベルのフォント: M PLUS Rounded 1c（SIL Open Font License 1.1）— Copyright 2016 The Rounded M+ Project Authors.
+- 地名ラベルのフォント（中国語・韓国語の県名・区域名）: Noto Sans SC（簡体字）/ TC（繁体字）/ KR（韓国語）（SIL Open Font License 1.1・https://github.com/notofonts/noto-cjk ）— © 2014-2021 Adobe (http://www.adobe.com/).
 - 過去の地震の再生データ（2016年熊本地震・2016年鳥取県中部地震・2018年北海道胆振東部地震・2018年大阪府北部地震）: 地震情報・津波は「気象庁防災情報XMLデータベース」（国立情報学研究所 CPS-IIP, Asanobu KITAMOTO・CC BY 4.0）、緊急地震速報は気象庁「緊急地震速報（警報）発表状況」（政府標準利用規約 第1.0版）
 - テストボタンが流す電文: 「気象庁防災情報XMLデータベース」（国立情報学研究所 CPS-IIP, Asanobu KITAMOTO・CC BY 4.0）と、気象庁「防災情報XMLフォーマット 技術資料」のサンプル電文（公共データ利用規約 第1.0版）。実配信に出ない形は、これらを書き換えて作成（→ [public/data/test-telegrams/README.md](public/data/test-telegrams/README.md)）

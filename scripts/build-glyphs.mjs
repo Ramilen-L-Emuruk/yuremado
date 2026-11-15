@@ -1,4 +1,4 @@
-// 日本語ラベル用 SDF グリフ PBF を事前生成する（§8 テキスト描画 B案・移行計画 docs/webgl-rendering-migration-plan.md §8）。
+// 地名ラベル用 SDF グリフ PBF を事前生成する（§8 テキスト描画 B案・移行計画 docs/webgl-rendering-migration-plan.md §8）。
 //
 // 背景: MapLibre は glyphs 未設定だと text-font の文字を実行時に TinySDF でクライアント
 // ラスタライズする。日本語（漢字数百字）の初回生成が実機 Surface Go 2 で 75〜260ms のメイン
@@ -12,18 +12,25 @@
 // 不要）でシムする。標準の node-fontnik は native ビルドが Node 24 で通らず不採用（この経路なら
 // Windows 開発機でも Linux CI でも同一スクリプトが動く）。
 //
-// 出力: public/fonts/<STACK>/<start>-<end>.pbf（MapLibre の glyphs URL 規約）。
-//       必要な codepoint を含む 256 ブロックだけを生成する（ラベルは既知有限集合のため軽量）。
+// 出力: public/fonts/<組>/<start>-<end>.pbf（MapLibre の glyphs URL 規約）。組（フォントスタック）ごとに、
+//       その組で描く字を含む 256 ブロックだけを生成する（ラベルは既知有限集合のため軽量）。
+//
+// 組は 2 種類ある（組の名前の単一情報源は src/components/Map/gl/fontStack.ts）:
+//   - M PLUS Rounded 1c（JP_FONT_STACK）: 地方名・日本語の県名・区域名・震度の字・英字の言語の訳。
+//   - 言語ごとの組（PLACE_LABEL_FONT_STACKS。Noto Sans SC/TC/KR Black）: その言語の県名・区域名の訳だけ。
+//     M PLUS に無い字（简体の县・한글など）を使うため（2026-11-15 ユーザー承認）。
+//     訳の無い名前（日本語のまま）は M PLUS の組で描くので、こちらには焼かない。
 //
 // 使い方:
-//   node scripts/build-glyphs.mjs                    # 既定: 同梱の M PLUS Rounded 1c ExtraBold
-//   GLYPH_FONT=path/to/Other.ttf \                   # 別フォントを使う場合のみ上書き
+//   node scripts/build-glyphs.mjs                    # 既定: 同梱のフォントで全部の組を焼く
+//   GLYPH_FONT=path/to/Other.ttf \                   # M PLUS の組だけ別フォントで焼く場合のみ上書き
 //     GLYPH_FAMILY="Internal Family" GLYPH_STACK="Other Family" node scripts/build-glyphs.mjs
 //
-// 本番フォント: 再配布可能な M PLUS Rounded 1c ExtraBold(OFL) を scripts/fonts/ に同梱し、既定で登録する
-// （システム Meiryo / UD デジタル教科書体は再配布不可のため不採用）。出力 public/fonts/M PLUS Rounded 1c/ を
-// MapLibre が配信する。丸ゴシック＋ExtraBold を選んだのは、暗い地図上の小さな地名ラベル（13〜17px）で
-// 輪郭が識別しやすく太さも稼げるため。perf 特性（事前生成で TinySDF スパイクを消す）はフォントに依らず不変。
+// 本番フォント: 再配布可能なフォント（OFL 1.1）を scripts/fonts/ に同梱し、既定で登録する
+// （システム Meiryo / UD デジタル教科書体は再配布不可のため不採用）。M PLUS Rounded 1c ExtraBold は
+// 丸ゴシック＋ExtraBold で、暗い地図上の小さな地名ラベル（13〜17px）で輪郭が識別しやすく太さも稼げるため。
+// 中韓の組は Noto Sans SC/TC/KR の Black（元のフォントを丸ごと同梱。2026-11-15 ユーザー承認）。
+// perf 特性（事前生成で TinySDF スパイクを消す）はフォントに依らず不変。
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -39,6 +46,7 @@ import { PbfReader, PbfWriter } from 'pbf'
 const CHECK_ONLY = process.argv.includes('--check')
 
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const FONTS_DIR = path.join(ROOT, 'scripts', 'fonts')
 
 // SDF パラメータ（MapLibre 既定・サーバーグリフと一致させる）。
 const FONT_SIZE = 24
@@ -48,28 +56,108 @@ const FONT_SIZE = 24
 const BUFFER = 3
 const RADIUS = 8
 const CUTOFF = 0.25
-// フォントウェイト。既定 800(ExtraBold)＝ダーク地図上で細い文字が「非常に見づらい」とのユーザー指摘を
-// 受け、視認性を最優先に太字化する。tiny-sdf は canvas の font 文字列にこの値を渡し、napi-rs/canvas
-// (skia) が登録済みフォントから該当ウェイトを選ぶ（同梱フォントは ExtraBold 単体＝800 のみを持つため、
-// ここを変える場合は対応ウェイトの TTF を GLYPH_FONT で併せて差し替えること）。
-const FONT_WEIGHT = process.env.GLYPH_WEIGHT ?? '800'
 
-// フォント指定。GLYPH_FONT にファイルパスが与えられれば登録して使う。既定は本リポジトリに同梱した
+// M PLUS の組。GLYPH_FONT にファイルパスが与えられれば登録して使う。既定は本リポジトリに同梱した
 // M PLUS Rounded 1c ExtraBold(OFL・再配布可)。これにより `node scripts/build-glyphs.mjs` 一発で
 // 開発機でも Linux CI でも同一の glyph を再生成できる（区域名の増減時に回し直す想定）。
-const DEFAULT_FONT_FILE = path.join(ROOT, 'scripts', 'fonts', 'MPLUSRounded1c-ExtraBold.ttf')
-const FONT_FILE = process.env.GLYPH_FONT ?? (fs.existsSync(DEFAULT_FONT_FILE) ? DEFAULT_FONT_FILE : '')
-// canvas に渡す「内部」ファミリ名。M PLUS Rounded 1c は配布名と TTF 内部の名前が一致せず、ExtraBold は
-// "Rounded Mplus 1c" の weight 800 として登録される。ここに配布名を書くと skia がフォントを見つけられず、
-// 例外を出さないまま別フォントで焼いてしまうため実測値を使う（GLYPH_FAMILY で上書き可）。
-const FONT_FAMILY = process.env.GLYPH_FAMILY ?? 'Rounded Mplus 1c'
+const DEFAULT_FONT_FILE = path.join(FONTS_DIR, 'MPLUSRounded1c-ExtraBold.ttf')
+const PRIMARY_FONT_FILE = process.env.GLYPH_FONT ?? (fs.existsSync(DEFAULT_FONT_FILE) ? DEFAULT_FONT_FILE : '')
 
 /**
- * グリフ生成に必要な native 依存を読み込み、フォントを登録して設定の整合を検証する。
+ * 組の定義。
+ * - `family`: canvas に渡す「内部」ファミリ名。配布名とフォント内部の名前は一致しないことがある（M PLUS Rounded 1c
+ *   ExtraBold は "Rounded Mplus 1c" の weight 800、Noto Sans SC Black は "Noto Sans SC" の weight 900 として登録される）。
+ *   ここに配布名を書くと skia がフォントを見つけられず、例外を出さないまま別フォントで焼いてしまうため実測値を使う。
+ * - `weight`: 暗い地図の上の小さなラベルでも読めるよう、太いウェイトを使う。tiny-sdf は
+ *   canvas の font 文字列にこの値を渡し、napi-rs/canvas (skia) が登録済みフォントから該当ウェイトを選ぶ
+ *   （同梱フォントはどれも 1 ウェイト単体なので、変えるなら対応ウェイトのフォントも差し替えること）。
+ * - `license`: OFL 1.1 第2条は、フォントソフトウェアの派生物を配布する各コピーに著作権表示とライセンス全文を
+ *   添付することを求める。エンドユーザーへ実際に配信されるのは public/fonts/<組>/ 配下の SDF 派生物なので、
+ *   ライセンス文を出力先にも複製する（scripts/fonts/ はビルド時ソースで配信対象外のため）。
+ */
+const PRIMARY = {
+  stack: process.env.GLYPH_STACK ?? 'M PLUS Rounded 1c',
+  file: PRIMARY_FONT_FILE,
+  family: process.env.GLYPH_FAMILY ?? 'Rounded Mplus 1c',
+  weight: process.env.GLYPH_WEIGHT ?? '800',
+  // GLYPH_FONT で別フォントに差し替えた場合は同梱ライセンスと対応しなくなるので複製しない。
+  // 判定は path.resolve で正規化してから行う（GLYPH_FONT に相対パスやフォワードスラッシュで同じ
+  // ファイルを指定されたとき、素の文字列比較では別物と見なされ複製が漏れるため）。
+  license:
+    PRIMARY_FONT_FILE !== '' && path.resolve(PRIMARY_FONT_FILE) === path.resolve(DEFAULT_FONT_FILE)
+      ? path.join(FONTS_DIR, 'OFL.txt')
+      : '',
+}
+/** 言語ごとの組（組の名前 → フォント）。どの言語がどの組かは fontStack.ts の PLACE_LABEL_FONT_STACKS が決める */
+const LOCALE_FONTS = {
+  'Noto Sans SC Black': { file: 'NotoSansSC-Black.otf', family: 'Noto Sans SC', weight: '900' },
+  'Noto Sans TC Black': { file: 'NotoSansTC-Black.otf', family: 'Noto Sans TC', weight: '900' },
+  'Noto Sans KR Black': { file: 'NotoSansKR-Black.otf', family: 'Noto Sans KR', weight: '900' },
+}
+const NOTO_LICENSE = path.join(FONTS_DIR, 'NotoSansCJK-OFL.txt')
+
+// フォントスタック名の単一情報源(src/components/Map/gl/fontStack.ts)と、これから出力する組が一致することを
+// ビルド時に照合する。ずれると MapLibre は該当テキストを無音で描かなくなる(glyphs URL の {fontstack} と
+// public/fonts/<stack>/ が食い違うサイレント障害)ため、ここで早期失敗させる。.mjs は .ts を import できない
+// ためソースを読んでリテラルを取り出して突き合わせる。
+const FONT_STACK_SRC = fs.readFileSync(path.join(ROOT, 'src', 'components', 'Map', 'gl', 'fontStack.ts'), 'utf8')
+function readAppFontStack() {
+  const m = FONT_STACK_SRC.match(/JP_FONT_STACK\s*=\s*'([^']+)'/)
+  if (!m) throw new Error('fontStack.ts から JP_FONT_STACK を読み取れなかった')
+  return m[1]
+}
+/** fontStack.ts の PLACE_LABEL_FONT_STACKS（言語 → 組の名前）。読めなければ止める */
+function readLocaleFontStacks() {
+  const block = FONT_STACK_SRC.match(/PLACE_LABEL_FONT_STACKS[^=]*=\s*\{\r?\n([^}]*)\r?\n\}/)
+  // 1 行に 1 言語（`'言語': '組の名前',`）だけを許す。読めない行があれば止める（コメントや別の書き方を黙って読み飛ばさない）
+  const lines = block ? block[1].split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '') : []
+  const pairs = lines.map((l) => {
+    const m = l.match(/^'?([A-Za-z-]+)'?\s*:\s*'([^']+)',?$/)
+    if (!m) throw new Error(`fontStack.ts の PLACE_LABEL_FONT_STACKS に読めない行がある: ${l}（1 行に 1 言語の \`'言語': '組の名前',\` で書くこと）`)
+    return [m[1], m[2]]
+  })
+  if (pairs.length === 0) throw new Error('fontStack.ts から PLACE_LABEL_FONT_STACKS を読み取れなかった')
+  return new Map(pairs)
+}
+const APP_FONT_STACK = readAppFontStack()
+if (PRIMARY.stack !== APP_FONT_STACK) {
+  throw new Error(
+    `フォントスタック名の不一致: build-glyphs の STACK="${PRIMARY.stack}" ≠ アプリの JP_FONT_STACK="${APP_FONT_STACK}"。` +
+      `public/fonts/<stack>/ と text-font がずれるとテキストが無音で消える。fontStack.ts と GLYPH_STACK/GLYPH_FAMILY を揃えること。`,
+  )
+}
+const LOCALE_STACK_OF = readLocaleFontStacks()
+{
+  const appStacks = new Set(LOCALE_STACK_OF.values())
+  const unknown = [...appStacks].filter((s) => !(s in LOCALE_FONTS))
+  const unused = Object.keys(LOCALE_FONTS).filter((s) => !appStacks.has(s))
+  if (unknown.length || unused.length) {
+    throw new Error(
+      `言語ごとの組がアプリと食い違う: フォントの無い組 ${unknown.join(', ') || '(なし)'} / アプリが使わない組 ${unused.join(', ') || '(なし)'}。` +
+        'fontStack.ts の PLACE_LABEL_FONT_STACKS と build-glyphs.mjs の LOCALE_FONTS を揃えること。',
+    )
+  }
+  // 組を持つのに訳さない言語があると、その組には ASCII しか焼かれず、検査も通ってしまう
+  const labelLocales = new Set(readLabelLocales())
+  const notLabeled = [...LOCALE_STACK_OF.keys()].filter((l) => !labelLocales.has(l))
+  if (notLabeled.length) {
+    throw new Error(`PLACE_LABEL_FONT_STACKS の言語が MAP_LABEL_LOCALES に無い: ${notLabeled.join(', ')}。訳さない言語に組を持たせないか、MAP_LABEL_LOCALES に足すこと。`)
+  }
+}
+
+/** 焼く組の一覧（M PLUS の組が先頭） */
+const STACKS = [
+  PRIMARY,
+  ...Object.entries(LOCALE_FONTS).map(([stack, f]) => ({ stack, file: path.join(FONTS_DIR, f.file), family: f.family, weight: f.weight, license: NOTO_LICENSE })),
+]
+const outDirOf = (stack) => path.join(ROOT, 'public', 'fonts', stack.stack)
+
+/**
+ * グリフ生成に必要な native 依存を読み込み、全部の組のフォントを登録して設定の整合を検証する。
  * 検証モード（--check）からは呼ばない（生成物を読むだけの処理を native の可用性に依存させないため）。
  * @returns TinySDF コンストラクタ
  */
-async function setupFont() {
+async function setupFonts() {
   const { createCanvas, GlobalFonts } = await import('@napi-rs/canvas')
   // tiny-sdf は document.createElement('canvas') を使うため Node 上でシムする。
   globalThis.document = {
@@ -78,66 +166,67 @@ async function setupFont() {
       return createCanvas(1, 1)
     },
   }
-  const familiesBefore = new Set(GlobalFonts.families.map((f) => f.family))
-  if (FONT_FILE) {
-    const ok = GlobalFonts.registerFromPath(path.resolve(FONT_FILE))
-    if (!ok) throw new Error(`フォントを登録できなかった: ${FONT_FILE}`)
-  }
-  // registerFromPath が成功しても、canvas に渡す FONT_FAMILY が TTF 内部の名前と食い違っていれば skia は
-  // 例外を投げずシステム既定フォントで描いてしまう（実測で確認済み。配布名 "M PLUS Rounded 1c" を渡すと
-  // 別形状のグリフが無言で生成された）。ビルドは "glyphs generated" と成功ログを出したまま全グリフが化ける
-  // ため、登録結果と突き合わせてここで失敗させる。GLYPH_FONT 未指定時はシステム側の全ファミリを対象にする。
-  const candidates = FONT_FILE ? GlobalFonts.families.filter((f) => !familiesBefore.has(f.family)) : GlobalFonts.families
-  const matched = candidates.find((f) => f.family === FONT_FAMILY)
-  if (!matched) {
-    throw new Error(
-      `フォントファミリ名の不一致: GLYPH_FAMILY="${FONT_FAMILY}" が見つからない。skia は例外を出さず別フォントで` +
-        `焼くため停止する。${
-          FONT_FILE
-            ? `${path.basename(FONT_FILE)} が登録したファミリ: ${candidates.map((f) => f.family).join(' / ') || '(なし)'}`
-            : 'GLYPH_FONT でフォントファイルを指定するか、GLYPH_FAMILY を実在するファミリ名にすること。'
-        }`,
-    )
-  }
-  // ウェイトも同様に無言で代替される（同梱フォントは静的な ExtraBold 単体なので、400 を渡しても 800 が
-  // 返るだけで指定ミスに気付けない）。持っていないウェイトを要求していたら止める。
-  if (!matched.styles.some((s) => String(s.weight) === FONT_WEIGHT)) {
-    throw new Error(
-      `フォントウェイトの不一致: GLYPH_WEIGHT=${FONT_WEIGHT} は "${FONT_FAMILY}" に存在しない` +
-        `（利用可能: ${matched.styles.map((s) => s.weight).join(' / ')}）。skia が近いウェイトで無言に代替するため停止する。`,
-    )
+  for (const s of STACKS) {
+    const familiesBefore = new Set(GlobalFonts.families.map((f) => f.family))
+    if (s.file) {
+      const ok = GlobalFonts.registerFromPath(path.resolve(s.file))
+      if (!ok) throw new Error(`フォントを登録できなかった: ${s.file}`)
+    }
+    // registerFromPath が成功しても、canvas に渡す family がフォント内部の名前と食い違っていれば skia は
+    // 例外を投げずシステム既定フォントで描いてしまう（実測で確認済み。配布名 "M PLUS Rounded 1c" を渡すと
+    // 別形状のグリフが無言で生成された）。ビルドは成功ログを出したまま全グリフが化けるため、登録結果と
+    // 突き合わせてここで失敗させる。フォント未指定時はシステム側の全ファミリを対象にする。
+    const candidates = s.file ? GlobalFonts.families.filter((f) => !familiesBefore.has(f.family)) : GlobalFonts.families
+    const matched = candidates.find((f) => f.family === s.family)
+    if (!matched) {
+      throw new Error(
+        `フォントファミリ名の不一致（組 "${s.stack}"）: family="${s.family}" が見つからない。skia は例外を出さず別フォントで` +
+          `焼くため停止する。${
+            s.file
+              ? `${path.basename(s.file)} が登録したファミリ: ${candidates.map((f) => f.family).join(' / ') || '(なし)'}` +
+                (familiesBefore.has(s.family) ? `（同じ名前の "${s.family}" が登録の前から入っている。端末に入っている同名の書体が先に読まれた可能性がある）` : '')
+              : 'GLYPH_FONT でフォントファイルを指定するか、GLYPH_FAMILY を実在するファミリ名にすること。'
+          }`,
+      )
+    }
+    // ウェイトも同様に無言で代替される（同梱フォントは 1 ウェイト単体なので、別の値を渡しても同じ字形が
+    // 返るだけで指定ミスに気付けない）。持っていないウェイトを要求していたら止める。
+    if (!matched.styles.some((st) => String(st.weight) === s.weight)) {
+      throw new Error(
+        `フォントウェイトの不一致（組 "${s.stack}"）: weight=${s.weight} は "${s.family}" に存在しない` +
+          `（利用可能: ${matched.styles.map((st) => st.weight).join(' / ')}）。skia が近いウェイトで無言に代替するため停止する。`,
+      )
+    }
   }
   return (await import('@mapbox/tiny-sdf')).default
 }
-// glyphs URL のディレクトリ名 ＝ style の text-font 値。上の FONT_FAMILY（TTF 内部名）とは別物なので、
-// アプリ側の JP_FONT_STACK と一致する配布名を既定に置く（下の照合で不一致ならビルドを失敗させる）。
-const STACK = process.env.GLYPH_STACK ?? 'M PLUS Rounded 1c'
-const OUT_DIR = path.join(ROOT, 'public', 'fonts', STACK)
 
-// フォントスタック名の単一情報源(src/components/Map/gl/fontStack.ts の JP_FONT_STACK)と、これから
-// 出力する STACK が一致することをビルド時に照合する。ずれると MapLibre は該当テキストを無音で描かなく
-// なる(glyphs URL の {fontstack} と public/fonts/<stack>/ が食い違うサイレント障害)ため、ここで早期失敗
-// させる。.mjs は .ts を import できないためソースを読んでリテラルを取り出して突き合わせる。
-function readAppFontStack() {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'components', 'Map', 'gl', 'fontStack.ts'), 'utf8')
-  const m = src.match(/JP_FONT_STACK\s*=\s*'([^']+)'/)
-  if (!m) throw new Error('fontStack.ts から JP_FONT_STACK を読み取れなかった')
-  return m[1]
-}
-const APP_FONT_STACK = readAppFontStack()
-if (STACK !== APP_FONT_STACK) {
-  throw new Error(
-    `フォントスタック名の不一致: build-glyphs の STACK="${STACK}" ≠ アプリの JP_FONT_STACK="${APP_FONT_STACK}"。` +
-      `public/fonts/<stack>/ と text-font がずれるとテキストが無音で消える。fontStack.ts と GLYPH_STACK/GLYPH_FAMILY を揃えること。`,
-  )
+const readJson = (...p) => JSON.parse(fs.readFileSync(path.join(ROOT, ...p), 'utf8'))
+
+/** 地図のラベルを訳す言語（src/i18n/placeNames.ts の MAP_LABEL_LOCALES）。読めなければ止める */
+function readLabelLocales() {
+  // .mjs は .ts を import できないためソースから一覧を取り出す。読めなければ止める——読めないまま進むと、
+  // 訳の字が欠けて空白の混ざったラベルになるのに検査は通ってしまう
+  const placeNamesSrc = fs.readFileSync(path.join(ROOT, 'src', 'i18n', 'placeNames.ts'), 'utf8')
+  const localesMatch = placeNamesSrc.match(/MAP_LABEL_LOCALES:[^=]*=\s*\[([^\]]*)\]/)
+  const labelLocales = localesMatch ? [...localesMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : []
+  if (labelLocales.length === 0) throw new Error('placeNames.ts から MAP_LABEL_LOCALES を読み取れなかった')
+  return labelLocales
 }
 
-/** ラベルに実際に使われる Unicode コードポイント集合を集める。 */
+/** その言語の県名・区域名の訳の字を足す */
+function addTranslations(locale, add) {
+  const table = readJson('public', 'data', 'place-names', `${locale}.json`)
+  for (const kind of ['pref', 'area']) Object.values(table[kind]).forEach(add)
+}
+
+/** 組ごとに、その組で描く Unicode コードポイント集合を集める（組の名前 → 集合）。 */
 function collectCodepoints() {
-  const cps = new Set()
-  const add = (s) => {
-    for (const ch of s) cps.add(ch.codePointAt(0))
+  const sets = new Map(STACKS.map((s) => [s.stack, new Set()]))
+  const adder = (stack) => (s) => {
+    for (const ch of s) sets.get(stack).add(ch.codePointAt(0))
   }
+  const add = adder(PRIMARY.stack)
   // 地方 14（気象庁の地方予報区）。単一情報源 src/utils/regions.ts の REGIONS から名前を読む（リテラル再定義だと LabelsGL が
   // 使う REGIONS と非連動になり、地方区分変更時に新しい地方名だけ空白表示になる。.mjs は .ts を import
   // できないためソースを読んで name を取り出す）。
@@ -147,26 +236,35 @@ function collectCodepoints() {
   regionNames.forEach(add)
   // 震度ラベル（poc/label.ts の INTENSITY_LABELS と一致）
   ;['1', '2', '3', '4', '5弱', '5強', '6弱', '6強', '7'].forEach(add)
-  // 県 47（prefectures.json のキー）
-  const prefs = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'data', 'prefectures.json'), 'utf8'))
-  Object.keys(prefs).forEach(add)
+  // 県 47（prefectures.json のキー）。訳の無い名前は日本語のまま M PLUS の組で描く
+  Object.keys(readJson('public', 'data', 'prefectures.json')).forEach(add)
   // 区域 192（subregions.json の name）
-  const subs = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'data', 'subregions.json'), 'utf8'))
-  for (const s of subs) add(s.name)
-  // 県名・区域名の訳（地図のラベルを訳す言語＝ src/i18n/placeNames.ts の MAP_LABEL_LOCALES。.mjs は .ts を
-  // import できないためソースから一覧を取り出す。読めなければ止める——読めないまま進むと、訳の字が欠けて
-  // 空白の混ざったラベルになるのに検査は通ってしまう）
-  const placeNamesSrc = fs.readFileSync(path.join(ROOT, 'src', 'i18n', 'placeNames.ts'), 'utf8')
-  const localesMatch = placeNamesSrc.match(/MAP_LABEL_LOCALES:[^=]*=\s*\[([^\]]*)\]/)
-  const labelLocales = localesMatch ? [...localesMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : []
-  if (labelLocales.length === 0) throw new Error('placeNames.ts から MAP_LABEL_LOCALES を読み取れなかった')
-  for (const locale of labelLocales) {
-    const table = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'data', 'place-names', `${locale}.json`), 'utf8'))
-    for (const kind of ['pref', 'area']) Object.values(table[kind]).forEach(add)
+  for (const s of readJson('public', 'data', 'subregions.json')) add(s.name)
+  // 県名・区域名の訳。自分の組を持つ言語はその組へ、ほかは M PLUS の組へ。
+  // 自分の組を持たない言語の訳に、日本語の地名に無い漢字・ハングルなど（U+2E80 以降）が来たら止める。M PLUS に字形が無いと、
+  // 空白で焼けるか、skia が別の書体で黙って補うかのどちらかで、どちらも検査を通りうるため（中韓は言語ごとの組を足して描く）
+  const japaneseChars = new Set(sets.get(PRIMARY.stack))
+  for (const locale of readLabelLocales()) {
+    const own = LOCALE_STACK_OF.get(locale)
+    if (own) {
+      addTranslations(locale, adder(own))
+      continue
+    }
+    const foreign = new Set()
+    addTranslations(locale, (s) => {
+      for (const ch of s) if (ch.codePointAt(0) >= 0x2e80 && !japaneseChars.has(ch.codePointAt(0))) foreign.add(ch)
+    })
+    if (foreign.size) {
+      throw new Error(
+        `言語 ${locale} の訳に、日本語の地名に無い字が ${foreign.size} 字ある（${[...foreign].slice(0, 20).join('')}）。` +
+          'M PLUS の組では描けないので、fontStack.ts の PLACE_LABEL_FONT_STACKS にその言語の組を足すこと。',
+      )
+    }
+    addTranslations(locale, add)
   }
-  // ASCII 基本ラテン（数字・記号の保険）
-  for (let c = 0x20; c < 0x7f; c++) cps.add(c)
-  return cps
+  // ASCII 基本ラテン（数字・記号の保険）。どの組にも入れる
+  for (const set of sets.values()) for (let c = 0x20; c < 0x7f; c++) set.add(c)
+  return sets
 }
 
 /** codepoint 集合を 256 ブロック単位に振り分ける。 */
@@ -203,38 +301,32 @@ function writeGlyphsProto(data, pbf) {
   pbf.writeMessage(1, writeStack, data)
 }
 
-async function main() {
-  const TinySDF = await setupFont()
+/** 1 つの組を焼く */
+function bakeStack(TinySDF, s, cps) {
   const sdf = new TinySDF({
     fontSize: FONT_SIZE,
     buffer: BUFFER,
     radius: RADIUS,
     cutoff: CUTOFF,
-    fontFamily: FONT_FAMILY,
-    fontWeight: FONT_WEIGHT,
+    fontFamily: s.family,
+    fontWeight: s.weight,
   })
-  const cps = collectCodepoints()
+  const outDir = outDirOf(s)
   const blocks = groupByBlock(cps)
-  fs.rmSync(OUT_DIR, { recursive: true, force: true })
-  fs.mkdirSync(OUT_DIR, { recursive: true })
-
-  // OFL 1.1 第2条は、フォントソフトウェアの派生物を配布する各コピーに著作権表示とライセンス全文を
-  // 添付することを求める。エンドユーザーへ実際に配信されるのは public/fonts/<stack>/ 配下の SDF 派生物
-  // なので、ライセンス文を出力先にも複製する（scripts/fonts/ はビルド時ソースで配信対象外のため）。
-  // GLYPH_FONT で別フォントに差し替えた場合は同梱ライセンスと対応しなくなるので複製しない。
-  // 判定は path.resolve で正規化してから行う（GLYPH_FONT に相対パスやフォワードスラッシュで同じ
-  // ファイルを指定されたとき、素の文字列比較では別物と見なされ複製が漏れるため）。
-  const LICENSE_SRC = path.join(ROOT, 'scripts', 'fonts', 'OFL.txt')
-  const usesBundledFont = FONT_FILE !== '' && path.resolve(FONT_FILE) === path.resolve(DEFAULT_FONT_FILE)
-  if (usesBundledFont && fs.existsSync(LICENSE_SRC)) {
-    fs.copyFileSync(LICENSE_SRC, path.join(OUT_DIR, 'OFL.txt'))
+  fs.rmSync(outDir, { recursive: true, force: true })
+  fs.mkdirSync(outDir, { recursive: true })
+  if (s.license) {
+    // ライセンス文の無い派生物を配らない（OFL 1.1 第2条）。黙って飛ばさずに止める
+    if (!fs.existsSync(s.license)) throw new Error(`組 "${s.stack}" のライセンス文が無い: ${s.license}`)
+    fs.copyFileSync(s.license, path.join(outDir, 'OFL.txt'))
   }
 
   // 焼いた条件を残す（--check がこれと現在の設定を突き合わせ、フォント差し替え後の焼き直し忘れを検知する）。
-  fs.writeFileSync(path.join(OUT_DIR, BUILD_INFO_FILE), `${JSON.stringify(buildFingerprint(), null, 2)}\n`)
+  fs.writeFileSync(path.join(outDir, BUILD_INFO_FILE), `${JSON.stringify(buildFingerprint(s), null, 2)}\n`)
 
   const sortedBlocks = [...blocks.keys()].sort((a, b) => a - b)
   let totalGlyphs = 0
+  let bytes = 0
   for (const b of sortedBlocks) {
     const start = b * 256
     const end = start + 255
@@ -254,14 +346,22 @@ async function main() {
       })
     }
     const pbf = new PbfWriter()
-    writeGlyphsProto({ name: STACK, range: `${start}-${end}`, glyphs }, pbf)
-    fs.writeFileSync(path.join(OUT_DIR, `${start}-${end}.pbf`), pbf.finish())
+    writeGlyphsProto({ name: s.stack, range: `${start}-${end}`, glyphs }, pbf)
+    const buf = pbf.finish()
+    bytes += buf.length
+    fs.writeFileSync(path.join(outDir, `${start}-${end}.pbf`), buf)
     totalGlyphs += glyphs.length
   }
   console.log(
-    `グリフを作った: stack="${STACK}" font="${FONT_FILE || FONT_FAMILY}" weight=${FONT_WEIGHT} ` +
-      `codepoints=${cps.size} blocks=${sortedBlocks.length} glyphs=${totalGlyphs} -> public/fonts/${STACK}/`,
+    `グリフを作った: stack="${s.stack}" font="${s.file || s.family}" weight=${s.weight} ` +
+      `codepoints=${cps.size} blocks=${sortedBlocks.length} glyphs=${totalGlyphs} ${(bytes / 1024).toFixed(0)}KB -> public/fonts/${s.stack}/`,
   )
+}
+
+async function main() {
+  const TinySDF = await setupFonts()
+  const sets = collectCodepoints()
+  for (const s of STACKS) bakeStack(TinySDF, s, sets.get(s.stack))
 }
 
 // 半角スペースは字形を持たないため幅・高さ 0 で焼かれるのが正常（実測でも空になるのはこれだけ）。
@@ -282,17 +382,17 @@ const BUILD_INFO_FILE = 'build-info.json'
  *
  * 注意: これにより --check は scripts/fonts/ のフォント実体にも依存する（生成物だけでは完結しない）。
  */
-function buildFingerprint() {
+function buildFingerprint(s) {
   // GLYPH_FONT で明示指定された場合は存在チェックを経ていないため、ここで確認する。
   // これが無いと readFileSync の生の ENOENT になり、他の失敗系と違って何をすべきか分からない。
-  if (FONT_FILE && !fs.existsSync(FONT_FILE)) {
-    throw new Error(`フォントが見つからない: ${FONT_FILE}（GLYPH_FONT の指定を確認すること）。指紋の照合にはフォント実体が要る。`)
+  if (s.file && !fs.existsSync(s.file)) {
+    throw new Error(`フォントが見つからない: ${s.file}（組 "${s.stack}"。GLYPH_FONT の指定を確認すること）。指紋の照合にはフォント実体が要る。`)
   }
   return {
-    font: FONT_FILE ? path.basename(FONT_FILE) : '(system font)',
-    fontSha256: FONT_FILE ? crypto.createHash('sha256').update(fs.readFileSync(FONT_FILE)).digest('hex') : '',
-    family: FONT_FAMILY,
-    weight: FONT_WEIGHT,
+    font: s.file ? path.basename(s.file) : '(system font)',
+    fontSha256: s.file ? crypto.createHash('sha256').update(fs.readFileSync(s.file)).digest('hex') : '',
+    family: s.family,
+    weight: s.weight,
     sdf: { fontSize: FONT_SIZE, buffer: BUFFER, radius: RADIUS, cutoff: CUTOFF },
   }
 }
@@ -346,32 +446,32 @@ function readGlyphs(buf) {
 }
 
 /**
- * ラベルに必要な文字が、生成済みグリフに全て収録されているかを検証する（--check）。
+ * ラベルに必要な文字が、組ごとに生成済みグリフに全て収録されているかを検証する（--check）。
  *
  * 地名（地方・県・区域）を増減したのに再生成を忘れると、その文字は MapLibre 側でエラーにならず
  * 静かに欠ける（既存の 256 文字ブロック内に落ちた場合は警告すら出ない）。型チェックもビルドも通って
  * しまうため、ビルドの前段でここを機械的に突き合わせる。実際に配信される PBF を読んで確認する。
  */
-function check() {
-  const required = collectCodepoints()
-  if (!fs.existsSync(OUT_DIR)) {
+function checkStack(s, required) {
+  const outDir = outDirOf(s)
+  if (!fs.existsSync(outDir)) {
     throw new Error(
-      `グリフ未生成: public/fonts/${STACK}/ が存在しない。` +
+      `グリフ未生成: public/fonts/${s.stack}/ が存在しない。` +
         '`node scripts/build-glyphs.mjs` を実行すること' +
         '（別のフォントスタック名で生成した名残が残っているだけの場合は、その古いディレクトリを削除すること）。',
     )
   }
   const present = new Map()
-  for (const file of fs.readdirSync(OUT_DIR)) {
+  for (const file of fs.readdirSync(outDir)) {
     if (!file.endsWith('.pbf')) continue
-    for (const g of readGlyphs(fs.readFileSync(path.join(OUT_DIR, file)))) present.set(g.id, g)
+    for (const g of readGlyphs(fs.readFileSync(path.join(outDir, file)))) present.set(g.id, g)
   }
   const describe = (cps) => cps.map((cp) => `${String.fromCodePoint(cp)}(U+${cp.toString(16).toUpperCase()})`).join(' ')
 
   const missing = [...required].filter((cp) => !present.has(cp))
   if (missing.length > 0) {
     throw new Error(
-      `グリフ未生成の文字が ${missing.length} 件ある: ${describe(missing)}\n` +
+      `グリフ未生成の文字が ${missing.length} 件ある（組 "${s.stack}"）: ${describe(missing)}\n` +
         '地名データを更新したら `node scripts/build-glyphs.mjs` で焼き直すこと' +
         '（このまま配信すると、ラベル上でその文字だけが無警告で空白になる）。',
     )
@@ -383,17 +483,17 @@ function check() {
   )
   if (blank.length > 0) {
     throw new Error(
-      `字形が空のグリフが ${blank.length} 件ある: ${describe(blank)}\n` +
+      `字形が空のグリフが ${blank.length} 件ある（組 "${s.stack}"）: ${describe(blank)}\n` +
         '使用中のフォントに該当する字形が無い可能性がある' +
         '（収録はされているため取りこぼしには見えないが、ラベル上では空白で描かれる）。',
     )
   }
   // ここまでで「どの文字が入っているか」は保証できるが、フォント自体を差し替えて焼き直しを忘れた場合は
   // 収録も字形も揃ったまま形だけが古い。生成時に残した指紋と現在の設定を突き合わせて検知する。
-  const infoPath = path.join(OUT_DIR, BUILD_INFO_FILE)
+  const infoPath = path.join(outDir, BUILD_INFO_FILE)
   if (!fs.existsSync(infoPath)) {
     throw new Error(
-      `${BUILD_INFO_FILE} が無く、グリフを焼いた条件を確認できない（生成物と一緒にコミットし忘れた可能性）。` +
+      `${BUILD_INFO_FILE} が無く、組 "${s.stack}" のグリフを焼いた条件を確認できない（生成物と一緒にコミットし忘れた可能性）。` +
         '`node scripts/build-glyphs.mjs` で焼き直すこと。',
     )
   }
@@ -406,21 +506,31 @@ function check() {
     // 壊れた JSON をそのまま投げると用途不明な SyntaxError になる。どのファイルをどうすべきか添える。
     throw new Error(`${infoPath} を読めない（内容が壊れている）。\`node scripts/build-glyphs.mjs\` で焼き直すこと。 — ${e.message}`)
   }
-  const differences = diffFingerprints(recorded, buildFingerprint())
+  const current = buildFingerprint(s)
+  const differences = diffFingerprints(recorded, current)
   if (differences.length > 0) {
     throw new Error(
-      `グリフを焼いた条件が現在の設定と食い違う（収録文字は足りているが、字形が古いまま配信される）。\n` +
+      `組 "${s.stack}" のグリフを焼いた条件が現在の設定と食い違う（収録文字は足りているが、字形が古いまま配信される）。\n` +
         `  相違点  : ${differences.join(', ')}\n` +
         `  焼いた時: ${describeFingerprint(recorded)}\n` +
-        `  現在    : ${describeFingerprint(buildFingerprint())}\n` +
+        `  現在    : ${describeFingerprint(current)}\n` +
         '`node scripts/build-glyphs.mjs` で焼き直すこと。',
     )
+  }
+
+  if (s.license && !fs.existsSync(path.join(outDir, 'OFL.txt'))) {
+    throw new Error(`組 "${s.stack}" の出力先に OFL.txt が無い（ライセンス文の無い派生物を配ることになる）。\`node scripts/build-glyphs.mjs\` で焼き直すこと。`)
   }
 
   // 余分は害がない（使われなくなった文字が残っているだけ）ので停止はしない。再生成の目安として報告する。
   const extra = [...present.keys()].filter((cp) => !required.has(cp))
   const extraNote = extra.length > 0 ? ` / 未使用の収録文字 ${extra.length} 件（再生成で除去できる）` : ''
-  console.log(`glyphs check: ok — stack="${STACK}" 必要 ${required.size} 文字が全て収録済み${extraNote}`)
+  console.log(`glyphs check: ok — stack="${s.stack}" 必要 ${required.size} 文字が全て収録済み${extraNote}`)
+}
+
+function check() {
+  const sets = collectCodepoints()
+  for (const s of STACKS) checkStack(s, sets.get(s.stack))
 }
 
 if (CHECK_ONLY) check()
