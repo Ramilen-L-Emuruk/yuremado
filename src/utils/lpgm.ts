@@ -57,6 +57,11 @@ export function lpgmClassLabel(cls: number, w: Messages['formats']): string {
   return isObservedLpgmClass(cls) ? w.lpgmClass(cls) : w.lpgmClassUnknown
 }
 
+/** 長周期の一覧の行の札（幅の決まった欄に入る形。英語は「Cl. 3」）。読めない階級は「階級不明」 */
+export function lpgmClassTagLabel(cls: number, w: Messages['formats']): string {
+  return isObservedLpgmClass(cls) ? w.lpgmClassTag(cls) : w.lpgmClassTagUnknown
+}
+
 /** 地震タブ・速報の札の短い形（「長周期3」）。読めない階級は「長周期不明」 */
 export function lpgmShortLabel(cls: number, w: Messages['formats']): string {
   return isObservedLpgmClass(cls) ? w.lpgmShort(cls) : w.lpgmShortUnknown

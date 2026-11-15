@@ -576,6 +576,8 @@ export const ja = {
     /** 見出しの行の報の一覧の開閉（後ろに最後の報の時刻が付く） */
     updated: '更新',
     maxIntensity: '最大震度',
+    /** 開いたカードの最大震度の枠（幅 68px）の見出し。英語「Max」・スペイン語とポルトガル語「Máx.」（2026-11-14 ユーザー選択「Max・Máx. (Recommended)」）。全文は `maxIntensity` を吹き出しに出す */
+    maxIntensityTile: '最大震度',
     tsunami: '津波',
     depth: '深さ',
     intensities: '各地の震度',
@@ -2473,6 +2475,11 @@ export const ja = {
     intensityShort: { '-1': '不明', 10: '1', 20: '2', 30: '3', 40: '4', 45: '5弱', 50: '5強', 55: '6弱', 60: '6強', 70: '7' },
     /** 「5弱以上」の形（電文の「震度５弱以上未入電」） */
     orAbove: (label: string) => `${label}以上`,
+    /**
+     * 震度の一覧の行のように幅の決まった欄で使う「以上」の形。札は `intensityShort` の語を渡す。英語・スペイン語・
+     * ポルトガル語は「≥5-」（2026-11-14 ユーザー選択「5+ 5- 6+ 6- (Recommended)」。説明の原文は「「5 Lower or higher」等は「≥5-」（23px）」）
+     */
+    orAboveShort: (label: string) => `${label}以上`,
     /** 「5弱程度以上」の形（緊急地震速報の上限を定めない予想） */
     approxAbove: (label: string) => `${label}程度以上`,
     /** 「3〜4」の形（緊急地震速報の区域の予想の幅） */
@@ -2480,12 +2487,22 @@ export const ja = {
     /** 長周期地震動階級の札 */
     lpgmClass: (cls: number) => `階級${cls}`,
     lpgmClassUnknown: '階級不明',
+    /** 長周期の一覧の行の札（幅 52px の欄）。英語・スペイン語・ポルトガル語は「Cl. 1」（2026-11-14 ユーザー選択「Cl. 1 (Recommended)」） */
+    lpgmClassTag: (cls: number) => `階級${cls}`,
+    lpgmClassTagUnknown: '階級不明',
     /** 地震タブ・速報の札の短い形（「長周期3」） */
     lpgmShort: (cls: number) => `長周期${cls}`,
     /** 階級が読めないときの短い札（「長周期不明」） */
     lpgmShortUnknown: '長周期不明',
-    /** 札の枠の下に別の要素で小さく添える「以上」の語 */
+    /** 札の枠の下に別の要素で小さく添える「以上」の語（`orAboveTilePrefix` が記号を返す言語では使わない） */
     orAboveSuffix: '以上',
+    /**
+     * 震度の枠の数字の前に付ける「以上」の記号。記号を返す言語は、下に添える `orAboveSuffix` を出さずにこちらを出す。
+     * 英語・スペイン語・ポルトガル語は「≥」（2026-11-15 ユーザー選択「案A「≥5-」にする (Recommended)」。
+     * 閉じた行の枠 46px に「or higher」10px 43px・「ou superior」55px が入らず 2 行に割れていた）。
+     * 記号を付けない言語（日本語・韓国語・中国語）は空の文字列を返すので、関数で持つ
+     */
+    orAboveTilePrefix: () => '',
     /** 札の前後に別の要素で添える「程度以上」の語。札の前に来る語は関数で持つ（日本語・韓国語は無いので空の文字列を返す） */
     approxAboveBefore: () => '',
     approxAboveAfter: '程度以上',

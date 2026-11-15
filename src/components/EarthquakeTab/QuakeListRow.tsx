@@ -5,9 +5,17 @@ import { getLpgmClassColor, lpgmShortLabel } from '../../utils/lpgm'
 import type { QuakeListSort, QuakeSortKey } from '../../utils/quakeListView'
 import type { Messages } from '../../i18n/messages'
 
-/** 震度の枠の下に小さく添える「以上」の語（日本語は「以上」、英語は「or higher」） */
-export function orAboveWord(f: Pick<Messages['formats'], 'orAboveSuffix'>): string {
-  return f.orAboveSuffix
+/**
+ * 震度の枠の下に小さく添える「以上」の語。日本語・韓国語・中国語は「以上」「이상」。数字の前に記号を付ける言語
+ * （英語・スペイン語・ポルトガル語の「≥」。`orAboveTilePrefix`）は空の文字列で、下には何も添えない。
+ */
+export function orAboveWord(f: Pick<Messages['formats'], 'orAboveSuffix' | 'orAboveTilePrefix'>): string {
+  return f.orAboveTilePrefix() === '' ? f.orAboveSuffix : ''
+}
+
+/** 震度の枠の数字の前に付ける「以上」の記号。「以上」でない枠や、記号を使わない言語では空の文字列。 */
+export function orAboveTilePrefix(orAbove: boolean, f: Pick<Messages['formats'], 'orAboveTilePrefix'>): string {
+  return orAbove ? f.orAboveTilePrefix() : ''
 }
 
 /**
@@ -135,10 +143,25 @@ export function QuakeListDayLabel({ label }: { label: string }) {
  * 先頭の数字と、その後ろに続く添え字に分ける。日本語は「5」＋「弱」・「0」＋「未満」になり、数字だけの札
  * （「3」）や数字で始まらない札（「不明」「?」）はそのまま出す。
  */
-export function TileScaleLabel({ label }: { label: string }) {
+/**
+ * 規模と深さを下の段へ下げたとき、震央地名の欄が何 px 広がるか。規模の欄（`minmax(--qk-col-m, max-content)`）が
+ * 中身の幅から最小の幅まで縮む分。最小の幅を読めないときは 0（広がらないとみなし、下げない側に倒す）。
+ */
+function nameGainIfDropped(row: HTMLElement, magCol: HTMLElement | null): number {
+  if (!magCol) return 0
+  const raw = getComputedStyle(row).getPropertyValue('--qk-col-m').trim()
+  const v = parseFloat(raw)
+  if (!Number.isFinite(v)) return 0
+  const minPx = raw.endsWith('rem') ? v * parseFloat(getComputedStyle(document.documentElement).fontSize) : raw.endsWith('px') ? v : NaN
+  if (!Number.isFinite(minPx)) return 0
+  return Math.max(0, magCol.getBoundingClientRect().width - minPx)
+}
+
+export function TileScaleLabel({ label, prefix }: { label: string; prefix: string }) {
   const m = /^(\d+)(\D.*)$/.exec(label)
   return (
     <span data-tile-value className="whitespace-nowrap">
+      {prefix !== '' && <span style={{ fontSize: '0.75em' }}>{prefix}</span>}
       {m ? <>{m[1]}<span style={{ fontSize: '0.55em' }}>{m[2]}</span></> : label}
     </span>
   )
@@ -166,6 +189,8 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
   // 入らないときだけ段を下げる。**描いてから測る**（文字の幅は字体と UI 倍率で変わるので、文字数では決められない）。
   const [dropChips, setDropChips] = useState(false)
   const [dropValues, setDropValues] = useState(false)
+  /** 規模の欄。地名のために規模と深さを下げたとき、地名の欄がどれだけ広がるかをこの幅から見積もる。 */
+  const magColRef = useRef<HTMLSpanElement>(null)
   // 札を下げても見出しの段に入らない（見出しそのものが長い）ときだけ、見出しを折り返す
   // （2026-11-11 ユーザー選択「2 行に折り返す (Recommended)」。訳した報の名前が津波の札の下に潜っていた）
   const [wrapHeading, setWrapHeading] = useState(false)
@@ -216,7 +241,18 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
       setDropValues(true)
       return
     }
-    if (!dropValues && (row.scrollWidth > row.clientWidth + 1 || nm.scrollWidth > nm.clientWidth + 1)) setDropValues(true)
+    if (dropValues) return
+    if (row.scrollWidth > row.clientWidth + 1) {
+      setDropValues(true)
+      return
+    }
+    // 震央地名だけが入らない行は、下げたら入るときだけ下げる。下げても入らない行は下げずに地名を「…」で省く
+    // （2026-11-14 ユーザー選択「下げても入らないなら下げない (Recommended)」。下げると 2 行に分かれたうえ
+    // 地名も省かれたままになっていた）。規模の欄は `minmax(--qk-col-m, max-content)` なので、規模を下げると
+    // 欄が最小の幅まで縮み、その差だけ地名の欄が広がる。下げる前に測って決め、下げてから戻す往復をしない
+    if (nm.scrollWidth > nm.clientWidth + 1 && nm.scrollWidth <= nm.clientWidth + nameGainIfDropped(row, magColRef.current) + 1) {
+      setDropValues(true)
+    }
   })
   useLayoutEffect(() => {
     const row = rowRef.current
@@ -254,8 +290,8 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
         style={{ gridRow: `1 / ${tileSpan + 1}`, width: 'var(--qk-tile-w)', height: 'var(--qk-tile-h)', ...quakeTileColors(scale) }}
       >
         <div data-tile className="flex flex-1 w-full flex-col items-center justify-center" style={{ fontSize: lpgmClass !== null ? 'calc(var(--qk-tile-f) - 3px)' : 'var(--qk-tile-f)' }}>
-          <TileScaleLabel label={scaleLabel} />
-          {orAbove && <small className={lpgmClass !== null ? 'text-[8.5px]' : 'mt-0.5 text-[10px]'}>{orAboveWord(f)}</small>}
+          <TileScaleLabel label={scaleLabel} prefix={orAboveTilePrefix(orAbove, f)} />
+          {orAbove && orAboveWord(f) !== '' && <small className={lpgmClass !== null ? 'text-[8.5px]' : 'mt-0.5 text-[10px]'}>{orAboveWord(f)}</small>}
         </div>
         {lpgmClass !== null && (
           <div
@@ -277,9 +313,10 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
         <div className="col-start-2 col-end-6 row-start-2 flex justify-end gap-1.5" style={{ fontSize: 'var(--qk-fs)' }}><span ref={chipsRef} className="contents">{chips}</span></div>
       )}
       <span data-col="time" className="col-start-2 tabular-nums text-secondary" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{time}</span>
-      {/* 震央地名。規模と深さを下の段へ下げても欄に入らないときは、1 行のまま末尾を「…」で省き、全文は `title` で
-          持たせる（2026-11-05 ユーザー選択「B 「…」で省く」。全文の出し方とスマホの扱いは docs/quake-tab-redesign.md の表）。
-          省いても `scrollWidth` は全文の幅のままなので、段を下げる判定は変わらない */}
+      {/* 震央地名。規模と深さを下の段へ下げても欄に入らないときは、段を戻して 1 行のまま末尾を「…」で省き、全文は
+          `title` で持たせる（2026-11-05 ユーザー選択「B 「…」で省く」・2026-11-14 選択「下げても入らないなら下げない
+          (Recommended)」。全文の出し方とスマホの扱いは docs/quake-tab-redesign.md の表）。
+          省いても `scrollWidth` は全文の幅のままなので、入らないかの判定は変わらない */}
       <span ref={nameRef} title={name} className="col-start-3 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-bold text-white" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{name}</span>
       {wideDepth ? (
         // 深さの語が欄に入らない行: 規模と深さを下の段の右端へ続けて並べる（欄の縦の揃えより、重ならないことを取る）
@@ -289,7 +326,7 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
         </span>
       ) : (
         <>
-          <span className="flex items-center justify-end gap-1.5 whitespace-nowrap tabular-nums" style={{ gridRow: valueRow, gridColumn: dropValues ? '3 / 5' : '4', fontSize: 'var(--qk-f)' }}>
+          <span ref={magColRef} className="flex items-center justify-end gap-1.5 whitespace-nowrap tabular-nums" style={{ gridRow: valueRow, gridColumn: dropValues ? '3 / 5' : '4', fontSize: 'var(--qk-f)' }}>
             {magnitude && <><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getMagnitudeColor(magnitude.value) }} />{magnitude.text}</>}
           </span>
           <span ref={depthColRef} className="col-start-5 flex items-center justify-end whitespace-nowrap" style={{ gridRow: valueRow, fontSize: 'var(--qk-f)' }}>
