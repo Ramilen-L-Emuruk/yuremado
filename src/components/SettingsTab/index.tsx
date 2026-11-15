@@ -54,6 +54,7 @@ import {
 import { ReleaseNotesDialog } from '../ReleaseNotesDialog'
 import { allNotes, type ReleaseNoteEntry } from '../../utils/releaseNotes'
 import { useIsSettingsCategoryActive, type SettingsCategoryId } from './SettingsDialog'
+import { ShortLabel } from '../ShortLabel'
 
 /**
  * 操作の結果として行の下に出す文（案内・誤り）。状態には文そのものではなく、辞書を受けて文を組む関数を持ち、
@@ -1021,11 +1022,12 @@ function IntensityBadge({ scale }: { scale: number }) {
   const { settings: w, formats: fw } = useMessages()
   if (scale === -1) return null
   return (
+    // 札は地震一覧の枠と同じ短い語（英語などは「5-」）。正式な呼び名はホバーと読み上げに渡す
     <span
-      className="inline-block text-xs font-bold px-1.5 py-0.5 rounded-md"
+      className="inline-block text-xs font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap"
       style={quakeTileColors(scale)}
     >
-      {w.scale.badge(intensityLabel(scale, fw))}
+      <ShortLabel short={w.scale.badge(intensityShortLabel(scale, fw))} full={w.scale.badge(intensityLabel(scale, fw))} />
     </span>
   )
 }

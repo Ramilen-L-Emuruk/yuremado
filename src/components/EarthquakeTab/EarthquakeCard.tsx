@@ -2,7 +2,7 @@ import { Fragment, memo, useMemo, useRef, useEffect, useLayoutEffect, useState }
 import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, JMAInternationalTsunami, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
 import { quakeEventKey, isKnownCorrection } from '../../utils/quakeMerge'
 import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
-import { lpgmClassLabel, lpgmShortLabel, getLpgmClassColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, lpgmPeriodSeconds, type LpgmStationRow } from '../../utils/lpgm'
+import { lpgmClassLabel, lpgmClassTagLabel, lpgmShortLabel, getLpgmClassColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, lpgmPeriodSeconds, type LpgmStationRow } from '../../utils/lpgm'
 import { readableTextColor, liftForContrast } from '../../utils/contrast'
 import { estimatedIntensityAvailability, estimatedMarkMismatchNote } from '../../utils/estimatedIntensity'
 import { telegramTextSubject, quakeTelegramTextTarget } from '../../utils/ttsFollow'
@@ -11,6 +11,7 @@ import { domesticTsunamiCardForecastText, warnIfDomesticTsunamiSentenceMissing }
 import { useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking'
 import { scrollParentOf } from '../../hooks/useFollowScroll'
 import { SerialBadge } from '../SerialBadge'
+import { ShortLabel } from '../ShortLabel'
 import {
   quakeTimeLabeledText,
   quakeTimeText,
@@ -47,7 +48,7 @@ import { usePrefectures } from '../../hooks/usePrefectures'
 import { ringsBoundsIndex, EMPTY_BOUNDS_INDEX, type RingsBounds } from '../../utils/subregions'
 import { groupUnreceivedPointNames, type UnreceivedPointGroup } from './unreceivedPointNames'
 import { QuakeSeismoWave } from './QuakeSeismoWave'
-import { QuakeListRow, TileScaleLabel, quakeTileColors, orAboveWord } from './QuakeListRow'
+import { QuakeListRow, TileScaleLabel, quakeTileColors, orAboveWord, orAboveTilePrefix } from './QuakeListRow'
 import { QuakeOpenPin } from './QuakeOpenPin'
 import { hasDomesticQuakeReport, quakeReplayStartMs } from '../../utils/quakeReplayStart'
 import { InternationalTsunamiText } from './InternationalTsunamiText'
@@ -228,7 +229,14 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
         className={`flex flex-col leading-[1.15] whitespace-nowrap${depth === 0 ? ' font-extrabold' : ' font-bold'}`}
         style={{ color: getIntensityColor(scale) }}
       >
-        <span>{unreceived ? f.orAbove(intensityLabel(scale, f)) : intensityLabel(scale, f)}</span>
+        {/* 欄の幅は日本語の札に合わせた固定幅なので、札は短い形（英語「5+」）で出し、全文は吹き出しと読み上げに渡す
+            （2026-11-14 ユーザー選択「5+ 5- 6+ 6- (Recommended)」） */}
+        <span>
+          <ShortLabel
+            short={unreceived ? f.orAboveShort(intensityShortLabel(scale, f)) : intensityShortLabel(scale, f)}
+            full={unreceived ? f.orAbove(intensityLabel(scale, f)) : intensityLabel(scale, f)}
+          />
+        </span>
         {(unreceivedIsOwn || hasUnreceived) && (
           <small
             className="font-normal"
@@ -457,10 +465,10 @@ function LpgmRow({ label, lgInt, int, nonJma, depth, expandKey, expanded, onTogg
       {/* 階級の札（52px の欄。見本 opened.html の .lgg）。節の見出しが「長周期地震動」なので「長周期」は添えない。 */}
       <span>
         <span
-          className="inline-block rounded-[3px] px-1.5 font-bold leading-[1.4]"
+          className="inline-block whitespace-nowrap rounded-[3px] px-1.5 font-bold leading-[1.4]"
           style={{ fontSize: 'var(--qk-fs)', background: classColor, color: readableTextColor(classColor) }}
         >
-          {lpgmClassLabel(lgInt, f)}
+          <ShortLabel short={lpgmClassTagLabel(lgInt, f)} full={lpgmClassLabel(lgInt, f)} />
         </span>
       </span>
       <span className={`min-w-0 ${depth === 0 ? 'text-white' : 'text-secondary'}`}>
@@ -1629,7 +1637,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   <span>{heldText
                     ? <span onClick={ev => ev.stopPropagation()} onKeyDown={ev => ev.stopPropagation()}><DescriptionTip label={entryLabel} description={heldText} labelClassName="" /></span>
                     : entryLabel}</span>
-                  <span className="tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms, f) : q.timeUnknown}</span>
+                  {/* 時刻は折らず、長い報の名前のほうを折る（2026-11-14 ユーザー選択「時刻は折らない (Recommended)」。
+                      英語の「Nov 15, 00:56」が名前に押されて 2 行に割れていた） */}
+                  <span className="shrink-0 whitespace-nowrap tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms, f) : q.timeUnknown}</span>
                 </div>
               )
             })}
@@ -1667,12 +1677,12 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               style={{ ...quakeTileColors(maxScale), width: 'var(--qk-big)' }}
             >
               <div data-tile className="quake-tile-part flex flex-1 flex-col items-center justify-center gap-1 py-1 leading-none">
-                <span className="font-semibold" style={{ fontSize: 'var(--qk-fs)', color: liftForContrast(getIntensityColor(maxScale), getIntensityBgColor(maxScale)) }}>{q.maxIntensity}</span>
+                <span className="font-semibold" style={{ fontSize: 'var(--qk-fs)', color: liftForContrast(getIntensityColor(maxScale), getIntensityBgColor(maxScale)) }}><ShortLabel short={q.maxIntensityTile} full={q.maxIntensity} /></span>
                 <span className="font-black" style={{ fontSize: 'calc(var(--qk-big-f) * 0.75)' }}>
-                  <TileScaleLabel label={maxScaleLabel} />
+                  <TileScaleLabel label={maxScaleLabel} prefix={orAboveTilePrefix(maxScaleOrAbove, f)} />
                 </span>
-                {/* 「以上」は本体より小さく添える（→ `maxScaleOrAbove` の注記） */}
-                {maxScaleOrAbove && <span className="text-[0.8rem] font-bold">{orAboveWord(f)}</span>}
+                {/* 「以上」は本体より小さく添える（→ `maxScaleOrAbove` の注記）。英語などは数字の前の「≥」で表す */}
+                {maxScaleOrAbove && orAboveWord(f) !== '' && <span className="text-[0.8rem] font-bold">{orAboveWord(f)}</span>}
               </div>
               {lpgmShown && (
                 <div
