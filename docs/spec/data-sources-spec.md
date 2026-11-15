@@ -4421,6 +4421,7 @@ K は使えなくなるので、タブが表示に戻ったときにその関係
 | `public-stations.json` | `scripts/build-public-stations.ts` | 公開観測点（気象庁の広帯域地震計）の場所・感度・成分・運用期間・日本語名（→ §4.6「観測点の表」） |
 | `wepa60-region-names.json` | `scripts/build-wepa60-region-names.mjs` | 国際津波関連情報の震央の地域名（英語）→ 気象庁の詳細震央地名（→ 下記「国際津波関連情報の地名の表」） |
 | `place-names/<言語>.json` | `scripts/build-place-names.ts` | 地名の訳（日本語の名前 → 言語ごとの名前。→ 下記「地名の訳の表」） |
+| `src/data/plateNames.json`（`public/data/` ではなくバンドルに入る） | `scripts/build-plate-names.mjs` | プレート名の訳（日本語の名前 → 日本語以外の 6 言語。→ 下記「プレート名の訳」） |
 
 **取得に失敗したとき**: そのデータを使う表示だけを諦めて動作を続ける（何が欠けるかは各仕様書を参照）。
 失敗は `console` に残す。**地図のデータ（下記の取得状況に数えるもの）は、取得口（`fetchJsonWithTimeout`）が
@@ -5076,6 +5077,19 @@ M 未決定の記録が並ぶことがあり（2025 年 1 月の日向灘の地�
 
 **取得は 2 件**（配布元の GeoJSON と原典の歩のファイル）。原典は
 `http://peterbird.name/oldFTP/PB2002/PB2002_steps.dat.txt`（570,262 バイト）。
+
+### プレート名の訳（`src/data/plateNames.json`）
+
+プレート境界の吹き出しに出すプレート名（52 件）を、日本語以外の 6 言語で引く表（2026-11-15 ユーザー選択「全言語で訳す (Recommended)」）。
+引き方は `src/i18n/plateNames.ts` の `plateNameFor`（日本語の画面と表に無い名前は日本語のまま）。日本語の名前は `scripts/lib/plateNames.mjs`（境界の生成と共有）。
+
+訳は、その言語の利用者が実際に使う名前にする（2026-11-15「記事名に合わせる (Recommended)」）。言い換えと作った訳の表（`EN_ALIAS`・`MISSING`）は `scripts/build-plate-names.mjs` にある。
+
+- PB2002 のプレート（配布元 `PB2002_plates.json` の地名）を、Wikidata のプレートの項目と英語名で結ぶ。「Africa」と「African Plate」のような形の違いは `EN_ALIAS` で結ぶ。Wikidata のラベルは結ぶのにだけ使う
+- その項目の、各言語の Wikipedia の記事名を訳にする。英語も記事名どおり小文字の plate（「Pacific plate」。2026-11-15「記事名どおり小文字の plate (Recommended)」）。中国語の記事名は 1 つの字体で書かれているので、簡体・繁体は OpenCC で字形だけ変える
+- その言語に記事が無い 31 欄（ポルトガル語 21・スペイン語 8・韓国語 1・英語 1）は、記事名の型で作った訳を `MISSING` に持つ（2026-11-15「一覧の案で入れる (Recommended)」・「作った訳のまま (Recommended)」）。その言語で決まった呼び方かは、Wikipedia の記事が無いこと以上には確かめていない
+- **`MISSING` の欄に記事ができた、記事も `MISSING` も無い欄がある、同じプレートの 2 つの項目で記事名が食い違う、のどれでも止める**
+- 取得は 3 件（`PB2002_plates.json`、Wikidata の SPARQL でプレートの項目、同じく記事名）。控えは `.cache/plate-names`（`cacheDir`）。Wikidata のデータは CC0。Wikipedia からは記事名（題名）だけを訳に使い、本文は取らない
 
 ### JMA2001 走時表（`src/data/jma2001TravelTime.ts`）
 
@@ -6270,3 +6284,4 @@ EEW の予想震度は範囲（下限・上限）で配信され、**上限が�
 - 2026-11-15: §6 の地名の訳の表に、中国語・韓国語の辞書の誤りと揺れの直し（`scripts/lib/placeNameFixes.ts`）と、その字体で使わない字が残ると止める確かめと、細分区域のローマ字の切れ目の直しを書いた
 - 2026-11-15: §6 の地名の訳の表に、中国語・韓国語の観測点名の作り方（`scripts/lib/placeNameCjk.ts`）と、韓国語の「沖」を 앞바다 にそろえることを書いた。件数の表を数え直した
 - 2026-11-15: §6 の地名の訳の表に、中国語・韓国語の辞書に無い細分区域 28 件の作り方を書いた。件数の表を数え直した
+- 2026-11-15: §6 に「プレート名の訳」（`src/data/plateNames.json`）を足した。生成データの表にも足した
