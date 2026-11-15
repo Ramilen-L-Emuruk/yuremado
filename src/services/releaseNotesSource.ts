@@ -15,8 +15,10 @@ export async function fetchReleaseNotes(signal: AbortSignal | null): Promise<Rel
     { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { cache: 'no-store' } },
     async (res) => {
       if (!res.ok) throw new Error(`変更内容を取れなかった（HTTP ${res.status}）`)
-      const { entries, dropped } = parseReleaseNotes(await res.json())
+      const { entries, dropped, ignoredTranslations } = parseReleaseNotes(await res.json())
       if (dropped > 0) log.warn(`[更新] 変更内容のうち ${dropped} 版を読めなかった（形が違う）`)
+      // 後の版で足した言語の訳もここに数える（その言語の画面は日本語の文で出る）
+      if (ignoredTranslations > 0) log.warn(`[更新] 変更内容の訳のうち ${ignoredTranslations} 件を読まずに捨てた（知らない言語か形が違う）`)
       return entries
     },
   )
