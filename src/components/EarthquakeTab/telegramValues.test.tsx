@@ -180,6 +180,30 @@ describe('編集した官署', () => {
   })
 })
 
+describe('長周期地震動の電文の官署', () => {
+  // 正: 地震情報の官署の行の下に、情報名を頭に付けて出す（2026-11-15 ユーザー選択「最後の官署の行の下に足す」）
+  it('地震情報の官署の行の下に情報名つきで出す', async () => {
+    await renderTab(makeQuake({ editorialOffice: '気象庁本庁' }), true,
+      { ...makeLpgm('長周期地震動に関する観測情報'), editorialOffice: '大阪管区気象台', publishingOffice: '気象庁' })
+    const row = screen.getByTestId('lpgm-offices')
+    expect(row.textContent).toBe('長周期地震動に関する観測情報編集官署 大阪管区気象台発表官署 気象庁')
+    expect(row.previousElementSibling?.textContent).toContain('編集官署 気象庁本庁')
+  })
+
+  // 対照: 長周期の電文に官署が無ければ、行ごと出さない
+  it('長周期に官署が無ければ出さない', async () => {
+    await renderTab(makeQuake({ editorialOffice: '気象庁本庁' }), true, makeLpgm('長周期地震動に関する観測情報'))
+    expect(screen.queryByTestId('lpgm-offices')).toBeNull()
+  })
+
+  // 安全弁: 取り消された長周期の官署は出さない
+  it('取り消された長周期には出さない', async () => {
+    await renderTab(makeQuake({ editorialOffice: '気象庁本庁' }), true,
+      { ...makeLpgm('長周期地震動に関する観測情報'), cancelled: true, editorialOffice: '気象庁本庁' })
+    expect(screen.queryByTestId('lpgm-offices')).toBeNull()
+  })
+})
+
 describe('震源を決めた機関', () => {
   // 正: 気象庁以外が決めた震源のときだけ出る。**機関名だけでは含意が伝わらない**ので
   // ラベルに書く（津波カードと同じ文面）。

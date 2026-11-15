@@ -353,8 +353,20 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   onToggleLpgm?: (eventId: string) => void
   onDeactivateLpgm?: () => void
 }) {
-  const { realtime: rt, formats: fw } = useMessages()
+  const { realtime: rt, formats: fw, quake: qm } = useMessages()
   const place = usePlaceNames()
+  // 電文を編集・発表した官署。地震カードと同じ語（「編集官署 …」「発表官署 …」）で、2 つをひと塊にして
+  // 情報名に続ける。入らなければ塊ごと下の行の右端へ落ちる（片方だけが落ちる形にしない）。
+  // （2026-11-15 ユーザー回答「別行になるならさっきのほうがマシかなぁ」）
+  const officeLabels = [
+    eew.editorialOffice && `${qm.editorialOffice} ${eew.editorialOffice}`,
+    eew.publishingOffice && `${qm.publishingOffice} ${eew.publishingOffice}`,
+  ].filter((s): s is string => !!s)
+  const officesNode = officeLabels.length > 0 && (
+    <span className="inline-flex gap-x-2 whitespace-nowrap" data-testid="eew-offices">
+      {officeLabels.map(s => <span key={s}>{s}</span>)}
+    </span>
+  )
   const { scale: maxScale, orAbove: maxScaleOrAbove } = eewMaxScaleInfo(eew)
   const scaleZero = isEewScaleZeroForecast(eew)
   const { cls: lpgmClass, over: lpgmClassOver } = eewMaxLpgmClassInfo(eew)
@@ -493,7 +505,20 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   // 震央位置の精度のもう一つの値（`rank2`）。`rank` と違うときだけ 1 行足す（→ `eewEpicenterRank2Label`）。
   const epicenterRank2Text = eewEpicenterRank2Label(eew.accuracy, rt)
   const hypocenterSettled = isEewHypocenterSettled(eew)
-  const hasAccuracyText = !!(epicenterRankText || epicenterRank2Text || depthRankText || magnitudeRankText || magnitudePointsText || hypocenterSettled)
+  // 精度情報の行（見出しを出すかもこの行の有無で決める）。`rank2` の 1〜4 はどれも IPF 法の点数の語なので、上の行と並べて「IPF 法の側の値」と
+  // 読めるようにする（2026-10-30 ユーザー選択「震央（IPF法） (Recommended)」）。
+  // **「最終報」とは書かない**（`settled` の行）。資料は同じ注で「PLUM 法により予測震度が今後変化する
+  // 可能性はある」と断っている —— 震源が決まっても予想震度は動きうる。
+  const accuracyRows: { key: string; label?: string; value: string }[] = [
+    ...(epicenterRankText ? [{ key: 'epicenter', label: depthRankDiffers ? rt.accuracyRow.epicenter : rt.accuracyRow.hypocenter, value: epicenterRankText }] : []),
+    ...(epicenterRank2Text ? [{ key: 'epicenterIpf', label: rt.accuracyRow.epicenterIpf, value: epicenterRank2Text }] : []),
+    ...(depthRankText && depthRankDiffers ? [{ key: 'depth', label: rt.accuracyRow.depth, value: depthRankText }] : []),
+    ...(magnitudeRankText || magnitudePointsText
+      ? [{ key: 'magnitude', label: rt.accuracyRow.magnitude, value: [magnitudeRankText, magnitudePointsText].filter(Boolean).join(rt.accuracyJoin) }]
+      : []),
+    ...(hypocenterSettled ? [{ key: 'settled', value: rt.hypocenterSettled }] : []),
+  ]
+  const hasAccuracyText = accuracyRows.length > 0
 
   // 主要動の到達について何か言える地域。**同じ要素に 3 通りの意味が入る**ので、並べる前に
   // 見分ける（電文解説資料 Ⅱ.21 2-1-5-3-6・2-1-5-3-7、気象庁コード表 12）。
@@ -1120,47 +1145,33 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             {/* 資料の語をそのまま出すと決めた以上、その語に含まれる専門用語も説明する側で引き受ける（最後の行の
                 〔観測網外〕〔観測網内〕は「EPOS（海域〔観測網外〕）」の形でしか出ないが、語だけでは何と対比しているのか分からない） */}
             <DescriptionTip label={rt.accuracyHeading} description={rt.accuracyHint} />
-            {epicenterRankText && (
-              <div className="flex items-start gap-2">
-                <span className="shrink-0">{depthRankDiffers ? rt.accuracyRow.epicenter : rt.accuracyRow.hypocenter}</span>
-                <span className="text-white wrap-break-word">{epicenterRankText}</span>
+            {accuracyRows.map((r, i) => (
+              <div key={r.key} className="flex items-start gap-2">
+                {r.label && <span className="shrink-0">{r.label}</span>}
+                {/* 最後の行だけ、電文の情報名と官署を右端に添える（下の `eew.infoName`・`officesNode`）。
+                    収まらなければその行の下へ落ちる。値の折り返しは今までどおりこの枠の中で起きる。 */}
+                {/* 値を左へ押し（`mr-auto`）、残りは右へ寄せる（`justify-end`）。下の行へ落ちたものも右端に付く。 */}
+                <div className="flex min-w-0 flex-1 flex-wrap justify-end gap-x-2 gap-y-1.5">
+                  <span className="mr-auto text-white wrap-break-word">{r.value}</span>
+                  {i === accuracyRows.length - 1 && eew.infoName && (
+                    <span className="whitespace-nowrap">{eew.infoName}</span>
+                  )}
+                  {i === accuracyRows.length - 1 && officesNode}
+                </div>
               </div>
-            )}
-            {epicenterRank2Text && (
-              <div className="flex items-start gap-2">
-                {/* `rank2` の 1〜4 はどれも IPF 法の点数の語なので、上の行と並べて「IPF 法の側の値」と読めるようにする
-                    （2026-10-30 ユーザー選択「震央（IPF法） (Recommended)」） */}
-                <span className="shrink-0">{rt.accuracyRow.epicenterIpf}</span>
-                <span className="text-white wrap-break-word">{epicenterRank2Text}</span>
-              </div>
-            )}
-            {depthRankText && depthRankDiffers && (
-              <div className="flex items-start gap-2">
-                <span className="shrink-0">{rt.accuracyRow.depth}</span>
-                <span className="text-white wrap-break-word">{depthRankText}</span>
-              </div>
-            )}
-            {(magnitudeRankText || magnitudePointsText) && (
-              <div className="flex items-start gap-2">
-                <span className="shrink-0">{rt.accuracyRow.magnitude}</span>
-                <span className="text-white wrap-break-word">
-                  {[magnitudeRankText, magnitudePointsText].filter(Boolean).join(rt.accuracyJoin)}
-                </span>
-              </div>
-            )}
-            {/* **「最終報」とは書かない。** 資料は同じ注で「PLUM 法により予測震度が今後変化する
-                可能性はある」と断っている —— 震源が決まっても予想震度は動きうる。 */}
-            {hypocenterSettled && (
-              <span className="text-white">{rt.hypocenterSettled}</span>
-            )}
+            ))}
           </div>
         )}
 
         {/* 電文が名乗る情報名（`Head/Title`）。見出しは区分から組み立てた語なので、電文の名乗りは
-            カードの右下へ小さく添える（2026-10-30 ユーザー選択「右下に小さく出す (Recommended)」）。 */}
-        {eew.infoName && (
-          <div className="text-right text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
-            {eew.infoName}
+            カードの右下へ小さく添える（2026-10-30 ユーザー選択「右下に小さく出す (Recommended)」）。
+            精度情報があるときは、その最後の行の右端に並べる（上。収まらなければその下へ落ちる。
+            2026-11-15 ユーザー選択「右端に寄せる (Recommended)」）。ここで出すのは精度情報の行が無いときだけ。
+            官署はどちらの場合も情報名に続ける。 */}
+        {(eew.infoName || officesNode) && !hasAccuracyText && (
+          <div className="flex flex-wrap justify-end gap-x-2 gap-y-1.5 text-right text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+            {eew.infoName && <span className="whitespace-nowrap">{eew.infoName}</span>}
+            {officesNode}
           </div>
         )}
       </div>

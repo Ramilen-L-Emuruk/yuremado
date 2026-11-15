@@ -1231,6 +1231,20 @@ function readEarthquakeInfoMeta(doc: XmlDocument): import('../types/earthquake')
     ...(appendix && { appendix }),
     ...(infoKind && { earthquakeInfoKind: infoKind }),
     ...(infoType && { earthquakeInfoType: infoType }),
+    ...readTelegramOffices(doc),
+  }
+}
+
+/**
+ * 電文を編集・発表した官署を読む（→ {@link TelegramOffices}）。地震情報・津波と同じ読み手で、
+ * 互いに落とさない。帯の電文（南海トラフ系・後発地震・お知らせ・地震回数）と緊急地震速報が使う。
+ */
+function readTelegramOffices(doc: XmlDocument): import('../types/earthquake').TelegramOffices {
+  const editorialOffice = parseEditorialOfficeFromXml(doc)
+  const publishingOffice = parsePublishingOfficeFromXml(doc)
+  return {
+    ...(editorialOffice && { editorialOffice }),
+    ...(publishingOffice && { publishingOffice }),
   }
 }
 
@@ -1395,6 +1409,8 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   // 警報の対象地方。予報級では空（→ `readEewWarningRegions`）。
   const { regions: eewWarningRegions, added: eewAddedWarningRegions, unreadable: unreadableWarningRegions, unreadableLastKind: unreadableWarningLastKind } = readEewWarningRegions(doc)
   const eewInfoName = readInfoName(doc)
+  // 官署は地震情報と同じ読み手で、互いに落とさない（→ `readTelegramOffices`）。
+  const eewOffices = readTelegramOffices(doc)
   const hypocenterEl = eqEl ? xmlQ(eqEl, 'Hypocenter') : null
   const areaEl = eqEl ? xmlQ(hypocenterEl ?? eqEl, 'Area') : null
   const { lat, lng, depth, depthAtLeast } = areaEl
@@ -1651,6 +1667,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     ...(eewWarningRegions.length > 0 && { warningRegions: eewWarningRegions }),
     ...(eewAddedWarningRegions.length > 0 && { addedWarningRegions: eewAddedWarningRegions }),
     ...(eewInfoName && { infoName: eewInfoName }),
+    ...eewOffices,
     ...(eewCancelText && { cancelText: eewCancelText }),
     ...(strongShakingOnly && { strongShakingOnly: true as const }),
     ...(strongShakingText && { strongShakingText }),
@@ -2847,7 +2864,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   if (cancelled) {
     const lpgmBodyEl = xmlQ(doc, 'Body')
     const cancelText = lpgmBodyEl ? xmlText(xmlChild(lpgmBodyEl, 'Text')) : ''
-    return { ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }), id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }), originTime, maxClass: 0, cancelled: true, ...(cancelText && { cancelText }) }
+    return { ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }), id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }), originTime, maxClass: 0, cancelled: true, ...(cancelText && { cancelText }), ...readTelegramOffices(doc) }
   }
   if (!originTime) return dropTelegram(DMDATA_LOG_PREFIX, 'VXSE62（長周期地震動観測情報）の OriginTime が無いか、日時として読めません')
 
@@ -3075,6 +3092,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   return {
     ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }),
     ...(lpgmInfoName && { infoName: lpgmInfoName }),
+    ...readTelegramOffices(doc),
     id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }),
     // 県・区域の `Revise` で続報の変化を伝える電文（→ `JMALpgm.reportsRevise`）
     reportsRevise: true,
@@ -3168,6 +3186,7 @@ export function parseNankaiFromXml(xml: string): JMANankai | null {
     return {
       ...(nankaiOperationStatus && { operationStatus: nankaiOperationStatus }),
       id, time: reportDateTime, eventId,
+      ...readTelegramOffices(doc),
       kindCode: '', kindName: '',
       headline: '南海トラフ地震臨時情報（取消）',
       body: cancelBodyEl ? xmlText(xmlQ(cancelBodyEl, 'Text')) : '',
@@ -3343,6 +3362,7 @@ export function parseVyse60FromXml(xml: string): JMAKohatsu | null {
     return {
     ...(kohatsuOperationStatus && { operationStatus: kohatsuOperationStatus }),
       id, time: reportDateTime, eventId,
+      ...readTelegramOffices(doc),
       headline: '北海道・三陸沖後発地震注意情報（取消）',
       body: cancelBodyEl ? xmlText(xmlQ(cancelBodyEl, 'Text')) : '',
       cancelled: true, retracted: true, reportDateTime,
@@ -3450,6 +3470,7 @@ export function parseQuakeNoticeFromXml(xml: string): JMAQuakeNotice | null {
     ...(operationStatus && { operationStatus }),
     id: quakeNoticeId(eventId, controlDateTime || reportDateTime),
     time: reportDateTime, eventId,
+    ...readTelegramOffices(doc),
     headline, body,
     ...(freeText && { freeText }),
     cancelled, reportDateTime,
@@ -3523,6 +3544,7 @@ export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | n
       ...(operationStatus && { operationStatus }),
       id: `dmdata-quake-count-${eventId}-${serial}`,
       time: reportDateTime, eventId, headline,
+      ...readTelegramOffices(doc),
       items: [], ...(cancelText && { cancelText }),
       cancelled: true, reportDateTime,
       expireAt: new Date(reportMs + 7 * 24 * 3600 * 1000).toISOString(),
@@ -3589,6 +3611,7 @@ export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | n
     ...(operationStatus && { operationStatus }),
     id: `dmdata-quake-count-${eventId}-${serial}`,
     time: reportDateTime, eventId, headline, items,
+    ...readTelegramOffices(doc),
     ...(body && { body }),
     ...(bodyEl && xmlText(xmlQ(bodyEl, 'NextAdvisory')) && { nextAdvisory: xmlText(xmlQ(bodyEl, 'NextAdvisory')) }),
     ...(bodyEl && xmlText(xmlQ(bodyEl, 'FreeFormComment')) && { freeText: xmlText(xmlQ(bodyEl, 'FreeFormComment')) }),
