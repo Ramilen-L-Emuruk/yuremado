@@ -5,17 +5,25 @@ import {
   allNotes,
   compareVersions,
   notesBetween,
+  missingTranslations,
   notesForUpdate,
   parseReleaseNotes,
+  releaseNoteText,
   type ReleaseNoteEntry,
 } from './releaseNotes'
 
 describe('public/release-notes.json', () => {
   const pkgVersion = (JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }).version
-  const { entries, dropped } = parseReleaseNotes(JSON.parse(readFileSync('public/release-notes.json', 'utf8')))
+  const body = JSON.parse(readFileSync('public/release-notes.json', 'utf8')) as { versions: unknown[] }
+  const { entries, dropped, ignoredTranslations } = parseReleaseNotes(body)
 
   it('読めない版が 1 つも無い', () => {
     expect(dropped).toBe(0)
+    expect(entries).toHaveLength(body.versions.length)
+  })
+
+  it('読まずに捨てた訳が 1 つも無い（知らない言語・空の文・文字列でない値を書いたら CI で止める）', () => {
+    expect(ignoredTranslations).toBe(0)
   })
 
   it('書き始めた版より後は、いまの版の変更内容が必ずある（リリースで書き忘れたら CI で止める）', () => {
@@ -28,14 +36,23 @@ describe('public/release-notes.json', () => {
     const versions = entries.map((e) => e.version)
     expect(new Set(versions).size).toBe(versions.length)
   })
+
+  it('どの行も日本語以外の 6 言語の訳を持つ（リリースで訳を書き忘れたら CI で止める）', () => {
+    const missing = entries.flatMap((e) => [...e.added, ...e.fixed].flatMap((item) => {
+      const langs = missingTranslations(item)
+      return langs.length === 0 ? [] : [`${e.version}「${item.text}」: ${langs.join(', ')}`]
+    }))
+    expect(missing).toEqual([])
+  })
 })
 
 const entries: ReleaseNoteEntry[] = [
-  { version: '5.68.0', date: '2026-10-25', added: [], fixed: [{ text: 'A', variant: 'both' }] },
-  { version: '5.70.0', date: '2026-10-27', added: [{ text: 'B', variant: 'dmdss' }], fixed: [] },
-  { version: '5.69.0', date: '2026-10-26', added: [{ text: 'C', variant: 'standard' }], fixed: [{ text: 'D', variant: 'both' }] },
+  { version: '5.68.0', date: '2026-10-25', added: [], fixed: [{ text: 'A', variant: 'both', translations: {} }] },
+  { version: '5.70.0', date: '2026-10-27', added: [{ text: 'B', variant: 'dmdss', translations: {} }], fixed: [] },
+  { version: '5.69.0', date: '2026-10-26', added: [{ text: 'C', variant: 'standard', translations: {} }], fixed: [{ text: 'D', variant: 'both', translations: {} }] },
   { version: '5.10.0', date: '2026-08-01', added: [], fixed: [] },
 ]
+const line = (text: string) => ({ text, translations: {} })
 
 describe('compareVersions', () => {
   it('数字として比べる（文字の並びでは 5.10 が 5.9 より小さくなる）', () => {
@@ -61,8 +78,8 @@ describe('notesBetween', () => {
   // 版を 1 つにまとめたので、資料の `variant` では絞らない（まとめる前の版の行もすべて出す）
   it('資料の版の印によらず全部の行を出し、行の無い版は「軽微な修正」に倒す', () => {
     const [v570, v569] = notesBetween(entries, '5.68.0', '5.70.0')
-    expect(v570).toMatchObject({ version: '5.70.0', added: ['B'], fixed: [], minorOnly: false })
-    expect(v569).toMatchObject({ added: ['C'], fixed: ['D'], minorOnly: false })
+    expect(v570).toMatchObject({ version: '5.70.0', added: [line('B')], fixed: [], minorOnly: false })
+    expect(v569).toMatchObject({ added: [line('C')], fixed: [line('D')], minorOnly: false })
     const empty = notesBetween([{ version: '5.71.0', date: '2026-10-28', added: [], fixed: [] }], '5.70.0', '5.71.0')
     expect(empty[0]).toMatchObject({ minorOnly: true })
   })
@@ -76,6 +93,21 @@ describe('notesForUpdate', () => {
 
   it('載っていればそのまま（対照）', () => {
     expect(notesForUpdate(entries, '5.68.0', '5.70.0').map((v) => v.version)).toEqual(['5.70.0', '5.69.0'])
+  })
+})
+
+describe('releaseNoteText', () => {
+  const item = { text: '甲を追加', translations: { en: 'Added A', 'zh-Hant': '新增甲' } }
+  it('正: 画面の言語の訳を出す', () => {
+    expect(releaseNoteText(item, 'en')).toBe('Added A')
+    expect(releaseNoteText(item, 'zh-Hant')).toBe('新增甲')
+  })
+  it('対照: 日本語の画面は日本語の文', () => {
+    expect(releaseNoteText(item, 'ja')).toBe('甲を追加')
+  })
+  it('安全弁: 訳が無い言語は日本語の文のまま出す（空の行にしない）', () => {
+    expect(releaseNoteText(item, 'ko')).toBe('甲を追加')
+    expect(missingTranslations(item)).toEqual(['zh-Hans', 'ko', 'pt-BR', 'es'])
   })
 })
 
@@ -100,8 +132,36 @@ describe('parseReleaseNotes', () => {
     expect(dropped).toBe(3)
   })
 
+  it('訳の欄を読む。無い行は訳なしとして読む（訳を書く前の資料も読める）', () => {
+    const body = {
+      versions: [{
+        version: '6.17.0', date: '2026-11-16', fixed: [],
+        added: [{ text: '甲', variant: 'both', translations: { en: 'A', ko: '가' } }, { text: '乙', variant: 'both' }],
+      }],
+    }
+    const { entries: got, dropped } = parseReleaseNotes(body)
+    expect(dropped).toBe(0)
+    expect(got[0].added).toEqual([
+      { text: '甲', variant: 'both', translations: { en: 'A', ko: '가' } },
+      { text: '乙', variant: 'both', translations: {} },
+    ])
+  })
+
+  it('安全弁: 読めない訳はその言語だけ捨てて数え、版は捨てない（後の版が足した言語の訳で窓が欠けない）', () => {
+    const translations = { en: 'A', fr: 'Ajouté', ko: '', es: 1 }
+    const body = { versions: [
+      { version: '6.17.0', date: '2026-11-16', fixed: [], added: [{ text: '甲', variant: 'both', translations }] },
+      { version: '6.17.1', date: '2026-11-16', fixed: [], added: [{ text: '乙', variant: 'both', translations: ['en'] }] },
+    ] }
+    const { entries: got, dropped, ignoredTranslations } = parseReleaseNotes(body)
+    expect(dropped).toBe(0)
+    expect(got.map((e) => e.added[0].translations)).toEqual([{ en: 'A' }, {}])
+    expect(ignoredTranslations).toBe(4)
+    expect(releaseNoteText(got[0].added[0], 'ko')).toBe('甲')
+  })
+
   it('入れ物の形が違えば空として読む', () => {
-    expect(parseReleaseNotes(null)).toEqual({ entries: [], dropped: 0 })
-    expect(parseReleaseNotes({ versions: 'x' })).toEqual({ entries: [], dropped: 0 })
+    expect(parseReleaseNotes(null)).toEqual({ entries: [], dropped: 0, ignoredTranslations: 0 })
+    expect(parseReleaseNotes({ versions: 'x' })).toEqual({ entries: [], dropped: 0, ignoredTranslations: 0 })
   })
 })

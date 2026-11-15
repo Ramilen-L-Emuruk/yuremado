@@ -40,6 +40,8 @@
 
 1. `messages/<名前>.ts` を `Messages` として書く
 2. `messages.ts` の `LOCALES` に 1 行、`LOADERS` に 1 行足す
+3. 変更内容（`public/release-notes.json`）の全部の行に、その言語の訳を足す（欠けると `utils/releaseNotes.test.ts` が落ちる。§5「日本語のまま出す」の変更内容の項）
+4. 起動に失敗したときの画面の文面（`index.html` の `#boot-failed-text`）と、manifest の `*_localized`（`vite.config.ts`）に、その言語の文を足す（画面の文面の欠けは `utils/bootRecovery.test.ts` が落とす）
 
 辞書の形がそろっているかは型チェックと `npm test` が見る。
 
@@ -324,7 +326,9 @@
 
 - 読み上げの文（「今回は移さない」）
 - 電文の自由文（`FreeFormComment` など。「日本語のまま出す」）
-- 変更内容の窓の各項目の本文（`release-notes.json`。「日本語のまま出す」）。窓の見出し・ボタンは辞書から出す
+- 変更内容の窓の各項目の本文（`release-notes.json`。「日本語のまま出す」）。窓の見出し・ボタンは辞書から出す。**2026-11-15 に覆し、各行に 6 言語の訳を持たせて画面の言語で出す**（ユーザー選択「変更内容の窓の本文を訳す」「この訳で入れる (Recommended)」「各行に訳の欄を足す (Recommended)」）
+  - 訳は各行の `translations`（`utils/releaseNotes.ts`）。古い版のアプリは `text` と `variant` だけを読むので、訳を足しても古い版の窓は日本語のまま出る。訳の無い言語・読めない訳（その版のアプリが知らない言語を含む）は、その言語だけ日本語の文で出す（版は捨てない）
+  - 訳の書き方と諮り方は `.claude/skills/release/SKILL.md` の 5a（2026-11-15 ユーザー選択「5a で 6 言語も書き、テストで止める (Recommended)」）
 
 次のものも辞書へ移さず、日本語のまま出す（どれも 2026-11-11 ユーザー選択）。
 
