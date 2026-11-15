@@ -84,7 +84,7 @@ describe('EEW_PREFECTURE_CODES', () => {
 describe('eewPrefDisplayName', () => {
   const prefs: Record<string, string> = { 熊本県: 'Kumamoto Prefecture', 東京都: 'Tokyo Metropolis', 北海道: 'Hokkaido Prefecture' }
   const en: PlaceNameLookup = Object.assign((kind: string, name: string) => (kind === 'pref' ? prefs[name] ?? name : name), {
-    has: (kind: string, name: string) => kind === 'pref' && Object.hasOwn(prefs, name),
+    has: (kind: string, name: string) => kind === 'pref' && Object.prototype.hasOwnProperty.call(prefs, name),
   })
 
   it('正: 都道府県と同じ範囲の府県予報区（「県」が付かない名前）は、その都道府県の訳で出す', () => {
