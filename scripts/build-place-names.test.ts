@@ -46,9 +46,39 @@ describe('buildPlaceNameTable', () => {
     expect(table.epi['山形県庄内地方']).toBe('山形縣庄內地方')
     expect(table.area['山形県庄内']).toBe('山形縣庄內地方')
   })
-  it('辞書の無い区域は、英字の言語だけ作り、中韓は持たない（対照）', () => {
+  it('辞書の無い区域は、英字の言語はローマ字、中韓は名前から作る', () => {
+    const zhHans = PLACE_NAME_LOCALES.find((l) => l.id === 'zh-Hans')!
     expect(buildPlaceNameTable(sources(), en).table.area['伊豆大島']).toBe('Izuoshima')
-    expect(buildPlaceNameTable(sources(), ko).table.area['伊豆大島']).toBeUndefined()
+    expect(buildPlaceNameTable(sources(), ko).table.area['伊豆大島']).toBe('이즈오시마')
+    expect(buildPlaceNameTable(sources(), zhHans).table.area['伊豆大島']).toBe('伊豆大岛')
+  })
+  it('辞書の無い区域の頭の県名は表の訳で、韓国語は「本島・北部」などだけ訳す', () => {
+    const src = sources({
+      pref: { '47': entry('沖縄県', '', '오키나와 현'), '42': entry('長崎県', '', '나가사키 현') },
+      eqStations: [
+        { region: { code: '800', name: '沖縄県本島北部', kana: 'オキナワケンホントウホクブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'a', name: '石巻市旧', kana: 'イシノマキシキュウ' },
+        { region: { code: '801', name: '長崎県対馬', kana: 'ナガサキケンツシマ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'b', name: '石巻市旧', kana: 'イシノマキシキュウ' },
+      ],
+    })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.area['沖縄県本島北部']).toBe('오키나와현 본섬 북부')
+    expect(table.area['長崎県対馬']).toBe('나가사키현 쓰시마')
+    expect(report.untranslated.area).toEqual([])
+  })
+  it('対照: 英字の言語でも訳さない区域は、中韓でも作らず止めない', () => {
+    const src = sources({ eqStations: [{ region: { code: '900', name: '色丹島', kana: 'シコタントウ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'c', name: '石巻市旧', kana: 'イシノマキシキュウ' }] })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.area['色丹島']).toBeUndefined()
+    expect(() => checkUntranslated(report)).not.toThrow()
+  })
+  it('安全弁: 県名の後ろの読みの切れ目が見つからない区域は作らず、止める', () => {
+    const src = sources({
+      pref: { '47': entry('沖縄県', '', '오키나와 현') },
+      eqStations: [{ region: { code: '800', name: '沖縄県本島北部', kana: 'オキナワホントウホクブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'a', name: '石巻市旧', kana: 'イシノマキシキュウ' }],
+    })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.area['沖縄県本島北部']).toBeUndefined()
+    expect(() => checkUntranslated(report)).toThrow('訳を作れない名前が増えた')
   })
   it('韓国語の観測点は「市町村の訳 残りのハングル」、沖合の津波観測点は「頭 앞바다 距離 記号」', () => {
     const k = buildPlaceNameTable(sources(), ko).table
