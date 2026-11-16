@@ -128,7 +128,7 @@ async function renderTab(opts: {
       historyView={null}
       onPickHistory={() => {}}
       onReplayQuake={() => {}}
-      replayError={null}
+      replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
     />,
     { wrapper },
   )

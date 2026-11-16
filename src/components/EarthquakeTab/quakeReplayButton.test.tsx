@@ -90,6 +90,7 @@ async function renderTab(opts: { quake: JMAQuake | null; replayError?: string | 
       onPickHistory={() => {}}
       onReplayQuake={opts.onReplayQuake ?? (() => {})}
       replayError={opts.replayError ?? null}
+      replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
     />,
   )
   await flushDataEffects()

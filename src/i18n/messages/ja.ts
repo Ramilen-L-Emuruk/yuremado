@@ -104,6 +104,8 @@ export const ja = {
     dataNameList: (names: readonly string[], rest: number) => (rest > 0 ? `${names.join('・')}ほか${rest}件` : names.join('・')),
     /** 欠けたデータの 1 行。`gaveUp` は 1 つでも取り直しを諦めたか */
     dataLoadFailed: (subject: string, gaveUp: boolean) => `${subject}を取り込めず（${gaveUp ? '再読み込みで取得し直します' : '取り直しています'}）`,
+    /** 地震カードの「MMI（USGS）」「すべり」で開いた地図の重ねを取れなかった（2026-11-16 ユーザー選択「その帯に載せる (Recommended)」） */
+    analysisOverlayFailed: (layer: 'mmi' | 'slip') => `${layer === 'mmi' ? 'MMI（USGS）' : 'すべり（USGS）'}を取り込めず（押し直すと取り直します）`,
     /** 地図の隅の更新時刻。`time` は書式を済ませた時刻（まだ受けていなければ null）。 */
     updatedAt: (time: string | null) => (time !== null ? `更新 ${time}` : '更新 受信待機中…'),
     seismoDisconnected: '地震計 未接続',
@@ -582,7 +584,38 @@ export const ja = {
     depth: '深さ',
     intensities: '各地の震度',
     /** 各地の震度の見出しの右の、地図の見せ方の切り替え */
-    segment: { observed: '観測点', official: '推計震度分布', simple: '簡易推定', lpgm: '長周期' },
+    segment: { observed: '観測点', official: '推計震度分布', simple: '簡易推定', lpgm: '長周期', mmi: 'MMI（USGS）', slip: 'すべり' },
+    /**
+     * 海外の機関と気象庁の解析（要約の行と中央の窓。`components/EarthquakeTab/QuakeAnalysis*.tsx`）。
+     * 語の出どころは 2026-11-15 に決めたもの（各言語の出どころの表は計画書 項目 98 の段 c3）
+     */
+    analysis: {
+      close: '閉じる', loading: '読み込み中',
+      // 窓の見出しの答え全体の時点・取得元の行の各機関を確かめた時点（2026-11-16 ユーザー選択「窓と取得元の行に出す (Recommended)」
+      // 「どちらも「○ 時点」 (Recommended)」）
+      asOf: (at: string) => `${at} 時点`,
+      label: '解析', more: '詳しく ›', damage: '被害の見込み', solutions: (n: number) => `解 ${n} 件`,
+      fault: { reverse: '逆断層型', normal: '正断層型', strikeSlip: '横ずれ断層型' },
+      title: (name: string) => `${name}の解析`, quakeInfo: '地震情報', catalog: '長期震源カタログ',
+      // 長期震源カタログと照合できたときだけ、名前の後ろに空白を挟んで出す（2026-11-16 ユーザー発言「照合できたときだけ照合済みとか出せばいいじゃん」
+      // 「と、はいらねえよ。空白でいいだろ」・選択「この形でよい (Recommended)」）
+      catalogMatched: '照合済み',
+      byAgency: '機関ごと', byKind: '種類ごと', tabMech: '発震機構解', tabUsgs: '被害と揺れ（USGS）', tabSources: '取得元', jma: '気象庁',
+      status: { matched: 'あり', none: 'なし', pending: '確認中', error: '取得失敗' },
+      stale: '直近の確認では見つからず', merged: (n: number) => `USGS は近くの地震 ${n} つをまとめて解析した可能性あり`, watchError: (at: string) => `USGS の更新を取得できていない（${at} 以降）`, noSolutions: '発震機構解はありません',
+      viaEmsc: 'EMSC 経由', preferred: 'EMSC の推奨', depth: '深さ', planes: '節面', published: '公表', noPublished: '公表時刻なし', older: (n: number) => `前の版 ${n} 件`,
+      // 気象庁の解の名前。全世界の CMT 解は気象庁の一覧の見出し（ＣＭＴ解／全世界）に沿って「CMT 解（全世界・速報値）」
+      // （2026-11-15 選択「CMT 解（全世界・速報値） (Recommended)」）
+      jmaMethod: { cmt: 'CMT 解', firstMotion: '初動解' }, jmaStage: { refined: '精査後', preliminary: '速報値' }, jmaScopeGlobal: '全世界',
+      jmaMethodLabel: (method: string, stage: string, scope: string | null) => `${method}（${scope ? `${scope}・` : ''}${stage}）`,
+      extra: { dc: 'DC 成分', clvd: 'CLVD 成分', iso: '等方成分', vr: 'V.R.', stations: '観測点数' },
+      pager: '被害の見込み（PAGER）', shakemap: '推定の揺れ（ShakeMap）', finiteFault: '断層のすべり（有限断層モデル）', groundFailure: '地盤の崩れの推定（Ground Failure）', dyfi: '揺れの体験の投稿（DYFI）',
+      deaths: '死者', economic: '経済損失（ドル）', max: '最大', accel: '加速度', velocity: '速度',
+      maxSlip: '最大すべり', length: '長さ', width: '幅', sdr: '走向/傾斜/すべり角',
+      landslide: '土砂崩れ', liquefaction: '液状化', exposed: '影響', reports: (n: string) => `${n} 件`,
+      alert: { green: '緑', yellow: '黄', orange: 'オレンジ', red: '赤' },
+      credit: '出典', lat: '北緯', lon: '東経',
+    },
     segmentHint: {
       official: '気象庁が地盤の揺れやすさまで考慮して推計した震度の分布です',
       simple: '観測点の震度をこのアプリが補間した目安です。気象庁の推計とは精度が違います',
@@ -890,6 +923,10 @@ export const ja = {
       nameSeparator: '・',
       unreceivedTitle: '震度を入手していない地点',
       unreceived: '未入電',
+      /** 海外の機関の解析の重ね（2026-11-15 に決めた見出し。目盛りは USGS の凡例の段と 0〜最大） */
+      analysisMmiTitle: '推定の揺れ（MMI・USGS）',
+      analysisSlipTitle: '断層のすべり（m・USGS）',
+      analysisSlipShort: 'すべり',
       psWave: '緊急地震速報の予報円',
       psWaveShort: '予報円',
       pWave: 'P波',
@@ -1771,6 +1808,12 @@ export const ja = {
         label: '地震情報（震度を入手していない地点が多い報）',
         description: '日向灘 M6.4 最大震度5強（実電文）– 震度を入手していない地点が 60。市町村・区域・県の行に「未入電あり」の印が付き、値そのものが届いていない 18 市町村は「5弱以上」と出る',
         button: '未入電テスト',
+      },
+      /** 2026-11-15 選択「この案で入れる (Recommended)」 */
+      analysisQuake: {
+        label: '海外機関と気象庁の解析',
+        description: '能登半島地震 M7.6 最大震度7（実電文）に、中継が返した実際の解析の答え（2026-11-15 取得）を添える – カードに解析の行が出て、［詳しく ›］で窓が開き、「MMI（USGS）」「すべり」で地図に重ねられる',
+        button: '解析テスト',
       },
       maxScaleOrAboveQuake: {
         label: '地震情報（最大震度が「5弱以上」になる報）',

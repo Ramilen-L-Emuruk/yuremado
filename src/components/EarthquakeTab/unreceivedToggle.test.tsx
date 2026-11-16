@@ -103,7 +103,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     historyView={null}
     onPickHistory={() => {}}
     onReplayQuake={() => {}}
-    replayError={null}
+    replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
   />
   )
   await flushDataEffects()
@@ -189,7 +189,7 @@ describe('未入電トグル', () => {
         historyView={null}
         onPickHistory={() => {}}
         onReplayQuake={() => {}}
-        replayError={null}
+        replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
       />,
     )
     expect(findIntensityRow(PREF)).toBeUndefined()

@@ -123,7 +123,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     historyView={null}
     onPickHistory={() => {}}
     onReplayQuake={() => {}}
-    replayError={null}
+    replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
   />
   )
   await flushDataEffects()
@@ -178,7 +178,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     historyView={null}
     onPickHistory={() => {}}
     onReplayQuake={() => {}}
-    replayError={null}
+    replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
   />
 )
 const renderSpeaking = async (subject: string | null, lpgm: JMALpgm = makeLpgm()) => {

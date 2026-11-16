@@ -64,7 +64,8 @@ import {
 } from '../utils/specialInfoBands'
 import { dropExpiredUpTo, earliestExpiryMs, putBandItem, type BandListItem } from '../utils/specialInfoBandList'
 import { loadTestTelegramScripts } from '../utils/testDataLoader'
-import { buildTestLogOnlyEntries, buildTestTelegramEntries, defaultTestTelegramFetcher, type TestTelegramScript } from '../utils/testTelegrams'
+import { buildTestLogOnlyEntries, buildTestTelegramEntries, defaultTestTelegramFetcher, type BuiltTestTelegram, type TestTelegramScript } from '../utils/testTelegrams'
+import { clearTestAnalyses, payloadEventIds, setTestAnalysis } from '../utils/testAnalysis'
 
 /**
  * 画面・音へ回らずに落とした電文を、録画ツール向けに記録する
@@ -4214,15 +4215,23 @@ export function useEarthquakes(
    */
   const runTestTelegramScript = useCallback(async (
     pick: (scripts: Awaited<ReturnType<typeof loadTestTelegramScripts>>) => TestTelegramScript,
+    /**
+     * 流す前に、組んだ電文（EventID を書き換えた後）を受け取って準備する。「解析テスト」が答えを結び付けるのに使う。
+     * 読み込み（await）と置く処理を分け、置く処理（戻り値の関数）は世代を確かめた後に呼ぶ
+     */
+    beforeQueue?: (built: readonly BuiltTestTelegram[]) => Promise<() => void>,
   ) => {
     const generation = testGenerationRef.current
     try {
       const scripts = await loadTestTelegramScripts()
       const built = await buildTestTelegramEntries(pick(scripts), { now: serverDate() })
+      // 前段（答えの読み込み）にも await があるので、世代は前段の後に確かめる。リセットされた古い実行は何も置かない
+      const commit = beforeQueue ? await beforeQueue(built) : null
       if (generation !== testGenerationRef.current) {
         log.debug('[test] 組んでいる間にリセットされたので、テスト用の電文を捨てました')
         return
       }
+      commit?.()
       for (const { entry } of built) {
         eventQueueRef.current.push({ eventTime: entry.replayTime, payload: entry.payload, logEntry: entry.logEntry })
       }
@@ -4338,6 +4347,16 @@ export function useEarthquakes(
    * （→ docs/spec/quake-spec.md §5「市町村の震度」）。
    */
   const simulateUnreceivedQuake = useCallback(() => runTestTelegramScript(s => s.UNRECEIVED_QUAKE), [runTestTelegramScript])
+  /**
+   * 解析テスト（能登本震の地震情報に、中継が返した実物の解析の答えを添える。2026-11-15 選択「この案で入れる (Recommended)」）。
+   * 電文は地震テストと同じ台本。答えは中継に問い合わせず、書き換えた EventID に結び付けて置く（→ `utils/testAnalysis.ts`）
+   */
+  const simulateAnalysisQuake = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE, async (built) => {
+    const { default: answer } = await import('../services/relayAnalysis.noto.fixture.json')
+    return () => {
+      for (const b of built) for (const id of payloadEventIds(b.entry.payload)) setTestAnalysis(id, answer)
+    }
+  }), [runTestTelegramScript])
 
   /**
    * 最大震度に「以上」が付く地震情報のテスト（石川県西方沖 2024-11-26）。
@@ -4677,6 +4696,8 @@ export function useEarthquakes(
     replayFetchWindowRef.current = null
     updateHistoryDays(() => EMPTY_HISTORY_DAYS)
     clearTestSimulationTimers()
+    // 「解析テスト」で地震に結び付けた答えも落とす（地震ごと消えるので、残すと次の同じ EventID に付く）
+    clearTestAnalyses()
     setState(prev => ({
       ...prev,
       earthquakes: [],
@@ -4857,7 +4878,7 @@ export function useEarthquakes(
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateAnalysisQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,
     simulateQuakeCancel,
     simulateQuakePartialCancel,

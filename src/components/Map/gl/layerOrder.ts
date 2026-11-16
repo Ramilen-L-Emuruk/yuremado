@@ -34,6 +34,9 @@ export const MAP_LAYER_ORDER = [
   // 気象庁の推計震度分布図（IXAC41）。自前の面と**排他**なので隣に置く（同時には出ない）。
   // 境界線より背面という理由も同じ。
   'quake-estimated-intensity',
+  // 海外の機関の解析の重ね: 断層のすべり（USGS の有限断層モデルの小区画）。震度の面と同じく境界線より背面
+  'analysis-slip-fill',
+  'analysis-slip-line',
   'sub-borders',
   'pref-borders',
   // 地震活動ヒートマップ（旧 z255）。プレート境界線・活断層線（旧 z263）より背面。
@@ -49,6 +52,8 @@ export const MAP_LAYER_ORDER = [
   'quake-lpgm-region-fill-line',
   'eew-lpgm-region-fill',
   'eew-lpgm-region-fill-line',
+  // 海外の機関の解析の重ね: 推定の揺れ（USGS の ShakeMap の MMI の等値線）。線なので境界線より前面
+  'analysis-mmi-line',
   'plate-boundaries',
   'active-faults',
   // 津波海岸線（旧 z270）。プレート境界線・活断層線より前面だが、予報円・観測点よりは背面。

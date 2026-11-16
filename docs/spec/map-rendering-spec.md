@@ -55,6 +55,10 @@ const mapMode = mapTab === 'tsunami' ? 'tsunami'
 **複数のレイヤーで使い回すファクトリは自分のインターフェースへ `id: MapLayerId` を直接持たせる**
 （`gl/depthPointLayer.ts` の `DepthPointLayer` がその形。4 枚がこれを共有する）。
 
+**海外の機関と気象庁の解析の重ね**（計画書 項目 98。描くのは `AnalysisOverlayGL`）の 3 層は、震度の層と同時には出ない（重ねを開いている間は震度の層を引っ込める。→ [`quake-spec.md`](quake-spec.md) §8「海外の機関と気象庁の解析」）。置き場所の理由は次のとおり。
+- `analysis-slip-fill`・`analysis-slip-line`（断層のすべり）は、推計震度分布図と同じく県境（`sub-borders`・`pref-borders`）より背面に置く。面なので、県境が上に見えるように
+- `analysis-mmi-line`（推定の揺れの等値線）は、区域の塗りより前面・県境より前面・プレート境界線（`plate-boundaries`）と活断層線（`active-faults`）より背面に置く。線なので県境に埋もれさせない。震度の点とラベルより背面
+
 **カスタムレイヤーの注意**: MapLibre の `type: 'custom'` レイヤーは `getStyle().layers` に現れない。
 順序確認は `map.style._order` を見る。現状は 8 つ——`kyoshin-subthreshold`・`pswave`・
 `quake-estimated-intensity`・`day-night` と、`gl/depthPointLayer.ts` を共有する
@@ -1245,6 +1249,7 @@ mode は 4 つ（`quake` / `tsunami` / `kyoshin` / `catalog`。§2）。**全モ
 - `QuakeIntensityPointsGL`（観測点ドット）
 - `QuakeUnreceivedPointsGL`（震度が届いていない観測点の印。観測点ドットとは出す条件が 1 つ違い、
   未入電トグルを開いている間は寄り具合に関わらず出す → [`quake-spec.md`](quake-spec.md) §4）
+- `AnalysisOverlayGL`（海外の機関と気象庁の解析の重ね。USGS の推定の揺れ（MMI の等値線）と断層のすべりの区画。重ねを開いている間だけ中身を出す。開いている間は上の区域塗り・観測点・震度の面・推計震度分布・未入電を引っ込める（`JapanMapGL.tsx` の `analysisMode`）→ [`quake-spec.md`](quake-spec.md) §8「海外の機関と気象庁の解析」）
 - `LpgmPointsGL` / `LpgmRegionFillGL`（長周期。観測点の吹き出しは周期ごとの内訳を、
   区域の印の吹き出しはその区域の観測点を並べる。内訳の行の中身と見出しの文はカードの観測点の行と共有する（`lpgmPeriodRows`）→
   [`quake-spec.md`](quake-spec.md) §8「長周期地震動は「どの周期帯が強く出たか」まで出す」）
@@ -3323,6 +3328,7 @@ canvas source へ視野ぶんだけ焼いていた頃は、2 つの限界があ�
 - **半透明で添えるだけの描画物は、主役として扱うモードのときだけ出す。** 予報円と EEW 震源の
   ×印は全モードで描かれるが、リアルタイム震度モード以外では薄く敷いてある（`fullOpacity`）。
   ×印を凡例に入れていないので、予報円もそのモードに限る —— 片方だけ枠を取ると釣り合わない
+- **海外の機関と気象庁の解析の重ね**（`analysisMmi`・`analysisSlip`）は、重ねを開いて取れた間だけ出す。MMI は USGS の凡例と同じ 9 段（I・II–III・IV・V・VI・VII・VIII・IX・X+）、すべりは 0 から最大すべりまでの色の帯（5 色の点を補間）。重ねを開いている間は震度の凡例（`quakeIntensity`・`unreceived`）を出さない（`JapanMapGL` の `legendSources`）
 
 **並べる順だけはモードで決める**（`MapLegendSources.primary`・実体は `JapanMapGL` の
 `LEGEND_PRIMARY_BY_MODE`）。いま見ている画面の主役を先頭へ寄せ、残りの相対順は崩さない。
@@ -4072,3 +4078,4 @@ canvas source へ視野ぶんだけ焼いていた頃は、2 つの限界があ�
 - 2026-11-08: §4 に「下地を地図の控えへ載せる」を足した（録画モードのあいだ、下地のタイル 290 枚を地図の控えへ先に読み込んでおき、遠くへ寄せた直後の黒い抜けを消す）
 - 2026-11-09: §4「下地を地図の控えへ載せる」に、配信版と比べた実測を足した
 - 2026-11-13: §5 のラベルを、英語・ポルトガル語・スペイン語では県名・区域名の訳で描くようにした（焼く字に訳の字を足した。`public/fonts/M PLUS Rounded 1c/` の全ファイルの合計が 228,202→233,203 バイト）。重なりの判定の幅の見積もりに半角の字と折り返しを入れた
+- 2026-11-15: §3・§7・§20 に海外の機関と気象庁の解析の重ね（`AnalysisOverlayGL`・層 `analysis-slip-fill`・`analysis-slip-line`・`analysis-mmi-line`・凡例 `analysisMmi`・`analysisSlip`）を足した（計画書 項目 98）

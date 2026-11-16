@@ -123,6 +123,8 @@ export interface TestFunctions {
   /** 津波の続報が地震情報より新しい規模を伝える場面。 */
   magnitudeFromTsunami?: () => void
   unreceivedQuake?: () => void
+  /** 解析テスト（能登の地震に実物の解析の答えを添える） */
+  analysisQuake?: () => void
   maxScaleOrAboveQuake?: () => void
   tsunamiGradeChange?: () => void
   tsunamiQuietReports?: () => void
@@ -2576,6 +2578,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {onTest.unreceivedQuake && (
           <Row label={w.test.unreceivedQuake.label} description={w.test.unreceivedQuake.description}>
             <TestButton color="orange" onClick={onTest.unreceivedQuake}>{w.test.unreceivedQuake.button}</TestButton>
+          </Row>
+        )}
+        {onTest.analysisQuake && (
+          <Row label={w.test.analysisQuake.label} description={w.test.analysisQuake.description}>
+            <TestButton color="orange" onClick={onTest.analysisQuake}>{w.test.analysisQuake.button}</TestButton>
           </Row>
         )}
         {onTest.maxScaleOrAboveQuake && (
