@@ -7,9 +7,9 @@ import { loadSubRegions } from '../../utils/subregions'
 import { REGIONS, regionLabel } from '../../utils/regions'
 import { useLocale, useMessages, useMessagesRef, usePlaceNames } from '../../i18n/I18nProvider'
 import { mapLabelPlaceNames, type PlaceNameLookup } from '../../i18n/placeNames'
-import type { Messages } from '../../i18n/messages'
+import type { Locale, Messages } from '../../i18n/messages'
 import { addOrderedLayer } from './gl/layerOrder'
-import { JP_FONT_STACK } from './gl/fontStack'
+import { JP_FONT_STACK, LABEL_TEXT_FONT_EXPR, placeLabelFontStack } from './gl/fontStack'
 import { log } from '../../utils/logger'
 import { profileSpan } from '../../utils/frameProfiler'
 import {
@@ -26,8 +26,9 @@ import { bindDynamicZoomRange, clampMinZoom } from './gl/viewSpan'
 import { labelMinZoom } from './gl/zoomLevels'
 
 // 地名ラベル（地方名／県名／区域名）を MapLibre の symbol レイヤーで描画する（Leaflet 版 BaseMap の
-// basemap-labels 相当）。日本語は事前生成した SDF グリフ（public/fonts/M PLUS Rounded 1c/・JapanMapGL の
-// style.glyphs と localIdeographFontFamily:false 設定を参照）を GPU 描画する。
+// basemap-labels 相当）。字は事前生成した SDF グリフ（public/fonts/<組>/・JapanMapGL の
+// style.glyphs と localIdeographFontFamily:false 設定を参照）を GPU 描画する。組は M PLUS Rounded 1c と、
+// 中韓の県名・区域名の訳を描く言語ごとの組（gl/fontStack.ts）。
 //
 // ズームによる粒度切替は各レイヤーの minzoom/maxzoom で宣言的に行う（Leaflet 版の zoomend ハンドラ相当）:
 //   下限〜6.4  : 地方ラベル（引きの画。日本全体フィットはこの帯に入る）
@@ -117,9 +118,9 @@ const REGION_SHIFT_EM = 1.5
 const PREF_SHIFT_EM = 1.5
 const SUB_SHIFT_EM = 2.2
 
-// symbol レイヤーの text-font。フォントスタック名は gl/fontStack.ts が単一情報源
-// （build-glyphs.mjs の出力ディレクトリ名と本値の一致はビルド時に照合される。詳細は fontStack.ts）。
-const JP_TEXT_FONT = [JP_FONT_STACK]
+// symbol レイヤーの text-font は、地方名・県名・区域名とも `LABEL_TEXT_FONT_EXPR`（地物の `font` から組を選ぶ。
+// 中韓の訳は言語ごとの組）。組の名前は gl/fontStack.ts が単一情報源で、build-glyphs.mjs の出力ディレクトリ名との一致は
+// ビルド時に照合される
 
 // 縁取り: ダーク地図上での視認性を確保するため、太めの halo-width＋halo-blur で背景色のソフトなグローを
 // 敷く（旧 Leaflet の三重 text-shadow 相当）。グリフ自体も ExtraBold(800)で焼いている（build-glyphs.mjs）。
@@ -176,21 +177,21 @@ const DEFAULT_PLACEMENT: LabelPlacement = { shift: 'none', dimmed: false }
  * （text-offset は layout プロパティで feature-state を受け付けないため。gl/labelOverlap.ts 冒頭）。
  */
 function labelFeatureCollection(
-  items: { t: LabelOverlapTarget; p: LabelPlacement }[],
+  items: { t: LabelTarget; p: LabelPlacement }[],
 ): FeatureCollection<Point> {
   return {
     type: 'FeatureCollection',
     features: items.map(({ t, p }) => ({
       type: 'Feature',
       id: t.id,
-      properties: { name: t.text, shift: p.shift, dimmed: p.dimmed },
+      properties: { name: t.text, font: t.font ?? JP_FONT_STACK, shift: p.shift, dimmed: p.dimmed },
       geometry: { type: 'Point', coordinates: t.lngLat },
     })),
   }
 }
 
 /** 判定前（レイヤー構築時）の GeoJSON。 */
-function initialFeatureCollection(targets: LabelOverlapTarget[]): FeatureCollection<Point> {
+function initialFeatureCollection(targets: LabelTarget[]): FeatureCollection<Point> {
   return labelFeatureCollection(targets.map((t) => ({ t, p: DEFAULT_PLACEMENT })))
 }
 
@@ -219,11 +220,11 @@ function warnIfRoomMissing(targets: LabelOverlapTarget[], file: string, kind: st
  */
 function applyPlacements(
   map: MapLibreMap,
-  targets: LabelOverlapTarget[],
+  targets: LabelTarget[],
   placements: LabelPlacement[],
   lastSig: Record<string, string>,
 ): void {
-  const bySource = new Map<string, { t: LabelOverlapTarget; p: LabelPlacement }[]>()
+  const bySource = new Map<string, { t: LabelTarget; p: LabelPlacement }[]>()
   targets.forEach((t, i) => {
     const items = bySource.get(t.source)
     if (items) items.push({ t, p: placements[i] })
@@ -248,19 +249,46 @@ function applyPlacements(
  * 県名・区域名は地名の引き方（`mapLabelPlaceNames` が訳さない言語では日本語の名前のまま返す）。
  * 元の日本語の名前（`place.name`）は残すので、言語を何度切り替えても日本語へ戻せる
  */
-export function relabelTargets(targets: LabelTarget[], labelPlace: PlaceNameLookup, mapWords: Messages['map']): Set<string> {
+export function relabelTargets(targets: LabelTarget[], labelPlace: PlaceNameLookup, mapWords: Messages['map'], locale: Locale): Set<string> {
   const changed = new Set<string>()
   for (const t of targets) {
     const text = t.place
       ? labelPlace(t.place.kind, t.place.name)
       : t.source === REGION_SRC ? regionLabel(REGIONS[Number(t.id)]?.name ?? t.text, mapWords) : t.text
-    if (t.text !== text) { t.text = text; changed.add(t.source) }
+    const font = placeFont(t, labelPlace, locale)
+    // 組の無いラベルは M PLUS と同じに見る（初めて組を決めただけで書き戻しを起こさない）
+    if (t.text !== text || (t.font ?? JP_FONT_STACK) !== font) { t.text = text; t.font = font; changed.add(t.source) }
   }
   return changed
 }
 
+/**
+ * ラベル 1 枚を描く組。県名・区域名の訳はその言語の組（`PLACE_LABEL_FONT_STACKS`）、訳の無い名前（日本語の名前の
+ * まま）は M PLUS（2026-11-15 ユーザー承認）。訳したかは
+ * 表に訳があるか（`PlaceNameLookup.has`）で見る。字で比べると、訳が日本語と同じ字の名前（繁体の「東京都」）だけ
+ * M PLUS になり、同じ地図の中で書体が混ざる。地方名は、日本語以外のどの言語の辞書（`map.regionName`）にも 14 件すべての
+ * 訳があるので、日本語以外では言語の組で描く（2026-11-16 ユーザー選択「この訳で入れる (Recommended)」）
+ */
+function placeFont(t: LabelTarget, lookup: PlaceNameLookup, locale: Locale): string {
+  if (t.source === REGION_SRC) return regionFont(locale)
+  return placeLabelFontStack(locale, !!t.place && lookup.has(t.place.kind, t.place.name))
+}
+
+/** 地方名のラベルを描く組 */
+function regionFont(locale: Locale): string {
+  return placeLabelFontStack(locale, locale !== 'ja')
+}
+
+/** 県名・区域名のラベル 1 枚の字・元の名前・組（足すときの言語と引き方で作る） */
+function placeLabel(kind: 'pref' | 'area', name: string, lookup: PlaceNameLookup, locale: Locale): Pick<LabelTarget, 'text' | 'place' | 'font'> {
+  const t: LabelTarget = { source: '', id: 0, lngLat: [0, 0], text: lookup(kind, name), textSize: 0, place: { kind, name } }
+  return { text: t.text, place: t.place, font: placeFont(t, lookup, locale) }
+}
+
 export interface LabelTarget extends LabelOverlapTarget {
   place?: { kind: 'pref' | 'area'; name: string }
+  /** 描く組の名前（地物の `font` に載せ、`text-font` の式が選ぶ）。省略は M PLUS */
+  font?: string
 }
 
 interface Props {
@@ -291,11 +319,15 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
   // 地方名の語（言語が変わったら下の effect が地方のラベルの字だけを差し替える）
   const messages = useMessages()
   const messagesRef = useMessagesRef()
-  // 県名・区域名の訳（訳す言語は `MAP_LABEL_LOCALES`。それ以外は日本語のまま）。県名・区域名は
+  // 県名・区域名の訳（訳す言語は `MAP_LABEL_LOCALES`。それ以外は日本語のまま）と、それを描く組。県名・区域名は
   // 非同期に読んでから足すので、足すときの言語で引けるよう ref でも持つ
-  const labelPlace = mapLabelPlaceNames(useLocale(), usePlaceNames())
+  const locale = useLocale()
+  const labelPlace = mapLabelPlaceNames(locale, usePlaceNames())
   const labelPlaceRef = useRef<PlaceNameLookup>(labelPlace)
   labelPlaceRef.current = labelPlace
+  // 足すときの組を選ぶ言語（字と同じく、足すときの言語で選ぶ）
+  const localeRef = useRef<Locale>(locale)
+  localeRef.current = locale
 
   useEffect(() => {
     if (!map) return
@@ -312,6 +344,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
       id: i,
       lngLat: [r.lng, r.lat],
       text: regionLabel(r.name, messagesRef.current.map),
+      font: regionFont(localeRef.current),
       textSize: REGION_TEXT_SIZE,
       shiftEm: REGION_SHIFT_EM,
       unboundedShift: true,
@@ -325,7 +358,8 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
       maxzoom: REGION_MAX_ZOOM,
       layout: {
         'text-field': ['get', 'name'],
-        'text-font': JP_TEXT_FONT,
+        // 中韓の地方名はその言語の組で描く（地物の `font` から選ぶ。`regionFont`）
+        'text-font': LABEL_TEXT_FONT_EXPR,
         'text-size': REGION_TEXT_SIZE * iconScaleRef.current,
         'text-letter-spacing': 0.05,
         // 地方名どうしが重なったら上下へ逃がし、バッジと重なったら全体を上下へずらす
@@ -364,8 +398,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
         source: PREF_SRC,
         id: i,
         lngLat: [shape.label[1], shape.label[0]],
-        text: labelPlaceRef.current('pref', name),
-        place: { kind: 'pref', name },
+        ...placeLabel('pref', name, labelPlaceRef.current, localeRef.current),
         textSize: PREF_TEXT_SIZE,
         shiftEm: PREF_SHIFT_EM,
         room: shape.room,
@@ -381,7 +414,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
         maxzoom: CITY_LABEL_MIN_ZOOM,
         layout: {
           'text-field': ['get', 'name'],
-          'text-font': JP_TEXT_FONT,
+          'text-font': LABEL_TEXT_FONT_EXPR,
           'text-size': PREF_TEXT_SIZE * iconScaleRef.current,
           'text-offset': labelTextOffsetExpr(PREF_SHIFT_EM),
         },
@@ -409,8 +442,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
         source: SUB_SRC,
         id: i,
         lngLat: [sr.label[1], sr.label[0]],
-        text: labelPlaceRef.current('area', sr.name),
-        place: { kind: 'area', name: sr.name },
+        ...placeLabel('area', sr.name, labelPlaceRef.current, localeRef.current),
         textSize: SUB_TEXT_SIZE,
         shiftEm: SUB_SHIFT_EM,
         room: sr.room,
@@ -427,7 +459,7 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
         minzoom: CITY_LABEL_MIN_ZOOM,
         layout: {
           'text-field': ['get', 'name'],
-          'text-font': JP_TEXT_FONT,
+          'text-font': LABEL_TEXT_FONT_EXPR,
           'text-size': SUB_TEXT_SIZE * iconScaleRef.current,
           'text-offset': labelTextOffsetExpr(SUB_SHIFT_EM),
         },
@@ -598,16 +630,16 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
   }, [map, overlapSignature])
 
   // 言語が変わったら（訳の表を読み終えたときも）、ラベルの字を差し替える。地方名は辞書の語、
-  // 県名・区域名は地名の訳（`MAP_LABEL_LOCALES` の言語だけ。ほかは日本語のまま）。
-  // **レイヤーは作り直さない。** 字の変わったソースだけ書き戻しを 1 回起こし（前回の署名を外す）、字の幅が変わるので重なりも測り直す。
+  // 県名・区域名は地名の訳（`MAP_LABEL_LOCALES` の言語だけ。ほかは日本語のまま）と、それを描く組。
+  // **レイヤーは作り直さない。** 字か組の変わったソースだけ書き戻しを 1 回起こし（前回の署名を外す）、字の幅が変わるので重なりも測り直す。
   // 言語か表が変わったときだけ走る（地図の移動や毎秒の更新では走らない）
   useEffect(() => {
     if (!map) return
-    const changedSources = relabelTargets(targetsRef.current, labelPlace, messages.map)
+    const changedSources = relabelTargets(targetsRef.current, labelPlace, messages.map, locale)
     if (changedSources.size === 0) return
     for (const id of changedSources) delete lastSigRef.current[id]
     scheduleOverlapCheckRef.current()
-  }, [map, messages, labelPlace])
+  }, [map, messages, labelPlace, locale])
 
   return null
 }

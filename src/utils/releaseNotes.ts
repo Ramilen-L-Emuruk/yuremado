@@ -1,10 +1,22 @@
+import { LOCALES, type Locale } from '../i18n/messages'
+
 /**
  * 版ごとの変更内容（`public/release-notes.json`）を、画面に出す形へ選ぶ。
  *
  * 変更内容はリリースのときに利用者向けに書く（2026-10-26 ユーザー承認「リリース時に利用者向けに書く」。
  * 書き方の決まりは `.claude/skills/release/SKILL.md`）。**アプリへは同梱しない** —— 待っている新しい版の
  * 内容を、古い版のページから読む必要があるので、配信されているファイルを取りに行く。
+ *
+ * 各行は日本語の `text` と、日本語以外の 6 言語の訳 `translations` を持つ（2026-11-15 ユーザー選択
+ * 「各行に訳の欄を足す (Recommended)」）。古い版のアプリは `text` と `variant` だけを読み、訳の欄は見ない。
  */
+
+/** 訳を持つ言語（日本語以外）。 */
+export type ReleaseNoteLocale = Exclude<Locale, 'ja'>
+
+const TRANSLATED_LOCALES: readonly ReleaseNoteLocale[] = LOCALES.map((l) => l.id).filter((id): id is ReleaseNoteLocale => id !== 'ja')
+
+export type ReleaseNoteTranslations = Readonly<Partial<Record<ReleaseNoteLocale, string>>>
 
 /**
  * 変更内容を書き始めた版。これより前の版は書かない（2026-10-26 ユーザー承認「この仕組みを出す版から」）。
@@ -20,8 +32,25 @@ export const FIRST_NOTED_VERSION = '5.70.0'
 export type ReleaseNoteVariant = 'both' | 'standard' | 'dmdss'
 
 export interface ReleaseNoteItem {
+  /** 日本語の文。 */
   text: string
   variant: ReleaseNoteVariant
+  /** 日本語以外の言語の訳。欠けた言語と、読めない訳の言語（`readTranslations` が捨てる）は日本語の文で出す（`releaseNoteText`）。 */
+  translations: ReleaseNoteTranslations
+}
+
+/** 画面に出す 1 行。言語は描くときに選ぶ（`releaseNoteText`）。 */
+export type ReleaseNoteLine = Pick<ReleaseNoteItem, 'text' | 'translations'>
+
+/** 1 行を画面の言語で出す。訳が無い言語は日本語の文のまま。 */
+export function releaseNoteText(line: ReleaseNoteLine, locale: Locale): string {
+  if (locale === 'ja') return line.text
+  return line.translations[locale] ?? line.text
+}
+
+/** 訳が欠けている言語。`releaseNotes.test.ts` が、リリースで訳を書き忘れた行を CI で止めるために使う。 */
+export function missingTranslations(line: ReleaseNoteLine): ReleaseNoteLocale[] {
+  return TRANSLATED_LOCALES.filter((l) => line.translations[l] === undefined)
 }
 
 export interface ReleaseNoteEntry {
@@ -38,8 +67,8 @@ export interface ReleaseNoteEntry {
 export interface ReleaseNoteView {
   version: string
   date: string
-  added: string[]
-  fixed: string[]
+  added: ReleaseNoteLine[]
+  fixed: ReleaseNoteLine[]
   minorOnly: boolean
 }
 
@@ -63,8 +92,8 @@ function parseVersion(v: string): [number, number, number] | null {
 }
 
 function toView(entry: ReleaseNoteEntry): ReleaseNoteView {
-  const added = entry.added.map((i) => i.text)
-  const fixed = entry.fixed.map((i) => i.text)
+  const added = entry.added.map(({ text, translations }) => ({ text, translations }))
+  const fixed = entry.fixed.map(({ text, translations }) => ({ text, translations }))
   return { version: entry.version, date: entry.date, added, fixed, minorOnly: added.length === 0 && fixed.length === 0 }
 }
 
@@ -116,41 +145,64 @@ function sortNewestFirst(entries: readonly ReleaseNoteEntry[]): ReleaseNoteEntry
 }
 
 /**
- * 取ってきた中身を読む。形が違う行は捨て、捨てた数を返す（記録に残すため。黙って欠けさせない）。
+ * 取ってきた中身を読む。形が違う版は捨て、捨てた数を返す（記録に残すため。黙って欠けさせない）。
+ *
+ * `ignoredTranslations` は、読まずに捨てた訳の数（知らない言語・空白だけの文・文字列でない値、欄そのものの形の誤り）。
+ * 訳の誤りでは版を捨てない —— その言語だけ日本語で出す。この版のアプリが知らない言語の訳を、後の版が足しても
+ * 窓が欠けないようにするため。書き忘れ・書き誤りは `releaseNotes.test.ts` が実ファイルで止める。
  */
-export function parseReleaseNotes(body: unknown): { entries: ReleaseNoteEntry[]; dropped: number } {
+export function parseReleaseNotes(body: unknown): { entries: ReleaseNoteEntry[]; dropped: number; ignoredTranslations: number } {
   const list = typeof body === 'object' && body !== null ? (body as { versions?: unknown }).versions : undefined
-  if (!Array.isArray(list)) return { entries: [], dropped: 0 }
+  if (!Array.isArray(list)) return { entries: [], dropped: 0, ignoredTranslations: 0 }
   const entries: ReleaseNoteEntry[] = []
+  const ignored = { count: 0 }
   let dropped = 0
   for (const raw of list) {
-    const entry = readEntry(raw)
+    const entry = readEntry(raw, ignored)
     if (entry === null) dropped++
     else entries.push(entry)
   }
-  return { entries, dropped }
+  return { entries, dropped, ignoredTranslations: ignored.count }
 }
 
-function readEntry(raw: unknown): ReleaseNoteEntry | null {
+function readEntry(raw: unknown, ignored: { count: number }): ReleaseNoteEntry | null {
   if (typeof raw !== 'object' || raw === null) return null
   const r = raw as Record<string, unknown>
   if (typeof r.version !== 'string' || parseVersion(r.version) === null) return null
   if (typeof r.date !== 'string') return null
-  const added = readItems(r.added)
-  const fixed = readItems(r.fixed)
+  const added = readItems(r.added, ignored)
+  const fixed = readItems(r.fixed, ignored)
   if (added === null || fixed === null) return null
   return { version: r.version, date: r.date, added, fixed }
 }
 
-function readItems(raw: unknown): ReleaseNoteItem[] | null {
+function readItems(raw: unknown, ignored: { count: number }): ReleaseNoteItem[] | null {
   if (!Array.isArray(raw)) return null
   const items: ReleaseNoteItem[] = []
   for (const it of raw) {
     if (typeof it !== 'object' || it === null) return null
-    const { text, variant } = it as Record<string, unknown>
+    const { text, variant, translations } = it as Record<string, unknown>
     if (typeof text !== 'string' || text === '') return null
     if (variant !== 'both' && variant !== 'standard' && variant !== 'dmdss') return null
-    items.push({ text, variant })
+    items.push({ text, variant, translations: readTranslations(translations, ignored) })
   }
   return items
+}
+
+/** 訳の欄。無ければ訳なし。読めない訳はその言語だけ捨てて数える（その言語の画面は日本語の文で出る）。 */
+function readTranslations(raw: unknown, ignored: { count: number }): ReleaseNoteTranslations {
+  if (raw === undefined) return {}
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    ignored.count++
+    return {}
+  }
+  const out: Partial<Record<ReleaseNoteLocale, string>> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(TRANSLATED_LOCALES as readonly string[]).includes(key) || typeof value !== 'string' || value.trim() === '') {
+      ignored.count++
+      continue
+    }
+    out[key as ReleaseNoteLocale] = value
+  }
+  return out
 }

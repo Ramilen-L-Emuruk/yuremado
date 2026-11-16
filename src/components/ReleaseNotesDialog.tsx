@@ -2,12 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import { CANCEL_FADE_MS, fadeIn } from './EarthquakeTab/quakeMotion'
 import { OVERLAY_BACKDROP_PAD } from '../rootFrame'
-import { useMessages } from '../i18n/I18nProvider'
+import { useLocale, useMessages } from '../i18n/I18nProvider'
 import { fetchReleaseNotes } from '../services/releaseNotesSource'
 import { isAbortedByCaller } from '../utils/fetchWithTimeout'
 import { log } from '../utils/logger'
 import { markReleaseNotesOpen } from '../utils/releaseNotesOpen'
-import type { ReleaseNoteEntry, ReleaseNoteView } from '../utils/releaseNotes'
+import { releaseNoteText, type ReleaseNoteEntry, type ReleaseNoteLine, type ReleaseNoteView } from '../utils/releaseNotes'
 
 /**
  * 版ごとの変更内容を出す窓。更新後の知らせの［変更内容］と、設定の窓の「変更履歴」の［表示］から開く。
@@ -133,13 +133,15 @@ function VersionNotes({ view }: { view: ReleaseNoteView }) {
   )
 }
 
-function NoteList({ label, items }: { label: string; items: string[] }) {
+/** 各行は画面の言語の訳で出す（訳の無い行は日本語のまま。→ `releaseNoteText`） */
+function NoteList({ label, items }: { label: string; items: ReleaseNoteLine[] }) {
+  const locale = useLocale()
   if (items.length === 0) return null
   return (
     <div>
       <div className="text-(length:--ui-fs) text-secondary">{label}</div>
       <ul className="ml-4 list-disc text-(length:--ui-fs) text-secondary">
-        {items.map((item, i) => <li key={i}>{item}</li>)}
+        {items.map((item, i) => <li key={i}>{releaseNoteText(item, locale)}</li>)}
       </ul>
     </div>
   )

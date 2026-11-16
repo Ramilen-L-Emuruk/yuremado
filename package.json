@@ -1,7 +1,7 @@
 {
   "name": "yuremado",
   "private": true,
-  "version": "6.16.0",
+  "version": "6.17.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -50,6 +50,7 @@
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.1",
     "mapshaper": "^0.7.83",
+    "opencc-js": "^1.4.2",
     "pbf": "^5.1.2",
     "postcss": "^8.4.49",
     "seisplotjs-seedcodec": "^1.0.3",

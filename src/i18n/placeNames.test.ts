@@ -22,6 +22,16 @@ describe('placeNameLookup', () => {
     expect(lookup('epi', '架空の沖')).toBe('架空の沖')
     expect(JA_PLACE_NAMES('city', '石狩市')).toBe('石狩市')
   })
+  it('has: 表に訳があれば、訳が日本語と同じ字でも true', () => {
+    const lookup = placeNameLookup(table({ pref: { 東京都: '東京都' } }))
+    expect(lookup.has('pref', '東京都')).toBe(true)
+  })
+  it('has: 表に無い名前・別の種類・日本語の引き方は false（対照）', () => {
+    const lookup = placeNameLookup(table({ pref: { 東京都: '東京都' } }))
+    expect(lookup.has('pref', '大阪府')).toBe(false)
+    expect(lookup.has('tsunamiArea', '東京都')).toBe(false)
+    expect(JA_PLACE_NAMES.has('pref', '東京都')).toBe(false)
+  })
 })
 
 describe('validatePlaceNameTable', () => {

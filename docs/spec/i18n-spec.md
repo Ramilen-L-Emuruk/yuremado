@@ -40,6 +40,8 @@
 
 1. `messages/<名前>.ts` を `Messages` として書く
 2. `messages.ts` の `LOCALES` に 1 行、`LOADERS` に 1 行足す
+3. 変更内容（`public/release-notes.json`）の全部の行に、その言語の訳を足す（欠けると `utils/releaseNotes.test.ts` が落ちる。§5「日本語のまま出す」の変更内容の項）
+4. 起動に失敗したときの画面の文面（`index.html` の `#boot-failed-text`）と、manifest の `*_localized`（`vite.config.ts`）に、その言語の文を足す（画面の文面の欠けは `utils/bootRecovery.test.ts` が落とす）
 
 辞書の形がそろっているかは型チェックと `npm test` が見る。
 
@@ -202,7 +204,7 @@
 
 - 前の段で決めた語を使い回した: 震源調査中（`Hypocenter under investigation`）・最大震度・到達確認・欠測・未入電・規模の欄の M 不明と深さ不明・気象庁以外の機関の震源・震源カタログ。凡例の密度の欄の完全性の注記は、外国語ではカタログタブの注記（`catalog.completeness`）と同じ文にした。日本語は凡例の今の文面を保つため、別の鍵（`map.legend.completeness`）にした
 - 海岸線の等級（凡例と海岸線の吹き出し）は、津波タブの等級名の英語に合わせた。ただし津波予報は今の凡例と同じく「津波予報」までにし、「（若干の海面変動）」を付けない（`map.popup.tsunamiGrade`）
-- プレートの名前は日本語のまま。地名・観測点名・区域名（電文とデータの値）は §5「地名の訳」の表で出す
+- プレートの名前は、吹き出しを開いたときの言語で訳す（§5「地名の訳」の「訳すのは出す直前だけ」の箇条。2026-11-15 ユーザー選択「全言語で訳す (Recommended)」）。地名・観測点名・区域名（電文とデータの値）は §5「地名の訳」の表で出す
 - 作った語: 吹き出しの見出しと行・凡例の見出しと見本の名前・密度の期間の名前・地図の隅の名前・地図を作れないときの文・自作地震計の札
 
 同じ日に、次も選んだ。
@@ -263,7 +265,7 @@
 - **深さの語が深さの列に入らない行だけ、規模と深さを下の段へ並べる**（2026-11-11 ユーザー選択「その行だけ下の段へ (Recommended)」）。「ごく浅い」の訳（英語 Very shallow 80px・スペイン語 Muy superficial 97px）は深さの列（`--qk-col-d`。標準の幅で 68px、広いレイアウトで 78px）に入らず、左へはみ出して規模に重なる（`components/EarthquakeTab/QuakeListRow.tsx`）
 - **長い形**（英語は 2026-11-11 ユーザー選択「この案でよい (Recommended)」、ポルトガル語・スペイン語・中国語・韓国語は同日「辞書の語にそろえる (Recommended)」）: 英語 5 Lower・5 Upper（気象庁の多言語辞書は 5-lower）、ポルトガル語 5 fraco・5 forte、スペイン語 5 débil・5 fuerte、簡体字 5弱・5强、繁体字 5弱・5強、韓国語 5약・5강。「強」の訳は気象庁の多言語辞書に無いので、forte・fuerte は fraco・débil の対として作った語。短い形が長い形と違うのは英語・ポルトガル語・スペイン語だけで、ほかの 4 言語は同じ字
 - **ポルトガル語・スペイン語は辞書の語にそろえる**（ユーザー選択「辞書の語にそろえる (Recommended)」）。文の中も同じ語（「5 fraco ou superior」「5 débil o superior」）
-- **規模を数字で出せないときの電文の説明も訳す**（2026-11-11 ユーザー選択「短く訳す (Recommended)」）。電文の字面は、気象庁の解説資料が定める「Ｍ不明」「Ｍ８を超える巨大地震」の 2 種（`types/earthquake.ts` の `magnitudeCondition` の注記。実配信の控えでは数えていない）で、日本語の画面は電文のまま（半角へ揃えて「M不明」「M8を超える巨大地震」）。ほかの言語は「M unknown」「Over M8」（スペイン語 M desconocida・Más de M8、ポルトガル語 M desconhecida・Mais de M8、韓国語 M 불명・M8 초과、中国語 M不明・超过M8／超過M8）。「巨大地震」は訳さない（幅 360px の一覧の行で英語「Over M8 (huge earthquake)」は 2 行に折れる）。訳の無い字面は電文のまま出す（`utils/formatters.ts` の `magnitudeConditionText`）。読み上げ・通知・共有カードの画像は日本語のまま
+- **規模を数字で出せないときの電文の説明も訳す**（2026-11-11 ユーザー選択「短く訳す (Recommended)」）。電文の字面は、気象庁の解説資料が定める「Ｍ不明」「Ｍ８を超える巨大地震」の 2 種（`types/earthquake.ts` の `magnitudeCondition` の注記。実配信の控えでは数えていない）で、日本語の画面は電文のまま（半角へ揃えて「M不明」「M8を超える巨大地震」）。ほかの言語は「M unknown」「Over M8」（スペイン語 M desconocida・Más de M8、ポルトガル語 M desconhecida・Mais de M8、韓国語 M 불명・M8 초과、中国語 M不明・超过M8／超過M8）。「巨大地震」は訳さない（幅 360px の一覧の行で英語「Over M8 (huge earthquake)」は 2 行に折れる）。訳の無い字面は電文のまま出す（`utils/formatters.ts` の `magnitudeConditionText`）。通知と共有カードの画像も同じ部品で画面の言語の字面を出す（`hooks/useLiveEventHandler.ts`・`utils/shareCardContent.ts`）。読み上げは日本語のまま
 - **英語の訳**（2026-11-11 ユーザー選択「この案でよい (Recommended)」）: 地震発生時刻 Origin time／地震発現時刻 Shaking onset time（不明は Onset time unknown）／不明 Unknown／ごく浅い Very shallow／○km以上 ○ km or deeper／震源決定: ○（気象庁以外） Hypocenter by ○ (not JMA)／気象庁マグニチュード JMA magnitude／北緯・東経 37.5°N 137.2°E／国内の津波の区分 No tsunami threat・Under investigation・Possible tsunami・Slight sea-level change・Tsunami warnings in effect・Watch for sea-level changes・Possible tsunami (if the hypocenter is under the sea)・Watch for further information・No impact on Japan／訂正 Corrected (details unknown)・Intensity corrected・Hypocenter corrected・Intensity and hypocenter corrected／津波の一括の題 A Major Tsunami Warning, Tsunami Warning or Tsunami Advisory is in effect／気象庁以外の観測点 Station operated by an agency other than JMA／○以上 ○ or higher／○程度以上 About ○ or higher／階級 Class○・Class unknown・札の「長周期○」 LPGM ○／0未満 Below 0（揺れ検知の枠と棒の札は <0）／津波の凡例 3 m or more・Under 0.2 m。気象庁の多言語辞書の語は Magnitude・Depth・Hypocenter・Latitude and longitude だけで、ほかは作った語。ほかの 5 言語は英語と同じ意味で作る。いまの値は辞書（`i18n/messages/en.ts` の `formats` ほか）が正で、この一覧は承認したときの案の記録
 - **簡体字は「烈度」にそろえる**（ユーザー選択「簡体字は烈度にそろえる (Recommended)」）。気象庁の多言語辞書は簡体字を「烈度5弱以上」、繁体字を「震度5弱以上」と書く。簡体字の辞書の値は「烈度」（日本語の画面の語を引いた「」の中は除く）
 - **津波の観測の「第1波 〜」の行**（2026-11-11 ユーザー選択「この訳でよい (Recommended)」）: 英語 Initial wave・ポルトガル語 Primeira onda・スペイン語 Primera ola・韓国語 제1파。中国語は気象庁の多言語辞書の「第１波到達時刻」（簡体「首波到达时间」・繁体「首波到達時間」）に合わせて簡体・繁体とも「首波」（同日ユーザー選択「首波（辞書の語） (Recommended)」）
@@ -318,7 +320,9 @@
 - 再生の帯は、帯の文を画面の言語で組み、ログと録画ツール向けの記録には日本語の文を残す。帯の文は描くときにいまの辞書で組み、state には何の失敗か（失敗の種類と原因）だけを持つ（2026-11-12 ユーザー選択「この段で直す (Recommended)」。地震タブの履歴の帯と同じ作り）
 - 通知の本文に出す発生時刻は日本時間で書き、日本語以外の文では時刻の後ろに「JST」を添える（2026-11-12 ユーザー選択「日本時間＋JST を添える (Recommended)」・推計震度分布図の通知も「そろえて JST を添える (Recommended)」）。時刻はその瞬間のまま辞書へ渡し、端末の時刻として組み直さない（組み直すと端末の時間帯の夏時間の切り替わりで 1 時間ずれる）
 - 画面に届くエラー（再生の帯・地震タブの履歴の帯・K-NET の取り込みの失敗）は、`message` を日本語の文のまま（ログと記録用）にし、文の鍵と引数（`errorText`）を添えて投げる。画面に出す所が鍵を辞書で文にし、鍵の無いエラーは `message` を出す（`utils/localizedError.ts`）。辞書を読めないファイル（`utils/knet`・`utils/dmdataApiKey.ts`。自作地震計のホストも読む）は日本語の文を自分で書き、辞書の日本語と同じ字面であることを `utils/keyedError.test.ts` が突き合わせる。普段は出ない実装の誤りの文は、日本語以外では頭に「Internal error:」の類を付ける
-- 地図の地方名は焼いた字形で描く（`scripts/build-glyphs.mjs` が焼くのは日本語の地名・ASCII・英葡西の県名と区域名の訳に出る字）。英語・ポルトガル語・スペイン語は訳し、中国語（簡体・繁体）と韓国語は字形に無い字が要るので、字形を焼き足さずに日本語の字のまま出す（2026-11-12 ユーザー選択「日本語の字のまま (Recommended)」）。県名・区域名のラベルの扱いは §5「地名の訳」
+- 地図の地方名は全部の言語で訳し、焼いた字形で描く（`scripts/build-glyphs.mjs`）。英語・ポルトガル語・スペイン語は M PLUS の組、中国語（簡体・繁体）と韓国語は県名・区域名と同じ言語ごとの組（Noto Sans SC / TC / KR Black）で描く（2026-11-16 ユーザー選択「リリースを止めて先に直す」「この訳で入れる (Recommended)」。11-12 の「日本語の字のまま (Recommended)」は、中韓の組を焼いたので覆した）
+  - 中韓の語は、地震タブの地域の窓（`quake.filter.groupName`）と各言語の Wikipedia の記事名から「地方」を落とした形（韓国語 홋카이도・도호쿠・간토・이즈 제도…）。中国語の「中国」は地域の窓と同じ「中国地区」「中國地區」、小笠原諸島は中国語版に記事が無いので「小笠原」
+  - 県名・区域名のラベルの扱いは §5「地名の訳」
 - 括弧・並べる区切り・範囲の「〜」は辞書の `formats`（`paren`・`listSep`・`spaceSep`・`slash`・`slashSpaced`・`range`・`rangeSpaced`）から出す。日本語の画面は今の字（全角の括弧・「、」・全角空白・「／」・「〜」）のまま。中国語（簡体・繁体）の範囲の記号は全角のチルダ「～」にそろえる（`formats` の範囲の書式・期間・絞り込みの条件など、中国語の辞書の中の範囲すべて）（2026-11-12 ユーザー選択「「～」にそろえる (Recommended)」）
 - 共有カードの副見出しは、日本語・中国語では全角の空き・「／」、ほかの言語では半角の空き 2 つ・「 / 」のところで折り返し、行数の上限を超えたときも項目の境目で切る（値の中の半角の空き 1 つと、前後に空きの無い「/」では割らない。`utils/shareCard.ts` の `SUBTITLE_SEPARATOR`）。注意文・出典は、かな・漢字を含まない文なら語の境で折る
 - 中国語（簡体・繁体）と韓国語の訳文の中の区切りは、日本語の中点「・」を使わない（2026-11-12 ユーザー選択「この段でまとめて直す (Recommended)」）。中国語は語を並べる区切りを「、」、語の後ろへ注記を足す区切り（「〜·全国最大」など）を「·」にし、韓国語はどちらも「·」にする。辞書の鍵（日本語の電文名）と、訳の表に無く日本語のまま出す地名・区域名・観測点名・出典の名前の中の「・」は残す
@@ -333,22 +337,28 @@
 
 - 読み上げの文（「今回は移さない」）
 - 電文の自由文（`FreeFormComment` など。「日本語のまま出す」）
-- 変更内容の窓の各項目の本文（`release-notes.json`。「日本語のまま出す」）。窓の見出し・ボタンは辞書から出す
+- 変更内容の窓の各項目の本文（`release-notes.json`。「日本語のまま出す」）。窓の見出し・ボタンは辞書から出す。**2026-11-15 に覆し、各行に 6 言語の訳を持たせて画面の言語で出す**（ユーザー選択「変更内容の窓の本文を訳す」「この訳で入れる (Recommended)」「各行に訳の欄を足す (Recommended)」）
+  - 訳は各行の `translations`（`utils/releaseNotes.ts`）。古い版のアプリは `text` と `variant` だけを読むので、訳を足しても古い版の窓は日本語のまま出る。訳の無い言語・読めない訳（その版のアプリが知らない言語を含む）は、その言語だけ日本語の文で出す（版は捨てない）
+  - 訳の書き方と諮り方は `.claude/skills/release/SKILL.md` の 5a（2026-11-15 ユーザー選択「5a で 6 言語も書き、テストで止める (Recommended)」）
 
 次のものも辞書へ移さず、日本語のまま出す（どれも 2026-11-11 ユーザー選択）。
 
 - 電文とデータに由来する地名（震源名・区域名・観測点名・県名など）。どの画面でも同じ（「電文・データの地名 (Recommended)」）。**2026-11-13 に覆し、訳の表のある地名は訳して出す**（下の「地名の訳」）
-- 設定の窓の時報の例文（「時報の例文 (Recommended)」）
-- 起動に失敗したときの画面（`index.html` の中の文）と、アプリの名前・説明（`vite.config.ts` の `manifest`・`index.html` の `meta`）（「起動失敗の画面など (Recommended)」）
+- 設定の窓の時報の例文（「時報の例文 (Recommended)」）。例文は読み上げる文なので、読み上げが日本語のままの間は日本語で出し、読み上げを多言語にしたら読み上げる言語の文にする（2026-11-15 ユーザー発言「今は日本語でいいですが、確定ではなく読み上げを多言語対応したら変えたいです」）
+- 起動に失敗したときの画面（`index.html` の中の文）と、アプリの名前・説明（`vite.config.ts` の `manifest`・`index.html` の `meta`）（「起動失敗の画面など (Recommended)」）。**2026-11-15 に覆し、次のとおり訳す**
+  - 起動に失敗したときの画面は、設定の言語で 7 言語から選ぶ（2026-11-15 ユーザー選択「設定の言語で 7 言語から選ぶ (Recommended)」）。辞書はまだ読めていないので、文面は `index.html` の `#boot-failed-text` に置き、`public/boot-recovery.js` が設定の言語で差し替える。言語の選び方は辞書を使わず、この JS が同じ規則を持つ（保存の読み方は `readStoredLocaleSetting`、端末の言語は `localeFromLanguageTags` と同じ。旧アドレスから渡された設定はアプリ本体が受け取るので、受け取る前の保存だけを見る）。ボタンの語は辞書の `errorScreen.reload` とそろえる（`utils/bootRecovery.test.ts` が照合する）
+  - manifest には言語ごとの名前と説明（`name_localized`・`short_name_localized`・`description_localized`）を足す（2026-11-15 ユーザー選択「この文面で足す (Recommended)」）。名前はどの言語も「Yuremado」。読むのはデスクトップの Chrome・Edge 148 以降だけで、ほかのブラウザ（Android の Chrome・Safari・Firefox）は日本語の `name`・`description` を出す（2026-11-15 に MDN の互換表 [`name_localized`](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Manifest/Reference/name_localized) と Chrome の解説 [Manifest localization](https://developer.chrome.com/blog/manifest-localization) で確かめた）。`index.html` の `meta`（説明・ホーム画面の題名）は日本語のまま
 
 ### 地名の訳
 
 電文とデータの地名は、日本語以外の画面では言語ごとの訳の表で出す。決めたこと（どれも 2026-11-13 ユーザー選択）:
 
 - 気象庁の多言語辞書にある地名は訳して出す（「辞書のある地名は訳して出す (Recommended)」）
-- 辞書に無い細分区域・観測点は、集めた英語名を使い、それも無いものは読み仮名からローマ字を作る（「集めた英語名＋無い分は作る (Recommended)」）。中国語・韓国語で辞書に無いものは日本語の名前のまま出す（「日本語の名のまま (Recommended)」）
+- 辞書に無い細分区域・観測点は、集めた英語名を使い、それも無いものは読み仮名からローマ字を作る（「集めた英語名＋無い分は作る (Recommended)」）。中国語・韓国語で辞書に無い細分区域（島など 28 件）は、名前の先頭の都道府県名を表の訳にし、残りを観測点名と同じ部品で作る（2026-11-15「一覧の案で訳す (Recommended)」で 11-13 の「日本語の名のまま (Recommended)」を覆した。作り方は [`data-sources-spec.md`](data-sources-spec.md) §6「地名の訳の表」）
+- 英字の言語でも訳さない細分区域 4 件（色丹島・国後島・択捉島・うるま市・金武町境界部地先の埋立地）は、どの言語でも日本語の名前のまま出す
+- 中国語・韓国語の観測点名は、中国語は漢字の字形を変え、韓国語は読み仮名をハングルにして作る（2026-11-15「案A 字形変換＋ハングル (Recommended)」で 11-13 の決定を観測点について覆した）。作り方・作らない名前・「沖」の扱いは [`data-sources-spec.md`](data-sources-spec.md) §6「地名の訳の表」
 - 訳して出す所は、画面・地図の吹き出し・通知とプッシュ通知・地図のラベル（「画面 (Recommended),地図の吹き出し (Recommended),通知とプッシュ通知 (Recommended),地図のラベル」）。どの表にも無い名前は日本語のまま出す（「日本語のまま出す (Recommended)」）
-- 地図の県名・区域名のラベルは、英語・ポルトガル語・スペイン語だけ訳す（「英葡西だけ訳す (Recommended)」）。訳に使う字が焼き元のフォント（M PLUS Rounded 1c）に無いため、中国語（簡体 31 字・繁体 7 字）と韓国語（83 字）は日本語のまま出す（字数は、県名・区域名の訳に出る字を焼き元のフォントが持つ字と突き合わせ、無かったものを 2026-11-13 に数えた）
+- 地図の県名・区域名のラベルは全部の言語で訳す。11-13 は「英葡西だけ訳す (Recommended)」だった（中韓の訳に使う字が焼き元のフォント M PLUS Rounded 1c に無いため）。2026-11-15 に中韓を足した（見本の画像を比べて「B 言語ごとに Noto で全部焼く」・焼き元は「元のフォントを丸ごと同梱」）。中韓の訳は言語ごとの組（Noto Sans SC / TC / KR Black）で描き、訳の無い名前（日本語のまま出る名前）は M PLUS で描く（「ラベルごとに書体を選ぶ (Recommended)」）
 - 訳の表はオフライン用に控える（「控える (Recommended)」）
 - ウィンドウの題名に入る震央地名も訳す（「訳す (Recommended)」）。日本語の題名は電文の名前のまま
 - 設定「通知する地域」の窓の県名も訳し、3 列のまま枠の中で折り返す（「B 案: 3 列で 2 行に折る (Recommended)」）
@@ -358,12 +368,12 @@
 
 - 表は `public/data/place-names/<言語>.json`（日本語には無い）。種類は震央地名・都道府県・市町村・津波予報区・細分区域・震度観測点・津波観測点の 7 つ。作り方と出どころは [`data-sources-spec.md`](data-sources-spec.md) §6「地名の訳の表」
 - 引き方は `i18n/placeNames.ts` の `PlaceNameLookup`（種類と日本語の名前を受けて、出す名前を返す）。画面は `usePlaceNames()`、あとで組む文（通知・共有カード）は `usePlaceNamesRef()` で受け、文を組む関数へ引数で渡す（省けない引数。テストは日本語のままの `JA_PLACE_NAMES` を渡す）
-- **訳すのは出す直前だけ。** 座標・塗り・並び・絞り込み・通知の地域の絞り・取消の照合・読み上げには日本語の名前を使う。活断層・プレート・公開観測点の名前は表に無いので日本語のまま
+- **訳すのは出す直前だけ。** 座標・塗り・並び・絞り込み・通知の地域の絞り・取消の照合・読み上げには日本語の名前を使う。活断層・公開観測点の名前は表に無いので日本語のまま。プレート名は別の表（`i18n/plateNames.ts`。作り方は [`data-sources-spec.md`](data-sources-spec.md) §6「プレート名の訳」）で、吹き出しを開いたときの言語で引く（2026-11-15 ユーザー選択「全言語で訳す (Recommended)」）
 - 緊急地震速報の府県予報区は「熊本」のように「県」の付かない名前で届くので、都道府県のコードを経て都道府県の訳で出す（`data/eewPrefectureCodes.ts` の `eewPrefDisplayName`）。都道府県を分けた府県予報区（北海道の 4 つ・伊豆諸島・小笠原・奄美・沖縄の 4 つ）は表に無いので電文の名前のまま（英字の言語では 1 行に訳と日本語が混ざる。2026-11-13 ユーザー選択「日本語のまま (Recommended)」）
 - 表は選んだ言語の 1 本だけ読む。読めるまでと読めなかったときは日本語の名前で出し（地名を空にはしない）、読めたら差し替える。読めなかった表は記録（`log.error`）に残し、回線が戻ったときと、次にその言語へ切り替えたときに取り直す。辞書と違って、読めなかったことを利用者には知らせない（2026-11-13 ユーザー選択「知らせない (Recommended)」）
 - 出したブラウザ通知とウィンドウの題名は、出した時の言語の文のまま（言語を切り替えても組み直さない）
 - プッシュ通知の地名も、同じ表で購読の言語の訳にして届く。中継は通知の文をアプリから写した関数で組み、表のうち通知が引く種類だけを写して持つ（→ [`../relay-server-design.md`](../relay-server-design.md) §6.7「通知の言語」）
-- 地図のラベルを訳す言語は `MAP_LABEL_LOCALES` が持つ。`scripts/build-glyphs.mjs` がこの一覧をソースから読み、その言語の訳に出る字（「·」とアクセント付きの字）を焼く。長い名前は MapLibre の折り返し（10em）で最大 4 行になり、重なりの判定の見積もりもこの折り返しに合わせてある（`gl/labelOverlap.ts`）
+- 地図のラベルを訳す言語は `MAP_LABEL_LOCALES`、訳を M PLUS 以外の組で描く言語は `components/Map/gl/fontStack.ts` の `PLACE_LABEL_FONT_STACKS` が持つ。`scripts/build-glyphs.mjs` がどちらもソースから読み、その言語の訳に出る字（「·」・アクセント付きの字・简体や繁體の字・ハングル）を、その言語の組へ焼く（→ [`map-rendering-spec.md`](map-rendering-spec.md) §5）。長い名前は MapLibre の折り返し（10em）で最大 4 行になり、重なりの判定の見積もりもこの折り返しに合わせてある（`gl/labelOverlap.ts`）
 - 都道府県の訳は辞書の値のまま出す（北海道も辞書の「Hokkaido Prefecture」。2026-11-13 ユーザー選択「辞書のある地名は訳して出す (Recommended)」による）
 
 日付・時刻の書式は、日本語以外の言語ではその言語の書き方（`Intl.DateTimeFormat`・時刻は 24 時間。入口は `i18n/intlDates.ts`）で出す。日本語の画面は今の書式のまま（2026-11-11 ユーザー選択「言語ごとの書き方 (Recommended)」）。移すのは漢字で書く日付（「11月11日 16:00」「2026年11月11日（水）」など）だけで、数字の形（`2026/11/11 16:00:00`）はどの言語でもそのまま出す。

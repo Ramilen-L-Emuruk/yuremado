@@ -81,21 +81,43 @@ const AREA_HEADS: readonly { kanji: string; roman: string }[] = [
 ]
 
 /**
- * 区域の英語名を読み仮名から作る（「県名 Ken 残り」など）。頭の語が無い名前（伊豆大島など）は 1 語にする。
- * 区切りはローマ字の並びの中で頭の語を探して決める（県名の読み仮名の長さを持っていないため）。作れなければ null
+ * 読み仮名を前と後に分けてローマ字にし、前のローマ字が `head` で終わる最初の切れ目を返す。
+ * `exact` が真なら前のローマ字が `head` そのもの（北海道）、偽なら `head` で終わり `head` より長い（「県名＋ken」）ときに切る。
+ * 分けてからローマ字にするのは、まとめて変えると切れ目をまたいで「ン＋マ行」が m に同化し（ケン＋ミヤコ → kemmiyako）、
+ * 頭の語が見つからなくなるため
+ */
+function splitKanaAfter(kana: string, head: string, exact: boolean): { left: string; right: string } | null {
+  for (let i = 1; i < kana.length; i++) {
+    const left = romanizeKana(kana.slice(0, i))
+    if (!left || !left.endsWith(head) || (exact ? left !== head : left.length <= head.length)) continue
+    // 長音の「ウ」「ー」（ホッカイド＋ウ）はローマ字で落ちて同じ並びになるので、その後ろまで切れ目を進める。
+    // 進めるのは長音の仮名だけ（「ウ＋オ」もローマ字では o に縮むので、並びが同じかだけで見ると次の語の頭まで食う）
+    while (i + 1 < kana.length && 'ウー'.includes(kana[i]) && romanizeKana(kana.slice(0, i + 1)) === left) i++
+    const right = romanizeKana(kana.slice(i))
+    if (right) return { left, right }
+  }
+  return null
+}
+
+/**
+ * 区域の英語名を読み仮名から作る（「県名 Ken 残り」・北海道は「Hokkaido 残り」）。頭の語が無い名前（伊豆大島など）は 1 語にする。
+ * 切れ目は読み仮名の上で探す（県名の読み仮名の長さを持っていないため）。作れなければ null。
+ * 北海道は気象庁の報に例が無いので、同じ形の「Hokkaido 残り」にする（2026-11-15 ユーザー選択「報の形にそろえる (Recommended)」）
  */
 export function areaEnFromKana(name: string, kana: string): string | null {
   const roman = romanizeKana(kana)
   if (!roman) return null
+  if (name.startsWith('北海道') && name.length > 3) {
+    const cut = splitKanaAfter(kana, 'hokkaido', true)
+    if (cut) return `Hokkaido ${capitalize(cut.right)}`
+  }
   for (const h of AREA_HEADS) {
     const at = name.indexOf(h.kanji)
     if (at <= 0 || at + h.kanji.length >= name.length) continue
-    // 県名の部分の読みの長さは分からないので、ローマ字の中で頭の語が最初に現れる所で切る。
-    // 頭の語がローマ字に見つからない（長音の落とし方で崩れた）ときは 1 語に倒す
-    const idx = roman.indexOf(h.roman, 1)
-    if (idx < 0 || idx + h.roman.length >= roman.length) break
-    const rest = roman.slice(idx + h.roman.length)
-    return `${capitalize(roman.slice(0, idx))} ${capitalize(h.roman)} ${capitalize(rest)}`
+    // 頭の語が読み仮名に見つからない（長音の落とし方で崩れた）ときは 1 語に倒す
+    const cut = splitKanaAfter(kana, h.roman, false)
+    if (!cut) break
+    return `${capitalize(cut.left.slice(0, -h.roman.length))} ${capitalize(h.roman)} ${capitalize(cut.right)}`
   }
   return capitalize(roman)
 }

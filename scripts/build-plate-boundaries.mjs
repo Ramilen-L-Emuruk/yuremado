@@ -21,6 +21,7 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { indexSteps, parseSteps, splitLineByClass } from './lib/plateSteps.mjs'
+import { PLATE_NAMES } from './lib/plateNames.mjs'
 
 const SOURCE_URL =
   'https://raw.githubusercontent.com/fraxen/tectonicplates/master/GeoJSON/PB2002_boundaries.json'
@@ -29,62 +30,7 @@ const STEPS_URL = 'http://peterbird.name/oldFTP/PB2002/PB2002_steps.dat.txt'
 /** 歩に当たらない区間の割合の上限。超えたら原典か配布元の形が変わっている。 */
 const MAX_UNMATCHED_RATIO = 0.01
 
-// PB2002 のプレート略号 → 日本語表記（全 52 プレート）。
-// 英語の正式名称は配布元 PB2002_plates.json の PlateName に一致させている。
-const PLATE_NAMES = {
-  AF: 'アフリカプレート',
-  AM: 'アムールプレート',
-  AN: '南極プレート',
-  AP: 'アルティプラノプレート',
-  AR: 'アラビアプレート',
-  AS: 'エーゲ海プレート',
-  AT: 'アナトリアプレート',
-  AU: 'オーストラリアプレート',
-  BH: 'バーズヘッドプレート',
-  BR: 'バルモラルリーフプレート',
-  BS: 'バンダ海プレート',
-  BU: 'ビルマプレート',
-  CA: 'カリブプレート',
-  CL: 'カロリンプレート',
-  CO: 'ココスプレート',
-  CR: 'コンウェイリーフプレート',
-  EA: 'イースタープレート',
-  EU: 'ユーラシアプレート',
-  FT: 'フツナプレート',
-  GP: 'ガラパゴスプレート',
-  IN: 'インドプレート',
-  JF: 'フアン・デ・フカプレート',
-  JZ: 'フアン・フェルナンデスプレート',
-  KE: 'ケルマデックプレート',
-  MA: 'マリアナプレート',
-  MN: 'マヌスプレート',
-  MO: 'マオケプレート',
-  MS: 'モルッカ海プレート',
-  NA: '北アメリカプレート',
-  NB: '北ビスマルクプレート',
-  ND: '北アンデスプレート',
-  NH: 'ニューヘブリデスプレート',
-  NI: 'ニウアフォオウプレート',
-  NZ: 'ナスカプレート',
-  OK: 'オホーツクプレート',
-  ON: '沖縄プレート',
-  PA: '太平洋プレート',
-  PM: 'パナマプレート',
-  PS: 'フィリピン海プレート',
-  RI: 'リベラプレート',
-  SA: '南アメリカプレート',
-  SB: '南ビスマルクプレート',
-  SC: 'スコシアプレート',
-  SL: 'シェトランドプレート',
-  SO: 'ソマリアプレート',
-  SS: 'ソロモン海プレート',
-  SU: 'スンダプレート',
-  SW: 'サンドイッチプレート',
-  TI: 'ティモールプレート',
-  TO: 'トンガプレート',
-  WL: 'ウッドラークプレート',
-  YA: '揚子江プレート',
-}
+// PB2002 のプレート略号 → 日本語表記（全 52 プレート）は lib/plateNames.mjs（プレート名の訳の生成と共有する）。
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUT_DIR = join(__dirname, '..', 'public', 'data')

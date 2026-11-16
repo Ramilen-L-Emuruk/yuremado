@@ -9,6 +9,7 @@ import { CHECKLIST_SOURCE_URLS } from '../utils/actionChecklist'
 import { isLocale, JA_MESSAGES, LOCALE_SETTINGS, LOCALES, loadMessages, localeFromLanguageTags, localeTag, resolveLocale, type Messages } from './messages'
 import { historicalArchiveLabel } from '../utils/historicalArchiveLabel'
 import { regionLabel } from '../utils/regions'
+import { PLACE_LABEL_FONT_STACKS } from '../components/Map/gl/fontStack'
 
 // 日本語以外の辞書を先に一度読んでおく。`loadMessages` は `import()` で読むので、初回の変換の待ちが
 // テスト本体に乗ると、全件を並列で回したときだけ既定の 5 秒を超える（実際に 2 件が時間切れになった）
@@ -219,9 +220,11 @@ describe('段 10b の語', () => {
     })
   })
 
-  it('地図の地方名は ASCII と日本語の地名の字だけで書く（地図の字は焼いた字形で描く）', async () => {
+  it('地図の地方名は、言語ごとの組を持たない言語では ASCII と日本語の地名の字だけで書く（M PLUS の組で描くため）', async () => {
     const jaChars = new Set([...Object.keys(JA_MESSAGES.map.regionName).join('')])
     for (const { id } of LOCALES) {
+      // 中韓は言語ごとの組に訳の字を焼いて描く（字の欠けは build-glyphs.mjs の --check が止める）
+      if (PLACE_LABEL_FONT_STACKS[id]) continue
       const m = await loadMessages(id)
       for (const name of Object.values(m.map.regionName)) {
         for (const ch of name) {

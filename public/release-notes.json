@@ -1,13 +1,115 @@
 {
   "versions": [
     {
+      "version": "6.17.0",
+      "date": "2026-11-16",
+      "added": [
+        {
+          "text": "中国語・韓国語の画面で、地図の地名と観測点名の訳を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added Chinese and Korean translations of place names and observation station names on the map",
+            "zh-Hans": "新增中文、韩语画面中地图地名和观测点名称的翻译",
+            "zh-Hant": "新增中文、韓語畫面中地圖地名與觀測點名稱的翻譯",
+            "ko": "중국어·한국어 화면에서 지도의 지명과 관측점 이름 번역 추가",
+            "pt-BR": "Adicionadas traduções em chinês e coreano dos nomes de lugares e das estações de observação no mapa",
+            "es": "Se añadieron traducciones al chino y al coreano de los nombres de lugares y de las estaciones de observación en el mapa"
+          }
+        },
+        {
+          "text": "地図のプレート名・変更内容・起動できないときの画面の訳を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added translations of plate names on the map, What's new and the screen shown when the app fails to start",
+            "zh-Hans": "新增地图板块名称、更新内容以及无法启动时画面的翻译",
+            "zh-Hant": "新增地圖板塊名稱、更新內容以及無法啟動時畫面的翻譯",
+            "ko": "지도의 판 이름·변경 사항·실행되지 않을 때 화면의 번역 추가",
+            "pt-BR": "Adicionadas traduções dos nomes das placas no mapa, das Novidades e da tela exibida quando o app não inicia",
+            "es": "Se añadieron traducciones de los nombres de las placas en el mapa, de las Novedades y de la pantalla que se muestra cuando la app no se inicia"
+          }
+        },
+        {
+          "text": "緊急地震速報・長周期地震動などの情報に、編集官署・発表官署の表示を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added the editing and issuing offices to EEW, long-period ground motion and other information",
+            "zh-Hans": "紧急地震警报、长周期地震动等信息新增显示编辑机构和发布机构",
+            "zh-Hant": "緊急地震警報、長週期地震動等訊息新增顯示編輯機構與發表機構",
+            "ko": "긴급 지진 속보·장주기 지진동 등의 정보에 편집 관서·발표 관서 표시 추가",
+            "pt-BR": "Adicionada a exibição dos órgãos de edição e de emissão no Alerta Urgente de Terremoto, no movimento sísmico de longo período e em outras informações",
+            "es": "Se añadió la indicación de los organismos de edición y de emisión en la Alerta Temprana de Terremoto, el movimiento sísmico de período largo y otras informaciones"
+          }
+        }
+      ],
+      "fixed": [
+        {
+          "text": "速報カードの情報名の位置を改善",
+          "variant": "both",
+          "translations": {
+            "en": "Improved the position of the information name on the EEW card",
+            "zh-Hans": "改进紧急地震警报卡片中信息名称的位置",
+            "zh-Hant": "改善緊急地震警報卡片中訊息名稱的位置",
+            "ko": "긴급 지진 속보 카드의 정보 이름 위치 개선",
+            "pt-BR": "Melhorada a posição do nome da informação no cartão do Alerta Urgente de Terremoto",
+            "es": "Se mejoró la posición del nombre de la información en la tarjeta de la Alerta Temprana de Terremoto"
+          }
+        },
+        {
+          "text": "中国語・韓国語の地名の訳の一部が誤っていた不具合を修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where some Chinese and Korean place name translations were incorrect",
+            "zh-Hans": "修复部分中文、韩语地名翻译有误的问题",
+            "zh-Hant": "修正部分中文、韓語地名翻譯有誤的問題",
+            "ko": "일부 중국어·한국어 지명 번역이 잘못되어 있던 문제 수정",
+            "pt-BR": "Corrigido um problema em que algumas traduções de nomes de lugares em chinês e coreano estavam incorretas",
+            "es": "Se corrigió un error por el que algunas traducciones de nombres de lugares al chino y al coreano eran incorrectas"
+          }
+        },
+        {
+          "text": "英語・ポルトガル語・スペイン語の画面で、地震カードの一部の文字が欄からはみ出す不具合を修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where some text on earthquake cards overflowed its field in English, Portuguese and Spanish",
+            "zh-Hans": "修复英语、葡萄牙语、西班牙语画面中地震卡片部分文字超出栏位的问题",
+            "zh-Hant": "修正英語、葡萄牙語、西班牙語畫面中地震卡片部分文字超出欄位的問題",
+            "ko": "영어·포르투갈어·스페인어 화면에서 지진 카드의 일부 글자가 칸을 벗어나는 문제 수정",
+            "pt-BR": "Corrigido um problema em que parte do texto dos cartões de terremoto ultrapassava o campo em inglês, português e espanhol",
+            "es": "Se corrigió un error por el que parte del texto de las tarjetas de terremoto se salía de su campo en inglés, portugués y español"
+          }
+        }
+      ]
+    },
+    {
       "version": "6.16.0",
       "date": "2026-11-13",
       "added": [
-        { "text": "表示の言語を選ぶ設定を追加（画面・地名・プッシュ通知を英語・中国語・韓国語・ポルトガル語・スペイン語で）", "variant": "both" }
+        {
+          "text": "表示の言語を選ぶ設定を追加（画面・地名・プッシュ通知を英語・中国語・韓国語・ポルトガル語・スペイン語で）",
+          "variant": "both",
+          "translations": {
+            "en": "Added a setting to choose the display language (screens, place names and push notifications in English, Chinese, Korean, Portuguese and Spanish)",
+            "zh-Hans": "新增选择显示语言的设置（画面、地名和推送通知可使用英语、中文、韩语、葡萄牙语、西班牙语）",
+            "zh-Hant": "新增選擇顯示語言的設定（畫面、地名與推播通知可使用英語、中文、韓語、葡萄牙語、西班牙語）",
+            "ko": "표시 언어를 선택하는 설정 추가(화면·지명·푸시 알림을 영어·중국어·한국어·포르투갈어·스페인어로)",
+            "pt-BR": "Adicionada uma configuração para escolher o idioma de exibição (telas, nomes de lugares e notificações push em inglês, chinês, coreano, português e espanhol)",
+            "es": "Se añadió un ajuste para elegir el idioma de visualización (pantallas, nombres de lugares y notificaciones push en inglés, chino, coreano, portugués y español)"
+          }
+        }
       ],
       "fixed": [
-        { "text": "設定の窓の通知の項目を 1 か所にまとめて改善", "variant": "both" }
+        {
+          "text": "設定の窓の通知の項目を 1 か所にまとめて改善",
+          "variant": "both",
+          "translations": {
+            "en": "Gathered the notification items in Settings into one place",
+            "zh-Hans": "将设置中的通知项目集中到一处",
+            "zh-Hant": "將設定中的通知項目集中到一處",
+            "ko": "설정의 알림 항목을 한곳에 모아 개선",
+            "pt-BR": "Itens de notificação das Configurações reunidos em um só lugar",
+            "es": "Se reunieron en un solo lugar los elementos de notificación de la Configuración"
+          }
+        }
       ]
     },
     {
@@ -28,33 +130,89 @@
       "added": [
         {
           "text": "発表中の緊急地震速報と津波を、どのタブからでも見られる帯を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added a banner that shows active Earthquake Early Warnings and tsunamis from any tab",
+            "zh-Hans": "新增横幅，可在任何标签页查看正在发布的紧急地震警报和海啸",
+            "zh-Hant": "新增橫幅，可在任何分頁查看發布中的緊急地震警報與海嘯",
+            "ko": "발표 중인 긴급 지진 속보와 지진해일을 어느 탭에서나 볼 수 있는 배너 추가",
+            "pt-BR": "Adicionada uma faixa que mostra, em qualquer aba, os Alertas Urgentes de Terremoto e os tsunamis em vigor",
+            "es": "Se añadió un banner que muestra desde cualquier pestaña las Alertas Tempranas de Terremoto y los tsunamis vigentes"
+          }
         },
         {
           "text": "お知らせと定例の解説情報の通知を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added notifications for notices and regular commentaries",
+            "zh-Hans": "新增对通知类信息和定期解说信息的通知",
+            "zh-Hant": "新增對通知類訊息與定期解說訊息的通知",
+            "ko": "알림 정보와 정례 해설 정보에 대한 알림 추가",
+            "pt-BR": "Adicionadas notificações para avisos e comentários regulares",
+            "es": "Se añadieron notificaciones para los avisos y los comentarios regulares"
+          }
         },
         {
           "text": "地震情報の取消と、震度を観測しなかった地震の通知を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added notifications for retracted Earthquake Information and for earthquakes with no observed intensity",
+            "zh-Hans": "新增地震信息撤销以及未观测到烈度的地震的通知",
+            "zh-Hant": "新增地震訊息撤銷，以及未觀測到震度的地震的通知",
+            "ko": "지진 정보 취소와 진도가 관측되지 않은 지진의 알림 추가",
+            "pt-BR": "Adicionadas notificações de anulação da Informação sobre terremotos e de terremotos sem intensidade observada",
+            "es": "Se añadieron notificaciones de anulación de la Información de terremotos y de terremotos sin intensidad observada"
+          }
         }
       ],
       "fixed": [
         {
           "text": "取消や続報の通知の伝え方を改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Improved how notifications for retractions and updates are worded",
+            "zh-Hans": "改进撤销和续报通知的表达方式",
+            "zh-Hant": "改善撤銷與續報通知的表達方式",
+            "ko": "취소와 후속보 알림의 전달 방식 개선",
+            "pt-BR": "Melhorada a forma de apresentar as notificações de anulação e de atualização",
+            "es": "Se mejoró la forma de presentar las notificaciones de anulación y de actualización"
+          }
         },
         {
           "text": "揺れ検知が消えず、関係のない全国の地点にも印が付くことがある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where shaking detection sometimes did not clear and unrelated locations across Japan were marked",
+            "zh-Hans": "修复摇晃检测有时不消失、全国无关地点也被标记的问题",
+            "zh-Hant": "修正搖晃偵測有時不消失、全國無關地點也被標記的問題",
+            "ko": "흔들림 감지가 사라지지 않고 관계없는 전국 지점에도 표시가 붙는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que a detecção de tremor às vezes não sumia e marcava locais sem relação em todo o Japão",
+            "es": "Se corrigió un error por el que la detección de movimiento a veces no desaparecía y marcaba puntos sin relación en todo Japón"
+          }
         },
         {
           "text": "特別な情報の帯を開くと、ほかの表示が動いてしまう不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where opening a special information banner moved other parts of the screen",
+            "zh-Hans": "修复展开特别信息横幅时其他显示内容随之移动的问题",
+            "zh-Hant": "修正展開特別訊息橫幅時，其他顯示內容跟著移動的問題",
+            "ko": "특별 정보 배너를 열면 다른 표시가 움직이는 문제 수정",
+            "pt-BR": "Corrigido um problema em que abrir a faixa de informações especiais movia o restante da tela",
+            "es": "Se corrigió un error por el que al abrir el banner de información especial se movía el resto de la pantalla"
+          }
         },
         {
           "text": "「試験報を受信」を切っていても、国際津波関連情報の通信試験が届く不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where communications tests of international tsunami information arrived even with \"Receive test reports\" turned off",
+            "zh-Hans": "修复即使关闭“接收测试报”，仍会收到国际海啸相关信息通信测试的问题",
+            "zh-Hant": "修正即使關閉「接收測試報」，仍會收到國際海嘯相關訊息通訊測試的問題",
+            "ko": "\"시험보 수신\"을 꺼 두어도 국제 지진해일 관련 정보의 통신 시험이 도착하는 문제 수정",
+            "pt-BR": "Corrigido um problema em que os testes de comunicação da Informação internacional sobre tsunami chegavam mesmo com \"Receber boletins de teste\" desativado",
+            "es": "Se corrigió un error por el que llegaban las pruebas de comunicación de la Información internacional del tsunami aunque \"Recibir boletines de prueba\" estuviera desactivado"
+          }
         }
       ]
     },
@@ -65,7 +223,15 @@
       "fixed": [
         {
           "text": "録画モードで海底地形が一瞬黒くなることがある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the seafloor topography could briefly turn black in recording mode",
+            "zh-Hans": "修复录屏模式下海底地形有时短暂变黑的问题",
+            "zh-Hant": "修正錄影模式下海底地形有時短暫變黑的問題",
+            "ko": "녹화 모드에서 해저 지형이 잠깐 검게 되는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que o relevo do fundo do mar podia ficar preto por um instante no modo de gravação",
+            "es": "Se corrigió un error por el que el relieve del fondo marino podía volverse negro un instante en el modo grabación"
+          }
         }
       ]
     },
@@ -75,17 +241,41 @@
       "added": [
         {
           "text": "VOICEVOX が無いとき・繋がらないときに、端末の声で読み上げる機能を追加（設定の「読み上げの声」で選べる）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added reading aloud with the device's voice when VOICEVOX is unavailable or cannot be reached (choose it under \"Voice\" in Settings)",
+            "zh-Hans": "新增在没有 VOICEVOX 或无法连接时，用设备的语音朗读的功能（可在设置的“朗读语音”中选择）",
+            "zh-Hant": "新增在沒有 VOICEVOX 或無法連線時，以裝置語音朗讀的功能（可在設定的「朗讀語音」中選擇）",
+            "ko": "VOICEVOX가 없거나 연결되지 않을 때 기기의 음성으로 읽는 기능 추가(설정의 \"읽기 음성\"에서 선택)",
+            "pt-BR": "Adicionada a leitura com a voz do aparelho quando o VOICEVOX não está disponível ou não conecta (escolha em \"Voz da leitura\" nas Configurações)",
+            "es": "Se añadió la lectura en voz alta con la voz del dispositivo cuando VOICEVOX no está disponible o no conecta (se elige en \"Voz de lectura\" en la Configuración)"
+          }
         }
       ],
       "fixed": [
         {
           "text": "日本で揺れた深い地震・遠い地震で、国際津波関連情報が地震カードに付かず別のカードになる不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where, for deep or distant earthquakes felt in Japan, international tsunami information appeared as a separate card instead of being attached to the earthquake card",
+            "zh-Hans": "修复在日本有震感的深源地震、远地地震中，国际海啸相关信息未附在地震卡片上而成为另一张卡片的问题",
+            "zh-Hant": "修正在日本有感的深層地震、遠地地震中，國際海嘯相關訊息未附在地震卡片上，而成為另一張卡片的問題",
+            "ko": "일본에서 흔들린 깊은 지진·먼 지진에서 국제 지진해일 관련 정보가 지진 카드에 붙지 않고 별도 카드가 되는 문제 수정",
+            "pt-BR": "Corrigido um problema em que, em terremotos profundos ou distantes sentidos no Japão, a Informação internacional sobre tsunami aparecia em um cartão separado em vez de no cartão do terremoto",
+            "es": "Se corrigió un error por el que, en terremotos profundos o lejanos sentidos en Japón, la Información internacional del tsunami aparecía en otra tarjeta en lugar de en la del terremoto"
+          }
         },
         {
           "text": "iPhone で、画面を触っても通知音が鳴るようにならないことがある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue on iPhone where alert sounds sometimes stayed disabled even after touching the screen",
+            "zh-Hans": "修复在 iPhone 上，即使触摸画面提示音有时仍无法播放的问题",
+            "zh-Hant": "修正在 iPhone 上，即使觸碰畫面，提示音有時仍無法播放的問題",
+            "ko": "iPhone에서 화면을 터치해도 알림음이 울리게 되지 않는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema no iPhone em que, mesmo tocando na tela, o som de notificação às vezes não era ativado",
+            "es": "Se corrigió un error en iPhone por el que, aun tocando la pantalla, a veces no se activaban los sonidos de alerta"
+          }
         }
       ]
     },
@@ -96,7 +286,15 @@
       "fixed": [
         {
           "text": "リアルタイム震度と気象庁の震度の違いの説明を改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Improved the explanation of the difference between real-time intensity and JMA's seismic intensity",
+            "zh-Hans": "改进实时烈度与日本气象厅烈度之间差异的说明",
+            "zh-Hant": "改善即時震度與日本氣象局震度差異的說明",
+            "ko": "실시간 진도와 기상청 진도의 차이에 대한 설명 개선",
+            "pt-BR": "Melhorada a explicação da diferença entre a intensidade em tempo real e a intensidade sísmica da JMA",
+            "es": "Se mejoró la explicación de la diferencia entre la intensidad en tiempo real y la intensidad sísmica de la JMA"
+          }
         }
       ]
     },
@@ -106,13 +304,29 @@
       "added": [
         {
           "text": "地震タブで期間を選ぶと、その期間の地震だけを読み込むように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The Earthquake Information tab now loads only the earthquakes in the period you choose",
+            "zh-Hans": "改进为在地震信息标签页选择期间后，只读取该期间的地震",
+            "zh-Hant": "改善為在地震訊息分頁選擇期間後，只讀取該期間的地震",
+            "ko": "지진 정보 탭에서 기간을 고르면 그 기간의 지진만 불러오도록 개선",
+            "pt-BR": "A aba Informação sobre terremotos agora carrega só os terremotos do período escolhido",
+            "es": "La pestaña Información de terremotos ahora carga solo los terremotos del período elegido"
+          }
         }
       ],
       "fixed": [
         {
           "text": "iPhone・iPad で、画面の上端がぼやけて表示されることがある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue on iPhone and iPad where the top edge of the screen could appear blurred",
+            "zh-Hans": "修复在 iPhone、iPad 上画面上端有时显示模糊的问题",
+            "zh-Hant": "修正在 iPhone、iPad 上畫面上緣有時顯示模糊的問題",
+            "ko": "iPhone·iPad에서 화면 위쪽 끝이 흐리게 보이는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema no iPhone e no iPad em que a borda superior da tela podia aparecer desfocada",
+            "es": "Se corrigió un error en iPhone y iPad por el que el borde superior de la pantalla podía verse borroso"
+          }
         }
       ]
     },
@@ -122,33 +336,89 @@
       "added": [
         {
           "text": "地震タブに絞り込みと並び替えを追加（設定の「最低表示震度」はこちらへ移動）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added filtering and sorting to the Earthquake Information tab (the \"minimum intensity to show\" setting moved here)",
+            "zh-Hans": "在地震信息标签页新增筛选和排序（设置中的“最低显示烈度”移至此处）",
+            "zh-Hant": "在地震訊息分頁新增篩選與排序（設定中的「最低顯示震度」移至此處）",
+            "ko": "지진 정보 탭에 필터와 정렬 추가(설정의 \"최저 표시 진도\"는 이쪽으로 이동)",
+            "pt-BR": "Adicionados filtros e ordenação à aba Informação sobre terremotos (a configuração \"intensidade mínima exibida\" passou para lá)",
+            "es": "Se añadieron filtros y orden a la pestaña Información de terremotos (el ajuste \"intensidad mínima mostrada\" pasó aquí)"
+          }
         },
         {
           "text": "地震カードの更新の一覧から、前の報の時点のカードと地図を見られる機能を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added the ability to view the card and map as of an earlier report from the earthquake card's list of updates",
+            "zh-Hans": "新增可从地震卡片的更新列表查看之前某一报时的卡片和地图的功能",
+            "zh-Hant": "新增可從地震卡片的更新列表，查看先前某一報當時的卡片與地圖的功能",
+            "ko": "지진 카드의 갱신 목록에서 이전 보 시점의 카드와 지도를 볼 수 있는 기능 추가",
+            "pt-BR": "Adicionada a opção de ver, na lista de atualizações do cartão do terremoto, o cartão e o mapa no momento de um boletim anterior",
+            "es": "Se añadió la posibilidad de ver, desde la lista de actualizaciones de la tarjeta del terremoto, la tarjeta y el mapa en el momento de un boletín anterior"
+          }
         },
         {
           "text": "地震カードから、その地震をリプレイで再生する機能を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added the ability to replay an earthquake from its earthquake card",
+            "zh-Hans": "新增从地震卡片回放该地震的功能",
+            "zh-Hant": "新增從地震卡片重播該地震的功能",
+            "ko": "지진 카드에서 그 지진을 재생하는 기능 추가",
+            "pt-BR": "Adicionada a opção de reproduzir o terremoto a partir do seu cartão",
+            "es": "Se añadió la posibilidad de reproducir el terremoto desde su tarjeta"
+          }
         },
         {
           "text": "国際津波関連情報の英文を日本語訳で表示し、原文と切り替えられるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The English text of international tsunami information is now shown with a Japanese translation, switchable to the original",
+            "zh-Hans": "改进为以日语译文显示国际海啸相关信息的英文，并可与原文切换",
+            "zh-Hant": "改善為以日文譯文顯示國際海嘯相關訊息的英文，並可與原文切換",
+            "ko": "국제 지진해일 관련 정보의 영문을 일본어 번역으로 표시하고 원문과 전환할 수 있도록 개선",
+            "pt-BR": "O texto em inglês da Informação internacional sobre tsunami agora aparece traduzido para o japonês, com opção de ver o original",
+            "es": "El texto en inglés de la Información internacional del tsunami ahora se muestra traducido al japonés, con opción de ver el original"
+          }
         },
         {
           "text": "揺れ検知で、小さな揺れをより早く捉えられるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Shaking detection now catches small shaking sooner",
+            "zh-Hans": "改进摇晃检测，能更早捕捉到较小的摇晃",
+            "zh-Hant": "改善搖晃偵測，能更早捕捉到較小的搖晃",
+            "ko": "흔들림 감지에서 작은 흔들림을 더 빨리 잡아내도록 개선",
+            "pt-BR": "A detecção de tremor agora capta tremores pequenos mais cedo",
+            "es": "La detección de movimiento ahora capta antes los movimientos pequeños"
+          }
         }
       ],
       "fixed": [
         {
           "text": "国際津波関連情報の英文の末尾に余計な文字が表示される不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where extra characters appeared at the end of the English text of international tsunami information",
+            "zh-Hans": "修复国际海啸相关信息英文末尾显示多余字符的问题",
+            "zh-Hant": "修正國際海嘯相關訊息英文末尾顯示多餘字元的問題",
+            "ko": "국제 지진해일 관련 정보의 영문 끝에 불필요한 문자가 표시되는 문제 수정",
+            "pt-BR": "Corrigido um problema em que apareciam caracteres a mais no fim do texto em inglês da Informação internacional sobre tsunami",
+            "es": "Se corrigió un error por el que aparecían caracteres de más al final del texto en inglés de la Información internacional del tsunami"
+          }
         },
         {
           "text": "電文ログで、電文に含まれる見えない文字が崩れて表示される不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue in the Telegram Log where invisible characters in telegrams were displayed as garbled text",
+            "zh-Hans": "修复电文记录中，电文所含的不可见字符显示为乱码的问题",
+            "zh-Hant": "修正電文紀錄中，電文所含的不可見字元顯示為亂碼的問題",
+            "ko": "전문 로그에서 전문에 포함된 보이지 않는 문자가 깨져 표시되는 문제 수정",
+            "pt-BR": "Corrigido um problema no Registro de telegramas em que caracteres invisíveis dos telegramas apareciam corrompidos",
+            "es": "Se corrigió un error en el Registro de telegramas por el que los caracteres invisibles de los telegramas se mostraban corruptos"
+          }
         }
       ]
     },
@@ -158,13 +428,29 @@
       "added": [
         {
           "text": "地震カードの見出しと各欄の間の余白を詰めるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Reduced the spacing between the heading and each section of the earthquake card",
+            "zh-Hans": "缩小地震卡片标题与各栏之间的间距",
+            "zh-Hant": "縮小地震卡片標題與各欄之間的間距",
+            "ko": "지진 카드의 제목과 각 칸 사이의 여백을 줄이도록 개선",
+            "pt-BR": "Reduzido o espaçamento entre o título e cada seção do cartão do terremoto",
+            "es": "Se redujo el espacio entre el título y cada sección de la tarjeta del terremoto"
+          }
         }
       ],
       "fixed": [
         {
           "text": "深い地震や遠い地震で、地震カードの波形に P 波・S 波の線が引かれない不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where P-wave and S-wave lines were not drawn on the earthquake card's waveform for deep or distant earthquakes",
+            "zh-Hans": "修复深源地震或远地地震时，地震卡片波形上未画出 P 波、S 波线的问题",
+            "zh-Hant": "修正深層地震或遠地地震時，地震卡片波形上未畫出 P 波、S 波線的問題",
+            "ko": "깊은 지진이나 먼 지진에서 지진 카드의 파형에 P파·S파 선이 그려지지 않는 문제 수정",
+            "pt-BR": "Corrigido um problema em que as linhas das ondas P e S não eram traçadas na forma de onda do cartão em terremotos profundos ou distantes",
+            "es": "Se corrigió un error por el que no se trazaban las líneas de las ondas P y S en la forma de onda de la tarjeta en terremotos profundos o lejanos"
+          }
         }
       ]
     },
@@ -174,7 +460,15 @@
       "added": [
         {
           "text": "地震カードの上の段の余白を詰めるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Reduced the spacing in the top section of the earthquake card",
+            "zh-Hans": "缩小地震卡片上部区域的间距",
+            "zh-Hant": "縮小地震卡片上方區塊的間距",
+            "ko": "지진 카드 위쪽 단의 여백을 줄이도록 개선",
+            "pt-BR": "Reduzido o espaçamento na parte superior do cartão do terremoto",
+            "es": "Se redujo el espacio en la parte superior de la tarjeta del terremoto"
+          }
         }
       ],
       "fixed": []
@@ -185,7 +479,15 @@
       "added": [
         {
           "text": "地震カードの震度・長周期の一覧の行間を詰めるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Reduced the line spacing in the intensity and long-period ground motion lists of the earthquake card",
+            "zh-Hans": "缩小地震卡片中烈度、长周期地震动列表的行距",
+            "zh-Hant": "縮小地震卡片中震度、長週期地震動列表的行距",
+            "ko": "지진 카드의 진도·장주기 목록의 줄 간격을 줄이도록 개선",
+            "pt-BR": "Reduzido o espaçamento entre linhas das listas de intensidade e de movimento sísmico de longo período do cartão",
+            "es": "Se redujo el interlineado de las listas de intensidad y de movimiento sísmico de período largo de la tarjeta"
+          }
         }
       ],
       "fixed": []
@@ -196,21 +498,53 @@
       "added": [
         {
           "text": "震源カタログを毎日更新し、最新の地震まで表示するように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The Hypocenter Catalog is now updated daily and shows the latest earthquakes",
+            "zh-Hans": "改进为每天更新震源目录，并显示到最新的地震",
+            "zh-Hant": "改善為每天更新震源目錄，並顯示到最新的地震",
+            "ko": "진원 목록을 매일 갱신하여 최신 지진까지 표시하도록 개선",
+            "pt-BR": "O Catálogo de hipocentros agora é atualizado todos os dias e mostra os terremotos mais recentes",
+            "es": "El Catálogo de hipocentros ahora se actualiza a diario y muestra los terremotos más recientes"
+          }
         }
       ],
       "fixed": [
         {
           "text": "緊急地震速報の後に、同じ揺れを別の地点として検知音や読み上げを繰り返す不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where, after an Earthquake Early Warning, the same shaking was treated as another location and the detection sound and reading aloud were repeated",
+            "zh-Hans": "修复在紧急地震警报之后，将同一摇晃当作另一地点，重复播放检测提示音和朗读的问题",
+            "zh-Hant": "修正在緊急地震警報之後，將同一搖晃當作另一地點，重複播放偵測音效與朗讀的問題",
+            "ko": "긴급 지진 속보 뒤에 같은 흔들림을 다른 지점으로 보고 감지음과 음성 읽기를 반복하는 문제 수정",
+            "pt-BR": "Corrigido um problema em que, após um Alerta Urgente de Terremoto, o mesmo tremor era tratado como outro local e o som de detecção e a leitura se repetiam",
+            "es": "Se corrigió un error por el que, tras una Alerta Temprana de Terremoto, el mismo movimiento se trataba como otro punto y se repetían el sonido de detección y la lectura"
+          }
         },
         {
           "text": "揺れ検知で、読み上げた地域と地図の寄せ先が食い違う不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue in shaking detection where the area read aloud differed from where the map zoomed to",
+            "zh-Hans": "修复摇晃检测中，朗读的地区与地图移动到的位置不一致的问题",
+            "zh-Hant": "修正搖晃偵測中，朗讀的地區與地圖移動到的位置不一致的問題",
+            "ko": "흔들림 감지에서 읽어 준 지역과 지도가 이동한 곳이 어긋나는 문제 수정",
+            "pt-BR": "Corrigido um problema na detecção de tremor em que a região lida em voz alta não coincidia com o ponto para onde o mapa se movia",
+            "es": "Se corrigió un error en la detección de movimiento por el que la zona leída no coincidía con el punto al que se movía el mapa"
+          }
         },
         {
           "text": "国際津波関連情報の読み上げと通知の文を改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Improved the reading-aloud and notification text for international tsunami information",
+            "zh-Hans": "改进国际海啸相关信息的朗读和通知文字",
+            "zh-Hant": "改善國際海嘯相關訊息的朗讀與通知文字",
+            "ko": "국제 지진해일 관련 정보의 음성 읽기와 알림 문구 개선",
+            "pt-BR": "Melhorados os textos da leitura e da notificação da Informação internacional sobre tsunami",
+            "es": "Se mejoraron los textos de la lectura y de la notificación de la Información internacional del tsunami"
+          }
         }
       ]
     },
@@ -220,21 +554,53 @@
       "added": [
         {
           "text": "国際津波関連情報を受けたとき、読み上げ・通知・音で知らせるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "International tsunami information is now announced with reading aloud, a notification and a sound when received",
+            "zh-Hans": "改进为收到国际海啸相关信息时，用朗读、通知和声音告知",
+            "zh-Hant": "改善為收到國際海嘯相關訊息時，以朗讀、通知與音效告知",
+            "ko": "국제 지진해일 관련 정보를 받았을 때 음성 읽기·알림·소리로 알리도록 개선",
+            "pt-BR": "Ao receber a Informação internacional sobre tsunami, o app agora avisa com leitura, notificação e som",
+            "es": "Al recibir la Información internacional del tsunami, ahora se avisa con lectura, notificación y sonido"
+          }
         }
       ],
       "fixed": [
         {
           "text": "揺れが続いている間に、揺れ検知の表示が消えたり検知音が何度も鳴ったりする不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where, while shaking continued, the shaking detection display disappeared or the detection sound played repeatedly",
+            "zh-Hans": "修复摇晃持续期间，摇晃检测的显示消失或检测提示音多次响起的问题",
+            "zh-Hant": "修正搖晃持續期間，搖晃偵測的顯示消失或偵測音效多次響起的問題",
+            "ko": "흔들림이 계속되는 동안 흔들림 감지 표시가 사라지거나 감지음이 여러 번 울리는 문제 수정",
+            "pt-BR": "Corrigido um problema em que, enquanto o tremor continuava, a exibição da detecção de tremor sumia ou o som de detecção tocava várias vezes",
+            "es": "Se corrigió un error por el que, mientras seguía el movimiento, la detección de movimiento desaparecía o el sonido de detección sonaba varias veces"
+          }
         },
         {
           "text": "揺れがまだ広がっている間に、緊急地震速報の表示が消える場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the Earthquake Early Warning display could disappear while the shaking was still spreading",
+            "zh-Hans": "修复摇晃仍在扩散时，紧急地震警报的显示有时消失的问题",
+            "zh-Hant": "修正搖晃仍在擴散時，緊急地震警報的顯示有時消失的問題",
+            "ko": "흔들림이 아직 퍼지고 있는 동안 긴급 지진 속보 표시가 사라지는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que o Alerta Urgente de Terremoto podia sumir da tela enquanto o tremor ainda se espalhava",
+            "es": "Se corrigió un error por el que la Alerta Temprana de Terremoto podía desaparecer de la pantalla mientras el movimiento aún se extendía"
+          }
         },
         {
           "text": "地震カードの観測点の波形で、揺れの始まりが欠ける不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the beginning of the shaking was missing from station waveforms on the earthquake card",
+            "zh-Hans": "修复地震卡片中观测点波形缺少摇晃开始部分的问题",
+            "zh-Hant": "修正地震卡片中觀測點波形缺少搖晃開始部分的問題",
+            "ko": "지진 카드의 관측점 파형에서 흔들림 시작 부분이 빠지는 문제 수정",
+            "pt-BR": "Corrigido um problema em que o início do tremor faltava nas formas de onda das estações no cartão do terremoto",
+            "es": "Se corrigió un error por el que faltaba el inicio del movimiento en las formas de onda de las estaciones de la tarjeta"
+          }
         }
       ]
     },
@@ -244,17 +610,41 @@
       "added": [
         {
           "text": "長周期地震動の情報が届いたとき、その欄まで巻くように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "When long-period ground motion information arrives, the view now scrolls to that section",
+            "zh-Hans": "改进为收到长周期地震动信息时，自动滚动到该栏",
+            "zh-Hant": "改善為收到長週期地震動訊息時，自動捲動到該欄",
+            "ko": "장주기 지진동 정보가 도착하면 그 칸까지 스크롤하도록 개선",
+            "pt-BR": "Ao chegar a informação de movimento sísmico de longo período, a tela agora rola até essa seção",
+            "es": "Al llegar la información de movimiento sísmico de período largo, ahora se desplaza hasta esa sección"
+          }
         },
         {
           "text": "設定の窓の見出しを整理",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Reorganized the headings in Settings",
+            "zh-Hans": "整理设置中的标题",
+            "zh-Hant": "整理設定中的標題",
+            "ko": "설정의 제목 정리",
+            "pt-BR": "Reorganizados os títulos das Configurações",
+            "es": "Se reorganizaron los títulos de la Configuración"
+          }
         }
       ],
       "fixed": [
         {
           "text": "揺れ検知の震度の欄の表示を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed the display of the intensity section in shaking detection",
+            "zh-Hans": "修正摇晃检测中烈度栏的显示",
+            "zh-Hant": "修正搖晃偵測中震度欄的顯示",
+            "ko": "흔들림 감지 진도 칸의 표시 수정",
+            "pt-BR": "Corrigida a exibição da seção de intensidade da detecção de tremor",
+            "es": "Se corrigió la visualización de la sección de intensidad de la detección de movimiento"
+          }
         }
       ]
     },
@@ -264,53 +654,149 @@
       "added": [
         {
           "text": "プッシュ通知を押すと、その地震や画面を開くように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Tapping a push notification now opens the related earthquake or screen",
+            "zh-Hans": "改进为点按推送通知时，打开对应的地震或画面",
+            "zh-Hant": "改善為點按推播通知時，開啟對應的地震或畫面",
+            "ko": "푸시 알림을 누르면 해당 지진이나 화면을 열도록 개선",
+            "pt-BR": "Tocar em uma notificação push agora abre o terremoto ou a tela correspondente",
+            "es": "Al tocar una notificación push, ahora se abre el terremoto o la pantalla correspondiente"
+          }
         },
         {
           "text": "設定に「アプリを開いている間は通知しない」を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added \"No notifications while the app is open\" to Settings",
+            "zh-Hans": "在设置中新增“打开应用期间不通知”",
+            "zh-Hant": "在設定中新增「開啟應用程式時不通知」",
+            "ko": "설정에 \"앱을 열어 둔 동안에는 알리지 않음\" 추가",
+            "pt-BR": "Adicionado \"Não notificar com o app aberto\" às Configurações",
+            "es": "Se añadió \"Sin notificaciones con la app abierta\" a la Configuración"
+          }
         },
         {
           "text": "揺れ検知の読み上げを、緊急地震速報の揺れがまだ届いていない場所の揺れだけ読むように変更",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Shaking detection is now read aloud only for places the Earthquake Early Warning's shaking has not yet reached",
+            "zh-Hans": "将摇晃检测的朗读改为只朗读紧急地震警报的摇晃尚未到达之处的摇晃",
+            "zh-Hant": "將搖晃偵測的朗讀改為只朗讀緊急地震警報的搖晃尚未到達之處的搖晃",
+            "ko": "흔들림 감지 음성 읽기를, 긴급 지진 속보의 흔들림이 아직 닿지 않은 곳의 흔들림만 읽도록 변경",
+            "pt-BR": "A leitura da detecção de tremor agora lê só os tremores em locais aonde o tremor do Alerta Urgente de Terremoto ainda não chegou",
+            "es": "La lectura de la detección de movimiento ahora solo lee el movimiento en lugares a los que aún no ha llegado el de la Alerta Temprana de Terremoto"
+          }
         },
         {
           "text": "地震情報の読み上げで、津波の一文を「津波警報等を発表中です。」と読むように変更（画面の文はそのまま）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "In Earthquake Information reading aloud, the tsunami sentence is now read as \"津波警報等を発表中です。\" (the on-screen text is unchanged)",
+            "zh-Hans": "地震信息的朗读中，将海啸那一句改为读作“津波警報等を発表中です。”（画面上的文字不变）",
+            "zh-Hant": "地震訊息的朗讀中，將海嘯那一句改為讀作「津波警報等を発表中です。」（畫面上的文字不變）",
+            "ko": "지진 정보 음성 읽기에서 지진해일 문장을 \"津波警報等を発表中です。\"로 읽도록 변경(화면 문구는 그대로)",
+            "pt-BR": "Na leitura da Informação sobre terremotos, a frase sobre tsunami agora é lida como \"津波警報等を発表中です。\" (o texto na tela não muda)",
+            "es": "En la lectura de la Información de terremotos, la frase del tsunami ahora se lee como \"津波警報等を発表中です。\" (el texto en pantalla no cambia)"
+          }
         },
         {
           "text": "揺れ検知で、震度0 未満の呼び名を「0未満」（狭い欄では「<0」）に変更",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Shaking detection now calls intensities below 0 \"Below 0\" (\"<0\" in narrow spaces)",
+            "zh-Hans": "摇晃检测中，将低于烈度0 的称呼改为“低于0”（窄栏中为“<0”）",
+            "zh-Hant": "搖晃偵測中，將低於震度0 的稱呼改為「低於0」（窄欄中為「<0」）",
+            "ko": "흔들림 감지에서 진도 0 미만의 명칭을 \"0 미만\"(좁은 칸에서는 \"<0\")으로 변경",
+            "pt-BR": "Na detecção de tremor, intensidades abaixo de 0 agora se chamam \"Abaixo de 0\" (\"<0\" em espaços estreitos)",
+            "es": "En la detección de movimiento, las intensidades por debajo de 0 ahora se llaman \"Menos de 0\" (\"<0\" en espacios estrechos)"
+          }
         },
         {
           "text": "地震タブの閉じた行で、長い震央地名は末尾を「…」で省くように変更（開くと全文）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "In collapsed rows of the Earthquake Information tab, long epicenter names are now shortened with \"…\" (the full name shows when opened)",
+            "zh-Hans": "在地震信息标签页的收起行中，较长的震中地名末尾改为以“…”省略（展开后显示全文）",
+            "zh-Hant": "在地震訊息分頁的收合列中，較長的震央地名末尾改以「…」省略（展開後顯示全文）",
+            "ko": "지진 정보 탭의 접힌 행에서 긴 진앙 지명은 끝을 \"…\"로 줄이도록 변경(펼치면 전체 표시)",
+            "pt-BR": "Nas linhas fechadas da aba Informação sobre terremotos, nomes longos de epicentro agora terminam em \"…\" (o nome completo aparece ao abrir)",
+            "es": "En las filas cerradas de la pestaña Información de terremotos, los nombres largos de epicentro ahora terminan en \"…\" (al abrir se ve completo)"
+          }
         }
       ],
       "fixed": [
         {
           "text": "狭い画面の地震タブで、開いた地震の帯が日付の区切りの上に重なり、巻くと遅れてついてくる不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue on narrow screens where, in the Earthquake Information tab, the bar of an opened earthquake overlapped the date divider and lagged behind when scrolling",
+            "zh-Hans": "修复窄画面的地震信息标签页中，展开的地震标题栏叠在日期分隔线上，滚动时延迟跟随的问题",
+            "zh-Hant": "修正窄畫面的地震訊息分頁中，展開的地震標題列疊在日期分隔線上，捲動時延遲跟隨的問題",
+            "ko": "좁은 화면의 지진 정보 탭에서 펼친 지진의 띠가 날짜 구분선 위에 겹치고, 스크롤하면 늦게 따라오는 문제 수정",
+            "pt-BR": "Corrigido um problema em telas estreitas em que, na aba Informação sobre terremotos, a barra do terremoto aberto ficava sobre o separador de data e acompanhava a rolagem com atraso",
+            "es": "Se corrigió un error en pantallas estrechas por el que, en la pestaña Información de terremotos, la barra del terremoto abierto se superponía al separador de fecha y seguía el desplazamiento con retraso"
+          }
         },
         {
           "text": "取り消された地震・津波の暗い覆いが、巻いたときに上の見出しへ重なる不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the dark overlay on retracted earthquakes and tsunamis covered the heading above when scrolling",
+            "zh-Hans": "修复已撤销地震、海啸的暗色遮罩在滚动时叠到上方标题上的问题",
+            "zh-Hant": "修正已撤銷地震、海嘯的暗色遮罩在捲動時疊到上方標題的問題",
+            "ko": "취소된 지진·지진해일의 어두운 덮개가 스크롤할 때 위쪽 제목에 겹치는 문제 수정",
+            "pt-BR": "Corrigido um problema em que a camada escura de terremotos e tsunamis anulados cobria o título acima ao rolar",
+            "es": "Se corrigió un error por el que la capa oscura de terremotos y tsunamis anulados tapaba el título superior al desplazarse"
+          }
         },
         {
           "text": "地図の端で開いた吹き出しが、左上の表示や凡例を隠す不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where popups opened near the edge of the map hid the top-left display and the legend",
+            "zh-Hans": "修复在地图边缘打开的弹出框遮住左上角显示和图例的问题",
+            "zh-Hant": "修正在地圖邊緣開啟的彈出框遮住左上角顯示與圖例的問題",
+            "ko": "지도 가장자리에서 연 말풍선이 왼쪽 위 표시와 범례를 가리는 문제 수정",
+            "pt-BR": "Corrigido um problema em que balões abertos na borda do mapa escondiam as informações do canto superior esquerdo e a legenda",
+            "es": "Se corrigió un error por el que las ventanas emergentes abiertas en el borde del mapa tapaban la información de la esquina superior izquierda y la leyenda"
+          }
         },
         {
           "text": "津波タブで、隠れている帯の影がタブの上端に見える不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue in the Tsunami Information tab where the shadow of a hidden bar showed at the top of the tab",
+            "zh-Hans": "修复海啸信息标签页中，隐藏的标题栏阴影出现在标签页上端的问题",
+            "zh-Hant": "修正海嘯訊息分頁中，隱藏的標題列陰影出現在分頁上緣的問題",
+            "ko": "지진해일 정보 탭에서 숨어 있는 띠의 그림자가 탭 위쪽 끝에 보이는 문제 수정",
+            "pt-BR": "Corrigido um problema na aba Informação sobre tsunami em que a sombra de uma barra oculta aparecia no topo da aba",
+            "es": "Se corrigió un error en la pestaña Información del tsunami por el que la sombra de una barra oculta se veía en la parte superior"
+          }
         },
         {
           "text": "津波タブで、予想の高さの無い区域を巻くと等級の見出しがすぐ外れる不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue in the Tsunami Information tab where the level heading came unstuck too early when scrolling through areas without a forecast height",
+            "zh-Hans": "修复海啸信息标签页中，滚动到没有预计高度的区域时，等级标题过早脱离的问题",
+            "zh-Hant": "修正海嘯訊息分頁中，捲動到沒有預計高度的區域時，等級標題過早脫離的問題",
+            "ko": "지진해일 정보 탭에서 예상 높이가 없는 구역을 스크롤하면 등급 제목이 바로 떨어지는 문제 수정",
+            "pt-BR": "Corrigido um problema na aba Informação sobre tsunami em que o título do nível se soltava cedo demais ao rolar por áreas sem altura prevista",
+            "es": "Se corrigió un error en la pestaña Información del tsunami por el que el título del nivel se soltaba demasiado pronto al desplazarse por áreas sin altura prevista"
+          }
         },
         {
           "text": "推計震度分布図が分かれて届いたとき、プッシュ通知が出ない不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where no push notification was sent when an estimated seismic intensity map arrived in several parts",
+            "zh-Hans": "修复推算烈度分布图分批送达时，不发出推送通知的问题",
+            "zh-Hant": "修正推算震度分布圖分批送達時，不發出推播通知的問題",
+            "ko": "추계 진도 분포도가 나뉘어 도착했을 때 푸시 알림이 나오지 않는 문제 수정",
+            "pt-BR": "Corrigido um problema em que não saía notificação push quando o mapa de intensidade sísmica estimada chegava em partes",
+            "es": "Se corrigió un error por el que no salía la notificación push cuando el mapa de intensidad sísmica estimada llegaba en varias partes"
+          }
         }
       ]
     },
@@ -320,53 +806,149 @@
       "added": [
         {
           "text": "プッシュ通知で津波にも対応",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Push notifications now cover tsunamis",
+            "zh-Hans": "推送通知新增支持海啸",
+            "zh-Hant": "推播通知新增支援海嘯",
+            "ko": "푸시 알림에서 지진해일도 지원",
+            "pt-BR": "As notificações push agora também cobrem tsunamis",
+            "es": "Las notificaciones push ahora también cubren los tsunamis"
+          }
         },
         {
           "text": "横に並べた画面でも、パネルの幅を境のつまみで変えられるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "In side-by-side layouts, the panel width can now also be changed with the handle on the border",
+            "zh-Hans": "改进为在左右并排的画面中，也可用边界的拖动柄调整面板宽度",
+            "zh-Hant": "改善為在左右並排的畫面中，也能用邊界的拖曳把手調整面板寬度",
+            "ko": "가로로 나란히 놓인 화면에서도 경계의 손잡이로 패널 너비를 바꿀 수 있도록 개선",
+            "pt-BR": "Em telas lado a lado, a largura do painel agora também pode ser ajustada pela alça na borda",
+            "es": "En la disposición lado a lado, ahora también se puede cambiar el ancho del panel con el tirador del borde"
+          }
         },
         {
           "text": "地震タブの一覧で、巻いても日付の区切りが上に残るように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "In the Earthquake Information tab list, the date divider now stays at the top while scrolling",
+            "zh-Hans": "改进为在地震信息标签页的列表中，滚动时日期分隔线保持在顶部",
+            "zh-Hant": "改善為在地震訊息分頁的列表中，捲動時日期分隔線保持在頂端",
+            "ko": "지진 정보 탭 목록에서 스크롤해도 날짜 구분선이 위에 남도록 개선",
+            "pt-BR": "Na lista da aba Informação sobre terremotos, o separador de data agora fica no topo durante a rolagem",
+            "es": "En la lista de la pestaña Información de terremotos, el separador de fecha ahora queda arriba al desplazarse"
+          }
         },
         {
           "text": "国際津波関連情報の英文を報ごとに開閉できるように改善（地震のカードでは閉じて表示）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The English text of international tsunami information can now be opened and closed per report (shown closed on earthquake cards)",
+            "zh-Hans": "改进为国际海啸相关信息的英文可按每报展开或收起（在地震卡片中默认收起）",
+            "zh-Hant": "改善為國際海嘯相關訊息的英文可依每一報展開或收合（在地震卡片中預設收合）",
+            "ko": "국제 지진해일 관련 정보의 영문을 보마다 열고 닫을 수 있도록 개선(지진 카드에서는 닫힌 상태로 표시)",
+            "pt-BR": "O texto em inglês da Informação internacional sobre tsunami agora pode ser aberto e fechado por boletim (fechado nos cartões de terremoto)",
+            "es": "El texto en inglés de la Información internacional del tsunami ahora se puede abrir y cerrar por boletín (cerrado en las tarjetas de terremoto)"
+          }
         },
         {
           "text": "主要動までのカウントダウンを、緊急地震速報のカードの下に貼りつけて表示するように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The countdown to the main shaking is now pinned below the Earthquake Early Warning card",
+            "zh-Hans": "改进为将主要震动到达前的倒计时固定显示在紧急地震警报卡片下方",
+            "zh-Hant": "改善為將主要震動到達前的倒數固定顯示在緊急地震警報卡片下方",
+            "ko": "주요동까지의 카운트다운을 긴급 지진 속보 카드 아래에 붙여 표시하도록 개선",
+            "pt-BR": "A contagem até o tremor principal agora fica fixa abaixo do cartão do Alerta Urgente de Terremoto",
+            "es": "La cuenta atrás hasta el movimiento principal ahora queda fija debajo de la tarjeta de la Alerta Temprana de Terremoto"
+          }
         },
         {
           "text": "揺れの検知で、観測点のまばらな地域の地震を拾いやすくし、誤った検知を減らすように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Shaking detection now picks up earthquakes in areas with sparse stations more easily and makes fewer false detections",
+            "zh-Hans": "改进摇晃检测，更容易捕捉观测点稀疏地区的地震，并减少误检测",
+            "zh-Hant": "改善搖晃偵測，更容易捕捉觀測點稀疏地區的地震，並減少誤偵測",
+            "ko": "흔들림 감지에서 관측점이 드문 지역의 지진을 잡기 쉽게 하고 잘못된 감지를 줄이도록 개선",
+            "pt-BR": "A detecção de tremor agora capta mais facilmente terremotos em áreas com poucas estações e erra menos",
+            "es": "La detección de movimiento ahora capta mejor los terremotos en zonas con pocas estaciones y comete menos falsas detecciones"
+          }
         },
         {
           "text": "使用状況データ（送ると選んだ場合だけ）に、設定の内容も含めるように変更（API キーや接続先は入れたかどうかだけ）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Usage data (only if you chose to send it) now includes your settings (for API keys and connection destinations, only whether they are set)",
+            "zh-Hans": "使用情况数据（仅在选择发送时）改为也包含设置内容（API密钥和连接目标只记录是否已填写）",
+            "zh-Hant": "使用情況資料（僅在選擇傳送時）改為也包含設定內容（API 金鑰與連線目標只記錄是否已填寫）",
+            "ko": "사용 현황 데이터(보내기로 선택한 경우만)에 설정 내용도 포함하도록 변경(API 키나 연결 대상은 입력했는지 여부만)",
+            "pt-BR": "Os dados de uso (só se você escolheu enviá-los) agora incluem as configurações (da chave de API e dos destinos de conexão, só se foram preenchidos)",
+            "es": "Los datos de uso (solo si eligió enviarlos) ahora incluyen la configuración (de la clave API y los destinos de conexión, solo si se introdujeron)"
+          }
         }
       ],
       "fixed": [
         {
           "text": "表示する最低震度を上げて地震タブの一覧が空になったとき、「もっと見る」が出ない不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where \"Load more\" did not appear when raising the minimum intensity to show left the Earthquake Information tab list empty",
+            "zh-Hans": "修复提高显示的最低烈度导致地震信息标签页列表为空时，不显示“查看更多”的问题",
+            "zh-Hant": "修正提高顯示的最低震度使地震訊息分頁列表變空時，不顯示「查看更多」的問題",
+            "ko": "표시할 최저 진도를 올려 지진 정보 탭 목록이 비었을 때 \"더 보기\"가 나오지 않는 문제 수정",
+            "pt-BR": "Corrigido um problema em que \"Ver mais\" não aparecia quando, ao aumentar a intensidade mínima exibida, a lista da aba Informação sobre terremotos ficava vazia",
+            "es": "Se corrigió un error por el que no aparecía \"Ver más\" cuando, al subir la intensidad mínima mostrada, la lista de la pestaña Información de terremotos quedaba vacía"
+          }
         },
         {
           "text": "縦長の画面でパネルを広げたとき、パネルの中から下の波形が透けて見える不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue on tall screens where the waveform below showed through the panel when the panel was expanded",
+            "zh-Hans": "修复在纵向画面中展开面板时，下方的波形透过面板显示出来的问题",
+            "zh-Hant": "修正在直向畫面中展開面板時，下方的波形透過面板顯示出來的問題",
+            "ko": "세로로 긴 화면에서 패널을 펼쳤을 때 패널 안으로 아래쪽 파형이 비쳐 보이는 문제 수정",
+            "pt-BR": "Corrigido um problema em telas verticais em que a forma de onda de baixo aparecia através do painel aberto",
+            "es": "Se corrigió un error en pantallas verticales por el que la forma de onda inferior se transparentaba a través del panel abierto"
+          }
         },
         {
           "text": "緊急地震速報の続報で、マグニチュードの表示が消える場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the magnitude could disappear in Earthquake Early Warning updates",
+            "zh-Hans": "修复紧急地震警报续报中，震级显示有时消失的问题",
+            "zh-Hant": "修正緊急地震警報續報中，規模顯示有時消失的問題",
+            "ko": "긴급 지진 속보 후속보에서 규모 표시가 사라지는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que a magnitude podia sumir nas atualizações do Alerta Urgente de Terremoto",
+            "es": "Se corrigió un error por el que la magnitud podía desaparecer en las actualizaciones de la Alerta Temprana de Terremoto"
+          }
         },
         {
           "text": "津波タブの表示が細かく揺れ続ける場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the Tsunami Information tab could keep jittering",
+            "zh-Hans": "修复海啸信息标签页的显示有时持续轻微抖动的问题",
+            "zh-Hant": "修正海嘯訊息分頁的顯示有時持續輕微晃動的問題",
+            "ko": "지진해일 정보 탭의 표시가 계속 미세하게 흔들리는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que a aba Informação sobre tsunami podia ficar tremendo",
+            "es": "Se corrigió un error por el que la pestaña Información del tsunami podía quedarse temblando"
+          }
         },
         {
           "text": "Windows で、設定の画面の選択リストが白地に白文字で読めない不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue on Windows where drop-down lists in Settings showed white text on a white background",
+            "zh-Hans": "修复在 Windows 上，设置画面的下拉列表白底白字无法阅读的问题",
+            "zh-Hant": "修正在 Windows 上，設定畫面的下拉選單白底白字無法閱讀的問題",
+            "ko": "Windows에서 설정 화면의 선택 목록이 흰 바탕에 흰 글자로 보이지 않는 문제 수정",
+            "pt-BR": "Corrigido um problema no Windows em que as listas de seleção das Configurações mostravam texto branco sobre fundo branco",
+            "es": "Se corrigió un error en Windows por el que las listas desplegables de la Configuración mostraban texto blanco sobre fondo blanco"
+          }
         }
       ]
     },
@@ -376,49 +958,137 @@
       "added": [
         {
           "text": "地震タブを、1 件 1 行の一覧からその場でカードを開いて詳しく見られる形に改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The Earthquake Information tab is now a one-line-per-earthquake list where you can open a card in place for details",
+            "zh-Hans": "改进地震信息标签页，改为每件一行的列表，可在原处展开卡片查看详情",
+            "zh-Hant": "改善地震訊息分頁，改為每筆一列的列表，可在原處展開卡片查看詳情",
+            "ko": "지진 정보 탭을 1건 1행 목록에서 그 자리에서 카드를 열어 자세히 볼 수 있는 형태로 개선",
+            "pt-BR": "A aba Informação sobre terremotos agora é uma lista de uma linha por terremoto, em que o cartão abre no próprio lugar com os detalhes",
+            "es": "La pestaña Información de terremotos ahora es una lista de una fila por terremoto en la que la tarjeta se abre en el mismo sitio con los detalles"
+          }
         },
         {
           "text": "リアルタイム・津波・震源カタログ・電文ログのタブと設定の画面を、地震タブと同じ見た目に改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The Real-time, Tsunami Information, Hypocenter Catalog and Telegram Log tabs and Settings now look the same as the Earthquake Information tab",
+            "zh-Hans": "将实时、海啸信息、震源目录、电文记录标签页和设置画面改为与地震信息标签页相同的外观",
+            "zh-Hant": "將即時、海嘯訊息、震源目錄、電文紀錄分頁與設定畫面改為與地震訊息分頁相同的外觀",
+            "ko": "실시간·지진해일 정보·진원 목록·전문 로그 탭과 설정 화면을 지진 정보 탭과 같은 모습으로 개선",
+            "pt-BR": "As abas Tempo real, Informação sobre tsunami, Catálogo de hipocentros e Registro de telegramas e as Configurações agora têm a mesma aparência da aba Informação sobre terremotos",
+            "es": "Las pestañas Tiempo real, Información del tsunami, Catálogo de hipocentros y Registro de telegramas y la Configuración ahora tienen el mismo aspecto que la pestaña Información de terremotos"
+          }
         },
         {
           "text": "同じ種類の特別な情報（お知らせ・解説情報など）が続けて届いたとき、1 本の帯にまとめて全件を読めるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "When several special information reports of the same kind (notices, commentaries, etc.) arrive in a row, they are now grouped into one banner where you can read them all",
+            "zh-Hans": "改进为同类特别信息（通知、解说信息等）连续送达时，合并到一条横幅中，可阅读全部内容",
+            "zh-Hant": "改善為同類特別訊息（通知、解說訊息等）連續送達時，合併為一條橫幅，可閱讀全部內容",
+            "ko": "같은 종류의 특별 정보(알림·해설 정보 등)가 연이어 도착하면 하나의 배너로 묶어 모두 읽을 수 있도록 개선",
+            "pt-BR": "Quando chegam seguidas várias informações especiais do mesmo tipo (avisos, comentários etc.), elas agora ficam em uma única faixa, onde todas podem ser lidas",
+            "es": "Cuando llegan seguidas varias informaciones especiales del mismo tipo (avisos, comentarios, etc.), ahora se agrupan en un solo banner donde se pueden leer todas"
+          }
         },
         {
           "text": "時報を追加（既定はオフ。設定の「音と読み上げ」から）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added a time signal (off by default; under \"Sound and reading aloud\" in Settings)",
+            "zh-Hans": "新增报时（默认关闭。在设置的“声音与朗读”中）",
+            "zh-Hant": "新增報時（預設關閉。在設定的「音效與朗讀」中）",
+            "ko": "시보 추가(기본은 꺼짐. 설정의 \"소리와 음성 읽기\"에서)",
+            "pt-BR": "Adicionado o sinal horário (desativado por padrão; em \"Som e leitura\" nas Configurações)",
+            "es": "Se añadió la señal horaria (desactivada por defecto; en \"Sonido y lectura en voz alta\" de la Configuración)"
+          }
         },
         {
           "text": "プッシュ通知で緊急地震速報と地震情報にも対応",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Push notifications now also cover Earthquake Early Warnings and Earthquake Information",
+            "zh-Hans": "推送通知新增支持紧急地震警报和地震信息",
+            "zh-Hant": "推播通知新增支援緊急地震警報與地震訊息",
+            "ko": "푸시 알림에서 긴급 지진 속보와 지진 정보도 지원",
+            "pt-BR": "As notificações push agora também cobrem os Alertas Urgentes de Terremoto e a Informação sobre terremotos",
+            "es": "Las notificaciones push ahora también cubren las Alertas Tempranas de Terremoto y la Información de terremotos"
+          }
         },
         {
           "text": "電文ログに、受け取った電文をすべて並べるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The Telegram Log now lists every telegram received",
+            "zh-Hans": "改进为在电文记录中列出收到的全部电文",
+            "zh-Hant": "改善為在電文紀錄中列出收到的所有電文",
+            "ko": "전문 로그에 받은 전문을 모두 나열하도록 개선",
+            "pt-BR": "O Registro de telegramas agora lista todos os telegramas recebidos",
+            "es": "El Registro de telegramas ahora muestra todos los telegramas recibidos"
+          }
         },
         {
           "text": "縦長の画面でパネルを広げたとき、地図の下の波形が急に消えず、パネルが重なるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "On tall screens, expanding the panel now slides it over the waveform below the map instead of the waveform suddenly disappearing",
+            "zh-Hans": "改进为在纵向画面中展开面板时，地图下方的波形不会突然消失，而是由面板覆盖",
+            "zh-Hant": "改善為在直向畫面中展開面板時，地圖下方的波形不會突然消失，而是由面板覆蓋",
+            "ko": "세로로 긴 화면에서 패널을 펼칠 때 지도 아래 파형이 갑자기 사라지지 않고 패널이 겹치도록 개선",
+            "pt-BR": "Em telas verticais, ao abrir o painel, a forma de onda abaixo do mapa não some mais de repente: o painel passa por cima dela",
+            "es": "En pantallas verticales, al abrir el panel la forma de onda bajo el mapa ya no desaparece de golpe: el panel se superpone"
+          }
         },
         {
           "text": "地図が低い画面では、行動チェックリストを小さな札で出し、押すと開く形に改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "On screens where the map is short, the action checklist now appears as a small tag that opens when tapped",
+            "zh-Hans": "改进为在地图较矮的画面中，行动清单以小标签显示，点按后展开",
+            "zh-Hant": "改善為在地圖較矮的畫面中，行動檢查清單以小標籤顯示，點按後展開",
+            "ko": "지도가 낮은 화면에서는 행동 체크리스트를 작은 태그로 표시하고 누르면 열리는 형태로 개선",
+            "pt-BR": "Em telas com o mapa baixo, a lista de ações agora aparece como uma pequena etiqueta que abre ao tocar",
+            "es": "En pantallas con el mapa bajo, la lista de acciones ahora aparece como una pequeña etiqueta que se abre al tocarla"
+          }
         }
       ],
       "fixed": [
         {
           "text": "観測網から遠い地震で、揺れの検知が続いている間に緊急地震速報の表示が早く消える場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where, for earthquakes far from the observation network, the Earthquake Early Warning display could disappear early while shaking detection was still ongoing",
+            "zh-Hans": "修复对于远离观测网的地震，摇晃检测仍在持续时，紧急地震警报的显示有时过早消失的问题",
+            "zh-Hant": "修正對於遠離觀測網的地震，搖晃偵測仍在持續時，緊急地震警報的顯示有時過早消失的問題",
+            "ko": "관측망에서 먼 지진에서 흔들림 감지가 이어지는 동안 긴급 지진 속보 표시가 일찍 사라지는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que, em terremotos longe da rede de observação, o Alerta Urgente de Terremoto podia sumir da tela cedo enquanto a detecção de tremor continuava",
+            "es": "Se corrigió un error por el que, en terremotos lejos de la red de observación, la Alerta Temprana de Terremoto podía desaparecer pronto de la pantalla mientras seguía la detección de movimiento"
+          }
         },
         {
           "text": "最大震度が「5弱以上（未入電）」の地震が、表示する最低震度を 5強以上にした設定で一覧・通知・行動チェックリストから外れる不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where earthquakes with a maximum intensity of \"5 Lower or higher (not received)\" were left out of the list, notifications and the action checklist when the minimum intensity to show was set to 5 Upper or higher",
+            "zh-Hans": "修复最大烈度为“5弱以上（未收到）”的地震，在显示的最低烈度设为 5强以上时，从列表、通知和行动清单中被排除的问题",
+            "zh-Hant": "修正最大震度為「5弱以上（未收到）」的地震，在顯示的最低震度設為 5強以上時，從列表、通知與行動檢查清單中被排除的問題",
+            "ko": "최대 진도가 \"5약 이상(미수신)\"인 지진이, 표시할 최저 진도를 5강 이상으로 설정하면 목록·알림·행동 체크리스트에서 빠지는 문제 수정",
+            "pt-BR": "Corrigido um problema em que terremotos com intensidade máxima \"5 fraco ou superior (não recebido)\" ficavam fora da lista, das notificações e da lista de ações quando a intensidade mínima exibida era 5 forte ou superior",
+            "es": "Se corrigió un error por el que los terremotos con intensidad máxima \"5 débil o superior (no recibido)\" quedaban fuera de la lista, las notificaciones y la lista de acciones cuando la intensidad mínima mostrada era 5 fuerte o superior"
+          }
         },
         {
           "text": "通信に失敗したときに英語の文が出る不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where raw English error messages appeared when communication failed",
+            "zh-Hans": "修复通信失败时显示英文信息的问题",
+            "zh-Hant": "修正通訊失敗時顯示英文訊息的問題",
+            "ko": "통신에 실패했을 때 영어 문장이 나오는 문제 수정",
+            "pt-BR": "Corrigido um problema em que apareciam mensagens em inglês quando a comunicação falhava",
+            "es": "Se corrigió un error por el que aparecían mensajes en inglés cuando fallaba la comunicación"
+          }
         }
       ]
     },
@@ -428,11 +1098,27 @@
       "added": [
         {
           "text": "アプリを閉じていても通知を受け取れる設定「プッシュ通知」を追加（既定はオフ。南海トラフなど一部の情報から対応）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added the \"Push notifications\" setting to receive notifications even when the app is closed (off by default; starting with some information such as the Nankai Trough)",
+            "zh-Hans": "新增即使关闭应用也能接收通知的设置“推送通知”（默认关闭。先支持南海海槽等部分信息）",
+            "zh-Hant": "新增即使關閉應用程式也能接收通知的設定「推播通知」（預設關閉。先支援南海海槽等部分訊息）",
+            "ko": "앱을 닫아도 알림을 받을 수 있는 설정 \"푸시 알림\" 추가(기본은 꺼짐. 난카이 해곡 등 일부 정보부터 지원)",
+            "pt-BR": "Adicionada a configuração \"Notificações push\", para receber notificações mesmo com o app fechado (desativada por padrão; começa por algumas informações, como as da Fossa de Nankai)",
+            "es": "Se añadió el ajuste \"Notificaciones push\" para recibir notificaciones aun con la app cerrada (desactivado por defecto; empieza por parte de la información, como la de la Fosa de Nankai)"
+          }
         },
         {
           "text": "通知を出す都道府県を選べる設定「通知する地域」を追加（既定は全国）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added the \"Areas to notify\" setting to choose which prefectures you get notifications for (all of Japan by default)",
+            "zh-Hans": "新增可选择发出通知的都道府县的设置“通知地区”（默认为全国）",
+            "zh-Hant": "新增可選擇發出通知的都道府縣的設定「通知地區」（預設為全國）",
+            "ko": "알림을 낼 도도부현을 고를 수 있는 설정 \"알림 지역\" 추가(기본은 전국)",
+            "pt-BR": "Adicionada a configuração \"Regiões notificadas\", para escolher as províncias que geram notificações (todo o Japão por padrão)",
+            "es": "Se añadió el ajuste \"Prefecturas a notificar\" para elegir de qué prefecturas recibir notificaciones (todo Japón por defecto)"
+          }
         }
       ],
       "fixed": []
@@ -443,7 +1129,15 @@
       "added": [
         {
           "text": "使用状況データを送る設定「使用状況データを送信する」を追加（既定はオフ。許可した場合だけ送ります）",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added the \"Send usage data\" setting (off by default; data is sent only if you allow it)",
+            "zh-Hans": "新增发送使用情况数据的设置“发送使用情况数据”（默认关闭。仅在允许时发送）",
+            "zh-Hant": "新增傳送使用情況資料的設定「傳送使用情況資料」（預設關閉。僅在允許時傳送）",
+            "ko": "사용 현황 데이터를 보내는 설정 \"사용 현황 데이터 보내기\" 추가(기본은 꺼짐. 허용한 경우에만 보냄)",
+            "pt-BR": "Adicionada a configuração \"Enviar dados de uso\" (desativada por padrão; só envia se você permitir)",
+            "es": "Se añadió el ajuste \"Enviar datos de uso\" (desactivado por defecto; solo se envían si lo permite)"
+          }
         }
       ],
       "fixed": []
@@ -455,7 +1149,15 @@
       "fixed": [
         {
           "text": "地震タブに「欠けている可能性（照合中）」の帯が出続ける場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the \"Possibly missing (checking)\" bar could stay shown in the Earthquake Information tab",
+            "zh-Hans": "修复地震信息标签页中“可能有缺漏（核对中）”横条有时一直显示的问题",
+            "zh-Hant": "修正地震訊息分頁中「可能有缺漏（核對中）」橫條有時一直顯示的問題",
+            "ko": "지진 정보 탭에 \"누락 가능성(대조 중)\" 띠가 계속 나오는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que a faixa \"Possível falta (verificando)\" podia continuar aparecendo na aba Informação sobre terremotos",
+            "es": "Se corrigió un error por el que la barra \"Posible falta (comprobando)\" podía seguir apareciendo en la pestaña Información de terremotos"
+          }
         }
       ]
     },
@@ -465,21 +1167,53 @@
       "added": [
         {
           "text": "これまでの「標準版」と「DMDSS 版」を 1 つのアプリにまとめ、DMDATA の APIキーが無くても緊急地震速報（警報）・地震情報・津波情報などを受け取れるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Merged the former \"Standard\" and \"DMDSS\" editions into one app, so Earthquake Early Warnings (warnings), Earthquake Information, Tsunami Information and more can be received without a DMDATA API key",
+            "zh-Hans": "将以往的“标准版”和“DMDSS 版”合并为一个应用，即使没有 DMDATA 的API密钥也能接收紧急地震警报（警报）、地震信息、海啸信息等",
+            "zh-Hant": "將以往的「標準版」與「DMDSS 版」合併為一個應用程式，即使沒有 DMDATA 的 API 金鑰，也能接收緊急地震警報（警報）、地震訊息、海嘯訊息等",
+            "ko": "기존의 \"표준판\"과 \"DMDSS판\"을 하나의 앱으로 합쳐, DMDATA API 키가 없어도 긴급 지진 속보(경보)·지진 정보·지진해일 정보 등을 받을 수 있도록 개선",
+            "pt-BR": "As antigas versões \"Padrão\" e \"DMDSS\" foram unidas em um único app, e agora é possível receber Alertas Urgentes de Terremoto (alerta), Informação sobre terremotos, Informação sobre tsunami e mais sem chave de API do DMDATA",
+            "es": "Se unieron las antiguas versiones \"Estándar\" y \"DMDSS\" en una sola app, y ahora se pueden recibir las Alertas Tempranas de Terremoto (alerta), la Información de terremotos, la Información del tsunami y más sin clave API de DMDATA"
+          }
         },
         {
           "text": "アプリのアドレスを https://yuremado.com/ へ移転",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Moved the app's address to https://yuremado.com/",
+            "zh-Hans": "应用的网址迁移至 https://yuremado.com/",
+            "zh-Hant": "應用程式的網址遷移至 https://yuremado.com/",
+            "ko": "앱 주소를 https://yuremado.com/ 으로 이전",
+            "pt-BR": "Endereço do app transferido para https://yuremado.com/",
+            "es": "Se trasladó la dirección de la app a https://yuremado.com/"
+          }
         }
       ],
       "fixed": [
         {
           "text": "地震・津波のカードで、発表官署の名前が途中で折り返される不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the issuing office's name wrapped partway on earthquake and tsunami cards",
+            "zh-Hans": "修复地震、海啸卡片中，发布机构名称在中途换行的问题",
+            "zh-Hant": "修正地震、海嘯卡片中，發表機構名稱在中途換行的問題",
+            "ko": "지진·지진해일 카드에서 발표 관서 이름이 중간에 줄바꿈되는 문제 수정",
+            "pt-BR": "Corrigido um problema em que o nome do órgão emissor quebrava no meio nos cartões de terremoto e tsunami",
+            "es": "Se corrigió un error por el que el nombre del organismo emisor se partía a la mitad en las tarjetas de terremoto y tsunami"
+          }
         },
         {
           "text": "リプレイで、緊急地震速報が予報から警報へ切り替わらない場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue in replay where an Earthquake Early Warning sometimes did not switch from forecast to warning",
+            "zh-Hans": "修复回放中，紧急地震警报有时未从预报切换为警报的问题",
+            "zh-Hant": "修正重播中，緊急地震警報有時未從預報切換為警報的問題",
+            "ko": "재생에서 긴급 지진 속보가 예보에서 경보로 바뀌지 않는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema na reprodução em que o Alerta Urgente de Terremoto às vezes não passava de previsão para alerta",
+            "es": "Se corrigió un error en la reproducción por el que la Alerta Temprana de Terremoto a veces no pasaba de pronóstico a alerta"
+          }
         }
       ]
     },
@@ -489,13 +1223,29 @@
       "added": [
         {
           "text": "揺れを検知したとき、最も強く揺れている地域の名前を読み上げる設定「揺れ検知の読み上げ」を追加（既定はオフ）。通知音が鳴り終わってから読み上げるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added the \"Read shaking detection aloud\" setting, which reads the name of the area shaking most strongly when shaking is detected (off by default). Reading now starts after the alert sound finishes",
+            "zh-Hans": "新增设置“摇晃检测的朗读”，检测到摇晃时朗读摇晃最强地区的名称（默认关闭）。改进为在提示音结束后再朗读",
+            "zh-Hant": "新增設定「搖晃偵測朗讀」，偵測到搖晃時朗讀搖晃最強地區的名稱（預設關閉）。改善為在提示音結束後再朗讀",
+            "ko": "흔들림을 감지했을 때 가장 강하게 흔들리는 지역 이름을 읽는 설정 \"흔들림 감지 음성 읽기\" 추가(기본은 꺼짐). 알림음이 끝난 뒤에 읽도록 개선",
+            "pt-BR": "Adicionada a configuração \"Leitura da detecção de tremor\", que lê o nome da região com o tremor mais forte quando um tremor é detectado (desativada por padrão). A leitura agora começa depois que o som de notificação termina",
+            "es": "Se añadió el ajuste \"Leer la detección de movimiento\", que lee el nombre de la zona con el movimiento más fuerte al detectarlo (desactivado por defecto). La lectura ahora empieza cuando termina el sonido de alerta"
+          }
         }
       ],
       "fixed": [
         {
           "text": "緊急地震速報の地震の弱い揺れを、別の地点の揺れとして知らせることがある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where weak shaking from an Earthquake Early Warning earthquake could be announced as shaking at another location",
+            "zh-Hans": "修复有时将紧急地震警报所对应地震的微弱摇晃，当作另一地点的摇晃来告知的问题",
+            "zh-Hant": "修正有時將緊急地震警報所對應地震的微弱搖晃，當作另一地點的搖晃告知的問題",
+            "ko": "긴급 지진 속보 지진의 약한 흔들림을 다른 지점의 흔들림으로 알리는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que o tremor fraco do terremoto de um Alerta Urgente de Terremoto podia ser avisado como tremor em outro local",
+            "es": "Se corrigió un error por el que el movimiento débil del terremoto de una Alerta Temprana de Terremoto podía avisarse como movimiento en otro punto"
+          }
         }
       ]
     },
@@ -506,7 +1256,15 @@
       "fixed": [
         {
           "text": "揺れの検知が広がっている途中で、緊急地震速報の表示が消えてしまう場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the Earthquake Early Warning display could disappear while shaking detection was still spreading",
+            "zh-Hans": "修复摇晃检测仍在扩大途中，紧急地震警报的显示有时消失的问题",
+            "zh-Hant": "修正搖晃偵測仍在擴大途中，緊急地震警報的顯示有時消失的問題",
+            "ko": "흔들림 감지가 퍼지는 도중에 긴급 지진 속보 표시가 사라지는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que o Alerta Urgente de Terremoto podia sumir da tela enquanto a detecção de tremor ainda se espalhava",
+            "es": "Se corrigió un error por el que la Alerta Temprana de Terremoto podía desaparecer de la pantalla mientras la detección de movimiento aún se extendía"
+          }
         }
       ]
     },
@@ -516,37 +1274,101 @@
       "added": [
         {
           "text": "緊急地震速報に、震度0・長周期地震動階級0 の予想、情報名、地震発現時刻などを表示し、震源の地名が変わったときに読み上げで言い直すように改善",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Earthquake Early Warnings now show forecasts of intensity 0 and long-period ground motion class 0, the information name, the shaking onset time and more, and the reading aloud restates the hypocenter name when it changes",
+            "zh-Hans": "紧急地震警报改为显示烈度0、长周期地震动等级0 的预测、信息名称、开始摇晃时间等，并在震源地名变化时于朗读中重新说明",
+            "zh-Hant": "緊急地震警報改為顯示震度0、長週期地震動等級0 的預測、訊息名稱、開始搖晃時間等，並在震源地名變更時於朗讀中重新說明",
+            "ko": "긴급 지진 속보에 진도 0·장주기 지진동 계급 0의 예상, 정보 이름, 흔들림 시작 시각 등을 표시하고, 진원 지명이 바뀌면 음성 읽기로 다시 말하도록 개선",
+            "pt-BR": "Os Alertas Urgentes de Terremoto agora mostram previsões de intensidade 0 e de classe 0 de movimento sísmico de longo período, o nome da informação, a hora de início do tremor e mais, e a leitura repete o nome do hipocentro quando ele muda",
+            "es": "Las Alertas Tempranas de Terremoto ahora muestran pronósticos de intensidad 0 y de clase 0 de movimiento sísmico de período largo, el nombre de la información, la hora de inicio del temblor y más, y la lectura repite el nombre del hipocentro cuando cambia"
+          }
         },
         {
           "text": "地震情報のカードに、発表官署、震央の補足（「輪島の東北東 30km 付近」など）、震源の緯度・経度を追加",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Added the issuing office, supplementary epicenter details (e.g. \"輪島の東北東 30km 付近\") and the hypocenter's latitude and longitude to Earthquake Information cards",
+            "zh-Hans": "在地震信息卡片中新增发布机构、震中补充说明（如“輪島の東北東 30km 付近”）以及震源的纬度、经度",
+            "zh-Hant": "在地震訊息卡片中新增發表機構、震央補充說明（如「輪島の東北東 30km 付近」）以及震源的緯度、經度",
+            "ko": "지진 정보 카드에 발표 관서, 진앙 보충(\"輪島の東北東 30km 付近\" 등), 진원의 위도·경도 추가",
+            "pt-BR": "Adicionados aos cartões da Informação sobre terremotos o órgão emissor, o complemento do epicentro (como \"輪島の東北東 30km 付近\") e a latitude e a longitude do hipocentro",
+            "es": "Se añadieron a las tarjetas de la Información de terremotos el organismo emisor, el complemento del epicentro (como \"輪島の東北東 30km 付近\") y la latitud y la longitud del hipocentro"
+          }
         },
         {
           "text": "遠地地震のカードに、国際津波関連情報（英文）を追加",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Added international tsunami information (in English) to distant earthquake cards",
+            "zh-Hans": "在远地地震卡片中新增国际海啸相关信息（英文）",
+            "zh-Hant": "在遠地地震卡片中新增國際海嘯相關訊息（英文）",
+            "ko": "원지 지진 카드에 국제 지진해일 관련 정보(영문) 추가",
+            "pt-BR": "Adicionada a Informação internacional sobre tsunami (em inglês) aos cartões de terremotos distantes",
+            "es": "Se añadió la Información internacional del tsunami (en inglés) a las tarjetas de terremotos lejanos"
+          }
         },
         {
           "text": "津波のカードに、区域ごとの等級や予想の高さの変化、発表官署を追加",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Added changes in each area's level and forecast height, and the issuing office, to tsunami cards",
+            "zh-Hans": "在海啸卡片中新增各区域等级和预计高度的变化，以及发布机构",
+            "zh-Hant": "在海嘯卡片中新增各區域等級與預計高度的變化，以及發表機構",
+            "ko": "지진해일 카드에 구역별 등급과 예상 높이의 변화, 발표 관서 추가",
+            "pt-BR": "Adicionadas aos cartões de tsunami as mudanças de nível e de altura prevista por área e o órgão emissor",
+            "es": "Se añadieron a las tarjetas de tsunami los cambios de nivel y de altura prevista por área y el organismo emisor"
+          }
         },
         {
           "text": "南海トラフ地震臨時情報などの帯に、情報の種類を追加",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Added the type of information to banners such as Nankai Trough Earthquake Extra Information",
+            "zh-Hans": "在南海海槽地震临时信息等横幅中新增信息类型",
+            "zh-Hant": "在南海海槽地震臨時訊息等橫幅中新增訊息類型",
+            "ko": "난카이 해곡 지진 임시 정보 등의 배너에 정보 종류 추가",
+            "pt-BR": "Adicionado o tipo de informação às faixas, como a da Informação extraordinária sobre terremoto na Fossa de Nankai",
+            "es": "Se añadió el tipo de información a los banners, como el de la Información extraordinaria del terremoto de la Fosa de Nankai"
+          }
         },
         {
           "text": "揺れ検知で、震度0 に届かない揺れの観測点を強さに応じて 6 段階で描き分けるように改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Shaking detection now draws stations with shaking below intensity 0 in 6 levels by strength",
+            "zh-Hans": "改进摇晃检测，将未达烈度0 的摇晃观测点按强度分 6 级描绘",
+            "zh-Hant": "改善搖晃偵測，將未達震度0 的搖晃觀測點依強度分 6 級描繪",
+            "ko": "흔들림 감지에서 진도 0에 미치지 않는 흔들림의 관측점을 세기에 따라 6단계로 구분해 그리도록 개선",
+            "pt-BR": "A detecção de tremor agora desenha as estações com tremor abaixo da intensidade 0 em 6 níveis, conforme a força",
+            "es": "La detección de movimiento ahora dibuja en 6 niveles, según la fuerza, las estaciones con movimiento por debajo de la intensidad 0"
+          }
         },
         {
           "text": "初めて使うとき、気象庁の発表文を読み上げ、地震情報の通知を震度3以上で出すように変更",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "On first use, the app now reads JMA's announcement text aloud and sends Earthquake Information notifications for intensity 3 or higher",
+            "zh-Hans": "改为首次使用时朗读日本气象厅的发布文，并在烈度3以上时发出地震信息通知",
+            "zh-Hant": "改為首次使用時朗讀日本氣象局的發表文，並在震度3以上時發出地震訊息通知",
+            "ko": "처음 사용할 때 기상청의 발표문을 읽고, 지진 정보 알림을 진도 3 이상에서 내도록 변경",
+            "pt-BR": "No primeiro uso, o app agora lê o texto divulgado pela JMA e notifica a Informação sobre terremotos a partir da intensidade 3",
+            "es": "En el primer uso, la app ahora lee el texto publicado por la JMA y notifica la Información de terremotos desde la intensidad 3"
+          }
         }
       ],
       "fixed": [
         {
           "text": "過去の再生で、2023 年 1 月までの一部の日に緊急地震速報が表示されない不具合を修正",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Fixed an issue in past replays where Earthquake Early Warnings did not appear on some days up to January 2023",
+            "zh-Hans": "修复回放过去数据时，2023 年 1 月以前的部分日期不显示紧急地震警报的问题",
+            "zh-Hant": "修正重播過去資料時，2023 年 1 月以前的部分日期不顯示緊急地震警報的問題",
+            "ko": "과거 재생에서 2023년 1월까지의 일부 날짜에 긴급 지진 속보가 표시되지 않는 문제 수정",
+            "pt-BR": "Corrigido um problema na reprodução do passado em que os Alertas Urgentes de Terremoto não apareciam em alguns dias até janeiro de 2023",
+            "es": "Se corrigió un error en la reproducción del pasado por el que las Alertas Tempranas de Terremoto no aparecían algunos días hasta enero de 2023"
+          }
         }
       ]
     },
@@ -557,7 +1379,15 @@
       "fixed": [
         {
           "text": "揺れ検知で、震源から離れた観測点まで同じ揺れとして表示される場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue in shaking detection where stations far from the hypocenter could be shown as part of the same shaking",
+            "zh-Hans": "修复摇晃检测中，远离震源的观测点有时也被显示为同一摇晃的问题",
+            "zh-Hant": "修正搖晃偵測中，遠離震源的觀測點有時也被顯示為同一搖晃的問題",
+            "ko": "흔들림 감지에서 진원에서 떨어진 관측점까지 같은 흔들림으로 표시되는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema na detecção de tremor em que estações longe do hipocentro podiam aparecer como parte do mesmo tremor",
+            "es": "Se corrigió un error en la detección de movimiento por el que estaciones lejos del hipocentro podían mostrarse como parte del mismo movimiento"
+          }
         }
       ]
     },
@@ -567,17 +1397,41 @@
       "added": [
         {
           "text": "揺れ検知で、震度0 に届かない揺れの観測点も地図に表示し、検知の欄に「0以下」の行を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Shaking detection now also shows stations with shaking below intensity 0 on the map, and adds a \"0 or below\" row to the detection section",
+            "zh-Hans": "摇晃检测中，未达烈度0 的摇晃观测点也显示在地图上，并在检测栏中新增“0以下”一行",
+            "zh-Hant": "搖晃偵測中，未達震度0 的搖晃觀測點也顯示在地圖上，並在偵測欄中新增「0以下」一列",
+            "ko": "흔들림 감지에서 진도 0에 미치지 않는 흔들림의 관측점도 지도에 표시하고, 감지 칸에 \"0 이하\" 행 추가",
+            "pt-BR": "A detecção de tremor agora também mostra no mapa as estações com tremor abaixo da intensidade 0 e acrescenta a linha \"0 ou menos\" à seção de detecção",
+            "es": "La detección de movimiento ahora también muestra en el mapa las estaciones con movimiento por debajo de la intensidad 0 y añade la fila \"0 o menos\" a la sección de detección"
+          }
         },
         {
           "text": "揺れ検知の欄に、何が反応したかの一行を検知の初めから表示",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "The shaking detection section now shows from the start a line saying what triggered the detection",
+            "zh-Hans": "摇晃检测栏从检测一开始就显示一行说明是什么触发了检测",
+            "zh-Hant": "搖晃偵測欄從偵測一開始就顯示一行說明是什麼觸發了偵測",
+            "ko": "흔들림 감지 칸에 무엇이 반응했는지 한 줄을 감지 시작부터 표시",
+            "pt-BR": "A seção de detecção de tremor agora mostra desde o início uma linha dizendo o que disparou a detecção",
+            "es": "La sección de detección de movimiento ahora muestra desde el principio una línea con lo que activó la detección"
+          }
         }
       ],
       "fixed": [
         {
           "text": "リアルタイム震度の受信が一時遅れたとき、地震が無いのに全国に広がる揺れを検知する場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where, when real-time intensity data was briefly delayed, shaking spreading across Japan could be detected even though there was no earthquake",
+            "zh-Hans": "修复实时烈度接收暂时延迟时，即使没有地震也有时检测到遍及全国的摇晃的问题",
+            "zh-Hant": "修正即時震度接收暫時延遲時，即使沒有地震，有時也偵測到遍及全國的搖晃的問題",
+            "ko": "실시간 진도 수신이 잠시 늦어졌을 때 지진이 없는데도 전국으로 퍼지는 흔들림을 감지하는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que, com um atraso momentâneo na recepção da intensidade em tempo real, podia ser detectado um tremor espalhado por todo o Japão sem haver terremoto",
+            "es": "Se corrigió un error por el que, con un retraso momentáneo en la recepción de la intensidad en tiempo real, podía detectarse un movimiento extendido por todo Japón sin haber terremoto"
+          }
         }
       ]
     },
@@ -587,7 +1441,15 @@
       "added": [
         {
           "text": "揺れ検知を新しい方式に変更",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Switched shaking detection to a new method",
+            "zh-Hans": "将摇晃检测改为新方式",
+            "zh-Hant": "將搖晃偵測改為新方式",
+            "ko": "흔들림 감지를 새 방식으로 변경",
+            "pt-BR": "A detecção de tremor passou a usar um novo método",
+            "es": "La detección de movimiento pasó a usar un nuevo método"
+          }
         }
       ],
       "fixed": []
@@ -598,27 +1460,75 @@
       "added": [
         {
           "text": "緊急地震速報の地域ごとの予想震度に幅（「3〜4」など）を表示",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Earthquake Early Warnings now show forecast intensity ranges by area (e.g. \"3–4\")",
+            "zh-Hans": "紧急地震警报的各地区预测烈度显示范围（如“3～4”）",
+            "zh-Hant": "緊急地震警報的各地區預測震度顯示範圍（如「3～4」）",
+            "ko": "긴급 지진 속보의 지역별 예상 진도에 폭(\"3〜4\" 등)을 표시",
+            "pt-BR": "Os Alertas Urgentes de Terremoto agora mostram a faixa da intensidade prevista por região (como \"3–4\")",
+            "es": "Las Alertas Tempranas de Terremoto ahora muestran el rango de intensidad prevista por zona (como \"3–4\")"
+          }
         },
         {
           "text": "緊急地震速報に予想長周期地震動の階級0 と、震源が未確定のときの陸域・海域を表示",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Earthquake Early Warnings now show forecast long-period ground motion class 0 and, when the hypocenter is not yet fixed, whether it is on land or at sea",
+            "zh-Hans": "紧急地震警报显示预测长周期地震动等级0，以及震源未确定时的陆域、海域",
+            "zh-Hant": "緊急地震警報顯示預測長週期地震動等級0，以及震源未確定時的陸域、海域",
+            "ko": "긴급 지진 속보에 예상 장주기 지진동 계급 0과, 진원이 확정되지 않았을 때의 육역·해역 표시",
+            "pt-BR": "Os Alertas Urgentes de Terremoto agora mostram a classe 0 prevista de movimento sísmico de longo período e, com o hipocentro ainda não definido, se ele está em terra ou no mar",
+            "es": "Las Alertas Tempranas de Terremoto ahora muestran la clase 0 prevista de movimiento sísmico de período largo y, con el hipocentro aún sin determinar, si está en tierra o en el mar"
+          }
         },
         {
           "text": "長周期地震動の情報に震源・規模・最大震度を表示し、階級0 の地域も読み上げ",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Long-period ground motion information now shows the hypocenter, magnitude and maximum intensity, and areas with class 0 are also read aloud",
+            "zh-Hans": "长周期地震动信息显示震源、震级、最大烈度，并朗读等级0 的地区",
+            "zh-Hant": "長週期地震動訊息顯示震源、規模、最大震度，並朗讀等級0 的地區",
+            "ko": "장주기 지진동 정보에 진원·규모·최대 진도를 표시하고, 계급 0 지역도 읽기",
+            "pt-BR": "A informação de movimento sísmico de longo período agora mostra o hipocentro, a magnitude e a intensidade máxima, e as regiões de classe 0 também são lidas",
+            "es": "La información de movimiento sísmico de período largo ahora muestra el hipocentro, la magnitud y la intensidad máxima, y también se leen las zonas de clase 0"
+          }
         },
         {
           "text": "津波情報にマグニチュードの種類と編集官署を表示",
-          "variant": "dmdss"
+          "variant": "dmdss",
+          "translations": {
+            "en": "Tsunami Information now shows the magnitude type and the editing office",
+            "zh-Hans": "海啸信息显示震级类型和编辑机构",
+            "zh-Hant": "海嘯訊息顯示規模類型與編輯機構",
+            "ko": "지진해일 정보에 규모 종류와 편집 관서 표시",
+            "pt-BR": "A Informação sobre tsunami agora mostra o tipo de magnitude e o órgão editor",
+            "es": "La Información del tsunami ahora muestra el tipo de magnitud y el organismo editor"
+          }
         },
         {
           "text": "地震情報に海外での津波の見通しを表示",
-          "variant": "standard"
+          "variant": "standard",
+          "translations": {
+            "en": "Earthquake Information now shows the outlook for tsunamis overseas",
+            "zh-Hans": "地震信息显示海外海啸的预测",
+            "zh-Hant": "地震訊息顯示海外海嘯的預測",
+            "ko": "지진 정보에 해외 지진해일 전망 표시",
+            "pt-BR": "A Informação sobre terremotos agora mostra a perspectiva de tsunami no exterior",
+            "es": "La Información de terremotos ahora muestra la previsión de tsunami en el extranjero"
+          }
         },
         {
           "text": "録画モードで地図を寄せたときの海底地形と震度の表示を改善",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Improved the seafloor topography and intensity display when the map zooms in recording mode",
+            "zh-Hans": "改进录屏模式下地图移近时海底地形和烈度的显示",
+            "zh-Hant": "改善錄影模式下地圖拉近時海底地形與震度的顯示",
+            "ko": "녹화 모드에서 지도를 확대했을 때 해저 지형과 진도 표시 개선",
+            "pt-BR": "Melhorada a exibição do relevo do fundo do mar e da intensidade quando o mapa se aproxima no modo de gravação",
+            "es": "Se mejoró la visualización del relieve del fondo marino y de la intensidad cuando el mapa se acerca en el modo grabación"
+          }
         }
       ],
       "fixed": []
@@ -629,7 +1539,15 @@
       "added": [
         {
           "text": "設定画面に更新の確認ボタンを追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added a button to check for updates in Settings",
+            "zh-Hans": "在设置画面中新增检查更新按钮",
+            "zh-Hant": "在設定畫面中新增檢查更新按鈕",
+            "ko": "설정 화면에 업데이트 확인 버튼 추가",
+            "pt-BR": "Adicionado às Configurações um botão para verificar atualizações",
+            "es": "Se añadió a la Configuración un botón para buscar actualizaciones"
+          }
         }
       ],
       "fixed": []
@@ -640,11 +1558,27 @@
       "added": [
         {
           "text": "設定画面を変更",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Changed the Settings screen",
+            "zh-Hans": "更改设置画面",
+            "zh-Hant": "變更設定畫面",
+            "ko": "설정 화면 변경",
+            "pt-BR": "Alterada a tela de Configurações",
+            "es": "Se cambió la pantalla de Configuración"
+          }
         },
         {
           "text": "地図の表示配置を変更",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Changed the layout of the map display",
+            "zh-Hans": "更改地图的显示布局",
+            "zh-Hant": "變更地圖的顯示配置",
+            "ko": "지도 표시 배치 변경",
+            "pt-BR": "Alterada a disposição dos elementos do mapa",
+            "es": "Se cambió la disposición de los elementos del mapa"
+          }
         }
       ],
       "fixed": []
@@ -655,21 +1589,53 @@
       "added": [
         {
           "text": "新しいバージョンのお知らせと自動更新を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added new version notices and automatic updates",
+            "zh-Hans": "新增新版本通知和自动更新",
+            "zh-Hant": "新增新版本通知與自動更新",
+            "ko": "새 버전 알림과 자동 업데이트 추가",
+            "pt-BR": "Adicionados o aviso de nova versão e a atualização automática",
+            "es": "Se añadieron el aviso de nueva versión y la actualización automática"
+          }
         },
         {
           "text": "変更内容を確認できる画面を追加",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Added a screen to see what's new",
+            "zh-Hans": "新增可查看更新内容的画面",
+            "zh-Hant": "新增可查看更新內容的畫面",
+            "ko": "변경 사항을 확인할 수 있는 화면 추가",
+            "pt-BR": "Adicionada uma tela para ver as novidades",
+            "es": "Se añadió una pantalla para ver las novedades"
+          }
         }
       ],
       "fixed": [
         {
           "text": "起動時に画面が真っ白のままになる場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the screen could stay blank white at startup",
+            "zh-Hans": "修复启动时画面有时一直空白的问题",
+            "zh-Hant": "修正啟動時畫面有時一直空白的問題",
+            "ko": "시작할 때 화면이 하얀 채로 남는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que a tela podia ficar toda branca ao iniciar",
+            "es": "Se corrigió un error por el que la pantalla podía quedarse en blanco al iniciar"
+          }
         },
         {
           "text": "ブラウザ通知が表示されない場合がある不具合を修正",
-          "variant": "both"
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where browser notifications sometimes did not appear",
+            "zh-Hans": "修复浏览器通知有时不显示的问题",
+            "zh-Hant": "修正瀏覽器通知有時不顯示的問題",
+            "ko": "브라우저 알림이 표시되지 않는 경우가 있는 문제 수정",
+            "pt-BR": "Corrigido um problema em que as notificações do navegador às vezes não apareciam",
+            "es": "Se corrigió un error por el que las notificaciones del navegador a veces no aparecían"
+          }
         }
       ]
     }

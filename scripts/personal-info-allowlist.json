@@ -45,6 +45,7 @@
   "binaryExtensions": [
     { "ext": "pbf", "reason": "地図のベクトルタイル・グリフ（公的データの生成物）" },
     { "ext": "ttf", "reason": "フォント" },
+    { "ext": "otf", "reason": "フォント（地名ラベルの焼き元の Noto Sans CJK。名前表にあるのは配布元の著作権表示・商標・版・公表されている書体の作者名・ライセンス文だけ）" },
     { "ext": "bufr", "reason": "テストボタンの推計震度分布図（自前で組んだ二進電文）。書き込むのは凡例・発現時刻・震源・規模・区域コード・メッシュ番号・計測震度だけで、文字列も付帯情報も持たない（scripts/build-test-estimated-intensity-bufr.ts）" }
   ]
 }

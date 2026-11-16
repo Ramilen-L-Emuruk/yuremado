@@ -34,15 +34,86 @@ describe('buildPlaceNameTable', () => {
   })
   it('区域は同じ名前か、同じコードの「名前＋地方」の辞書の訳を使う', () => {
     const { table } = buildPlaceNameTable(sources(), ko)
-    expect(table.area['宮城県中部']).toBe('미야기 현 중부')
-    expect(table.area['山形県庄内']).toBe('야마가타 현 쇼나이 지방')
+    // 辞書は「미야기 현 중부」。行政の接尾辞の前の空白は詰めて入れる（lib/placeNameFixes.ts）
+    expect(table.area['宮城県中部']).toBe('미야기현 중부')
+    expect(table.area['山形県庄内']).toBe('야마가타현 쇼나이 지방')
   })
-  it('辞書の無い区域・観測点は、英字の言語だけ作り、中韓は持たない（対照）', () => {
+  it('区域は震央地名と同じ直し（名前ごとの上書きも）を受け、同じ地名の訳がずれない', () => {
+    const zhHant = PLACE_NAME_LOCALES.find((l) => l.id === 'zh-Hant')!
+    // 辞書の「莊內」は lib/placeNameFixes.ts の震央地名の上書きで「庄內」になる
+    const src = sources({ epi: { '240': { japanese: '山形県庄内地方', english: '', korean: '', chinese_zt: '山形縣莊內地方' } } })
+    const { table } = buildPlaceNameTable(src, zhHant)
+    expect(table.epi['山形県庄内地方']).toBe('山形縣庄內地方')
+    expect(table.area['山形県庄内']).toBe('山形縣庄內地方')
+  })
+  it('辞書の無い区域は、英字の言語はローマ字、中韓は名前から作る', () => {
+    const zhHans = PLACE_NAME_LOCALES.find((l) => l.id === 'zh-Hans')!
     expect(buildPlaceNameTable(sources(), en).table.area['伊豆大島']).toBe('Izuoshima')
+    expect(buildPlaceNameTable(sources(), ko).table.area['伊豆大島']).toBe('이즈오시마')
+    expect(buildPlaceNameTable(sources(), zhHans).table.area['伊豆大島']).toBe('伊豆大岛')
+  })
+  it('辞書の無い区域の頭の県名は表の訳で、韓国語は「本島・北部」などだけ訳す', () => {
+    const src = sources({
+      pref: { '47': entry('沖縄県', '', '오키나와 현'), '42': entry('長崎県', '', '나가사키 현') },
+      eqStations: [
+        { region: { code: '800', name: '沖縄県本島北部', kana: 'オキナワケンホントウホクブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'a', name: '石巻市旧', kana: 'イシノマキシキュウ' },
+        { region: { code: '801', name: '長崎県対馬', kana: 'ナガサキケンツシマ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'b', name: '石巻市旧', kana: 'イシノマキシキュウ' },
+      ],
+    })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.area['沖縄県本島北部']).toBe('오키나와현 본섬 북부')
+    expect(table.area['長崎県対馬']).toBe('나가사키현 쓰시마')
+    expect(report.untranslated.area).toEqual([])
+  })
+  it('対照: 英字の言語でも訳さない区域は、中韓でも作らず止めない', () => {
+    const src = sources({ eqStations: [{ region: { code: '900', name: '色丹島', kana: 'シコタントウ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'c', name: '石巻市旧', kana: 'イシノマキシキュウ' }] })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.area['色丹島']).toBeUndefined()
+    expect(() => checkUntranslated(report)).not.toThrow()
+  })
+  it('安全弁: 県名の後ろの読みの切れ目が見つからない区域は作らず、止める', () => {
+    const src = sources({
+      pref: { '47': entry('沖縄県', '', '오키나와 현') },
+      eqStations: [{ region: { code: '800', name: '沖縄県本島北部', kana: 'オキナワホントウホクブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: 'a', name: '石巻市旧', kana: 'イシノマキシキュウ' }],
+    })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.area['沖縄県本島北部']).toBeUndefined()
+    expect(() => checkUntranslated(report)).toThrow('訳を作れない名前が増えた')
+  })
+  it('韓国語の観測点は「市町村の訳 残りのハングル」、沖合の津波観測点は「頭 앞바다 距離 記号」', () => {
     const k = buildPlaceNameTable(sources(), ko).table
-    expect(k.area['伊豆大島']).toBeUndefined()
-    expect(Object.keys(k.station)).toHaveLength(0)
-    expect(Object.keys(k.tsunamiStation)).toHaveLength(0)
+    expect(k.station['石巻市泉町']).toBe('이시노마키시 이즈미마치')
+    expect(k.tsunamiStation['石巻市鮎川']).toBe('이시노마키시 아유카와')
+    expect(k.tsunamiStation['宮城沖１５０ｋｍＡ']).toBe('미야기 앞바다 150km A')
+  })
+  it('安全弁: 名前だけが沖合の形で読みが合わない津波観測点は作らず、韓国語は 1 件でも作れなければ止める', () => {
+    const src = sources({ tsunamiStations: [{ code: '22900', name: '宮城沖１５０ｋｍＡ', kana: 'ミヤギ１５０' }] })
+    const { table, report } = buildPlaceNameTable(src, ko)
+    expect(table.tsunamiStation['宮城沖１５０ｋｍＡ']).toBeUndefined()
+    expect(report.untranslated.tsunamiStation).toEqual(['宮城沖１５０ｋｍＡ'])
+    expect(() => checkUntranslated(report)).toThrow('訳を作れない名前が増えた')
+  })
+  it('対照: 名前の頭が市町村名でも読みが市町村の読みで始まらなければ、名前全体から作る', () => {
+    const src = sources({
+      eqStations: [{ region: { code: '220', name: '宮城県中部', kana: 'ミヤギケンチュウブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: '0420239', name: '石巻市旧', kana: 'イシマキキュウ' }],
+    })
+    expect(buildPlaceNameTable(src, ko).table.station['石巻市旧']).toBe('이시마키큐')
+  })
+  it('中国語の観測点は「市町村の訳＋残りの字形」で、繋ぎ以外の仮名を含む名前は作らない', () => {
+    const zhHans = PLACE_NAME_LOCALES.find((l) => l.id === 'zh-Hans')!
+    const src = sources({
+      city: { '0420200': { japanese: '石巻市', english: '', korean: '', chinese_zs: '石卷市' } },
+      eqStations: [
+        { region: { code: '220', name: '宮城県中部', kana: 'ミヤギケンチュウブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: '0420230', name: '石巻市泉町', kana: 'イシノマキシイズミマチ' },
+        { region: { code: '220', name: '宮城県中部', kana: 'ミヤギケンチュウブ' }, city: { code: '0420200', name: '石巻市', kana: 'イシノマキシ' }, code: '0420233', name: '石巻市ひより台', kana: 'イシノマキシヒヨリダイ' },
+      ],
+    })
+    const { table, report } = buildPlaceNameTable(src, zhHans)
+    expect(table.station['石巻市泉町']).toBe('石卷市泉町')
+    expect(table.station['石巻市ひより台']).toBeUndefined()
+    expect(table.tsunamiStation['宮城沖１５０ｋｍＡ']).toBe('宫城冲150km A')
+    // 仮名を含む名前は作らないと決めた範囲なので止めない
+    expect(() => checkUntranslated(report)).not.toThrow()
   })
   it('観測点は集めた英語名を * を外して先に使い、同じ名前の別のコードもそれにそろえる', () => {
     const { table, report } = buildPlaceNameTable(sources(), en)
@@ -92,16 +163,20 @@ describe('latinSeparators', () => {
 })
 
 describe('checkUntranslated', () => {
-  const report = (area: string[]): BuildReport => ({
+  const report = (area: string[], foreignChars: string[] = []): BuildReport => ({
     locale: 'en',
     counts: { epi: 0, pref: 0, city: 0, tsunamiArea: 0, area: 0, station: 0, tsunamiStation: 0 },
     romaji: { area: 0, station: 0, tsunamiStation: 0 },
     untranslated: { area, station: [], tsunamiStation: [] },
+    foreignChars,
   })
   it('対照: 日本語のまま出すと決めた名前だけなら通す', () => {
     expect(() => checkUntranslated(report([...KNOWN_UNTRANSLATED.area]))).not.toThrow()
   })
   it('正: それ以外に訳を作れない名前が出たら止める', () => {
     expect(() => checkUntranslated(report(['石狩地方北部']))).toThrow('訳を作れない名前が増えた')
+  })
+  it('正: その字体で使わない字が残った訳があれば止める', () => {
+    expect(() => checkUntranslated(report([], ['epi 伊勢湾→伊勢湾（湾）']))).toThrow('その字体で使わない字が残っている')
   })
 })

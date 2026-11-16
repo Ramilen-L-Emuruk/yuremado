@@ -30,25 +30,35 @@ export const PLACE_NAME_KINDS: readonly PlaceNameKind[] = ['epi', 'pref', 'city'
 
 export type PlaceNameTable = Readonly<Record<PlaceNameKind, Readonly<Record<string, string>>>>
 
-/** 種類と日本語の名前から、出す名前を返す。訳が無ければ日本語の名前をそのまま返す */
-export type PlaceNameLookup = (kind: PlaceNameKind, name: string) => string
+/**
+ * 種類と日本語の名前から、出す名前を返す。訳が無ければ日本語の名前をそのまま返す。
+ * `has` は表に訳があるか（訳が日本語の名前と同じ字の「東京都」も訳として数える）。地図のラベルが描く組を選ぶのに使う
+ * （省けない。省くと訳した字を字の無い組で描いて空白になるので、型で止める）
+ */
+export type PlaceNameLookup = ((kind: PlaceNameKind, name: string) => string) & {
+  readonly has: (kind: PlaceNameKind, name: string) => boolean
+}
 
-/** 日本語の画面と、表をまだ引けていないときの引き方（名前をそのまま返す） */
-export const JA_PLACE_NAMES: PlaceNameLookup = (_kind, name) => name
+/** 日本語の画面と、表をまだ引けていないときの引き方（名前をそのまま返し、訳は無い） */
+export const JA_PLACE_NAMES: PlaceNameLookup = Object.assign((_kind: PlaceNameKind, name: string) => name, {
+  has: () => false,
+})
 
 /** 表から引き方を作る */
 export function placeNameLookup(table: PlaceNameTable): PlaceNameLookup {
-  return (kind, name) => table[kind][name] ?? name
+  return Object.assign((kind: PlaceNameKind, name: string) => table[kind][name] ?? name, {
+    has: (kind: PlaceNameKind, name: string) => table[kind][name] !== undefined,
+  })
 }
 
 /**
  * 地図の県名・区域名のラベルを訳す言語。地図の字は事前に焼いたグリフ（`scripts/build-glyphs.mjs`）で
- * 描くので、焼き元のフォントに字のある言語だけを訳す（2026-11-13 ユーザー選択「英葡西だけ訳す (Recommended)」。
- * 中国語・韓国語は訳に使う字がフォントに無く、日本語のまま出す）。
+ * 描くので、焼いた字のある言語だけを訳す（2026-11-13 ユーザー承認の英葡西に、2026-11-15 ユーザー承認で中国語・韓国語を
+ * 足した。中韓の訳は言語ごとの組〈`components/Map/gl/fontStack.ts` の `PLACE_LABEL_FONT_STACKS`〉で描く）。
  *
  * **`build-glyphs.mjs` がこの一覧をソースから読み、ここに並べた言語の訳の字を焼く。** 書き方（1 行の配列）を変えると読めなくなる。
  */
-export const MAP_LABEL_LOCALES: readonly Locale[] = ['en', 'pt-BR', 'es']
+export const MAP_LABEL_LOCALES: readonly Locale[] = ['en', 'pt-BR', 'es', 'zh-Hans', 'zh-Hant', 'ko']
 
 /** 地図のラベルに使う引き方。訳さない言語では日本語の名前をそのまま返す */
 export function mapLabelPlaceNames(locale: Locale, place: PlaceNameLookup): PlaceNameLookup {

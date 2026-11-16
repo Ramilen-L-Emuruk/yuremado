@@ -1,0 +1,12 @@
+{
+  "font": "NotoSansTC-Black.otf",
+  "fontSha256": "3280b221ab7b011c6ae48d38388a0e8c72ddf479992bce62ff589ae932819ce4",
+  "family": "Noto Sans TC",
+  "weight": "900",
+  "sdf": {
+    "fontSize": 24,
+    "buffer": 3,
+    "radius": 8,
+    "cutoff": 0.25
+  }
+}
