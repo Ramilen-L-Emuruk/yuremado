@@ -49,7 +49,7 @@ import {
   FocusObsGL,
   FocusTargetGL,
 } from './CameraFollowsGL'
-import { JAPAN_CENTER, fitJapan, fitMaxZoom, REFERENCE_FIT_MAX_ZOOM } from './gl/camera'
+import { JAPAN_CENTER, fitJapan, fitMaxZoom, followsPaneResize, subscribeFramingSettled, REFERENCE_FIT_MAX_ZOOM } from './gl/camera'
 import { useActiveFaults } from '../../hooks/useActiveFaults'
 import { usePlateBoundaries } from '../../hooks/usePlateBoundaries'
 import { useQuakeLayerData } from '../../hooks/useQuakeLayerData'
@@ -510,8 +510,16 @@ export function JapanMapGL({
     m.on('zoomend', onZoomEnd)
     // ペインの寸法が変わると寄り上限＝集約閾値も変わる。MapLibre はコンテナを ResizeObserver で
     // 監視するため、window のリサイズだけでなくパネル境界のつまみの操作でもここへ届く。
-    const onResize = () => setAggregateMaxZoom(fitMaxZoom(m))
+    //
+    // **アプリが寄せた画のままなら、ここでは取り直さず、構図が落ち着いた知らせで取り直す。** そのときカメラは
+    // 新しい大きさで寄せ直される（`followsPaneResize`）。ここで先に閾値だけ下げると、寄せ直しの飛行が
+    // 終わるまでの間、前の大きさで寄せた深さが閾値を超え、区域の塗りが自前の推定の面へ一瞬切り替わる。
+    // `moveend` を直に見ないわけは `subscribeFramingSettled` の注記。
+    const onResize = () => {
+      if (!followsPaneResize(m)) setAggregateMaxZoom(fitMaxZoom(m))
+    }
     m.on('resize', onResize)
+    const unsubscribeFramingSettled = subscribeFramingSettled(m, () => setAggregateMaxZoom(fitMaxZoom(m)))
     // 同じ階級のバッジを画面の手前から並べる（gl/screenDepth.ts）。手前らしさは方位だけで決まる
     // ので、購読するのは回転だけでよい（中心・ズーム・傾きでは並びが変わらない）。
     // **購読はここに 1 本だけ置く。** 対象のレイヤーはモードごとに出入りするので、各レイヤーの
@@ -571,6 +579,7 @@ export function JapanMapGL({
       endMoveSpan = null
       m.off('zoomend', onZoomEnd)
       m.off('resize', onResize)
+      unsubscribeFramingSettled()
       m.off('rotate', onRotate)
       m.off('rotateend', onRotateEnd)
       m.off('styledata', onStyleData)
