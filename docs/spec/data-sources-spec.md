@@ -4422,6 +4422,7 @@ K は使えなくなるので、タブが表示に戻ったときにその関係
 | `wepa60-region-names.json` | `scripts/build-wepa60-region-names.mjs` | 国際津波関連情報の震央の地域名（英語）→ 気象庁の詳細震央地名（→ 下記「国際津波関連情報の地名の表」） |
 | `place-names/<言語>.json` | `scripts/build-place-names.ts` | 地名の訳（日本語の名前 → 言語ごとの名前。→ 下記「地名の訳の表」） |
 | `src/data/plateNames.json`（`public/data/` ではなくバンドルに入る） | `scripts/build-plate-names.mjs` | プレート名の訳（日本語の名前 → 日本語以外の 6 言語。→ 下記「プレート名の訳」） |
+| `src/data/publicStationNames.json`（`public/data/` ではなくバンドルに入る） | `scripts/build-public-station-names.ts` | 公開観測点の名前の訳（日本語の名前 → 日本語以外の 6 言語。→ 下記「公開観測点の名前の訳」） |
 
 **取得に失敗したとき**: そのデータを使う表示だけを諦めて動作を続ける（何が欠けるかは各仕様書を参照）。
 失敗は `console` に残す。**地図のデータ（下記の取得状況に数えるもの）は、取得口（`fetchJsonWithTimeout`）が
@@ -5090,6 +5091,17 @@ M 未決定の記録が並ぶことがあり（2025 年 1 月の日向灘の地�
 - その言語に記事が無い 31 欄（ポルトガル語 21・スペイン語 8・韓国語 1・英語 1）は、記事名の型で作った訳を `MISSING` に持つ（2026-11-15「一覧の案で入れる (Recommended)」・「作った訳のまま (Recommended)」）。その言語で決まった呼び方かは、Wikipedia の記事が無いこと以上には確かめていない
 - **`MISSING` の欄に記事ができた、記事も `MISSING` も無い欄がある、同じプレートの 2 つの項目で記事名が食い違う、のどれでも止める**
 - 取得は 3 件（`PB2002_plates.json`、Wikidata の SPARQL でプレートの項目、同じく記事名）。控えは `.cache/plate-names`（`cacheDir`）。Wikidata のデータは CC0。Wikipedia からは記事名（題名）だけを訳に使い、本文は取らない
+
+### 公開観測点の名前の訳（`src/data/publicStationNames.json`）
+
+公開観測点（気象庁の広帯域地震計。→ §4.6）の名前（20 件）を、日本語以外の 6 言語で引く表。地図の印の吹き出し・下の波形の見出し・地震カードの波形の見出しに出す（2026-11-16 ユーザー選択「公開観測点の名前を訳す」）。
+引き方は `src/i18n/publicStationNames.ts` の `publicStationNameFor`（日本語の画面と表に無い名前は日本語のまま）。作るのは `scripts/build-public-station-names.ts` で、取りに行かない（入力は `public-stations.json`・読み仮名の表・地名の訳の表）。
+
+- 読み仮名は `scripts/lib/publicStationReadings.ts` に手で持つ。日本語の名前と同じ気象庁の観測点一覧（地震・火山月報（カタログ編）の付録「地震観測点」。地方ごとの頁、例: https://ds.data.jma.go.jp/eqev/data/bulletin/catalog/appendix/stkyushu.html ）の「観測点名(英語)」の列（`Sadogashimaginzan` のように空白なしで書かれている）から起こし、名前を語の切れ目（県名・島名と地区の名前の境）で分けて持つ。スクリプトはこの頁を取らない。読みを起こすときに手で取った頁の控えをメインの checkout の `.cache/jma-station-appendix` に置いてある（観測点が増えて読みを足すときは、ここと照らすか取り直す）
+- 英語・ポルトガル語・スペイン語: 読み仮名を語の切れ目ごとにローマ字にして空白で繋ぐ（`Sadogashima Ginzan`。部品は震度観測点と同じ `placeNameRomaji.ts`。2026-11-16 ユーザー選択「読みからローマ字 (Recommended)」）。気象庁の一覧の綴りとは、長音を落とす（大分 Oita）・ン＋マを m にする（天間林 Temmabayashi）ところだけが違う（2026-11-16 に手で突き合わせた）。EarthScope の英字の地名（`siteName`）は使わない（佐渡島銀山が `Sado`・青森天間林が `Aomori Tenma` のように欠ける）
+- 中国語（簡体・繁体）: 漢字の字形だけを変える（`placeNameCjk.ts`。上の「地名の訳の表」の中国語の観測点名と同じ部品）。字ごとの対応は、地名の訳の表のうち多言語辞書から来た種類（`epi`・`pref`・`city`・`tsunamiArea`）から学ぶ。仮名の名前「えりも」は字形を変えられないので、表の市町村「えりも町→襟裳町」から「町」を落とした「襟裳」にする（2026-11-16 ユーザー選択「辞書の「襟裳」にする (Recommended)」）
+- 韓国語: 読み仮名を語の切れ目ごとにハングルにして空白で繋ぐ（上の「地名の訳の表」の韓国語の観測点名と同じ部品）
+- **読み仮名の無い名前・訳を作れない名前があれば、表を書き換えずに止める。** 表に残る観測点の名前に読みがあることと、表が作り直したものと同じことは `scripts/build-public-station-names.test.ts` が `npm test` で確かめる
 
 ### JMA2001 走時表（`src/data/jma2001TravelTime.ts`）
 
@@ -6285,3 +6297,4 @@ EEW の予想震度は範囲（下限・上限）で配信され、**上限が�
 - 2026-11-15: §6 の地名の訳の表に、中国語・韓国語の観測点名の作り方（`scripts/lib/placeNameCjk.ts`）と、韓国語の「沖」を 앞바다 にそろえることを書いた。件数の表を数え直した
 - 2026-11-15: §6 の地名の訳の表に、中国語・韓国語の辞書に無い細分区域 28 件の作り方を書いた。件数の表を数え直した
 - 2026-11-15: §6 に「プレート名の訳」（`src/data/plateNames.json`）を足した。生成データの表にも足した
+- 2026-11-16: §6 に「公開観測点の名前の訳」（`src/data/publicStationNames.json`）を足した。生成データの表にも足した

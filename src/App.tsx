@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
-import { useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
+import { useLocale, useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
 import { useApplyLocaleSetting } from './i18n/useApplyLocaleSetting'
 import { historicalArchiveLabel } from './utils/historicalArchiveLabel'
 import { JA_MESSAGES } from './i18n/messages'
@@ -32,6 +32,7 @@ import { useSeismoQuakeWavesWithStatus, type SeismoQuakeWave } from './hooks/use
 import { useSeismoReplay } from './hooks/useSeismoReplay'
 import { usePublicQuakeWaves } from './hooks/usePublicQuakeWaves'
 import { mergeQuakeWaves } from './utils/mergeQuakeWaves'
+import { localizePublicQuakeCards, type PublicCardNameCache } from './utils/publicQuakeCardNames'
 import { useQuakeOriginSeconds } from './hooks/useQuakeOriginSeconds'
 import { SeismoWaveChart } from './components/SeismoWaveChart'
 import { hasWaveChartRows } from './components/SeismoWaveChart/chartRows'
@@ -225,6 +226,8 @@ export function App() {
   const messagesRef = useMessagesRef()
   // 同じく、通知の本文の地名を呼ばれた時点の言語で訳すための参照
   const placeNamesRef = usePlaceNamesRef()
+  // 画面の言語（地震カードの公開観測点の見出しの名前を訳す）
+  const locale = useLocale()
   const tabNames = messages.nav
   // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
   useApplyLocaleSetting(settings.locale)
@@ -3239,12 +3242,14 @@ export function App() {
   })
   // 自作地震計を先に、続けて公開観測点を番号順に（§6.3）。**変わっていない地震は前の配列を使い回す**（→ utils/mergeQuakeWaves.ts）。
   const quakeWavesRef = useRef<ReadonlyMap<string, readonly SeismoQuakeWave[]>>(new Map())
+  // 公開観測点の札の見出しは画面の言語の名前にする（訳した札は控えて、同じ参照を返す。→ utils/publicQuakeCardNames.ts）
+  const publicCardNameCacheRef = useRef<PublicCardNameCache>(new WeakMap())
   const quakeWaves = useMemo(() => {
-    const cards = new Map([...publicQuakeWaves].map(([key, list]) => [key, list.map((w) => w.card)]))
+    const cards = localizePublicQuakeCards(publicQuakeWaves, locale, publicCardNameCacheRef.current)
     const merged = mergeQuakeWaves(seismoQuakeWaves, cards, quakeWavesRef.current)
     quakeWavesRef.current = merged
     return merged
-  }, [seismoQuakeWaves, publicQuakeWaves])
+  }, [seismoQuakeWaves, publicQuakeWaves, locale])
   // 地図の公開観測点の印。**下部の波形を出している間はそちらを優先し**、出していなければ開いている地震カードの観測点を出す
   // （2026-10-15 ユーザー決定）。
   const openedPublicWaves = selectedQuakeKey === null ? undefined : publicQuakeWaves.get(selectedQuakeKey)

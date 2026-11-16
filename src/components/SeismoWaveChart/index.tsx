@@ -64,7 +64,8 @@ import {
 import { WaveAxisToggles } from './WaveAxisToggles'
 import { PUBLIC_WAVE_UNIT, SEISMO_WAVE_UNIT, type WaveUnit } from './waveUnit'
 import { SharedLaneScales } from './sharedScale'
-import { useMessages } from '../../i18n/I18nProvider'
+import { useLocale, useMessages } from '../../i18n/I18nProvider'
+import { publicStationNameFor } from '../../i18n/publicStationNames'
 
 // 段の名前・見出しの印・ホバーの語は辞書の `waveChart`。
 //
@@ -80,8 +81,8 @@ import { useMessages } from '../../i18n/I18nProvider'
  * 公開観測点の見出し（番号＋観測点名）。**番号の書き方は地図の印と一緒に決める**（§12。いまは選ばれた「#1 宮城丸森」の形）。
  * 書き方を変えるときはここだけ直す。
  */
-export function publicStationHeading(number: number, nameJa: string): string {
-  return `#${number} ${nameJa}`
+export function publicStationHeading(number: number, name: string): string {
+  return `#${number} ${name}`
 }
 
 
@@ -221,6 +222,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
   const publicScalesRef = useRef<SharedLaneScales | null>(null)
   if (publicScalesRef.current === null) publicScalesRef.current = new SharedLaneScales()
   const ww = useMessages().waveChart
+  const locale = useLocale()
   const sources: LiveWaveSource[] = []
   for (const station of stations) {
     sources.push({
@@ -246,7 +248,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
     publicWaves.stations.forEach((ps, i) => {
       sources.push({
         id: `public:${ps.code}`,
-        title: publicStationHeading(ps.number, ps.nameJa),
+        title: publicStationHeading(ps.number, publicStationNameFor(locale, ps.nameJa)),
         lat: ps.lat,
         lon: ps.lon,
         stale: ps.stale,
@@ -614,13 +616,14 @@ function StationWave({
   return (
     <div className="w-full bg-black/70 px-2 py-1">
       <div className="flex items-center gap-2 text-[10px] roomy:text-xs leading-none mb-1">
-        {/* 寄せられる段は見出しをボタンにする（キーボードからも押せるように。名前は見出しの文字そのもの）。 */}
+        {/* 寄せられる段は見出しをボタンにする（キーボードからも押せるように。名前は見出しの文字そのもの）。
+            狭い画面の上限は 160px（公開観測点の名前の訳で一番長い韓国語 152px が入る。2026-11-16 ユーザー選択「欄を 160px に広げる」） */}
         {focus !== null ? (
-          <button type="button" onClick={focus} className="text-white truncate max-w-32 roomy:max-w-56 hover:underline text-left leading-none">
+          <button type="button" onClick={focus} className="text-white truncate max-w-40 roomy:max-w-56 hover:underline text-left leading-none">
             {source.title}
           </button>
         ) : (
-          <span className="text-white truncate max-w-32 roomy:max-w-56">{source.title}</span>
+          <span className="text-white truncate max-w-40 roomy:max-w-56">{source.title}</span>
         )}
         {showControls && <WaveAxisToggles />}
         {/* 右へ寄せる群。**途絶はいちばん右へ寄せず、数え上げと同じ列に並べる。** 起きていることの
