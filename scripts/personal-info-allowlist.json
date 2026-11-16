@@ -1,7 +1,11 @@
 {
   "_読み方": "公開前の個人情報の検査（scripts/check-personal-info.ts）で、一般的な形の検査から外すもの。**このファイルも公開されるので、個人情報を書かない。** 手元の照合ファイルの値には効かない。values・publicDataPaths に載せてよいのは、公的なデータ・架空の値・本人が自ら公開している第三者の連絡先（依存パッケージのライセンス文など）だけ。fileValues には、形だけが似ている別物（コードの識別子など）を、確かめたファイルと組で 1 件ずつ載せる。binaryExtensions は付帯情報を持たない種類だけ。足すときは理由を書くこと。",
   "publicDataPaths": [
-    { "path": "public/data/", "reason": "公的なデータ（国土数値情報・気象庁・産総研など）から作った地図・観測点・断層の生成物" }
+    { "path": "public/data/", "reason": "公的なデータ（国土数値情報・気象庁・産総研など）から作った地図・観測点・断層の生成物" },
+    { "path": "src/services/analysisOverlay.ffm.fixture.json", "reason": "公的なデータ（USGS が公表した 2024 年能登半島地震の有限断層モデルの区画）を、地図の重ねのテストの見本にしたもの" },
+    { "path": "src/services/analysisOverlay.shakemap.fixture.json", "reason": "公的なデータ（USGS が公表した 2024 年能登半島地震の ShakeMap の MMI 等値線）を、地図の重ねのテストの見本にしたもの" },
+    { "path": "src/services/relayAnalysis.noto.fixture.json", "reason": "公的なデータ（USGS・EMSC・GEOFON・気象庁が公表した 2024 年能登半島地震の震源と解析）を、解析の読み取りのテストの見本にしたもの" },
+    { "path": "src/services/relayAnalysis.sanriku.fixture.json", "reason": "公的なデータ（USGS・EMSC・GEOFON が公表した 2026-11-12 三陸沖の地震の震源）を、解析の読み取りのテストの見本にしたもの" }
   ],
   "values": [
     { "value": "floatdrop@gmail.com", "reason": "依存パッケージの作者が npm とライセンス文に自ら載せている連絡先（第三者ソフトウェアのライセンス全文・package-lock.json）" },
