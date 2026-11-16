@@ -1,6 +1,86 @@
 {
   "versions": [
     {
+      "version": "6.17.0",
+      "date": "2026-11-16",
+      "added": [
+        {
+          "text": "中国語・韓国語の画面で、地図の地名と観測点名の訳を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added Chinese and Korean translations of place names and observation station names on the map",
+            "zh-Hans": "新增中文、韩语画面中地图地名和观测点名称的翻译",
+            "zh-Hant": "新增中文、韓語畫面中地圖地名與觀測點名稱的翻譯",
+            "ko": "중국어·한국어 화면에서 지도의 지명과 관측점 이름 번역 추가",
+            "pt-BR": "Adicionadas traduções em chinês e coreano dos nomes de lugares e das estações de observação no mapa",
+            "es": "Se añadieron traducciones al chino y al coreano de los nombres de lugares y de las estaciones de observación en el mapa"
+          }
+        },
+        {
+          "text": "地図のプレート名・変更内容・起動できないときの画面の訳を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added translations of plate names on the map, What's new and the screen shown when the app fails to start",
+            "zh-Hans": "新增地图板块名称、更新内容以及无法启动时画面的翻译",
+            "zh-Hant": "新增地圖板塊名稱、更新內容以及無法啟動時畫面的翻譯",
+            "ko": "지도의 판 이름·변경 사항·실행되지 않을 때 화면의 번역 추가",
+            "pt-BR": "Adicionadas traduções dos nomes das placas no mapa, das Novidades e da tela exibida quando o app não inicia",
+            "es": "Se añadieron traducciones de los nombres de las placas en el mapa, de las Novedades y de la pantalla que se muestra cuando la app no se inicia"
+          }
+        },
+        {
+          "text": "緊急地震速報・長周期地震動などの情報に、編集官署・発表官署の表示を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added the editing and issuing offices to EEW, long-period ground motion and other information",
+            "zh-Hans": "紧急地震警报、长周期地震动等信息新增显示编辑机构和发布机构",
+            "zh-Hant": "緊急地震警報、長週期地震動等訊息新增顯示編輯機構與發表機構",
+            "ko": "긴급 지진 속보·장주기 지진동 등의 정보에 편집 관서·발표 관서 표시 추가",
+            "pt-BR": "Adicionada a exibição dos órgãos de edição e de emissão no Alerta Urgente de Terremoto, no movimento sísmico de longo período e em outras informações",
+            "es": "Se añadió la indicación de los organismos de edición y de emisión en la Alerta Temprana de Terremoto, el movimiento sísmico de período largo y otras informaciones"
+          }
+        }
+      ],
+      "fixed": [
+        {
+          "text": "速報カードの情報名の位置を改善",
+          "variant": "both",
+          "translations": {
+            "en": "Improved the position of the information name on the EEW card",
+            "zh-Hans": "改进紧急地震警报卡片中信息名称的位置",
+            "zh-Hant": "改善緊急地震警報卡片中訊息名稱的位置",
+            "ko": "긴급 지진 속보 카드의 정보 이름 위치 개선",
+            "pt-BR": "Melhorada a posição do nome da informação no cartão do Alerta Urgente de Terremoto",
+            "es": "Se mejoró la posición del nombre de la información en la tarjeta de la Alerta Temprana de Terremoto"
+          }
+        },
+        {
+          "text": "中国語・韓国語の地名の訳の一部が誤っていた不具合を修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where some Chinese and Korean place name translations were incorrect",
+            "zh-Hans": "修复部分中文、韩语地名翻译有误的问题",
+            "zh-Hant": "修正部分中文、韓語地名翻譯有誤的問題",
+            "ko": "일부 중국어·한국어 지명 번역이 잘못되어 있던 문제 수정",
+            "pt-BR": "Corrigido um problema em que algumas traduções de nomes de lugares em chinês e coreano estavam incorretas",
+            "es": "Se corrigió un error por el que algunas traducciones de nombres de lugares al chino y al coreano eran incorrectas"
+          }
+        },
+        {
+          "text": "英語・ポルトガル語・スペイン語の画面で、地震カードの一部の文字が欄からはみ出す不具合を修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where some text on earthquake cards overflowed its field in English, Portuguese and Spanish",
+            "zh-Hans": "修复英语、葡萄牙语、西班牙语画面中地震卡片部分文字超出栏位的问题",
+            "zh-Hant": "修正英語、葡萄牙語、西班牙語畫面中地震卡片部分文字超出欄位的問題",
+            "ko": "영어·포르투갈어·스페인어 화면에서 지진 카드의 일부 글자가 칸을 벗어나는 문제 수정",
+            "pt-BR": "Corrigido um problema em que parte do texto dos cartões de terremoto ultrapassava o campo em inglês, português e espanhol",
+            "es": "Se corrigió un error por el que parte del texto de las tarjetas de terremoto se salía de su campo en inglés, portugués y español"
+          }
+        }
+      ]
+    },
+    {
       "version": "6.16.0",
       "date": "2026-11-13",
       "added": [
