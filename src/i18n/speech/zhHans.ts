@@ -1,9 +1,14 @@
 import type { SpeechWordsInProgress } from '../speechWords'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
 import { zhHans } from '../messages/zhHans'
-import { intensityIn, regionNameIn, reportNameIn, showsApproxAbove } from './shared'
+import { firstWaveKindIn, intensityIn, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn } from './shared'
 
 const intensity = intensityIn(zhHans)
+/** 原因地震の呼び方（1 つ目の地震か、2 つ目以降の地震か） */
+const theQuake = (first: boolean) => (first ? '此次地震' : '另一次地震')
+/** 津波の観測点の句の述語の語幹（更新・観測） */
+const STEM_UPDATED = '更新为'
+const STEM_OBSERVED = '观测到'
 /** 未入電の単位（量詞つき）。「件」は声で自然な「处」（2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 14-5） */
 const UNIT: Readonly<Record<UnreceivedUnit, string>> = { '地点': '个地点', '地域': '个地区', '件': '处' }
 const notReceived = '但尚未收到烈度。'
@@ -153,5 +158,99 @@ export const zhHansSpeech: SpeechWordsInProgress = {
       '0226': '震源附近可能发生海啸。',
       '0228': '一般来说，此规模的地震发生在海域浅处时，可能引发海啸。',
     },
+  },
+  tsunami: {
+    infoLabel: '海啸信息',
+    gradeName: tsunamiGradeNamesIn(zhHans),
+    heightToSpeech: tsunamiHeightIn(({ value, limit }) =>
+      (limit === 'over' ? `超过${value}米` : limit === 'under' ? `不足${value}米` : limit === 'orMore' ? `${value}米以上` : `${value}米`)),
+    nonNumericHeight: { 巨大: '巨大海啸', 高い: '较高的海啸' },
+    heightLabel: { height: markHeightOrMore },
+    areaSep: '、',
+    heightGroupSep: '；',
+    // 区域名と観測点名を「的」でつなぐ（「石川县能登的轮岛港」）
+    districtStationSep: '的',
+    stationSep: '；',
+    forecastHeightAt: (h) => `：预计${h}`,
+    observedHeightAt: (h) => `：${h}`,
+    heightsExpected: '。',
+    alsoIssued: (g) => `：也发布了${g}。`,
+    issuedForAreasBelow: (g) => `${g}发布的沿岸地区如下。`,
+    issuedFor: (g) => `：${g}发布中。`,
+    issuedForAreas: (g) => `：已发布${g}。`,
+    gradeIssued: (g) => `已发布${g}。`,
+    downgradedBelow: (g) => `已降为${g}。目前，${g}发布的沿岸地区如下。`,
+    downgradedLead: (g) => `已降为${g}。目前，`,
+    areaLifted: (g) => `：${g}已被解除。`,
+    warningsEtc: '海啸警报等',
+    areaGradeChanged: (from, to, raised) => `：${from}${raised ? '升为' : '降为'}${to}。`,
+    forecastHeightChanged: '预计海啸最大高度已变更。',
+    fallbackEvacuation: tsunamiEvacuationIn(zhHans, ''),
+    sourceLead: '此次地震的震源位于',
+    sourceLeadOther: '另外，另一次地震的震源位于',
+    sourceMagnitudeLead: '，震级为',
+    sourceMagnitude: (magnitude) => magnitude,
+    sourceTail: '。',
+    sourceHypocenterAmended: (first, name) => `${theQuake(first)}的震源已更新为${name}。`,
+    sourceMagnitudeAmendedTo: (first, magnitude) => `${theQuake(first)}的震级已更新为${magnitude}。`,
+    sourceMagnitudeAmended: (first, predicate) => `${theQuake(first)}的震级已更新。${predicate}`,
+    sourceDepthAmendedTo: (first, depth) => `${theQuake(first)}的震源深度已更新为${depth}。`,
+    expiryLead: (g, _time) => `该${g}的失效时间为`,
+    expiryTail: '。',
+    // 延長か変更かを時刻の前で言う（2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 15 節）
+    expiryChangeLead: (g, extended, _time) => `${g}的失效时间已${extended ? '延长' : '变更'}，现为`,
+    expiryExtended: '。',
+    expiryChanged: '。',
+    retracted: '海啸警报等因误发而已被取消。',
+    expired: '海啸预报已失效。',
+    allLifted: '海啸警报等已全部解除。',
+    infoRetracted: '海啸信息已被取消。',
+    offshoreRetracted: '近海海啸观测信息已被取消。',
+    firstWaveKind: firstWaveKindIn('初波上升', '初波下降', '首波'),
+    // 更新は時刻を名詞句に畳む（「更新为16时41分观测到的0.9米」。観測の時刻か更新の行き先かを分ける）
+    heightClause: (firstWave, at, value, updated) =>
+      `：${firstWave ? `${firstWave.time}${firstWave.initial}到达，` : ''}${updated
+        ? `${STEM_UPDATED}${at ? `${at}观测到的` : ''}${value}`
+        : `${at ?? ''}${STEM_OBSERVED}${value}`}`,
+    observationInfoLead: '海啸观测信息。',
+    maxWaveUpdatedLead: '以下地点的最大波已更新。',
+    newlyObservedLead: '以下地点新观测到海啸。',
+    stemUpdated: STEM_UPDATED,
+    stemObserved: STEM_OBSERVED,
+    tailUpdated: '。',
+    tailObserved: '。',
+    omittedObserving: (n) => `另外${n}个地点也正在观测到海啸。`,
+    omittedArrival: (n) => `另外${n}个地点也已确认到达。`,
+    omittedUpdated: (n) => `另外${n}个地点也已更新。`,
+    omittedMissing: (n) => `另外${n}个地点也处于缺测状态。`,
+    omittedWarningLevel: (n) => `另外${n}个地点也观测到相当于海啸警报的海啸。`,
+    arrivalLead: '以下地点已确认海啸到达。',
+    firstWaveObservedClause: (time, initial) => `：${time}观测到${initial}`,
+    firstWaveUpdatedClause: (time, initial) => `：更新为${time}的${initial}`,
+    arrivalConfirmedClause: '：确认到达',
+    arrivalConfirmedTail: '：已确认到达。',
+    maxHeightObserving: '最大波高观测中。',
+    maxHeightWeak: '最大波高微弱。',
+    updatedAtClause: (at) => (at ? `：更新为${at}` : '：已更新'),
+    maxHeightTimeLead: '以下地点的最大波观测时间已更新。',
+    maxHeightTimeTail: '：最大波观测时间已更新。',
+    missingMaxHeightTimeLead: '在缺测的观测点，最大波观测时间已更新。',
+    missingPrefix: '处于缺测状态的',
+    firstWaveUpdatedLead: '以下地点的首波已更新。',
+    firstWaveArrivedLead: '以下地点已确认首波的到来。',
+    observationNoChange: '海啸观测信息。观测到的波高没有变化。',
+    observationLowered: '海啸观测信息已发布。',
+    tideFallbackHeadline: '现发布各地的涨潮时间和首波海啸预计抵达时间。',
+    tide: {
+      tide: '涨潮时间已更新。',
+      arrival: '海啸到达情况已更新。',
+      arrivalTime: '海啸预计抵达时间已更新。',
+      none: '内容没有变化。',
+    },
+    missingObservedLead: '缺测前的观测值如下。',
+    weakTsunamiAt: '：微弱海啸',
+    missingObservedTail: '。目前处于缺测状态。',
+    missingTail: '：缺测。',
+    warningLevelTail: '：正在观测到相当于海啸警报的海啸。',
   },
 }

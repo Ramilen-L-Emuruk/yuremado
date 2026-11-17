@@ -48,7 +48,7 @@ export type QuakeOccurrencePart =
 
 /**
  * 訳し終えた区分だけを持つ語表（日本語以外。`speech/<言語>.ts`）。区分ごとに段を分けて訳している（段1 は緊急地震速報、
- * 段2 は地震情報・震度速報と共通の語）。
+ * 段2 は地震情報・震度速報と共通の語、段3 は津波）。
  *
  * **全区分がそろうまで読み上げには使わない**（2026-11-17 ユーザー選択「全段そろうまで出さない」。1 つの言語の中で
  * 報ごとに日本語と訳が入れ替わらないため）。そろった言語は {@link SpeechWords} の形になり、下の `SPEECH_WORDS` へ移る。
@@ -61,6 +61,7 @@ export type SpeechWordsInProgress = {
   common: SpeechWords['common']
   eew: SpeechWords['eew']
   quake: SpeechWords['quake']
+  tsunami: SpeechWords['tsunami']
 }
 
 /**
