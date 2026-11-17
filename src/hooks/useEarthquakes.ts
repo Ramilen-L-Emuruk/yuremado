@@ -4349,10 +4349,11 @@ export function useEarthquakes(
   const simulateUnreceivedQuake = useCallback(() => runTestTelegramScript(s => s.UNRECEIVED_QUAKE), [runTestTelegramScript])
   /**
    * 解析テスト（能登本震の地震情報に、中継が返した実物の解析の答えを添える。2026-11-15 選択「この案で入れる (Recommended)」）。
-   * 電文は地震テストと同じ台本。答えは中継に問い合わせず、書き換えた EventID に結び付けて置く（→ `utils/testAnalysis.ts`）
+   * 電文は地震テストと同じ台本。答えは中継に問い合わせず、書き換えた EventID に結び付けて置く（→ `utils/testAnalysis.ts`）。
+   * 答えは気象庁の精査後の詳細（テンソル・セントロイド・主軸・観測点数・V.R.）まで入った版（2026-11-17 取得）
    */
   const simulateAnalysisQuake = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE, async (built) => {
-    const { default: answer } = await import('../services/relayAnalysis.noto.fixture.json')
+    const { default: answer } = await import('../services/relayAnalysis.noto-refined.fixture.json')
     return () => {
       for (const b of built) for (const id of payloadEventIds(b.entry.payload)) setTestAnalysis(id, answer)
     }

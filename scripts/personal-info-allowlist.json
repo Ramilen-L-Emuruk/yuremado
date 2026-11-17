@@ -5,6 +5,7 @@
     { "path": "src/services/analysisOverlay.ffm.fixture.json", "reason": "公的なデータ（USGS が公表した 2024 年能登半島地震の有限断層モデルの区画）を、地図の重ねのテストの見本にしたもの" },
     { "path": "src/services/analysisOverlay.shakemap.fixture.json", "reason": "公的なデータ（USGS が公表した 2024 年能登半島地震の ShakeMap の MMI 等値線）を、地図の重ねのテストの見本にしたもの" },
     { "path": "src/services/relayAnalysis.noto.fixture.json", "reason": "公的なデータ（USGS・EMSC・GEOFON・気象庁が公表した 2024 年能登半島地震の震源と解析）を、解析の読み取りのテストの見本にしたもの" },
+    { "path": "src/services/relayAnalysis.noto-refined.fixture.json", "reason": "公的なデータ（USGS・EMSC・GEOFON・気象庁が公表した 2024 年能登半島地震の震源と、気象庁が精査後に公表した CMT 解）を、解析テストの答えの見本にしたもの" },
     { "path": "src/services/relayAnalysis.sanriku.fixture.json", "reason": "公的なデータ（USGS・EMSC・GEOFON が公表した 2026-11-12 三陸沖の地震の震源）を、解析の読み取りのテストの見本にしたもの" }
   ],
   "values": [
