@@ -7,7 +7,8 @@
 // 許すのは、言語に依らない名前（既読の記録・件数の上限・選抜・電文の文の割り方）と、組を引く関数・日本語の組そのもの
 // （`JA_SPEECH_TEXT` は、既読の鍵だけを取って声にしない経路で使う）。テスト・計測台は日本語の文面を照合するので対象外。
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync, statSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
 const ALLOWED = new Set([
@@ -31,6 +32,14 @@ function sourceFiles(dir: string): string[] {
   }
   return out
 }
+
+/**
+ * 本体のファイルの中身（`src` からの相対パス → 本文）。**ファイルを読み込む時点で、まとめて並べて読む。** テストの本体で
+ * 千を超えるファイルを 1 件ずつ読むと、全件を並列で流したときだけ既定の 5 秒を超える（CLAUDE.md「多数のファイルをテスト本体で直列に読まないこと」）
+ */
+const SOURCES: ReadonlyMap<string, string> = new Map(await Promise.all(
+  sourceFiles('src').map(async file => [relative('.', file).replace(/\\/g, '/'), await readFile(file, 'utf8')] as const),
+))
 
 const TTS_TEXT_PATH = String.raw`['"][./]+(?:utils\/)?ttsText(?:\.ts)?['"]`
 
@@ -71,10 +80,8 @@ const JA_SPEECH_TEXT_FILES = new Set(['src/hooks/useLiveEventHandler.ts'])
 describe('本体は読み上げの文を組む関数を画面の言語の組から引く', () => {
   it('ttsText から直に読む値は、言語に依らない名前と組を引く関数だけ', () => {
     const offenders: string[] = []
-    for (const file of sourceFiles('src')) {
-      const rel = relative('.', file).replace(/\\/g, '/')
+    for (const [rel, src] of SOURCES) {
       if (rel === 'src/utils/ttsText.ts') continue
-      const src = readFileSync(file, 'utf8')
       for (const n of importedValues(src)) {
         if (!ALLOWED.has(n)) offenders.push(`${rel}: ${n}`)
         else if (n === 'JA_SPEECH_TEXT' && !JA_SPEECH_TEXT_FILES.has(rel)) offenders.push(`${rel}: JA_SPEECH_TEXT（使ってよいファイルの外）`)
@@ -97,10 +104,9 @@ describe('本体は読み上げの文を組む関数を画面の言語の組か�
   it('本体は日本語以外の語表を静的に読まない', () => {
     const offenders: string[] = []
     const re = /(?:import|export)\s[^;]*?from\s+['"][^'"]*speech\/(?:en|zhHans|zhHant|ko|ptBR|es|shared)['"]/g
-    for (const file of sourceFiles('src')) {
-      const rel = relative('.', file).replace(/\\/g, '/')
+    for (const [rel, src] of SOURCES) {
       if (/^src\/i18n\/speech\//.test(rel)) continue
-      for (const m of readFileSync(file, 'utf8').matchAll(re)) offenders.push(`${rel}: ${m[0]}`)
+      for (const m of src.matchAll(re)) offenders.push(`${rel}: ${m[0]}`)
     }
     expect(offenders).toEqual([])
   })
