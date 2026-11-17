@@ -553,6 +553,7 @@ export const zhHans: Messages = {
           AUST: 'Geoscience Australia（澳大利亚堪培拉）。',
         },
         agencySrc: 'EMSC 的地震页面',
+        tensor: { text: '将地震矩按受力的面和力的作用方向分解后得到的 6 个数（Mrr、Mtt、Mff、Mrt、Mrf、Mtf）。末尾的“×10ⁿ N·m”是所有数共用的单位。', src: '日本气象厅《什么是 CMT 解》' },
         cmt: { text: '根据长周期地震波形，用一个点代表整个断层运动而求得的震源机制解。震级（Mw）也同时确定。', src: '日本气象厅《什么是 CMT 解》' },
         refined: { text: '日本气象厅事后重新核查、收录在每月列表中的值，与地震刚发生后发布的速报值分开列出。', src: '日本气象厅《震源机制解（精查后）》' },
         centroid: { text: '用一个点代表整个断层运动的位置，通常与断层开始错动的点（震源）不一致。', src: '日本气象厅《什么是 CMT 解》' },

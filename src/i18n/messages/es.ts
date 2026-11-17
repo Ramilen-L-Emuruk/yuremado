@@ -557,6 +557,7 @@ export const es: Messages = {
           AUST: 'Geoscience Australia (Canberra, Australia).',
         },
         agencySrc: 'página del sismo en el EMSC',
+        tensor: { text: 'Seis números (Mrr, Mtt, Mff, Mrt, Mrf, Mtf) que expresan el momento sísmico descompuesto según el plano sobre el que actúa la fuerza y la dirección en que actúa. El «×10ⁿ N·m» del final es la unidad de todos los números.', src: 'JMA, «¿Qué es una solución CMT?»' },
         cmt: { text: 'Mecanismo focal obtenido a partir de formas de onda de periodo largo, que representa todo el movimiento de la falla con un solo punto. También determina la magnitud (Mw).', src: 'JMA, «¿Qué es una solución CMT?»' },
         refined: { text: 'Valores que la JMA revisó después y publicó en su lista mensual. Aparecen aparte de los valores preliminares que se emiten justo después del sismo.', src: 'JMA, «Mecanismos focales (revisados)»' },
         centroid: { text: 'El punto que representa todo el movimiento de la falla. Por lo general no coincide con el punto donde la falla empezó a moverse (el hipocentro).', src: 'JMA, «¿Qué es una solución CMT?»' },

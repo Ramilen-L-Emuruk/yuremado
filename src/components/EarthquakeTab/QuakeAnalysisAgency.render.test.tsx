@@ -67,7 +67,16 @@ describe('MechTable', () => {
     expect(screen.getByText('手で見直した')).toBeTruthy()
     // テンソルは列ではなく、表の幅の行（見出しには出ない）
     expect(heads).not.toContain('モーメントテンソル')
-    expect(screen.getByText(/^モーメントテンソル Mrr 1\.84 Mtt −0\.74 Mff −1\.10 Mrt 0\.33 Mrf −0\.68 Mtf −0\.94 \(×10²⁰ N·m\)$/)).toBeTruthy()
+    // 頭の語は点線の吹き出しの部品なので、行（td）の文字の全体で見る
+    const tensorCell = [...container.querySelectorAll('td[colspan]')].map(td => td.textContent)
+    expect(tensorCell).toContain('モーメントテンソル Mrr 1.84 Mtt −0.74 Mff −1.10 Mrt 0.33 Mrf −0.68 Mtf −0.94 (×10²⁰ N·m)')
+    expect(screen.getByRole('button', { name: /モーメントテンソル/ })).toBeTruthy()
+    // 狭い並びでも、テンソルの頭の語は吹き出しつき（「テンソル」の釦）
+    cleanup()
+    setWide(false)
+    render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'geofon')} withSource={false} />)
+    expect(screen.getByRole('button', { name: 'テンソル' })).toBeTruthy()
+    setWide(true)
     // [対照] EMSC の解は見直しの段階を持たないので、その列は出さない
     cleanup()
     const emsc = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} />)

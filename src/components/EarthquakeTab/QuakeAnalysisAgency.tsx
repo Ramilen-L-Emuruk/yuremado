@@ -303,7 +303,7 @@ function columns(w: AnalysisWords, a: QuakeAnalysis): Column[] {
     { key: 'eval', head: w.col.evaluation, short: null, value: s => (s.evaluationMode === 'manual' ? w.evaluation.manual : s.evaluationMode === 'automatic' ? w.evaluation.automatic : s.evaluationMode) },
     // テンソルの 6 成分。幅のある表では列にせず、解の行の下に表の幅で添える（MechTable）
     {
-      key: 'tensor', head: w.col.tensor, short: w.col.tensorShort,
+      key: 'tensor', head: <Term label={w.col.tensor} tip={w.tips.tensor} />, short: <Term label={w.col.tensorShort} tip={w.tips.tensor} />,
       value: s => {
         if (!s.tensor) return null
         const t = s.tensor
@@ -408,7 +408,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
               {tensorCol && tensorCol.value(g.latest) !== null && (
                 <tr className={g.latest.preferred ? 'bg-[#1b2430]' : undefined}>
                   <td />
-                  <td colSpan={tableCols.length + 1} className="px-2 pb-1.5 pt-0 text-[11px] text-secondary">{w.col.tensor} {tensorCol.value(g.latest)}</td>
+                  <td colSpan={tableCols.length + 1} className="px-2 pb-1.5 pt-0 text-[11px] text-secondary">{tensorCol.head} {tensorCol.value(g.latest)}</td>
                 </tr>
               )}
               {open.has(g.latest.key) && g.older.map((o, i) => (
@@ -423,7 +423,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
                   {tensorCol && tensorCol.value(o) !== null && (
                     <tr className="text-secondary">
                       <td />
-                      <td colSpan={tableCols.length + 1} className="px-2 pb-1 pt-0 text-[11px]">{w.col.tensor} {tensorCol.value(o)}</td>
+                      <td colSpan={tableCols.length + 1} className="px-2 pb-1 pt-0 text-[11px]">{tensorCol.head} {tensorCol.value(o)}</td>
                     </tr>
                   )}
                 </Fragment>

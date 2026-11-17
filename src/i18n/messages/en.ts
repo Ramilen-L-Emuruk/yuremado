@@ -557,6 +557,7 @@ export const en: Messages = {
           AUST: 'Geoscience Australia (Canberra, Australia).',
         },
         agencySrc: 'EMSC event page',
+        tensor: { text: 'Six numbers (Mrr, Mtt, Mff, Mrt, Mrf, Mtf) expressing the seismic moment broken down by the plane on which force acts and the direction in which it acts. The “×10ⁿ N·m” at the end is the unit for every number.', src: 'JMA, “What is a CMT solution?”' },
         cmt: { text: 'A focal mechanism obtained from long-period waveforms, representing the whole fault motion by a single point. The magnitude (Mw) is determined at the same time.', src: 'JMA, “What is a CMT solution?”' },
         refined: { text: 'Values JMA re-examined later and listed in its monthly catalog. They are listed separately from the preliminary values issued right after the earthquake.', src: 'JMA, “Focal mechanisms (reviewed)”' },
         centroid: { text: 'The single point that represents the whole fault motion. It usually differs from the point where the fault started to move (the hypocenter).', src: 'JMA, “What is a CMT solution?”' },
