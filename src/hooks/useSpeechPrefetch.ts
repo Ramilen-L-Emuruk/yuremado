@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react'
 import type { ReplayPayload } from '../types/replay'
 import { prefetchSpeechTexts, abortSpeechPrefetch, isValidVoicevoxUrl } from '../utils/voicevox'
 import { speculativeSpeechTextsSafe } from '../utils/speechPrefetch'
-import type { TtsSpeechOptions } from '../utils/ttsText'
+import { speechTextFor, type TtsSpeechOptions } from '../utils/ttsText'
+import { useLocale, usePlaceNames } from '../i18n/I18nProvider'
 import { log } from '../utils/logger'
 
 /**
@@ -64,14 +65,17 @@ export function useSpeechPrefetch({
 }): void {
   // 毎レンダー変わりうる値は ref 経由で読む。依存に入れると、設定を触るたびに
   // interval を張り直すことになる（投機の周期が乱れる）。
-  const latest = useRef({ peekUpcoming, baseUrl, speakerId, opts })
-  latest.current = { peekUpcoming, baseUrl, speakerId, opts }
+  // 文は本体の読み上げと同じ組（画面の言語）で組む。組が違うと先に焼いた音が当たらない
+  const locale = useLocale()
+  const speechText = speechTextFor(locale, usePlaceNames())
+  const latest = useRef({ peekUpcoming, baseUrl, speakerId, opts, speechText })
+  latest.current = { peekUpcoming, baseUrl, speakerId, opts, speechText }
 
   useEffect(() => {
     if (!enabled) return
 
     const tick = () => {
-      const { peekUpcoming, baseUrl, speakerId, opts } = latest.current
+      const { peekUpcoming, baseUrl, speakerId, opts, speechText } = latest.current
       // 通信前の検分。**黙って戻らない**（設定の窓は同じ条件を画面に出すが、ここは画面を
       // 持たないので、記録が無いと「投機が一度も効かない」原因を追えない）。値が変わらない
       // 限り毎周期この判定を通るため、記録は `debug` に留める。
@@ -81,7 +85,7 @@ export function useSpeechPrefetch({
       }
       const payloads = peekUpcoming(PREFETCH_HORIZON_MS)
       if (payloads.length === 0) return
-      const texts = payloads.flatMap(p => speculativeSpeechTextsSafe(p, opts))
+      const texts = payloads.flatMap(p => speculativeSpeechTextsSafe(speechText, p, opts))
       if (texts.length === 0) return
       prefetchSpeechTexts(baseUrl, texts, speakerId)
     }

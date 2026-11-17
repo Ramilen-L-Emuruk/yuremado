@@ -924,11 +924,11 @@ describe('電文本文の語（実データの辞書で引く）', { timeout: 15
   // 導く必要がある。**電文だけを走査していたときは取りこぼした** —— 取消の読み上げが組む
   // `12時0分に発表された…` の「に」は、実電文の自由文には 1 件も無かった。
   //
-  // ここでは `ttsText.ts` を読んで「日時を埋めた直後の文字」を機械的に集め、そのすべてで鍵が
-  // 引けることを確かめる。**新しいテンプレートを足して直後の文字が変わったら、ここが落ちる。**
+  // ここでは `ttsText.ts` と日本語の語表（文面の置き場。`i18n/speech/ja.ts`）を読んで「日時を埋めた直後の文字」を
+  // 機械的に集め、そのすべてで鍵が引けることを確かめる。**新しいテンプレートを足して直後の文字が変わったら、ここが落ちる。**
   it('日時を埋めるテンプレートの直後の文字を、辞書が覆っている', async () => {
     const { findPhraseBreakMatch, dict } = await loadedRealDictModule()
-    const src = readFileSync('src/utils/ttsText.ts', 'utf8')
+    const src = readFileSync('src/utils/ttsText.ts', 'utf8') + readFileSync('src/i18n/speech/ja.ts', 'utf8')
 
     // `${time}頃、` `${formatted}に発表された…` のような形から、直後の 1 文字を集める
     const suffixes = new Set<string>()
