@@ -965,6 +965,32 @@ describe('mergeQuakeInto — 通常電文どうし', () => {
       expect(merged.earthquake.domesticTsunamiCode).toBe('0215')
     })
 
+    // 022x 系のコードは付加文の原文と同じ側から採る（→ `JMAQuake.earthquake.foreignTsunamiCodes`）。区分が 不明 でも
+    // 原文を持つ既存の側を採るので、区分の向きではなく原文の向きで決まることを固定する
+    it('正: 震度速報の続報で、付加文の原文と一緒に 022x 系のコードも据え置く', () => {
+      const afterEpicenter = mergeQuakeInto(firstPrompt, epicenterOnly)
+      const withForeign: JMAQuake = {
+        ...afterEpicenter,
+        earthquake: { ...afterEpicenter.earthquake, domesticTsunami: '不明', foreignTsunamiCodes: ['0226'] },
+        forecastText: '震源の近傍で津波発生の可能性があります。',
+      }
+      const merged = mergeQuakeInto(withForeign, secondPrompt)
+      expect(merged.forecastText).toBe('震源の近傍で津波発生の可能性があります。')
+      expect(merged.earthquake.foreignTsunamiCodes).toEqual(['0226'])
+    })
+
+    it('対照: 既存が付加文の原文を持たなければ、022x 系のコードも震度速報の側（持たない）になる', () => {
+      const afterEpicenter = mergeQuakeInto(firstPrompt, epicenterOnly)
+      const stale: JMAQuake = {
+        ...afterEpicenter,
+        earthquake: { ...afterEpicenter.earthquake, foreignTsunamiCodes: ['0226'] },
+        forecastText: undefined,
+      }
+      const merged = mergeQuakeInto(stale, secondPrompt)
+      expect(merged.forecastText).toBe('今後の情報に注意してください。')
+      expect(merged.earthquake.foreignTsunamiCodes).toBeUndefined()
+    })
+
     it('対照: 既存が津波区分を持たない（不明）なら震度速報の値を使う', () => {
       // 判断がまだ無いカードに「なし」を捏造しない。震度速報の `調査中` が正しい表示になる。
       const unknown: JMAQuake = {

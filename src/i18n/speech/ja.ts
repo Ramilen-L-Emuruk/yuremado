@@ -1,4 +1,5 @@
-import type { DomesticTsunami, DomesticTsunamiCode, IntensityScale, TsunamiGrade } from '../../types/earthquake'
+import type { DomesticTsunami, DomesticTsunamiCode, ForeignTsunamiCode, IntensityScale, QuakeRetractedReport, TsunamiGrade } from '../../types/earthquake'
+import type { QuakeOccurrencePart, QuakeOccurrenceTexts } from '../speechWords'
 import { TSUNAMI_GRADE_NAME, TSUNAMI_ALL_LIFTED_SENTENCE, fallbackEvacuationAction } from '../../utils/tsunami'
 import { ja as jaMessages } from '../messages/ja'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from '../../utils/intensity'
@@ -19,6 +20,9 @@ const time = (hour: number, minute: number) => `${hour}時${minute}分`
  * 途中で割れる）。あちらは読みが正しく抑揚だけの問題なので、句区切り辞書で核を直す。
  */
 const day = (d: number) => (d === 1 ? 'ついたち' : `${d}日`)
+
+/** 震源名と深さの間（地震の発生の文と、津波の文の震源の句が使う） */
+const hypocenterDepthSep = '、'
 
 /**
  * 読み上げの文の語表（日本語）。読み上げの関数の組（`utils/ttsText.ts` の `createSpeechText`）が文面をここから引く。
@@ -50,7 +54,11 @@ export const jaSpeech = {
     day,
     /** 日付つきの時刻 */
     dayTime: (d: number, hour: number, minute: number) => `${day(d)}${time(hour, minute)}`,
-    /** 取消の理由（電文の文）を別の発話で読むときの前置き。`infoName` は情報の名前 */
+    /**
+     * 取消の理由（電文の文）を別の発話で読むときの前置き。`infoName` は情報の名前。
+     * 呼び出し側（`useLiveEventHandler.ts`）はいま日本語の名前を渡している。日本語以外の組はこの前置きを使わない
+     * （理由の文を読まないので手前で null が返る）が、使う形にするなら名前を語表の名前へ引き直す（長周期の段で直す）
+     */
     cancelReasonLead: (infoName: string) => `${infoName}が取り消された理由をお伝えします。`,
     /** 情報の名乗り（初報） */
     issued: (label: string) => `${label}。`,
@@ -132,6 +140,16 @@ export const jaSpeech = {
       `${time ? `${time}頃発生した地震について、` : ''}気象庁の推計震度分布図${isNew ? 'を受信しました' : 'が更新されました'}。`,
   },
   quake: {
+    /**
+     * 地名を並べるときの区切り（観測した地域・未入電の地名。階級ごとの句の間は `common.listSep`）。日本語は `listSep` と同じ。
+     * 地名の訳がコンマを含む言語では別の区切りにする（2026-11-17 ユーザー選択「「; 」で区切る (Recommended)」）
+     */
+    regionSep: '、',
+    /**
+     * 観測した地域の階級と階級の間（`fresh` は続報で初めて観測した地域の文か）。日本語は句の区切りで、述語「で観測しました。」を
+     * 最後の句と共有する。英語などは階級ごとに文を切る（2026-11-17 ユーザー選択「階級ごとに文を切る (Recommended)」）
+     */
+    intensityGroupSep: (_fresh: boolean) => '、',
     /** 「震度5弱以上・未入電」を件数だけで言う文（地名を読まない設定） */
     unreceivedCountOnly: (count: number, unit: UnreceivedUnit) => `${count}${unit}では、震度5弱以上と推定されますが、未入電です。`,
     /** 未入電の地名を上限で落とした分 */
@@ -158,6 +176,8 @@ export const jaSpeech = {
       'Ｍ８を超える巨大地震': '8を超える巨大地震とみられます。',
     },
     /** 知らない表記の述部（表記をそのまま読む） */
+    // 気象庁の文を読まない言語は表記を読まずに「数値で発表されていない」と言い、在処の文は読み上げの関数の組が
+    // 発話の末尾に 1 度だけ足す（→ `ttsText.ts` の `withElsewhereForUnknownMagnitude`）
     magnitudeConditionUnknown: (body: string) => `${body}です。`,
     /** 規模が数値でないときの文 */
     magnitudeIs: (predicate: string) => `マグニチュードは${predicate}`,
@@ -221,15 +241,38 @@ export const jaSpeech = {
     cancelledAt: (time: string) => `${time}に発表された地震情報は取り消されました。`,
     /** 取消 */
     cancelled: '地震情報は取り消されました。',
-    /** 種類を名指しした取消（`issueType` は電文の情報の名前） */
-    reportCancelledAt: (issueType: string, time: string) => `${time}に発表された${issueType}は取り消されました。`,
-    reportCancelled: (issueType: string) => `${issueType}は取り消されました。`,
+    /** 種類を名指しした取消（`name` は {@link reportName} で引いた情報の名前） */
+    reportCancelledAt: (name: string, time: string) => `${time}に発表された${name}は取り消されました。`,
+    reportCancelled: (name: string) => `${name}は取り消されました。`,
+    /** 種類を名指しした取消で言う情報の名前。キーは取り消された報の種別。日本語は電文の種別の名前のまま */
+    reportName: {
+      '震度速報': '震度速報',
+      '震源情報': '震源情報',
+      '震源・震度情報': '震源・震度情報',
+      '各地の震度情報': '各地の震度情報',
+      '顕著な地震の震源要素更新のお知らせ': '顕著な地震の震源要素更新のお知らせ',
+      '遠地地震': '遠地地震',
+      'その他': 'その他',
+      '長周期地震動に関する観測情報': '長周期地震動に関する観測情報',
+    } satisfies Record<QuakeRetractedReport['issueType'], string>,
     /** 震源名と深さの間 */
-    hypocenterDepthSep: '、',
-    /** 震源名・深さの後 */
-    hypocenterOf: 'を震源とする',
-    /** 発生の文の締め */
-    occurred: '地震が発生しました。',
+    hypocenterDepthSep,
+    /**
+     * 発生の文の並び（時刻の句の後ろ）。「石川県能登地方、深さ10キロメートルを震源とするマグニチュード6.5の地震が発生しました。」
+     * 震源名が無ければ震源の句ごと、規模が無ければ規模の句を省く。規模が数値でないときは、文の後ろに規模の文を続ける
+     */
+    occurrence: (t: QuakeOccurrenceTexts): QuakeOccurrencePart[] => [
+      ...(t.name !== undefined
+        ? [
+          { kind: 'name' } as const,
+          ...(t.depth !== undefined ? [{ kind: 'text', text: hypocenterDepthSep } as const, { kind: 'depth' } as const] : []),
+          { kind: 'text', text: 'を震源とする' } as const,
+        ]
+        : []),
+      ...(t.magnitude !== undefined ? [{ kind: 'magnitude' } as const] : []),
+      { kind: 'text', text: '地震が発生しました。' },
+      ...(t.magnitudeSentence !== undefined ? [{ kind: 'magnitudeSentence' } as const] : []),
+    ],
     /** 津波の区分ごとの文（区分を決めたコードを持たないとき）。キーは電文の区分 */
     domesticTsunami: {
       'なし': 'この地震による津波の心配はありません。',
@@ -248,6 +291,18 @@ export const jaSpeech = {
       ...DOMESTIC_TSUNAMI_CODE_TEXT,
       '0211': '津波警報等を発表中です。',
     } satisfies Record<DomesticTsunamiCode, string>,
+    /**
+     * 遠地地震の 022x 系のコードごとの文（気象庁のコード表の文）。**日本語の読み上げはこの表を読まない** —— 日本語は付加文の
+     * 原文をそのまま読む。日本語以外は原文の代わりにこの表の訳を読む（2026-11-17 ユーザー選択「022x の文を訳して読む (Recommended)」）。
+     * この表の文は、訳した文を原文と同じ順に並べるとき、原文の中の位置を探すのにも使う（→ `ttsText.ts` の `translatedForecastSegments`。
+     * 一字でも変えると位置が見つからず、並びが崩れる）
+     */
+    foreignTsunamiCode: {
+      '0221': '太平洋の広域に津波発生の可能性があります。',
+      '0222': '太平洋で津波発生の可能性があります。',
+      '0226': '震源の近傍で津波発生の可能性があります。',
+      '0228': '一般的に、この規模の地震が海域の浅い領域で発生すると津波が発生することがあります。',
+    } satisfies Record<ForeignTsunamiCode, string>,
   },
   tsunami: {
     /** 津波情報の名前（気象庁の文を読む前置き） */

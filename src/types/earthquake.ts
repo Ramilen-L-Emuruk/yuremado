@@ -292,6 +292,14 @@ export type DomesticTsunamiCode =
   | '0211' | '0212' | '0213' | '0214' | '0215' | '0216' | '0217' | '0229' | '0230'
 
 /**
+ * 遠地地震の固定付加文のうち、日本以外への津波の見通し・一般論を述べるコード（`Comments/ForecastComment/Code` の 022x 系）。
+ * 0221「太平洋の広域に津波発生の可能性があります。」・0222「太平洋で津波発生の可能性があります。」・
+ * 0226「震源の近傍で津波発生の可能性があります。」・0228「一般的に、この規模の地震が海域の浅い領域で発生すると
+ * 津波が発生することがあります。」。国内の区分（{@link DomesticTsunami}）は決めない
+ */
+export type ForeignTsunamiCode = '0221' | '0222' | '0226' | '0228'
+
+/**
  * 市町村ごとの震度（電文の `Pref/Area/City`。電文解説資料 Ⅱ.33 2-1-3-3-3）。
  *
  * **`points` へ混ぜない。** `points` は「都道府県ロールアップ点／区域／観測点」の 3 種を
@@ -427,6 +435,15 @@ export interface JMAQuake {
      * 借りるときは消す（→ `utils/borrowFromTsunami.ts`）。
      */
     domesticTsunamiCode?: DomesticTsunamiCode
+    /**
+     * 付加文の 022x 系のコード（{@link ForeignTsunamiCode}）。電文の順で、知らないコードは入れない。無ければ入らない。
+     *
+     * **文の原文は {@link JMAQuake.forecastText} が持つ**（国内のコードの文と一緒に 1 つの文字列で）。こちらはコードだけで、
+     * 日本語以外の読み上げが原文の代わりに訳した文を読むのに使う（2026-11-17 ユーザー選択「022x の文を訳して読む (Recommended)」）。
+     * {@link JMAQuake.foreignTsunamiText}（海外への見通しを文面で持つ欄。いまの読み取りには値を入れる経路が無い）とは別の欄。
+     * 統合では原文（`forecastText`）を採った側から一緒に採る（片側だけ動くと、原文と訳が別の報の文になる）
+     */
+    foreignTsunamiCodes?: readonly ForeignTsunamiCode[]
   }
   /**
    * 電文の運用種別（`Control/Status`）。訓練・試験のときだけ入る。→ {@link TelegramOperationStatus}

@@ -1,4 +1,5 @@
 import type { Messages } from '../messages'
+import type { QuakeRetractedReport } from '../../types/earthquake'
 import { intensityLabel, isValidIntensityScale } from '../../utils/intensity'
 
 /**
@@ -31,4 +32,96 @@ export function regionNameIn(m: Messages): (name: string) => string {
 /** 「12:40」（英語・ポルトガル語・スペイン語の時刻） */
 export function clockTime(hour: number, minute: number): string {
   return `${hour}:${String(minute).padStart(2, '0')}`
+}
+
+/**
+ * 時刻の文字列（{@link clockTime} の形）が 1 時台か。ポルトガル語・スペイン語は 1 時だけ単数の冠詞を取る
+ * （「às 12:40」に対して「à 1:40」、「a las 12:40」に対して「a la 1:40」。2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 14-5）
+ */
+export function isOneOClock(time: string): boolean {
+  return /^1:/.test(time)
+}
+
+/**
+ * 地震情報の取消で、取り消された情報を名指すときの名前（画面の `quake.issueType` と、長周期は `quake.infoName.lpgm`）。
+ * 読み上げの名前を画面の名前と言い分けない
+ */
+export function reportNameIn(m: Messages): Record<QuakeRetractedReport['issueType'], string> {
+  return { ...m.quake.issueType, '長周期地震動に関する観測情報': m.quake.infoName.lpgm }
+}
+
+/** 英語の序数（1st・2nd・3rd・4th・11th・12th・13th・21st・22nd） */
+export function englishOrdinal(n: number): string {
+  const tens = n % 100
+  if (tens >= 11 && tens <= 13) return `${n}th`
+  switch (n % 10) {
+    case 1: return `${n}st`
+    case 2: return `${n}nd`
+    case 3: return `${n}rd`
+    default: return `${n}th`
+  }
+}
+
+/** 漢数字の読みの終わりが持つ받침（数字の最後の桁ごと。0 は「영」、ほかは「일 이 삼 사 오 육 칠 팔 구」） */
+const DIGIT_FINAL: Readonly<Record<string, { batchim: boolean; rieul: boolean }>> = {
+  '0': { batchim: true, rieul: false },
+  '1': { batchim: true, rieul: true },
+  '2': { batchim: false, rieul: false },
+  '3': { batchim: true, rieul: false },
+  '4': { batchim: false, rieul: false },
+  '5': { batchim: false, rieul: false },
+  '6': { batchim: true, rieul: false },
+  '7': { batchim: true, rieul: true },
+  '8': { batchim: true, rieul: true },
+  '9': { batchim: false, rieul: false },
+}
+
+/**
+ * 語の終わりに받침（パッチム）があるか。助詞の形を選ぶのに使う。
+ *
+ * ハングルの音節なら字から読む。数字で終わるなら読みの終わりで決める —— 末尾が 0 の整数は「십・백・천・만」と
+ * 位で終わる（どれも받침があり ㄹ ではない）、小数点の後や単独の 0 は「영」。ハングルでも数字でもない字（ラテン文字など）は
+ * 받침が無いものとして扱う
+ */
+function finalSound(word: string): { batchim: boolean; rieul: boolean } {
+  const s = word.replace(/[\s.,:;)）」』]+$/u, '')
+  const last = s.slice(-1)
+  if (!last) return { batchim: false, rieul: false }
+  const code = last.charCodeAt(0)
+  if (code >= 0xAC00 && code <= 0xD7A3) {
+    const jong = (code - 0xAC00) % 28
+    return { batchim: jong !== 0, rieul: jong === 8 }
+  }
+  if (/[0-9]/.test(last)) {
+    if (last !== '0') return DIGIT_FINAL[last]
+    // 末尾の 0 の前が 0 以外の数字なら位（십・백・천・만）で終わる。小数点の後・単独の 0 は「영」。どちらも받침がある
+    return { batchim: true, rieul: false }
+  }
+  return { batchim: false, rieul: false }
+}
+
+/**
+ * 韓国語の助詞を、直前の語の終わりで選んで付ける（2026-11-17 ユーザー選択「この案で入れる (Recommended)」の
+ * 「韓国語の助詞は関数の中で選ぶ」）。`으로/로` は받침が ㄹ のときも「로」
+ */
+export function withKoreanParticle(word: string, particle: KoreanParticle): string {
+  return `${word}${koreanParticle(word, particle)}`
+}
+
+type KoreanParticle = '을/를' | '은/는' | '이/가' | '으로/로'
+
+/** {@link withKoreanParticle} の助詞だけ（語と助詞を別の断片に置くとき） */
+export function koreanParticle(word: string, particle: KoreanParticle): string {
+  const { batchim, rieul } = finalSound(word)
+  switch (particle) {
+    case '을/를': return batchim ? '을' : '를'
+    case '은/는': return batchim ? '은' : '는'
+    case '이/가': return batchim ? '이' : '가'
+    case '으로/로': return batchim && !rieul ? '으로' : '로'
+  }
+}
+
+/** 規模の小数点をコンマにする（ポルトガル語・スペイン語。「6.5」→「6,5」） */
+export function decimalComma(value: string): string {
+  return value.replace('.', ',')
 }

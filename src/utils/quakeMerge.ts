@@ -842,6 +842,20 @@ function domesticTsunamiFrom(
 }
 
 /**
+ * 付加文の 022x 系のコードを `from` のものに置き換える（`from` が持たなければ欄ごと外す）。
+ * **原文（`forecastText`）を採った側と同じ報から採る**（片側だけ動くと、日本語の原文と訳した文が別の報の文になる。
+ * → `JMAQuake.earthquake.foreignTsunamiCodes`）
+ */
+function withForeignTsunamiCodesOf(
+  earthquake: JMAQuake['earthquake'],
+  from: Pick<JMAQuake, 'earthquake'>,
+): JMAQuake['earthquake'] {
+  const { foreignTsunamiCodes: _replaced, ...rest } = earthquake
+  const codes = from.earthquake.foreignTsunamiCodes
+  return codes ? { ...rest, foreignTsunamiCodes: codes } : rest
+}
+
+/**
  * 地震発生時刻（分まで）を、震源を採った報から取り出す（`earthquake` へスプレッドで使う）。
  *
  * **震源と組で運ぶ**（→ `JMAQuake.earthquake.originTime`）。統合で震源を片側から採るのに発生時刻を土台の側に
@@ -1190,10 +1204,11 @@ function mergeQuakeIntoBody(
   if (incoming.issue.type === '震度速報' && !existing.cancelledAt) {
     result = {
       ...result,
-      earthquake: {
+      // 022x 系のコードは付加文の原文（下の `forecastText`）と同じ側から採る（→ `JMAQuake.earthquake.foreignTsunamiCodes`）
+      earthquake: withForeignTsunamiCodesOf({
         ...result.earthquake,
         ...domesticTsunamiFrom(existing.earthquake.domesticTsunami !== '不明' ? existing : result),
-      },
+      }, existing.forecastText !== undefined ? existing : result),
       // **出どころの印も区分と一緒に運ぶ。** 既存の区分が津波電文の等級から借りたものなら、
       // それを据え置いた側も借り物。落とすと画面から出どころが消えるだけでなく、
       // 「気象庁が判断を示した値」と見分けが付かなくなり、津波の続報で等級が上がっても
