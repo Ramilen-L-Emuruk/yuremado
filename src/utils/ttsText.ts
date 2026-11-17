@@ -504,8 +504,11 @@ const boilerplateMismatchGate = createPerLabelLogGate(4, 60_000)
  * 本体のファイルがそれを直に呼ぶと、画面の言語によらず日本語で読む（`ttsTextLocaleImports.test.ts` が落とす）。
  *
  * 言語に依らない関数と定数（既読の記録・件数の上限・電文の文の割り方）も、中から呼ぶので組に入れてある。
+ *
+ * **組は自分の言語（`locale`）を持つ。** 読む側は、この組で組んだ文にこの `locale` を添えて声を選ぶ。言語を組の外
+ * （いまの読み上げの言語）から取り直すと、組が日本語へ落ちた回や、組んでから読むまでに言語が変わった回に、文と声の言語が食い違う。
  */
-export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
+export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale: Locale) {
   /**
    * 地震情報の地域名（区域・都道府県・市町村・観測点のどれか）を、声にする名前へ引く。表に無ければ日本語の名前のまま。
    * **鍵（`SpeechRef`）には日本語の名前を入れること**（既読と追従は言語によらない）。
@@ -1187,6 +1190,19 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
   }
 
   /**
+   * 文を続ける。空の文は落とし、語表の区切り（`common.sentenceSep`）を挟む。**日本語は区切りが空なので、ただの連結と同じ**
+   * （英語などは空白を挟まないと前の文の句点と次の文の頭が 1 語に繋がる）。
+   */
+  function joinSentences(...sentences: readonly string[]): string {
+    return sentences.filter(s => s !== '').join(w.common.sentenceSep)
+  }
+
+  /** 取消の文に、取消の理由（→ {@link cancelReasonSentence}）を続ける */
+  function withCancelReason(head: string, cancelText: string | undefined): string {
+    return joinSentences(head, cancelReasonSentence(cancelText))
+  }
+
+  /**
    * 「21時34分」形式。**日時として読めなければ `null`** —— 呼び出し側は時刻の句ごと落とす。
    * 素通しにすると「ナンじナンぷん」と**音声に出る**（画面と違い、聞き手は読み飛ばせない）。
    */
@@ -1243,7 +1259,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
     const head = time ? w.eew.cancelledAt(time) : w.eew.cancelled
     // 地震情報・津波情報と同じ扱い（→ `cancelReasonSentence`）。3 つの電文で揃えないと、
     // 同じ事象なのに種別によって理由が出たり出なかったりする
-    return head + cancelReasonSentence(event.cancelText)
+    return withCancelReason(head, event.cancelText)
   }
 
   /**
@@ -1255,7 +1271,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
     const formatted = time ? formatTime(time) : null
     // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。
     const head = formatted ? w.quake.cancelledAt(formatted) : w.quake.cancelled
-    return head + cancelReasonSentence(cancelText)
+    return withCancelReason(head, cancelText)
   }
 
   /**
@@ -1272,7 +1288,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
   function earthquakeReportCancelToText(issueType: string, time: string | null, cancelText?: string): string {
     const formatted = time ? formatTime(time) : null
     const head = formatted ? w.quake.reportCancelledAt(issueType, formatted) : w.quake.reportCancelled(issueType)
-    return head + cancelReasonSentence(cancelText)
+    return withCancelReason(head, cancelText)
   }
 
   /**
@@ -1309,6 +1325,9 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
       log.info(`[tts] 取消の宣言の形だが「${reason.subject}」が既知の情報名でないため読み上げます（${reason.text}）`)
     }
     if (reason.kind === 'none') return ''
+    // 気象庁の文を読まない言語は、文の在処だけを言う（短いので長さに関わらず続けて読む。別の発話へは回さない
+    // → {@link deferredCancelReasonToSpeak}）
+    if (w.common.telegramTextElsewhere !== null) return w.common.telegramTextElsewhere
     if (reason.text.length > CANCEL_REASON_INLINE_MAX_CHARS) {
       // **回したことを残す。** 別の発話は最下位の層で、待ちきれなければ黙る ——
       // 鳴らなかったときに「長文だったから別に回した」ことを後から辿れるようにする。
@@ -1367,6 +1386,8 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
   function deferredCancelReasonToSpeak(infoName: string, cancelText: string | undefined): string | null {
     const reason = classifyCancelReason(cancelText)
     if (reason.kind !== 'reason' && reason.kind !== 'unknownDeclaration') return null
+    // 気象庁の文を読まない言語は、取消の文に在処を続けて言い終えている（→ {@link cancelReasonSentence}）
+    if (w.common.telegramTextElsewhere !== null) return null
     if (reason.text.length <= CANCEL_REASON_INLINE_MAX_CHARS) return null
     return w.common.cancelReasonLead(infoName) + endTelegramSentence(reason.text)
   }
@@ -1528,9 +1549,9 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
     regions: readonly string[], isAdditional: boolean, announceUpgrade = false,
   ): string {
     if (regions.length === 0) return ''
-    const names = regions.map(r => w.eew.warningRegionName(r)).join(w.common.listSep)
+    const names = regions.map(eewWarningRegionToSay).join(w.common.listSep)
     const prefix = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
-    return prefix + (isAdditional
+    return joinSentences(prefix, isAdditional
       ? w.eew.warningRegionsAdditional(names, EEW_WARNING_REGIONS_CLOSING)
       : w.eew.warningRegions(names, EEW_WARNING_REGIONS_CLOSING))
   }
@@ -1542,6 +1563,15 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
    * 文を作る側と判定する側が同じ文字列を見るよう、ここに 1 つだけ置く。
    */
   const EEW_WARNING_REGIONS_CLOSING = w.eew.warningRegionsClosing
+
+  /**
+   * 警報の対象地方を声にするときの名前（電文の名前 → 読み上げの言語の名前。日本語は電文の名前のまま）。
+   * **地方名が鳴ったかの判定（`useLiveEventHandler` の第 1.5 段）はこれで照合する** —— 電文の名前で探すと、
+   * 訳した言語では「Kanto」の中に「関東」が見つからず、鳴っても既読にならずに報ごとに読み直す
+   */
+  function eewWarningRegionToSay(name: string): string {
+    return w.eew.warningRegionName(name)
+  }
 
   /**
    * 予想震度が付いていないときの句。理由の判定は `eewNoForecastReason` に委ねる
@@ -1664,7 +1694,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
       : canPresentLpgmClass(scaleInfo.scale, lpgmClass) ? eewLpgmOnlyText(lpgmClass, lpgmOver)
       : statesEewLpgmClassZero(event, scaleInfo.scale, lpgmClass, readLpgm) ? EEW_LPGM_CLASS_ZERO_TEXT
       : ''
-    return prefix + scaleText + lpgmText
+    return joinSentences(prefix, scaleText, lpgmText)
   }
 
   /**
@@ -3093,7 +3123,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
         ? w.tsunami.expired
         : w.tsunami.allLifted
     // 取消しの概要は取消電文にしか入らない。解除・失効では電文に無いので空のまま
-    return head + cancelReasonSentence(cancelText)
+    return withCancelReason(head, cancelText)
   }
 
   /**
@@ -3908,7 +3938,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
     // (Recommended)」。地震・津波・地震回数の取消と同じ書き方 → `cancelReasonSentence`）。理由は帯の取消の表示と
     // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
     if (event.retracted) {
-      return w.special.nankaiRetracted + cancelReasonSentence(event.body)
+      return withCancelReason(w.special.nankaiRetracted, event.body)
     }
     if (event.cancelled || event.kindName === '調査終了') {
       return w.special.nankaiEnded
@@ -3938,7 +3968,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
   function nankaiCommentaryToText(event: JMANankaiCommentary): string {
     // **取消は取り消された事実と理由を読む**（2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む (Recommended)」、
     // 文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。理由はパーサーが `body` に入れる。
-    if (event.cancelled) return w.special.commentaryRetracted + cancelReasonSentence(event.body)
+    if (event.cancelled) return withCancelReason(w.special.commentaryRetracted, event.body)
     if (event.serialName === '定例解説') {
       return w.special.commentaryRegular
     }
@@ -3985,7 +4015,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
       // 同じ「取り消した」でも種別によって理由が出たり出なかったりする。理由は帯の取消の表示と
       // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。
       // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
-      return w.special.countRetracted + cancelReasonSentence(event.cancelText)
+      return withCancelReason(w.special.countRetracted, event.cancelText)
     }
     const head = w.special.countLead
     const total = pickEarthquakeCountSummaryItem(event)
@@ -4037,7 +4067,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
    */
   function quakeNoticeToText(event: JMAQuakeNotice): string {
     if (event.cancelled) {
-      return w.special.noticeRetracted + cancelReasonSentence(event.body)
+      return withCancelReason(w.special.noticeRetracted, event.body)
     }
     // 見出しは句点を持たないのが通例だが、付いていても二重にしない
     const headline = event.headline.trim().replace(/。$/, '')
@@ -4049,7 +4079,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
     // **取消は取り消された事実と理由を伝える**（取消を読むのは 2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」。
     // 理由を読むのは臨時情報の取消と揃える —— 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。
     // 後発地震注意情報に「終了」の電文は無いので、`cancelled` が立つのは取消だけ。理由はパーサーが `body` に入れる。
-    if (event.cancelled) return w.special.kohatsuRetracted + cancelReasonSentence(event.body)
+    if (event.cancelled) return withCancelReason(w.special.kohatsuRetracted, event.body)
     // **句点は無条件に足さない** —— 気象庁の見出し文は句点で終わることが多く、
     // 重ねると「。。」になる（→ {@link endTelegramSentence}）。
     const headline = endTelegramSentence(event.headline.replace(/北海道・三陸沖後発地震注意情報/g, ''))
@@ -4161,7 +4191,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
       // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
       // 取消で長周期の表示（一覧・バッジ）は消えるが、理由は地震カードの報の一覧にも残る（→ `lpgmRetraction`）。
       // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
-      return w.lpgm.retracted + cancelReasonSentence(lpgm.cancelText)
+      return withCancelReason(w.lpgm.retracted, lpgm.cancelText)
     }
     // 地震の時刻は**発現時刻を先に採る**（地震情報・津波カードと同じ規則）。揃えないと、
     // 同じ地震について地震情報が「◯時◯分ころ」と読んだ直後に、長周期が 1 分違う時刻を読む。
@@ -4850,9 +4880,10 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup) {
   }
 
   return {
+    locale,
     createQuakeSpokenState, applySpokenRefs,
     eewCancelToText, earthquakeCancelToText, earthquakeReportCancelToText, CANCEL_REASON_INLINE_MAX_CHARS, deferredCancelReasonToSpeak,
-    eewAlertToText, EEW_LEAD_PHRASES, EEW_UPGRADE_PHRASE, eewWarningRegionsText, EEW_WARNING_REGIONS_CLOSING,
+    eewAlertToText, EEW_LEAD_PHRASES, EEW_UPGRADE_PHRASE, eewWarningRegionsText, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionToSay,
     eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, eewLpgmOnlyText, eewIntensityText, voicevoxPreviewTexts,
     DOMESTIC_TSUNAMI_CODE_SPEECH, domesticTsunamiFactValue, earthquakeToSegments, earthquakeToText,
     applyTsunamiSpokenRefs, tsunamiExpiryChangeSegments, tsunamiToSegments, tsunamiToText,
@@ -4879,7 +4910,7 @@ export type SpeechText = ReturnType<typeof createSpeechText>
  * 日本語の組。**日本語に固定する経路（テスト・参照だけ取る経路）のためのもの**で、画面の言語で読み上げる経路は
  * 画面の言語の組（`speechTextFor`）を使う（→ {@link createSpeechText}）。
  */
-export const JA_SPEECH_TEXT: SpeechText = createSpeechText(jaSpeech, JA_PLACE_NAMES)
+export const JA_SPEECH_TEXT: SpeechText = createSpeechText(jaSpeech, JA_PLACE_NAMES, 'ja')
 
 /** 言語ごとに作った組（地名の引きが変わったら作り直す）。 */
 const speechTextByLocale = new Map<Locale, { place: PlaceNameLookup; text: SpeechText }>()
@@ -4887,6 +4918,31 @@ const speechTextByLocale = new Map<Locale, { place: PlaceNameLookup; text: Speec
 const speechTextFailed = new Set<Locale>()
 /** 語表が無く日本語で読むことを記録した言語。 */
 const speechTextFallbackLogged = new Set<Locale>()
+/** {@link canBuildSpeechText} で組を作れると確かめた言語。 */
+const speechTextBuildable = new Set<Locale>()
+
+/**
+ * その言語の組を作れるか。**読み上げの言語を決める側（`hooks/useSpeechLocale.ts`）が先に確かめる** —— 作れない言語を
+ * 読み上げの言語に選ぶと、{@link speechTextFor} は日本語の組へ落ちるのに声はその言語のまま、日本語の文を日本語以外の声で読む。
+ *
+ * 地名の引きは組を作るときには呼ばれない（文を組むときに初めて呼ぶ）ので、作れるかは語表だけで決まる。日本語の引きで
+ * 1 度だけ試し、作れた・作れなかったを覚える（本物の引きで作る {@link speechTextFor} と結果は食い違わない）。
+ */
+export function canBuildSpeechText(locale: Locale): boolean {
+  if (locale === 'ja' || speechTextBuildable.has(locale)) return true
+  if (speechTextFailed.has(locale)) return false
+  const words = speechWordsFor(locale)
+  if (!words) return false
+  try {
+    createSpeechText(words, JA_PLACE_NAMES, locale)
+    speechTextBuildable.add(locale)
+    return true
+  } catch (err) {
+    speechTextFailed.add(locale)
+    log.error(`[tts] ${locale} の語表から読み上げの組を作れなかったため、日本語で読みます`, err)
+    return false
+  }
+}
 
 /**
  * 画面の言語で読み上げる組。**画面の言語の読み上げは、すべてここから引くこと**（→ {@link createSpeechText}）。
@@ -4908,7 +4964,7 @@ export function speechTextFor(locale: Locale, place: PlaceNameLookup): SpeechTex
   const cached = speechTextByLocale.get(locale)
   if (cached && cached.place === place) return cached.text
   try {
-    const text = createSpeechText(words, place)
+    const text = createSpeechText(words, place, locale)
     speechTextByLocale.set(locale, { place, text })
     return text
   } catch (err) {

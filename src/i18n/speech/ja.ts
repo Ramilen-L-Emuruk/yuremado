@@ -34,6 +34,16 @@ export const jaSpeech = {
   common: {
     /** 名前を並べるときの区切り */
     listSep: '、',
+    /**
+     * 文と文を続けるときの区切り。日本語と中国語は句点のあとに何も挟まない。英語など語を空白で分ける言語は空白を挟む
+     * （挟まないと「…Warning.Maximum …」と 1 語に繋がる）
+     */
+    sentenceSep: '',
+    /**
+     * 気象庁が書いた文（取消の理由など）の代わりに読む文。**日本語は気象庁の文をそのまま読むので null。**
+     * 日本語以外では気象庁の文を訳せないので、文の在処を伝える（2026-11-17 ユーザー選択「電文ログにあると言う (Recommended)」）
+     */
+    telegramTextElsewhere: null as string | null,
     /** 震度の呼び方（「5弱」など） */
     intensity: (scale: IntensityScale) => getIntensityLabel(scale),
     time,

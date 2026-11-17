@@ -13,6 +13,68 @@
  * 発火して、その間に始まった別の発話まで止める（割り込みで鳴り始め前の発話が列に残るのも同じ形で防ぐ）。
  */
 import { log, createLogThrottle } from './logger'
+import type { Locale } from '../i18n/messages'
+
+/** 読み上げの言語ごとの言語タグ（発話の `lang`）。声が見つからないときも、この言語で読むよう端末に伝える */
+export const SPEECH_LANG_TAG: Readonly<Record<Locale, string>> = {
+  ja: 'ja-JP',
+  en: 'en-US',
+  'zh-Hans': 'zh-CN',
+  'zh-Hant': 'zh-TW',
+  ko: 'ko-KR',
+  'pt-BR': 'pt-BR',
+  es: 'es-ES',
+}
+
+/**
+ * 日本語以外で、その言語の声とみなす `lang` の形（先に並べたものほど先に選ぶ）。**中国語は字体で分ける** ——
+ * 簡体字の画面に台湾の声、繁体字の画面に大陸の声を当てない（読みは同じでも、聞き手が選んだ言語と違う）。
+ * 繁体字は台湾の声を先に、無ければ香港の声（広東語の声もここに入る）
+ */
+const VOICE_LANG_PATTERNS: Readonly<Record<Exclude<Locale, 'ja'>, readonly RegExp[]>> = {
+  en: [/^en\b/i],
+  'zh-Hans': [/^(zh|cmn)[-_](cn|hans)\b/i, /^(zh|cmn)[-_]sg\b/i],
+  'zh-Hant': [/^(zh|cmn)[-_](tw|hant)\b/i, /^(zh|yue)[-_](hk|mo)\b/i],
+  ko: [/^ko\b/i],
+  'pt-BR': [/^pt[-_]br\b/i, /^pt\b/i],
+  es: [/^es\b/i],
+}
+
+/**
+ * その言語の声を選ぶ。日本語は {@link pickJapaneseVoice}。ほかは言語の形（{@link VOICE_LANG_PATTERNS}）の順に、
+ * 端末の中で動く声を先に選ぶ。無ければ null（呼び出し側はその言語で読めない）
+ */
+export function pickVoiceFor(voices: readonly SpeechSynthesisVoice[], locale: Locale): SpeechSynthesisVoice | null {
+  if (locale === 'ja') return pickJapaneseVoice(voices)
+  for (const pattern of VOICE_LANG_PATTERNS[locale]) {
+    // Android は `en_US` の形で返す（`_` は語の文字なので、正規化しないと `^en\b` に当たらない）
+    const matches = voices.filter(v => pattern.test(v.lang.replace('_', '-')))
+    const picked = matches.find(v => v.localService) ?? matches[0]
+    if (picked) return picked
+  }
+  return null
+}
+
+/**
+ * この端末にその言語の声があるか。**声の一覧がまだ届いていない（空の）ときは分からないので null**（呼び出し側は「無い」と
+ * 決めつけず、届いてから測り直す。→ `onSystemVoicesChanged`。Safari は一覧が遅れて埋まり、`voiceschanged` を出さない端末もある）。
+ * 日本語は声が無くても言語だけ指定して端末に任せる（今の扱い）ので常に true。端末の声が使えなければ false
+ */
+export function hasSystemVoiceFor(locale: Locale): boolean | null {
+  if (locale === 'ja') return true
+  if (!isSystemSpeechSupported()) return false
+  const voices = window.speechSynthesis.getVoices()
+  if (voices.length === 0) return null
+  return pickVoiceFor(voices, locale) !== null
+}
+
+/** 声の一覧が変わったら呼ぶ（届いた・入れ替わった）。外すための関数を返す。端末の声が使えなければ何もしない */
+export function onSystemVoicesChanged(listener: () => void): () => void {
+  if (!isSystemSpeechSupported()) return () => {}
+  const synth = window.speechSynthesis
+  synth.addEventListener?.('voiceschanged', listener)
+  return () => synth.removeEventListener?.('voiceschanged', listener)
+}
 
 /** 端末の声の速さ（2026-11-08 ユーザー発言「1.1がいいですね。Windows iPhoneともに」） */
 export const SYSTEM_SPEECH_RATE = 1.1
@@ -35,12 +97,29 @@ const END_TIMEOUT_SEC_PER_CHAR = 0.35
 const END_TIMEOUT_MIN_MS = 5000
 
 /**
+ * 言語ごとの 1 文字あたりの見切り（秒）。日本語と中国語は 1 字が 1 音節前後なので {@link END_TIMEOUT_SEC_PER_CHAR} のまま。
+ * 韓国語は 1 字が 1 音節で空白を挟む。英葡西は 1 語が数文字なので 1 字あたりはずっと短い。
+ * **どれも見積もりで、実測していない**（見切りは読み終わりの知らせを落としたときにだけ効く。長めに取っても、落としたときに
+ * 次へ進むのが遅れるだけ）。英語の読み上げはおよそ 1 秒 14 字なので、1 字 0.07 秒の倍の 0.15 秒にした
+ */
+const END_TIMEOUT_SEC_PER_CHAR_BY_LOCALE: Readonly<Record<Locale, number>> = {
+  ja: END_TIMEOUT_SEC_PER_CHAR,
+  'zh-Hans': END_TIMEOUT_SEC_PER_CHAR,
+  'zh-Hant': END_TIMEOUT_SEC_PER_CHAR,
+  ko: 0.3,
+  en: 0.15,
+  'pt-BR': 0.15,
+  es: 0.15,
+}
+
+/**
  * 声の一覧が空のとき、届くのを待つ上限（ms）。Chrome と Safari は開いた直後の `getVoices()` が空で、`voiceschanged` の後に
  * 埋まる。空のまま渡すと Haruka・Kyoko を選べず、端末の既定の声になる。
  */
 const VOICES_WAIT_MS = 1000
 
 const warnStartTimeout = createLogThrottle(60_000)
+const warnNoVoiceForLocale = createLogThrottle(60_000)
 /** 失敗の種類（`ev.error`）ごとに間引く。種類をまたいで間引くと、別の原因の失敗が記録から消える */
 const warnSpeechErrorByKind = new Map<string, ReturnType<typeof createLogThrottle>>()
 function warnSpeechError(kind: string, text: string): void {
@@ -125,9 +204,10 @@ function dropActive(): void {
  * 1 文を鳴らし、終わったら結末を返す。例外は投げない。前の発話が残っていれば止めてから渡す。
  *
  * @param onStart 実際に鳴り始めたときに呼ぶ（既読と追従はここで進める）
+ * @param locale 読み上げの言語（文の言語。声と発話の `lang` をこれで選ぶ）
  */
 export async function speakSystemUtterance(
-  text: string, volume: number, onStart: () => void,
+  text: string, volume: number, onStart: () => void, locale: Locale,
 ): Promise<SystemUtteranceResult> {
   if (!isSystemSpeechSupported()) return 'failed'
   // 声の一覧を待つ間に別の発話が始まったら、こちらは渡さずに降りる
@@ -162,9 +242,16 @@ export async function speakSystemUtterance(
         try { window.speechSynthesis.cancel() } catch { /* 止められなくても先へ進む */ }
       }
     }
-    utter.lang = 'ja-JP'
-    const voice = pickJapaneseVoice(window.speechSynthesis.getVoices())
-    if (voice) utter.voice = voice
+    utter.lang = SPEECH_LANG_TAG[locale]
+    const voice = pickVoiceFor(window.speechSynthesis.getVoices(), locale)
+    if (voice) {
+      utter.voice = voice
+      // 日本語以外は選んだ声の言語タグを使う（繁体字で香港の声を選んだのに zh-TW と名乗ると、言語タグを見るブラウザで声と食い違う）
+      if (locale !== 'ja' && voice.lang) utter.lang = voice.lang.replace('_', '-')
+    }
+    // 日本語以外で声が見つからないのは、読み上げの言語を決めた後に声が外れたときだけ（決める側が声のある言語しか選ばない）。
+    // 言語だけ指定して端末に任せるが、別の言語の声で読まれうるので残す
+    if (!voice && locale !== 'ja') warnNoVoiceForLocale(() => log.warn(`[SystemSpeech] ${locale} の声が見つからないため、言語（${utter.lang}）だけ指定して読む: ${text.slice(0, 30)}`))
     utter.rate = SYSTEM_SPEECH_RATE
     utter.volume = Math.min(1, Math.max(0, volume))
     utter.onstart = () => {
@@ -173,7 +260,7 @@ export async function speakSystemUtterance(
       if (settled || started) return
       started = true
       if (timer !== null) clearTimeout(timer)
-      const endMs = Math.max(END_TIMEOUT_MIN_MS, text.length * END_TIMEOUT_SEC_PER_CHAR * 1000)
+      const endMs = Math.max(END_TIMEOUT_MIN_MS, text.length * END_TIMEOUT_SEC_PER_CHAR_BY_LOCALE[locale] * 1000)
       timer = setTimeout(() => {
         log.warn(`[SystemSpeech] 読み終わりの知らせが ${Math.round(endMs / 1000)} 秒来ないため、止めて次へ進む: ${text.slice(0, 30)}`)
         giveUp('timeout')

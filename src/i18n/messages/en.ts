@@ -913,6 +913,7 @@ export const en: Messages = {
         label: 'Voice',
         description: 'When VOICEVOX cannot be reached, the system voice is used',
         system: 'System voice',
+        noLocaleVoice: 'This device has no English voice, so speech is read in Japanese.',
       },
       volume: {
         label: 'Volume',

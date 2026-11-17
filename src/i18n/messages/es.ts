@@ -913,6 +913,7 @@ export const es: Messages = {
         label: 'Voz de lectura',
         description: 'Si no se puede conectar con VOICEVOX, se usa la voz del sistema',
         system: 'Voz del sistema',
+        noLocaleVoice: 'Este dispositivo no tiene voz en español, por lo que la lectura en voz alta se hace en japonés.',
       },
       volume: {
         label: 'Volumen',

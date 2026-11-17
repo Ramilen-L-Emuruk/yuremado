@@ -10,7 +10,9 @@
 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| 読み上げの関数を `speechTextFor` の組を通さず `ttsText.ts` から直に呼ぶと、画面の言語によらず日本語で読む | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §4「文面は語表から引く」 |
+| 読み上げの関数を `speechTextFor` の組を通さず `ttsText.ts` から直に呼ぶと、読み上げの言語によらず日本語で読む | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §4「文面は語表から引く」 |
+| 読む側で文の言語をいまの読み上げの言語から取り直すと、組んだ文と違う言語の声で読む（日本語の文を英語の声で読むなど）。声は、文に添えた**その文を組んだ組の `locale`** だけで選ぶ。組を引く側は `utils/speechLocale.ts` の値（`getSpeechLocale`・`useSpeechLocale`）から組を引く | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §3「日本語以外の読み上げ（読み上げの言語）」 |
+| 緊急地震速報の地方名が鳴ったかを電文の名前で照合すると、訳した言語では見つからず、報ごとに同じ地方を読み直す（`eewWarningRegionToSay` で照合する） | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §4「文面は語表から引く」 |
 | 読む範囲の設定（震度側の 4 項目と長周期の 1 項目）の組み合わせ方を崩すと、想定より広く／狭く読み上げる（読む階級・地域数の絞り込み条件） | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §4「地域列挙の範囲」 |
 | 読み上げ詳細度の設定 4 項目を崩すと、誤って未読へ戻る、または声にしうる事実と記録判定がずれて差分の経路に入れなくなる | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §4「読み上げの詳しさ」 |
 | 区域名の逆引き手順を崩すと、引き当てを外して地図と読み上げの区域が食い違う、または県名捨て判定を外して県名と区域名が重複して聞こえる | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §4「地域名の粒度」 |

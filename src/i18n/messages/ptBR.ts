@@ -913,6 +913,7 @@ export const ptBR: Messages = {
         label: 'Voz da leitura',
         description: 'Sem conexão com o VOICEVOX, usa a leitura do sistema',
         system: 'Leitura do sistema',
+        noLocaleVoice: 'Este dispositivo não tem voz em português, por isso a leitura em voz alta é feita em japonês.',
       },
       volume: {
         label: 'Volume',

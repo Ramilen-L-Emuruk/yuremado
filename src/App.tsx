@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
-import { useLocale, useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
+import { useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
 import { useApplyLocaleSetting } from './i18n/useApplyLocaleSetting'
 import { historicalArchiveLabel } from './utils/historicalArchiveLabel'
 import { JA_MESSAGES } from './i18n/messages'
@@ -127,6 +127,8 @@ import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
 import { loadTtsEpicenterAccents } from './utils/ttsEpicenterAccents'
 import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed, setSpeechVoice, clearVoicevoxDown } from './utils/voicevox'
+import { setSpeechLocale } from './utils/speechLocale'
+import { useSpeechLocale, useSpeechLocaleDecision } from './hooks/useSpeechLocale'
 import { unlockSystemSpeech } from './utils/systemSpeech'
 import { speechTextFor } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
@@ -225,8 +227,13 @@ export function App() {
   const messagesRef = useMessagesRef()
   // 同じく、通知の本文の地名を呼ばれた時点の言語で訳すための参照
   const placeNamesRef = usePlaceNamesRef()
-  // 緊急地震速報の切り出し語（読み上げの作り置き）。本番の読み上げと同じ画面の言語の組から採る
-  const speechLeadPhrases = speechTextFor(useLocale(), placeNames).EEW_LEAD_PHRASES
+  // 読み上げの言語（文と声）。画面の言語と端末の声から決め、下の effect で読み上げへ渡す（→ hooks/useSpeechLocale.ts）
+  const speechLocaleDecision = useSpeechLocaleDecision()
+  // 緊急地震速報の切り出し語（読み上げの作り置き）。本番の読み上げと同じ読み上げの言語の組から採る
+  // 句と一緒に組の言語も渡す（作り置きを飛ばすかは、いまの言語の状態ではなく句を組んだ組の言語で決める）
+  const speechLeadText = speechTextFor(useSpeechLocale(), placeNames)
+  const speechLeadPhrases = speechLeadText.EEW_LEAD_PHRASES
+  const speechLeadLocale = speechLeadText.locale
   const tabNames = messages.nav
   // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
   useApplyLocaleSetting(settings.locale)
@@ -1479,8 +1486,8 @@ export function App() {
       return
     }
     // 切り出し語は本番の読み上げと同じ組（画面の言語）から採る（組が違うと作り置きが当たらない）
-    warmFixedPhrases(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases)
-  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases])
+    warmFixedPhrases(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases, speechLeadLocale)
+  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases, speechLeadLocale])
 
   // 録画中は合成待ちの予算を緩める（→ `RECORDING_SYNTH_BUDGET_MS`）。負荷で音が途切れた
   // ぶんだけ予算が削られるため、既定のままだと長い文の後半が落ちる。
@@ -1492,6 +1499,10 @@ export function App() {
   useEffect(() => {
     setSpeechVoice(settings.ttsVoice)
   }, [settings.ttsVoice])
+  // 読み上げの言語。文を組む側はこの値で組（`speechTextFor`）を引き、声は組が文に添えた言語で選ぶ（→ `utils/speechLocale.ts`）
+  useEffect(() => {
+    setSpeechLocale(speechLocaleDecision.speechLocale)
+  }, [speechLocaleDecision.speechLocale])
   // 接続先・話者を直したら「VOICEVOX に繋がらない」の印を解く（直した設定を次の報からすぐ試す）
   useEffect(() => {
     clearVoicevoxDown()

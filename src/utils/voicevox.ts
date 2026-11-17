@@ -1,6 +1,6 @@
 import { getAudioContext, getMasterInput, syncKeepAlive } from './alertSound'
 import { findPhraseBreakMatch, getTtsPhraseBreakDictCache, isPlaceNameKey, loadTtsPhraseBreakDict } from './ttsPhraseBreakDict'
-import { CHUNK_BREAK_PUNCTUATION as SHARED_CHUNK_BREAK_PUNCTUATION, SENTENCE_END_RE } from './ttsPunctuation'
+import { CHUNK_BREAK_PUNCTUATION as SHARED_CHUNK_BREAK_PUNCTUATION, FOREIGN_SPEECH_BREAKS, SENTENCE_END_RE } from './ttsPunctuation'
 import { leadingParticle, endsWithParticle } from './ttsTrailingParticles'
 import { getTtsStationReadingsCache, loadTtsStationReadings } from './ttsStationReadings'
 import { getTtsEpicenterAccentsCache, loadTtsEpicenterAccents } from './ttsEpicenterAccents'
@@ -8,7 +8,8 @@ import { mergeSpeechDicts } from './ttsGeneratedDict'
 import { speechChunkKey, takeCachedChunk, hasCachedChunk, putCachedChunk, clearSpeechAudioCache, registerSpeechCacheExtraStats } from './speechAudioCache'
 import { log, createLogThrottle } from './logger'
 import { fetchWithTimeout } from './fetchWithTimeout'
-import { cancelSystemSpeech, isSystemSpeechSupported, pickJapaneseVoice, speakSystemUtterance, type SystemUtteranceResult } from './systemSpeech'
+import { cancelSystemSpeech, isSystemSpeechSupported, pickVoiceFor, speakSystemUtterance, type SystemUtteranceResult } from './systemSpeech'
+import type { Locale } from '../i18n/messages'
 
 /**
  * 設定の接続先を使って通信を始めるまでに、入力が落ち着くのを待つ時間。
@@ -39,6 +40,24 @@ export function setSpeechVoice(voice: SpeechVoice): void {
   speechVoice = voice
 }
 
+
+/**
+ * 読み上げる文と、その文の言語。**素の文字列は日本語の文**（時報・揺れ検知・日本語の組で組んだ文。テストもこの形）。
+ * 日本語以外の文は `{ text, locale }` で渡す —— 文を組んだ側が組の言語を添える（`useLiveEventHandler` が、`sp()` で文を組んだ
+ * その場で読み上げの言語を読んで添える）。
+ *
+ * **文の言語を字の種類から推し量らない。** 推し量る作りは、訳の無い地名 1 つ・地名の訳の中黒で判定を誤った
+ * （2026-11-17 ユーザー選択「文に言語を持たせる (Recommended)」）。文を組んだ言語は組んだ側が知っている
+ */
+export type SpeechUtterance = string | { readonly text: string; readonly locale: Locale }
+
+/** 文と言語に分ける（素の文字列は日本語） */
+function utteranceOf(u: SpeechUtterance): { text: string; locale: Locale } {
+  return typeof u === 'string' ? { text: u, locale: 'ja' } : { text: u.text, locale: u.locale }
+}
+
+const debugPrefetchSkipped = createLogThrottle(60_000)
+
 /**
  * VOICEVOX で 1 音も合成できなかったあと、この時刻（`performance.now()`）までは VOICEVOX を試さず端末の声で読む。
  *
@@ -57,8 +76,12 @@ export function clearVoicevoxDown(): void {
 }
 
 /**
- * この読み上げを端末の声で読むか（声が `system`・接続先が URL として成り立たない・VOICEVOX が繋がらなかった直後）。
- * 時報が「声が先」の声の長さを、合成で測るか端末の声で測るかを決めるのにも使う。
+ * **日本語の文を**端末の声で読むか（声が `system`・接続先が URL として成り立たない・VOICEVOX が繋がらなかった直後）。
+ * 時報が「声が先」の声の長さを、合成で測るか端末の声で測るかを決めるのにも使う（時報の文は日本語）。
+ *
+ * **文の言語はここでは見ない。** 日本語以外の文は VOICEVOX で読めないので必ず端末の声だが、それは文を持つ側
+ * （{@link speakOnce}・{@link prewarmVoicevox}。→ {@link SpeechUtterance}）が見る。ここで読み上げの言語を見ると、日本語に固定した文
+ * （時報・揺れ検知）まで、VOICEVOX を使う設定なのに端末の声で読むことになる
  */
 export function routesToSystemVoice(baseUrl: string): boolean {
   if (speechVoice === 'system' || !isValidVoicevoxUrl(baseUrl)) return true
@@ -635,9 +658,68 @@ export function splitIntoSystemSentences(text: string): string[] {
  * —— 割り方が食い違うと、測った長さが鳴らす長さとずれる。取り下げの判定を添えた読み上げ（緊急地震速報）は読点の区切り、
  * それ以外は文の区切り（2026-11-08 ユーザー選択「速報だけ読点で区切る (Recommended)」）。
  */
-function systemSpeechUnits(text: string, withdrawable: boolean): string[] {
+function systemSpeechUnits(text: string, withdrawable: boolean, locale: Locale): string[] {
+  if (locale !== 'ja') return splitForeignSpeechUnits(text, withdrawable, locale)
   return withdrawable ? splitIntoChunks(text) : splitIntoSystemSentences(text)
 }
+
+/**
+ * 日本語以外の文を、端末の声で読む単位に分ける（日本語の {@link splitIntoChunks}・{@link splitIntoSystemSentences} にあたる）。
+ * 区切りの記号は言語ごと（→ `ttsPunctuation.ts` の `FOREIGN_SPEECH_BREAKS`）。
+ *
+ * - 取り下げの判定を添えた読み上げ（緊急地震速報）は、文の中の区切り（読点・カンマ・コロン）でも分ける（日本語と同じ理由。
+ *   取り下げは発話の切れ目でしか効かない）。{@link MIN_FOREIGN_UNIT} 字未満の断片は次へ付ける
+ * - それ以外は文ごとに 1 つ。{@link SYSTEM_SENTENCE_MAX_CHARS} 字を超える文だけ文の中の区切りで分ける
+ *
+ * **各要素は元の文を隙間なく切り出したもの**（空白も落とさない）。**つなげると元の文に戻る** —— 鳴った句の照合
+ * （`useLiveEventHandler` の `spokenChunks.join('')` が句を含むか）と画面の追従（元の文の中を探す）がこれに頼る。
+ * 空白を落とすと、英語などで「No intensity forecast:」「single-station.」をつないだときに句の中の空白が消え、鳴ったのに
+ * 鳴っていないと判定する。空白だけの断片は前の要素に付ける。
+ *
+ * export しているのはテストのため。
+ */
+export function splitForeignSpeechUnits(text: string, withdrawable: boolean, locale: Exclude<Locale, 'ja'>): string[] {
+  const { sentenceEnd, chunkBreak } = FOREIGN_SPEECH_BREAKS[locale]
+  const endsAt = (re: RegExp) => new Set([...text.matchAll(re)].map(m => (m.index ?? 0) + m[0].length))
+  const sentenceEnds = endsAt(sentenceEnd)
+  const chunkEnds = endsAt(chunkBreak)
+  const cuts = [...new Set([...sentenceEnds, ...chunkEnds, text.length])].sort((a, b) => a - b)
+
+  const units: string[] = []
+  const push = (from: number, to: number) => {
+    const piece = text.slice(from, to)
+    if (piece.trim() !== '') units.push(piece)
+    else if (units.length > 0) units[units.length - 1] += piece
+  }
+  let start = 0
+  /** 1 つ前の切れ目（文の中の区切りを含む） */
+  let prevCut = 0
+  for (const cut of cuts) {
+    const isSentenceEnd = sentenceEnds.has(cut) || cut === text.length
+    if (withdrawable) {
+      // 文の中の区切りでも分ける。短すぎる断片は次と合わせる（文の終わりなら合わせ先が無いので出す）
+      if (text.slice(start, cut).trim().length >= MIN_FOREIGN_UNIT || isSentenceEnd) {
+        push(start, cut)
+        start = cut
+      }
+      continue
+    }
+    // 上限を超えたら、1 つ前の切れ目までを先に出す（日本語の splitIntoSystemSentences と同じ形）
+    if (prevCut > start && text.slice(start, cut).trim().length > SYSTEM_SENTENCE_MAX_CHARS) {
+      push(start, prevCut)
+      start = prevCut
+    }
+    if (isSentenceEnd) {
+      push(start, cut)
+      start = cut
+    }
+    prevCut = cut
+  }
+  return units.length > 0 ? units : [text]
+}
+
+/** 日本語以外で、文の中の区切りで分けた断片の下限（字）。日本語の `splitIntoChunks` の 5 字に合わせた */
+const MIN_FOREIGN_UNIT = 5
 
 /** 通常テキストを /audio_query に渡し、accent_phrases 部分だけを取り出す。失敗時は null。 */
 async function fetchAccentPhrasesForText(
@@ -1122,9 +1204,10 @@ const activePrewarms = new Set<PrewarmedSpeech>()
  *
  * @returns AudioContext が未確立（ユーザー操作前）なら null。その場合は先行合成なしで進む
  */
-export function prewarmVoicevox(baseUrl: string, text: string, speakerId: number): PrewarmedSpeech | null {
-  // 端末の声で読むなら VOICEVOX へは投げない（端末の声には合成の待ちが無い）
-  if (routesToSystemVoice(baseUrl)) return null
+export function prewarmVoicevox(baseUrl: string, utterance: SpeechUtterance, speakerId: number): PrewarmedSpeech | null {
+  const { text, locale } = utteranceOf(utterance)
+  // 端末の声で読むなら VOICEVOX へは投げない（端末の声には合成の待ちが無い。日本語以外の文も端末の声）
+  if (locale !== 'ja' || routesToSystemVoice(baseUrl)) return null
   const ctx = getAudioContext()
   if (!ctx) return null
   const chunks = splitIntoChunks(text)
@@ -1262,8 +1345,10 @@ const phraseScopeOf = (baseUrl: string, speakerId: number) => JSON.stringify([ba
  *
  * @param phrases 作り置きする句。`splitIntoChunks` が単独のチャンクとして切り出せる形
  *   （句読点で終わり、5 文字以上）でなければ照合されない
+ * @param locale 句を組んだ組の言語（`SpeechText.locale`）。いまの読み上げの言語ではなくこちらで決める ——
+ *   組が日本語へ落ちた回は、読み上げの言語が日本語以外でも日本語の句を VOICEVOX で読む
  */
-export function warmFixedPhrases(baseUrl: string, speakerId: number, phrases: readonly string[]): void {
+export function warmFixedPhrases(baseUrl: string, speakerId: number, phrases: readonly string[], locale: Locale): void {
   const scope = phraseScopeOf(baseUrl, speakerId)
   if (scope !== fixedPhraseScope) {
     // 接続先か話者が変わった。前の声のまま鳴らさないよう捨て、進行中の合成も打ち切る
@@ -1273,6 +1358,13 @@ export function warmFixedPhrases(baseUrl: string, speakerId: number, phrases: re
     fixedPhraseScope = scope
   }
   fixedPhraseTargets = phrases
+
+  // 日本語以外の読み上げは端末の声で読み、作り置きを引かない（VOICEVOX は日本語だけ。訳した句を合成しても使われない）。
+  // 日本語へ戻ると、呼び出し側（`App.tsx`）が日本語の句でまた呼ぶ
+  if (locale !== 'ja') {
+    log.debug('[VoiceVox] 切り出し語の作り置きをスキップ (読み上げが日本語以外)')
+    return
+  }
 
   const ctx = getAudioContext()
   if (!ctx) {
@@ -1433,10 +1525,16 @@ registerSpeechCacheExtraStats(() => ({
  * **セッションには関与しない。** 進行中の再生を止めず、`currentSessionId` も動かさない。
  *
  * @param texts 投機する読み上げ文。チャンクに割って、控えに無いものだけ焼く
+ * @param locale 文を組んだ組の言語（`SpeechText.locale`。理由は {@link warmFixedPhrases} の同名の引数）
  */
-export function prefetchSpeechTexts(baseUrl: string, texts: readonly string[], speakerId: number): void {
+export function prefetchSpeechTexts(baseUrl: string, texts: readonly string[], speakerId: number, locale: Locale): void {
   // 読み上げの最中は手を出さない。次の駆動で呼び直される（覗き直せば同じ文がまた並ぶ）。
   if (isSpeaking() || prefetchRunning) return
+  // 日本語以外の文は端末の声で読み、VOICEVOX の控えを引かない（VOICEVOX は日本語だけ）
+  if (locale !== 'ja') {
+    debugPrefetchSkipped(() => log.debug('[VoiceVox] 投機の先行合成をスキップ (読み上げが日本語以外)'))
+    return
+  }
   const ctx = getAudioContext()
   if (!ctx) return
 
@@ -1869,7 +1967,7 @@ export function speakWithVoicevox(...args: Parameters<typeof speakOnce>): Promis
   // いる限り解けず、新しい読み上げが始まらないまま時間だけ過ぎたときに解ける。
   speakingSince = performance.now()
   speakingStaleWarned = false
-  speakingLastText = args[1]
+  speakingLastText = utteranceOf(args[1]).text
   speakingCount++
   return speakOnce(...args).finally(() => {
     speakingCount--
@@ -1893,7 +1991,8 @@ export function speakWithVoicevoxUncounted(...args: Parameters<typeof speakOnce>
 /** {@link speakWithVoicevox} の本体。読み上げの本数を数えるのは包む側の責務。 */
 async function speakOnce(
   baseUrl: string,
-  text: string,
+  /** 読み上げる文（素の文字列は日本語の文。日本語以外は言語を添える。→ {@link SpeechUtterance}） */
+  utterance: SpeechUtterance,
   speakerId: number,
   volume: number,
   shouldStillPlay?: ShouldStillPlay,
@@ -1911,7 +2010,9 @@ async function speakOnce(
   onChunkScheduled?: ChunkScheduledListener,
 ): Promise<SpeechOutcome> {
   const startedAt = performance.now()
-  log.debug(`[VoiceVox] 読み上げ: ${text}`, { speakerId, volume, prewarmed: !!prewarmed })
+  // 文の言語は文と一緒に届く（組んだ側が添える）。この発話の間は変えない
+  const { text, locale } = utteranceOf(utterance)
+  log.debug(`[VoiceVox] 読み上げ: ${text}`, { speakerId, volume, prewarmed: !!prewarmed, locale })
 
   // 既存の再生を全て停止。止める前に、前の発話のまだ鳴り始めていない予約を印す
   // （→ {@link markUnstartedAsCut}）。
@@ -1953,9 +2054,10 @@ async function speakOnce(
   // セッション ID を更新して古いパイプラインを無効化
   const sessionId = ++currentSessionId
 
-  if (routesToSystemVoice(baseUrl)) {
+  // 日本語以外の文は端末の声（VOICEVOX は日本語だけ）。日本語の文は声の設定どおり
+  if (locale !== 'ja' || routesToSystemVoice(baseUrl)) {
     return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled,
-      speechVoice === 'system' ? '声の設定' : 'VOICEVOX に繋がらない')
+      locale !== 'ja' ? '日本語以外の読み上げ' : speechVoice === 'system' ? '声の設定' : 'VOICEVOX に繋がらない', locale)
   }
 
   // 辞書が未ロードならここで待つ（キャッシュ済みなら即時解決）。取得できなくても句区切りが
@@ -1976,7 +2078,7 @@ async function speakOnce(
   if (!ctx) {
     // VOICEVOX の音は AudioContext でしか鳴らせない。端末の声なら鳴らせることがあるので、そちらで読む
     log.debug('[VoiceVox] AudioContext が無いため端末の声で読む')
-    return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled, '音声出力がまだ無い')
+    return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled, '音声出力がまだ無い', locale)
   }
   if (ctx.state === 'suspended') await ctx.resume()
   // soundEnabled が無効でも ttsEnabled だけで読み上げは鳴る（AUD-7）。この経路が
@@ -2270,7 +2372,7 @@ async function speakOnce(
       )
       voicevoxDown = { baseUrl, until: performance.now() + VOICEVOX_DOWN_HOLD_MS }
       if (markUnstartedAsCut === markMine) markUnstartedAsCut = null
-      return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled, 'VOICEVOX に繋がらない')
+      return speakWithSystemVoice(text, volume, sessionId, shouldStillPlay, onChunkScheduled, 'VOICEVOX に繋がらない', locale)
     }
   }
   await completionPromise
@@ -2305,13 +2407,15 @@ async function speakWithSystemVoice(
   shouldStillPlay: ShouldStillPlay | undefined,
   onChunkScheduled: ChunkScheduledListener | undefined,
   reason: string,
+  /** 文の言語（声と区切りをこれで選ぶ） */
+  locale: Locale,
 ): Promise<SpeechOutcome> {
   if (!isSystemSpeechSupported()) {
     warnNoSystemSpeech(() => log.warn(`[SystemSpeech] この端末では端末の声が使えないため読めない（${reason}）`))
     return { spoke: false, spokenChunks: [] }
   }
   log.debug(`[SystemSpeech] 読み上げ（${reason}）: ${text}`)
-  const chunks = systemSpeechUnits(text, shouldStillPlay !== undefined)
+  const chunks = systemSpeechUnits(text, shouldStillPlay !== undefined, locale)
   const spoken: string[] = []
   let startedAny = false
   let lastResult: SystemUtteranceResult = 'ended'
@@ -2338,7 +2442,7 @@ async function speakWithSystemVoice(
       } catch (err) {
         log.warn('[SystemSpeech] 予約の通知に失敗（読み上げは続行）', err)
       }
-    })
+    }, locale)
     if (systemAudibleSession === sessionId) {
       systemAudibleSession = null
       lastAudioEndedAt = performance.now()
@@ -2364,7 +2468,7 @@ async function speakWithSystemVoice(
 /** 端末の声で測った長さに足す余裕（秒）。黙って測ると、iPhone の Kyoko は鳴らしたときより 30〜80 ms 短く出る（2026-11-08 実測） */
 export const SYSTEM_SPEECH_MEASURE_MARGIN_SEC = 0.1
 
-/** 測った長さ（秒）。鍵は声の名前と文（{@link measureSystemSpeechSec}） */
+/** 測った長さ（秒）。鍵は読み上げの言語と声の名前と文（{@link measureSystemSpeechSec}） */
 const measuredSpeechSec = new Map<string, number>()
 
 /**
@@ -2378,11 +2482,13 @@ const measuredSpeechSec = new Map<string, number>()
  * 測っている間に読み上げが始まったら、測るのをやめて null を返す（→ {@link systemMeasure}）。端末の声が使えない・
  * 鳴り始めないときも null。
  */
-export async function measureSystemSpeechSec(text: string): Promise<number | null> {
+export async function measureSystemSpeechSec(utterance: SpeechUtterance): Promise<number | null> {
   if (!isSystemSpeechSupported()) return null
   // 同じ文・同じ声で一度測れていれば、測り直さない（時報の文は時刻ごとに決まり、毎日同じ文が繰り返される。
-  // 5 分間隔なら 1 日 288 回 × 2 回の無音の合成を、ページを開いている間の初回だけにする）
-  const cacheKey = `${pickJapaneseVoice(window.speechSynthesis.getVoices())?.name ?? ''}\u0000${text}`
+  // 5 分間隔なら 1 日 288 回 × 2 回の無音の合成を、ページを開いている間の初回だけにする）。
+  // 鍵には言語も入れる —— 声が見つからない言語は声の名前が空になり、言語の違う同じ文の長さを取り違える
+  const { text, locale } = utteranceOf(utterance)
+  const cacheKey = `${locale}\u0000${pickVoiceFor(window.speechSynthesis.getVoices(), locale)?.name ?? ''}\u0000${text}`
   const cached = measuredSpeechSec.get(cacheKey)
   if (cached !== undefined) return cached
   // 読み上げの最中なら測らない（測る発話が読み上げを止めたり、声の一覧の待ちで読み上げの番を奪ったりしないため）
@@ -2390,11 +2496,11 @@ export async function measureSystemSpeechSec(text: string): Promise<number | nul
   abortSystemMeasure()
   const me = { aborted: false }
   systemMeasure = me
-  const chunks = systemSpeechUnits(text, false)  // 時報は取り下げの判定を渡さない（useTimeSignal）
+  const chunks = systemSpeechUnits(text, false, locale)  // 時報は取り下げの判定を渡さない（useTimeSignal）
   const once = async (): Promise<number | null> => {
     let firstStart: number | null = null
     for (const chunk of chunks) {
-      const result = await speakSystemUtterance(chunk, 0, () => { firstStart ??= performance.now() })
+      const result = await speakSystemUtterance(chunk, 0, () => { firstStart ??= performance.now() }, locale)
       // 見切った（timeout）回は長さが分からない。見切った時間を長さとして覚えない
       if (me.aborted || result !== 'ended') return null
     }
@@ -2439,7 +2545,7 @@ export async function measureSystemSpeechSec(text: string): Promise<number | nul
  * 鳴る。**連打まわりを触るときは実機で同じ確かめ方をすること。**
  */
 export async function speakSequentially(
-  baseUrl: string, texts: readonly string[], speakerId: number, volume: number,
+  baseUrl: string, texts: readonly SpeechUtterance[], speakerId: number, volume: number,
 ): Promise<void> {
   for (const text of texts) {
     const playing = speakWithVoicevox(baseUrl, text, speakerId, volume)

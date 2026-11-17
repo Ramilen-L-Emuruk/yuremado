@@ -468,7 +468,7 @@ describe('切り出し語の作り置き', () => {
   /** 作り置きを 1 件用意する（合成の往復を済ませた状態にする）。 */
   async function warmed(baseUrl = 'http://vv', speakerId = 1) {
     synthDelaysMs = [0]
-    warmFixedPhrases(baseUrl, speakerId, [LEAD])
+    warmFixedPhrases(baseUrl, speakerId, [LEAD], 'ja')
     await advance(10)
     // 以降の計測に持ち越さないよう、合成の記録と予約済みソースを仕切り直す
     synthCallCount = 0
@@ -483,7 +483,7 @@ describe('切り出し語の作り置き', () => {
     expect(EEW_LEAD_PHRASES.length).toBeGreaterThan(1)
     synthDelaysMs = EEW_LEAD_PHRASES.map(() => 100)
 
-    warmFixedPhrases('http://vv', 1, EEW_LEAD_PHRASES)
+    warmFixedPhrases('http://vv', 1, EEW_LEAD_PHRASES, 'ja')
     await advance(10)
     expect(synthCallCount).toBe(1)   // 並行なら全件がここで発火している
 
@@ -500,7 +500,7 @@ describe('切り出し語の作り置き', () => {
   // 飛んでここが落ちる（確認済み）。他の 2 経路（`prewarmVoicevox` / `speakOnce`）は元から待つ。
   it('作り置きは辞書を待ってから焼く', async () => {
     synthDelaysMs = [0]
-    warmFixedPhrases('http://vv', 1, [LEAD])
+    warmFixedPhrases('http://vv', 1, [LEAD], 'ja')
     await advance(10)
 
     const dictAt = order.log.indexOf('dict')
@@ -531,7 +531,7 @@ describe('切り出し語の作り置き', () => {
     it('作り置きの合成に末尾の間が載る（正）', async () => {
       accentPhrasesFixture = withPauseSlot()
       synthDelaysMs = [0]
-      warmFixedPhrases('http://vv', 1, [LEAD])
+      warmFixedPhrases('http://vv', 1, [LEAD], 'ja')
       await advance(10)
 
       expect(synthBodies).toHaveLength(1)
@@ -543,7 +543,7 @@ describe('切り出し語の作り置き', () => {
 
       // 作り置きだけを焼く
       synthDelaysMs = [0]
-      warmFixedPhrases('http://vv', 1, [LEAD])
+      warmFixedPhrases('http://vv', 1, [LEAD], 'ja')
       await advance(10)
       const warmBody = synthBodies[0]
 
@@ -720,7 +720,7 @@ describe('切り出し語の作り置き', () => {
   // 諦めるため、記録も残らずに消える）。しかも作り置きは埋まらないままなので**復旧しない**。
   it('作り置きの合成が返ってこなくても、読み上げは待たされない', async () => {
     synthDelaysMs = [10_000_000]        // 作り置きの合成が返らない
-    warmFixedPhrases('http://vv', 1, [LEAD])
+    warmFixedPhrases('http://vv', 1, [LEAD], 'ja')
     await advance(10)
     synthCallCount = 0
     sources = []
@@ -734,7 +734,7 @@ describe('切り出し語の作り置き', () => {
 
   it('作り置きが合成中のままでも、読み上げた結果で埋め直す', async () => {
     synthDelaysMs = [10_000_000]
-    warmFixedPhrases('http://vv', 1, [LEAD])
+    warmFixedPhrases('http://vv', 1, [LEAD], 'ja')
     await advance(10)
 
     // 1 回目: 作り置きは未完了なので普通に合成し、その結果を作り置きへ残す
@@ -760,7 +760,7 @@ describe('切り出し語の作り置き', () => {
   it('作り置きに失敗していても、一度読み上げれば次から効く（自己修復）', async () => {
     // VOICEVOX が未起動で作り置きに失敗した状況
     vi.stubGlobal('fetch', () => Promise.resolve({ ok: false }))
-    warmFixedPhrases('http://vv', 1, [LEAD])
+    warmFixedPhrases('http://vv', 1, [LEAD], 'ja')
     await advance(10)
 
     // VOICEVOX が起動した。1 回目は合成を待たされるが、その結果を作り置きに残す
