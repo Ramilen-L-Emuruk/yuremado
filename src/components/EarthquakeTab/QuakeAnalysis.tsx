@@ -337,7 +337,7 @@ export function QuakeAnalysisDialog({ title, analysis: a, onClose }: { title: st
       role="presentation"
     >
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={w.title(title)}
-        className="flex max-h-full w-full max-w-[76rem] flex-col gap-2.5 overflow-y-auto rounded-lg border border-border bg-panel p-3 text-xs shadow-2xl shadow-black/60 [&>*]:shrink-0">
+        className="flex max-h-full w-auto min-w-[min(76rem,100%)] max-w-full flex-col gap-2.5 overflow-y-auto rounded-lg border border-border bg-panel p-3 text-xs shadow-2xl shadow-black/60 [&>*]:shrink-0">
         {/* ［閉じる］は 1 行目（地震の名前と時点）だけに並べ、2 行目（地震の時刻と長期震源カタログの状態）は窓の幅いっぱいに使う */}
         <div className="flex flex-col gap-1">
           <div className="flex items-start gap-2">

@@ -43,10 +43,13 @@ const momentOf = (s: FocalSolution): number | null =>
   typeof s.extra.scalarMoment === 'number' ? s.extra.scalarMoment : s.tensor ? s.tensor.mo * 10 ** s.tensor.exponent : null
 /** 表の列に出す補足の値の欄。これ以外の欄は「その他」の列に名前のまま出す */
 const KNOWN_EXTRA = new Set(['percentDoubleCouple', 'doubleCouple', 'percentClvd', 'percentIso', 'scalarMoment', 'varianceReduction', 'stationCount'])
-/** スカラーモーメント（Nm）を「2.27×10²⁰ N·m」の形に */
+/**
+ * スカラーモーメント（Nm）を「2.27×10²⁰ Nm」の形に。単位の書き方は気象庁の CMT 解の表（「×10(指数) Nm」）に合わせ、
+ * どの機関の値にも同じ形を使う（2026-11-17 ユーザー選択「この表のとおり直す (Recommended)」）
+ */
 function momentText(v: number): string {
   const [m, e] = v.toExponential(2).split('e+')
-  return `${m}×10${[...(e ?? '')].map(ch => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(ch)]).join('')} N·m`
+  return `${m}×10${[...(e ?? '')].map(ch => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(ch)]).join('')} Nm`
 }
 const stationsOf = (s: FocalSolution) => (typeof s.extra.stationCount === 'number' ? s.extra.stationCount : null)
 
@@ -217,7 +220,7 @@ function Lead({ a, source }: { a: QuakeAnalysis; source: AnalysisSource }) {
 }
 
 /**
- * GEOFON の状態（A 自動・C 人が確かめた・M 手で見直した。GEOFON の頁の Status の決め方）。知らない組み合わせは
+ * GEOFON の状態（A 自動・C 確認・M 手動。GEOFON の頁の Status の決め方）。知らない組み合わせは
  * 取得元の語を括弧で添え、黙って「自動で出した」に畳まない
  */
 export function evaluationWord(w: Pick<AnalysisWords, 'evaluation'>, e: Pick<MatchedEvent, 'evaluationMode' | 'evaluationStatus'>): string | null {
@@ -311,7 +314,7 @@ function columns(w: AnalysisWords, a: QuakeAnalysis): Column[] {
         const f = (v: number) => { const r = Math.round(v * 100) / 100; return (r === 0 ? 0 : r).toFixed(2).replace('-', '−') }
         const exp = [...String(t.exponent)].map(ch => (ch === '-' ? '⁻' : '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(ch)])).join('')
         // 括弧は言語を問わず半角（数式の単位の添え書き）
-        return `Mrr ${f(t.mrr)} Mtt ${f(t.mtt)} Mff ${f(t.mff)} Mrt ${f(t.mrt)} Mrf ${f(t.mrf)} Mtf ${f(t.mtf)} (×10${exp} N·m)`
+        return `Mrr ${f(t.mrr)} Mtt ${f(t.mtt)} Mff ${f(t.mff)} Mrt ${f(t.mrt)} Mrf ${f(t.mrf)} Mtf ${f(t.mtf)} (×10${exp} Nm)`
       },
     },
     // 名前の分からない補足の値（気象庁の初動解のスコアなど）は、取得元の欄の名前のまま出す（前の窓と同じ。値を落とさない）
@@ -339,7 +342,7 @@ function columns(w: AnalysisWords, a: QuakeAnalysis): Column[] {
 /** 表に切り替える幅（Tailwind の sm と同じ 640px） */
 const WIDE_QUERY = '(min-width: 640px)'
 
-/** 発震機構の表。幅のある画面は 1 解 1 行の表、狭い画面は 1 解 2 行の並び。前の版は「ほか N 版 ▸」で開く */
+/** 発震機構の表。幅のある画面は 1 解 1 行の表、狭い画面は 1 解 2 行の並び。前の版は「更新 N 件 ▸」で開く */
 export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solutions: readonly FocalSolution[]; withSource: boolean }) {
   const w = useMessages().quake.analysis
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
@@ -359,7 +362,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
     else next.add(key)
     return next
   })
-  // 「USGS のタブの解と同じ」は、機関ごとのタブで隣のタブに同じ値の解が実際にあるときだけ（種類ごとの表は同じ表に並ぶので出さない）
+  // 「USGS タブと同一」は、機関ごとのタブで隣のタブに同じ値の解が実際にあるときだけ（種類ごとの表は同じ表に並ぶので出さない）
   const sameAs = (s: FocalSolution) => {
     if (withSource) return null
     const src = mirroredSource(s, a.solutions)
@@ -369,7 +372,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
     ? <span className="ml-1 inline-block rounded-[3px] border border-[#3b82f6] px-1 text-[10px] text-[#93c5fd]">{w.badge[s.source]}</span>
     : null)
   const head = (s: FocalSolution) => (
-    <span className="inline-flex flex-wrap items-center gap-x-1">
+    <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-1">
       {s.planes && <span className="inline-block align-middle"><Beachball plane={s.planes[0]} size={22} /></span>}
       {withSource && s.source !== 'emsc' && <b className="text-white">{sourceName(w, s.source)}</b>}
       {withSource && s.source === 'emsc' && <span className="text-secondary">EMSC</span>}
@@ -390,8 +393,8 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
         <thead>
           <tr>
             {/* EMSC のタブは機関ごとの解なので「機関」 */}
-            <th className="px-2 py-1 text-left text-[11px] font-normal text-secondary">{withSource || groups.every(g => g.latest.source === 'emsc') ? w.col.agency : w.col.method}</th>
-            {tableCols.map(c => <th key={c.key} className="px-2 py-1 text-left text-[11px] font-normal text-secondary">{c.head}</th>)}
+            <th className="whitespace-nowrap px-2 py-1 text-left text-[11px] font-normal text-secondary">{withSource || groups.every(g => g.latest.source === 'emsc') ? w.col.agency : w.col.method}</th>
+            {tableCols.map(c => <th key={c.key} className="whitespace-nowrap px-2 py-1 text-left text-[11px] font-normal text-secondary">{c.head}</th>)}
             <th />
           </tr>
         </thead>
@@ -401,7 +404,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
               <tr className={g.latest.preferred ? 'bg-[#1b2430]' : undefined}>
                 <td className="whitespace-nowrap border-t border-border px-2 py-1.5">{head(g.latest)}</td>
                 {tableCols.map(c => <td key={c.key} className="whitespace-nowrap border-t border-border px-2 py-1.5 text-white">{c.value(g.latest) ?? ''}</td>)}
-                {/* 注記は長い言語で幅を越えるので折り返す（「ほか N 版」の釦だけは折り返さない） */}
+                {/* 注記は長い言語で幅を越えるので折り返す（「更新 N 件」の釦だけは折り返さない） */}
                 <td className="min-w-[7rem] border-t border-border px-2 py-1.5 text-[11px] text-secondary">{sameAs(g.latest)}{more(g)}</td>
               </tr>
               {/* テンソルの 6 成分は列にすると表が窮屈になるので、行の下に表の幅で添える */}
@@ -450,7 +453,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
   )
 }
 
-/** 狭い幅の 2 行目: 節面・主軸・割合・観測点・時刻と注記を「・」でつなぎ（各値は折り返さない）、最後に「ほか N 版」の釦 */
+/** 狭い幅の 2 行目: 節面・主軸・割合・観測点・時刻と注記を「・」でつなぎ（各値は折り返さない）、最後に「更新 N 件」の釦 */
 function SecondLine({ s, cols, note, tail }: { s: FocalSolution; cols: readonly Column[]; note: string | null; tail: ReactNode }) {
   const parts = cols.filter(c => c.key !== 'mw' && c.key !== 'fault' && c.key !== 'p2').flatMap(c => {
     const v = c.value(s)
