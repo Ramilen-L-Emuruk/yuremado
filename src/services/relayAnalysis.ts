@@ -13,6 +13,24 @@ export const ANALYSIS_SOURCES: readonly AnalysisSource[] = ['jma', 'usgs', 'emsc
 
 export interface NodalPlane { strike: number; dip: number; rake: number }
 
+/** 主軸 1 本の向き（度）。方位は北から時計回り、傾斜は水平からの下向き */
+export interface PrincipalAxis { azimuth: number; plunge: number }
+/** 圧縮軸（P）・張力軸（T）・中間の軸（N） */
+export interface PrincipalAxes { p: PrincipalAxis; t: PrincipalAxis; n: PrincipalAxis }
+/** モーメントテンソル（成分は 10 の `exponent` 乗 Nm を単位とした数。r 上・t 南・f 東） */
+export interface MomentTensor {
+  exponent: number
+  mo: number
+  mrr: number
+  mtt: number
+  mff: number
+  mrt: number
+  mrf: number
+  mtf: number
+  /** 非ダブルカップル成分の比（気象庁の「非D.C.成分比」） */
+  nonDcRatio: number | null
+}
+
 export interface FocalSolution {
   source: AnalysisSource
   /** 解を出した機関（USGS は `us`、EMSC がまとめた他機関の解ならその機関名） */
@@ -25,6 +43,16 @@ export interface FocalSolution {
   depthKm: number | null
   centroid: { lat: number; lon: number; time: string | null } | null
   planes: [NodalPlane, NodalPlane] | null
+  /** 主軸。取得元が出していない・中継がまだ読んでいなければ null */
+  axes: PrincipalAxes | null
+  /** モーメントテンソル。同上 */
+  tensor: MomentTensor | null
+  /** 気象庁が「参考」として出した解（数値が無く、震源球の図だけ。`planes` は null で、取れなかったわけではない） */
+  reference: boolean
+  /** 取得元がその地震で選んでいる解（USGS が採用した解・EMSC が推す解・GEOFON が選んだ解）。気象庁は false */
+  preferred: boolean
+  /** 解を人が見直したか（GEOFON の `manual`・`automatic` のまま）。取得元が出していなければ null */
+  evaluationMode: string | null
   /** 公表の時刻。気象庁の解は持たない（null） */
   publishedAt: string | null
   extra: Record<string, number | boolean>
@@ -38,6 +66,12 @@ export interface MatchedEvent {
   depthKm: number | null
   mag: number | null
   magType: string | null
+  /** 震源の深さの決め方（USGS の depth-type・GEOFON の depthType のまま。`operator assigned` は担当者が置いた値） */
+  depthType: string | null
+  /** 震源を人が見直したか（GEOFON の evaluationMode） */
+  evaluationMode: string | null
+  /** 震源の確かさの段階（GEOFON の evaluationStatus） */
+  evaluationStatus: string | null
   url: string | null
 }
 
@@ -127,7 +161,12 @@ function readEvent(v: unknown): MatchedEvent | null {
   const lat = num(v.lat)
   const lon = num(v.lon)
   if (id === null || time === null || lat === null || lon === null) return null
-  return { id, time, lat, lon, depthKm: num(v.depthKm), mag: num(v.mag), magType: str(v.magType), url: str(v.url) }
+  return {
+    id, time, lat, lon, depthKm: num(v.depthKm), mag: num(v.mag), magType: str(v.magType),
+    // 中継の前の版・端末の控えには欄が無い
+    depthType: str(v.depthType), evaluationMode: str(v.evaluationMode), evaluationStatus: str(v.evaluationStatus),
+    url: str(v.url),
+  }
 }
 
 function readSource(v: unknown): SourceState {
@@ -152,6 +191,29 @@ function readPlane(v: unknown): NodalPlane | null {
   return strike === null || dip === null || rake === null ? null : { strike, dip, rake }
 }
 
+function readAxis(v: unknown): PrincipalAxis | null {
+  if (!isRecord(v)) return null
+  const azimuth = num(v.azimuth), plunge = num(v.plunge)
+  return azimuth === null || plunge === null ? null : { azimuth, plunge }
+}
+
+/** 主軸。3 本そろわなければ null（中継の前の版の控えには欄そのものが無い） */
+function readAxes(v: unknown): PrincipalAxes | null {
+  if (!isRecord(v)) return null
+  const p = readAxis(v.p), t = readAxis(v.t), n = readAxis(v.n)
+  return p && t && n ? { p, t, n } : null
+}
+
+/** テンソル。成分と指数がそろわなければ null */
+function readTensor(v: unknown): MomentTensor | null {
+  if (!isRecord(v)) return null
+  const exponent = num(v.exponent), mo = num(v.mo)
+  const c = [num(v.mrr), num(v.mtt), num(v.mff), num(v.mrt), num(v.mrf), num(v.mtf)]
+  if (exponent === null || mo === null || c.some(x => x === null)) return null
+  const [mrr, mtt, mff, mrt, mrf, mtf] = c as number[]
+  return { exponent, mo, mrr, mtt, mff, mrt, mrf, mtf, nonDcRatio: num(v.nonDcRatio) }
+}
+
 function readSolution(v: unknown): FocalSolution | null {
   if (!isRecord(v)) return null
   const source = str(v.source)
@@ -161,6 +223,15 @@ function readSolution(v: unknown): FocalSolution | null {
   const planes = Array.isArray(v.planes) ? v.planes.map(readPlane) : null
   const extra: Record<string, number | boolean> = {}
   if (isRecord(v.extra)) for (const [k, x] of Object.entries(v.extra)) if (typeof x === 'number' || typeof x === 'boolean') extra[k] = x
+  // 中継の前の版は EMSC の推す解の印を extra.preferred（1）に入れていた。EMSC の解に限って欄へ移し、extra からは外す
+  const legacyPreferred = source === 'emsc' && (extra.preferred === 1 || extra.preferred === true)
+  if (source === 'emsc') delete extra.preferred
+  // 欄はあるのに読めない主軸・テンソルは、中継の形が変わった印なので書き残す（画面では「出していない」と見分けがつかない）
+  const axes = readAxes(v.axes)
+  const tensor = readTensor(v.tensor)
+  if ((v.axes != null && axes === null) || (v.tensor != null && tensor === null)) {
+    warnDropped(() => log.warn('[analysis] 解の主軸・テンソルを読めませんでした（無いものとして出します）', source, agency, v.axes, v.tensor))
+  }
   const c = isRecord(v.centroid) ? v.centroid : null
   const cLat = c ? num(c.lat) : null, cLon = c ? num(c.lon) : null
   return {
@@ -169,6 +240,12 @@ function readSolution(v: unknown): FocalSolution | null {
     depthKm: num(v.depthKm),
     centroid: c && cLat !== null && cLon !== null ? { lat: cLat, lon: cLon, time: isoOrNull(c.time) } : null,
     planes: planes && planes.length === 2 && planes[0] && planes[1] ? [planes[0], planes[1]] : null,
+    axes,
+    tensor,
+    // 欄が無い（中継の前の版）ときは参考でないとみる
+    reference: v.reference === true,
+    preferred: v.preferred === true || legacyPreferred,
+    evaluationMode: str(v.evaluationMode),
     publishedAt: isoOrNull(v.publishedAt),
     extra,
   }
@@ -271,13 +348,39 @@ export function groupSolutionVersions(solutions: readonly FocalSolution[]): { la
   })
 }
 
-/** 要約の行に使う代表の解（気象庁 → USGS → 先頭の順） */
+/** 1 つの機関の中の代表の解: 取得元が選んだ解 → 節面のある解 → 先頭（解析の窓の機関ごとのタブの先頭と同じ） */
+export function representativeGroup<G extends { latest: FocalSolution }>(groups: readonly G[]): G | null {
+  return groups.find(g => g.latest.preferred) ?? groups.find(g => g.latest.planes !== null) ?? groups[0] ?? null
+}
+
+/**
+ * 要約の行に使う代表の解。機関は気象庁 → USGS → EMSC → GEOFON の順に見て、節面のある代表の解を持つ最初の機関の解
+ * （気象庁の「参考」のように節面の無い解しか無い機関は飛ばす）。どの機関にも節面が無ければ最初に見つかった代表の解
+ */
 export function representativeSolution(a: QuakeAnalysis): FocalSolution | null {
-  const groups = groupSolutionVersions(a.solutions)
-  return groups.find(g => g.latest.source === 'jma')?.latest
-    ?? groups.find(g => g.latest.source === 'usgs')?.latest
-    ?? groups[0]?.latest
-    ?? null
+  const reps = ANALYSIS_SOURCES.map(s => representativeGroup(groupSolutionVersions(a.solutions.filter(x => x.source === s)))?.latest ?? null)
+  return reps.find(s => s !== null && s.planes !== null) ?? reps.find(s => s !== null) ?? null
+}
+
+/** EMSC が集めた機関の名前と、同じ機関の解を自前で持つ取得元 */
+const MIRRORED_AGENCY: Readonly<Record<string, AnalysisSource>> = { NEIC: 'usgs', GFZ: 'geofon' }
+
+const angleGap = (a: number, b: number) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d) }
+const samePlane = (p: NodalPlane, q: NodalPlane) => angleGap(p.strike, q.strike) <= 1 && Math.abs(p.dip - q.dip) <= 1 && angleGap(p.rake, q.rake) <= 1
+
+/**
+ * EMSC が集めた解のうち、USGS・GEOFON のタブにある解（どの版でも）と同じ値のものなら、その取得元を返す。
+ * EMSC は値を丸めて載せる（USGS のすべり角 102.5° が 102°、GEOFON の Mw 7.47 が 7.5）ので、
+ * Mw の差が 0.05 以内、節面の 3 つの角がどれも 1° 以内なら同じ解とみなす。節面はどちらの順でもよい
+ */
+export function mirroredSource(s: FocalSolution, all: readonly FocalSolution[]): AnalysisSource | null {
+  const source = s.source === 'emsc' && s.agency ? MIRRORED_AGENCY[s.agency] : undefined
+  if (!source || !s.planes || s.mw == null) return null
+  const [p1, p2] = s.planes
+  const mw = s.mw
+  const hit = all.some(o => o.source === source && o.planes && o.mw != null && Math.abs(o.mw - mw) <= 0.05 + 1e-9
+    && ((samePlane(p1, o.planes[0]) && samePlane(p2, o.planes[1])) || (samePlane(p1, o.planes[1]) && samePlane(p2, o.planes[0]))))
+  return hit ? source : null
 }
 
 export type FaultType = 'reverse' | 'normal' | 'strikeSlip'

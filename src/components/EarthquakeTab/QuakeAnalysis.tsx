@@ -6,17 +6,18 @@ import type { Locale } from '../../i18n/messages'
 import type { QuakeAnalysisView } from '../../hooks/useQuakeAnalysis'
 import {
   ANALYSIS_SOURCES, analysisCheckedAt, analysisIsEmpty, faultTypeOf, groupSolutionVersions, latestVersion, representativeSolution,
-  type AnalysisSource, type FocalSolution, type NodalPlane, type PagerEstimate, type QuakeAnalysis, type SourceState,
+  type AnalysisSource, type NodalPlane, type PagerEstimate, type QuakeAnalysis, type SourceState,
 } from '../../services/relayAnalysis'
 import { MMI_ROMAN, mmiColor, mmiIndex } from '../../services/analysisOverlay'
 import { formatDateTime, formatDateTimeMin } from '../../utils/formatters'
-import { CANCEL_FADE_MS, DisclosureCaret, fadeIn } from './quakeMotion'
-import { Beachball } from './Beachball'
+import { CANCEL_FADE_MS, fadeIn } from './quakeMotion'
+import { AgencyPanel, MechTable, sourceName, Term } from './QuakeAnalysisAgency'
 
 /**
  * 地震カードに添える海外の機関と気象庁の解析（計画書 項目 98）。カードには要約の 1 行だけを置き、
  * ［詳しく ›］で画面の中央に窓を開く（2026-11-11 発言「そういう詳しいのはポップアップするのがいいかもね。」）。
- * 見せ方と文言は 2026-11-15 に決めたもの（機関ごとのタブ＋種類ごとの切り替え・状態の語）。
+ * 機関ごとのタブ＋種類ごとの切り替えは 2026-11-15 に決め、機関ごとのタブの中身（代表の解・震源・発震機構の表・説明の吹き出し）は
+ * 2026-11-17 に作り直した（`QuakeAnalysisAgency.tsx`）
  */
 
 type AnalysisWords = ReturnType<typeof useMessages>['quake']['analysis']
@@ -43,24 +44,14 @@ function writeGroupBy(v: GroupBy): void {
   }
 }
 
-const sourceName = (w: AnalysisWords, s: AnalysisSource) => (s === 'jma' ? w.jma : s === 'usgs' ? 'USGS' : s === 'emsc' ? 'EMSC' : 'GEOFON')
 const alertText = (w: AnalysisWords, a: string) => (w.alert as Record<string, string>)[a] ?? a
 const faultText = (w: AnalysisWords, p: NodalPlane) => w.fault[faultTypeOf(p)]
-const planeText = (p: NodalPlane) => `${r0(p.strike)}°/${r0(p.dip)}°/${r0(p.rake)}°`
 const timeMin = (iso: string | null) => (iso ? formatDateTimeMin(iso) : null) ?? '—'
 /** 取得元の地震の発生時刻（0.1 秒まで） */
 function timeTenth(iso: string): string {
   const base = formatDateTime(iso)
   if (base === null) return '—'
   return `${base}.${Math.floor(new Date(iso).getMilliseconds() / 100)}`
-}
-
-/** 気象庁の解の名前（中継の手法: 初動・CMT・CMT全世界・CMT（精査後）・初動（精査後）） */
-function jmaMethodText(w: AnalysisWords, method: string): string {
-  const refined = method.endsWith('（精査後）')
-  const base = refined ? method.slice(0, -'（精査後）'.length) : method
-  const name = base === 'CMT' || base === 'CMT全世界' ? w.jmaMethod.cmt : base === '初動' ? w.jmaMethod.firstMotion : base
-  return w.jmaMethodLabel(name, refined ? w.jmaStage.refined : w.jmaStage.preliminary, base === 'CMT全世界' ? w.jmaScopeGlobal : null)
 }
 
 /** 人数・金額の短い書き方。日本語は万・億、他は Intl の短縮形 */
@@ -136,58 +127,6 @@ export function QuakeAnalysisSummary({ view, title }: { view: QuakeAnalysisView;
   )
 }
 
-function SolutionCard({ s, older }: { s: FocalSolution; older: readonly FocalSolution[] }) {
-  const w = useMessages().quake.analysis
-  const [open, setOpen] = useState(false)
-  const agency = s.source === 'jma' ? w.jma : s.agency === 'us' ? 'USGS' : s.agency
-  const method = s.source === 'jma' ? jmaMethodText(w, s.method) : s.method
-  const tags = [method, s.source === 'emsc' ? w.viaEmsc : '', s.extra.preferred === true ? w.preferred : ''].filter(Boolean).join('・')
-  const extra = extraText(w, s.extra)
-  return (
-    <div className="flex min-w-0 gap-2 rounded-md border border-border bg-[#141a21] p-2">
-      {s.planes ? <Beachball plane={s.planes[0]} size={48} /> : <div className="h-12 w-12 shrink-0 rounded-full border border-dashed border-border" />}
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex flex-wrap items-baseline gap-x-2"><b className="text-white">{agency}</b><span className="text-secondary">{tags}</span></div>
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <b className="text-[15px] text-white">Mw {s.mw?.toFixed(1) ?? '—'}</b>
-          {s.planes && <span className="text-white">{faultText(w, s.planes[0])}</span>}
-          {s.depthKm != null && <span className="text-secondary">{w.depth} {r0(s.depthKm)} km</span>}
-        </div>
-        {s.planes && <div className="text-secondary">{w.planes} {planeText(s.planes[0])}・{planeText(s.planes[1])}</div>}
-        <div className="text-secondary">{s.publishedAt ? `${timeMin(s.publishedAt)} ${w.published}` : w.noPublished}</div>
-        {extra && <div className="text-secondary">{extra}</div>}
-        {older.length > 0 && (
-          <button type="button" className="self-start text-left text-secondary hover:text-white" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen(!open) }}>
-            {w.older(older.length)} <DisclosureCaret open={open} />
-          </button>
-        )}
-        {open && older.map(o => (
-          <div key={o.publishedAt ?? o.key} className="text-secondary">
-            {timeMin(o.publishedAt)} {w.published}・Mw {o.mw?.toFixed(1) ?? '—'}{o.planes ? `・${planeText(o.planes[0])}` : ''}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/** 解に添えられた細かい値（DC 成分・モーメント・V.R.・観測点数など）。名前の分からない欄はそのまま出す */
-function extraText(w: AnalysisWords, extra: Record<string, number | boolean>): string {
-  const name: Record<string, string> = {
-    percentDoubleCouple: w.extra.dc, doubleCouple: w.extra.dc, percentClvd: w.extra.clvd, percentIso: w.extra.iso,
-    scalarMoment: 'Mo', varianceReduction: w.extra.vr, stationCount: w.extra.stations,
-  }
-  return Object.entries(extra).flatMap(([k, v]) => {
-    if (typeof v === 'boolean') return []
-    const nm = name[k] ?? k
-    if (k === 'scalarMoment') {
-      const [m, e] = v.toExponential(2).split('e+')
-      return [`${nm} ${m}×10${[...(e ?? '')].map(ch => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(ch)]).join('')} N·m`]
-    }
-    if (k.startsWith('percent') || k === 'doubleCouple' || k === 'varianceReduction') return [`${nm} ${r0(v <= 1 ? v * 100 : v)}%`]
-    return [`${nm} ${v}`]
-  }).join('・')
-}
 
 function PagerBar({ label, e, fmt }: { label: string; e: PagerEstimate; fmt: (n: number) => string }) {
   const w = useMessages().quake.analysis
@@ -220,12 +159,12 @@ function MmiBadge({ v }: { v: number }) {
   return <span className="inline-flex items-center rounded px-1.5 font-bold text-black" style={{ backgroundColor: mmiColor(v) }}>MMI {MMI_ROMAN[mmiIndex(v)]} ({v.toFixed(1)})</span>
 }
 
-function Section({ title, at, older, children }: { title: string; at: string; older: number; children: ReactNode }) {
+function Section({ title, tip, at, older, children }: { title: string; tip: { text: string; src: string } | null; at: string; older: number; children: ReactNode }) {
   const w = useMessages().quake.analysis
   return (
     <section className="flex min-w-0 flex-col gap-1.5 rounded-md border border-border bg-[#141a21] p-2">
       <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-        <h5 className="m-0 font-semibold text-white">{title}</h5>
+        <h5 className="m-0 font-semibold text-white">{tip ? <Term label={title} tip={tip} /> : title}</h5>
         <span className="text-secondary">{timeMin(at)} {w.published}{older > 0 ? `・${w.older(older)}` : ''}</span>
       </div>
       {children}
@@ -242,13 +181,13 @@ function UsgsProducts({ a }: { a: QuakeAnalysis }) {
   return (
     <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(22rem, 100%), 1fr))' }}>
       {p && (
-        <Section title={w.pager} at={p.publishedAt} older={u.pager.length - 1}>
+        <Section title={w.pager} tip={w.tips.pager} at={p.publishedAt} older={u.pager.length - 1}>
           {p.fatality ? <PagerBar label={w.deaths} e={p.fatality} fmt={c.deaths} /> : pending(p.content)}
           {p.economic && <PagerBar label={w.economic} e={p.economic} fmt={c.usdMillions} />}
         </Section>
       )}
       {s && (
-        <Section title={w.shakemap} at={s.publishedAt} older={u.shakemap.length - 1}>
+        <Section title={w.shakemap} tip={w.tips.shakemap} at={s.publishedAt} older={u.shakemap.length - 1}>
           <div className="flex flex-wrap items-center gap-2">
             {s.maxMmi != null && <><span className="text-secondary">{w.max}</span><MmiBadge v={s.maxMmi} /></>}
             <span className="text-[#cfd6dd]">
@@ -258,7 +197,7 @@ function UsgsProducts({ a }: { a: QuakeAnalysis }) {
         </Section>
       )}
       {f && (
-        <Section title={w.finiteFault} at={f.publishedAt} older={u.finiteFault.length - 1}>
+        <Section title={w.finiteFault} tip={w.tips.ffm} at={f.publishedAt} older={u.finiteFault.length - 1}>
           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[#cfd6dd]">
             {([
               ['Mw', f.mw != null ? f.mw.toFixed(1) : null],
@@ -273,7 +212,7 @@ function UsgsProducts({ a }: { a: QuakeAnalysis }) {
         </Section>
       )}
       {g && (
-        <Section title={w.groundFailure} at={g.publishedAt} older={u.groundFailure.length - 1}>
+        <Section title={w.groundFailure} tip={null} at={g.publishedAt} older={u.groundFailure.length - 1}>
           <div className="flex flex-wrap gap-2">
             {([[w.landslide, g.landslideAlert, g.landslidePopulation], [w.liquefaction, g.liquefactionAlert, g.liquefactionPopulation]] as const).map(([name, al, pop]) => (
               <span key={name} className="inline-flex items-center gap-1.5">
@@ -286,7 +225,7 @@ function UsgsProducts({ a }: { a: QuakeAnalysis }) {
         </Section>
       )}
       {d && (
-        <Section title={w.dyfi} at={d.publishedAt} older={u.dyfi.length - 1}>
+        <Section title={w.dyfi} tip={null} at={d.publishedAt} older={u.dyfi.length - 1}>
           <div className="flex flex-wrap items-center gap-2">
             {d.responses != null && <span className="text-[#cfd6dd]">{w.reports(c.num(d.responses))}</span>}
             {d.maxMmi != null && <><span className="text-secondary">{w.max}</span><MmiBadge v={d.maxMmi} /></>}
@@ -297,9 +236,12 @@ function UsgsProducts({ a }: { a: QuakeAnalysis }) {
   )
 }
 
-function EventLine({ source, state }: { source: AnalysisSource; state: SourceState }) {
+/**
+ * 取得元の状態の行。`withEvent` が偽なら状態と時点だけ（機関ごとのタブは、結べた地震を震源の欄に別に出すので重ねない）
+ */
+function EventLine({ source, state, withEvent }: { source: AnalysisSource; state: SourceState; withEvent: boolean }) {
   const w = useMessages().quake.analysis
-  const e = state.event
+  const e = withEvent ? state.event : null
   const hint = state.status === 'error' ? `${timeMin(state.errorAt)} ${state.error ?? ''}` : state.missingAt ? timeMin(state.missingAt) : state.checkedAt ? timeMin(state.checkedAt) : undefined
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5" title={hint}>
@@ -327,15 +269,6 @@ function Segment({ on, onClick, children, small = false }: { on: boolean; onClic
   )
 }
 
-function SolutionGrid({ groups }: { groups: ReturnType<typeof groupSolutionVersions> }) {
-  const w = useMessages().quake.analysis
-  if (groups.length === 0) return <div className="text-secondary">{w.noSolutions}</div>
-  return (
-    <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(17rem, 100%), 1fr))' }}>
-      {groups.map(g => <SolutionCard key={g.latest.key} s={g.latest} older={g.older} />)}
-    </div>
-  )
-}
 
 /** 解析の窓。画面の中央に出し、Esc・窓の外・［閉じる］で閉じる（作りは `SeismoWaveDetail` に揃える） */
 export function QuakeAnalysisDialog({ title, analysis: a, onClose }: { title: string; analysis: QuakeAnalysis; onClose: () => void }) {
@@ -453,18 +386,24 @@ export function QuakeAnalysisDialog({ title, analysis: a, onClose }: { title: st
         </div>
         {groupBy === 'agency' ? (
           <>
-            <EventLine source={agencyTab} state={a.sources[agencyTab]} />
+            <EventLine source={agencyTab} state={a.sources[agencyTab]} withEvent={false} />
             {agencyTab === 'usgs' && mergedLine}
-            <SolutionGrid groups={groupSolutionVersions(a.solutions.filter(x => x.source === agencyTab))} />
-            {agencyTab === 'usgs' && hasUsgs && <UsgsProducts a={a} />}
+            <AgencyPanel a={a} source={agencyTab}>
+              {agencyTab === 'usgs' && hasUsgs && (
+                <>
+                  <h3 className="m-0 flex items-baseline gap-2 text-xs font-semibold text-white">{w.impact}<span className="font-normal text-secondary">{w.usgsEstimate}</span></h3>
+                  <UsgsProducts a={a} />
+                </>
+              )}
+            </AgencyPanel>
           </>
         ) : (
           <>
-            {kindTab === 'mech' && <SolutionGrid groups={groups} />}
+            {kindTab === 'mech' && <MechTable a={a} solutions={a.solutions} withSource />}
             {kindTab === 'usgs' && hasUsgs && <UsgsProducts a={a} />}
             {kindTab === 'src' && (
               <div className="flex flex-col gap-1">
-                {ANALYSIS_SOURCES.map(s => <EventLine key={s} source={s} state={a.sources[s]} />)}
+                {ANALYSIS_SOURCES.map(s => <EventLine key={s} source={s} state={a.sources[s]} withEvent />)}
                 {mergedLine}
               </div>
             )}

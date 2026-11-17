@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { computePlacement, tipMaxWidth, type TipPlacement } from './tipPlacement'
 
 /**
@@ -34,7 +34,11 @@ function anchorRectFor(label: HTMLElement): DOMRect {
 
 interface Props {
   label: string
-  description: string
+  /**
+   * 吹き出しの中身。文のほか、図を添えた中身（解析の窓の断層の型の小図など）も渡せる。
+   * 文でない中身は描くたびに別の値になるので、開いている間の測り直しは文のときだけ中身の変化で行う
+   */
+  description: ReactNode
   /**
    * ラベルの字の色と大きさ（既定は設定の行の `text-white text-sm`）。点線の下線・押せる形はそのまま。
    * 設定の行でない所（地震カードの報の一覧の行など）で、周りの字に合わせるときに渡す。
@@ -96,7 +100,9 @@ export function DescriptionTip({ label, description, labelClassName = 'text-whit
     const viewport = currentViewport()
     const maxWidth = tipMaxWidth(viewport.width, rootFontPx())
     setPlacement(computePlacement(anchorRectFor(anchor), tip.offsetHeight, maxWidth, viewport))
-  }, [open, description])
+    // 図を添えた中身（文でない ReactNode）は描くたびに別の値になり、依存に入れると測るたびに描き直して止まらない。
+    // そのため文でない中身は、開いている間に変わっても測り直さない（開いたまま中身が変わる場面は、巻く・外を押すで閉じるので起きにくい）
+  }, [open, typeof description === 'string' ? description : null])
 
   // fixed 配置はスクロールに追従しないため、動いたら閉じる（追従させると基準の行が
   // 画面外へ出た後も吹き出しだけが残る）。capture で拾うのは、スクロールするのが

@@ -16,10 +16,18 @@ vi.unmock('./relayAnalysis')
 
 import {
   analysisAsOf, analysisCheckedAt, analysisIsEmpty, analysisUrl, faultTypeOf, fetchQuakeAnalysis, groupSolutionVersions,
-  latestVersion, parseQuakeAnalysis, representativeSolution,
+  latestVersion, mirroredSource, parseQuakeAnalysis, representativeGroup, representativeSolution,
 } from './relayAnalysis'
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
+
+/** 中継の前の版の答え（主軸・テンソル・参考・選ぶ印・見直しの段階・深さの決め方の欄が無い）を、今の見本から作る */
+function legacyAnswer(): unknown {
+  const a = clone(noto) as unknown as { solutions: Record<string, unknown>[]; sources: Record<string, { event: Record<string, unknown> | null }> }
+  for (const s of a.solutions) for (const k of ['axes', 'tensor', 'reference', 'preferred', 'evaluationMode']) delete s[k]
+  for (const src of Object.values(a.sources)) if (src.event) for (const k of ['depthType', 'evaluationMode', 'evaluationStatus']) delete src.event[k]
+  return a
+}
 
 describe('parseQuakeAnalysis', () => {
   it('能登の答えを読める（解 15 件・USGS の製品 5 種）', () => {
@@ -60,6 +68,49 @@ describe('parseQuakeAnalysis', () => {
     expect(a.usgs.pager).toHaveLength(11)
   })
 
+  it('主軸・テンソル・参考の印を読む。欄の無い前の版の答えは null と「参考でない」', () => {
+    const withNew = clone(noto) as unknown as { solutions: Record<string, unknown>[] }
+    withNew.solutions[0] = {
+      ...withNew.solutions[0],
+      axes: { p: { azimuth: 286, plunge: 42 }, t: { azimuth: 47, plunge: 30 }, n: { azimuth: 160, plunge: 33 } },
+      tensor: { exponent: 17, mo: 1.2, mrr: -0.26, mtt: 0.51, mff: -0.25, mrt: -0.02, mrf: -1.05, mtf: -0.52, nonDcRatio: -0.24 },
+      reference: false,
+    }
+    withNew.solutions[1] = { ...withNew.solutions[1], planes: null, reference: true }
+    const a = parseQuakeAnalysis(withNew)
+    expect(a.solutions[0].axes?.p).toEqual({ azimuth: 286, plunge: 42 })
+    expect(a.solutions[0].tensor).toMatchObject({ exponent: 17, nonDcRatio: -0.24 })
+    expect(a.solutions[1]).toMatchObject({ planes: null, reference: true })
+    // [対照] 欄が無い答え（中継の前の版）
+    const old = parseQuakeAnalysis(legacyAnswer())
+    expect(old.solutions[0]).toMatchObject({ axes: null, tensor: null, reference: false })
+    // [安全弁] 3 本そろわない主軸・成分の欠けたテンソルは null（誤った向きを描かない）
+    withNew.solutions[0] = { ...withNew.solutions[0], axes: { p: { azimuth: 1, plunge: 2 } }, tensor: { exponent: 17, mo: 1 } }
+    expect(parseQuakeAnalysis(withNew).solutions[0]).toMatchObject({ axes: null, tensor: null })
+  })
+
+  it('[正] 取得元が選ぶ解の印・見直しの段階と、震源の深さの決め方を読む', () => {
+    const withNew = clone(noto) as unknown as { solutions: Record<string, unknown>[]; sources: Record<string, { event: Record<string, unknown> | null }> }
+    withNew.solutions[0] = { ...withNew.solutions[0], preferred: true, evaluationMode: 'manual' }
+    withNew.sources.usgs.event = { ...withNew.sources.usgs.event!, depthType: 'operator assigned', evaluationMode: null, evaluationStatus: null }
+    const a = parseQuakeAnalysis(withNew)
+    expect(a.solutions[0]).toMatchObject({ preferred: true, evaluationMode: 'manual' })
+    expect(a.sources.usgs.event).toMatchObject({ depthType: 'operator assigned', evaluationMode: null, evaluationStatus: null })
+  })
+
+  it('[安全弁] 中継の前の版が extra.preferred（1）で送る EMSC の推す印も、欄へ移して extra から外す', () => {
+    const legacy = legacyAnswer() as { solutions: Record<string, unknown>[] }
+    const i = legacy.solutions.findIndex(s => s.source === 'emsc')
+    legacy.solutions[i] = { ...legacy.solutions[i], extra: { percentDoubleCouple: 79, preferred: 1 } }
+    const s = parseQuakeAnalysis(legacy).solutions[i]
+    expect(s.preferred).toBe(true)
+    expect(s.extra).toEqual({ percentDoubleCouple: 79 })
+    // [対照] 印の無い解は選ばれていない。欄が無い地震は深さの決め方が null
+    const plain = parseQuakeAnalysis(legacyAnswer())
+    expect(plain.solutions.filter(x => x.source === 'usgs').every(x => !x.preferred && x.evaluationMode === null)).toBe(true)
+    expect(plain.sources.usgs.event).toMatchObject({ depthType: null })
+  })
+
   it('知らない欄は無視し、知らない状態は確認中として読む', () => {
     const odd = clone(sanriku) as unknown as { future: number; sources: { usgs: { status: string } } }
     odd.future = 1
@@ -86,6 +137,58 @@ describe('並べる・絞る', () => {
     const noJma = { ...a, solutions: a.solutions.filter(s => s.source !== 'jma') }
     expect(representativeSolution(noJma)?.source).toBe('usgs')
     expect(representativeSolution(parseQuakeAnalysis(sanriku))).toBeNull()
+  })
+
+  it('機関の中の代表は、取得元が選んだ解 → 節面のある解 → 先頭', () => {
+    const groups = groupSolutionVersions(a.solutions.filter(s => s.source === 'emsc'))
+    const chosen = groups.find(g => g.latest.preferred)
+    expect(chosen).toBeDefined()
+    expect(representativeGroup(groups)).toBe(chosen)
+    // [対照] 選ぶ印が無ければ、節面のある最初の組
+    const unmarked = groups.map(g => ({ ...g, latest: { ...g.latest, preferred: false } }))
+    expect(representativeGroup(unmarked)).toBe(unmarked.find(g => g.latest.planes !== null))
+    // [安全弁] 節面がどれにも無くても先頭を返し、空なら null
+    const bare = unmarked.map(g => ({ ...g, latest: { ...g.latest, planes: null } }))
+    expect(representativeGroup(bare)).toBe(bare[0])
+    expect(representativeGroup([])).toBeNull()
+  })
+
+  it('EMSC の NEIC・GFZ は、USGS・GEOFON に丸めて同じ値の解があるときだけ同じ解とする', () => {
+    const neic = a.solutions.find(s => s.source === 'emsc' && s.agency === 'NEIC')!
+    const gfz = a.solutions.find(s => s.source === 'emsc' && s.agency === 'GFZ')!
+    // [正] NEIC はすべり角 102.5° を 102° に丸めた USGS の解、GFZ は GEOFON の 2 版目（Mw 7.47 → 7.5）
+    expect(mirroredSource(neic, a.solutions)).toBe('usgs')
+    expect(mirroredSource(gfz, a.solutions)).toBe('geofon')
+    // [対照] 相手の解が無い、または 1° を越えて違うなら言わない
+    expect(mirroredSource(neic, a.solutions.filter(s => s.source !== 'usgs'))).toBeNull()
+    const shifted = { ...gfz, planes: [{ ...gfz.planes![0], strike: gfz.planes![0].strike + 2 }, gfz.planes![1]] as typeof gfz.planes }
+    expect(mirroredSource(shifted, a.solutions)).toBeNull()
+    expect(mirroredSource({ ...neic, mw: 7.6 }, a.solutions)).toBeNull()
+    // [安全弁] 他の機関・EMSC でない解・節面の無い解は言わない
+    expect(mirroredSource(a.solutions.find(s => s.source === 'emsc' && s.agency === 'CPPT')!, a.solutions)).toBeNull()
+    expect(mirroredSource(a.solutions.find(s => s.source === 'usgs')!, a.solutions)).toBeNull()
+    expect(mirroredSource({ ...neic, planes: null }, a.solutions)).toBeNull()
+  })
+
+  it('同じ解とみなす幅の境目: 角は 1° まで、Mw は 0.05 まで。走向・すべり角は 360° で巻く。節面の順は問わない', () => {
+    const neic = a.solutions.find(s => s.source === 'emsc' && s.agency === 'NEIC')!
+    const p = (strike: number, dip: number, rake: number) => ({ strike, dip, rake })
+    const usgs = (planes: [ReturnType<typeof p>, ReturnType<typeof p>], mw = 7.5) => ({ ...neic, source: 'usgs' as const, agency: 'us', mw, planes })
+    const base: [ReturnType<typeof p>, ReturnType<typeof p>] = [p(100, 40, 90), p(280, 50, 90)]
+    const emsc = (planes: [ReturnType<typeof p>, ReturnType<typeof p>], mw = 7.5) => ({ ...neic, mw, planes })
+    const hit = (e: ReturnType<typeof emsc>, o: ReturnType<typeof usgs>) => mirroredSource(e, [o])
+    // [正] ちょうど 1°・ちょうど 0.05 は同じ
+    expect(hit(emsc([p(101, 41, 91), p(279, 49, 89)]), usgs(base))).toBe('usgs')
+    expect(hit(emsc(base, 7.55), usgs(base))).toBe('usgs')
+    // [対照] 1° を少しでも越える（走向・傾斜・すべり角のどれでも）、Mw が 0.06 違うなら別の解
+    expect(hit(emsc([p(101.01, 40, 90), base[1]]), usgs(base))).toBeNull()
+    expect(hit(emsc([p(100, 42, 90), base[1]]), usgs(base))).toBeNull()
+    expect(hit(emsc([base[0], p(280, 50, 91.5)]), usgs(base))).toBeNull()
+    expect(hit(emsc(base, 7.56), usgs(base))).toBeNull()
+    // [安全弁] 359.5° と 0.4°、すべり角 179.6° と −179.6° は 1° 以内として巻く。節面の順が逆でも同じ
+    const wrapped: [ReturnType<typeof p>, ReturnType<typeof p>] = [p(359.5, 40, 179.6), p(90, 80, 10)]
+    expect(hit(emsc([p(0.4, 40, -179.6), p(90, 80, 10)]), usgs(wrapped))).toBe('usgs')
+    expect(hit(emsc([base[1], base[0]]), usgs(base))).toBe('usgs')
   })
 
   it('すべり角で断層の型を分ける（境目 ±45°・±135° を含む）', () => {
