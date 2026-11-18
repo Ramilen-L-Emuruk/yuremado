@@ -1,6 +1,25 @@
 {
   "versions": [
     {
+      "version": "7.0.1",
+      "date": "2026-11-18",
+      "added": [],
+      "fixed": [
+        {
+          "text": "解析の窓の 3D 表示で、断層面が箱の上面の真ん中ではなく立体の中心を通るように修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed the 3D view in the analysis window so the fault plane passes through the center of the block rather than the center of its top face",
+            "zh-Hans": "修正分析窗口的 3D 显示，使断层面穿过块体中心而非顶面中央",
+            "zh-Hant": "修正分析視窗的 3D 顯示，使斷層面穿過塊體中心而非頂面中央",
+            "ko": "해석 창의 3D 표시에서 단층면이 윗면 가운데가 아닌 입체의 중심을 지나도록 수정",
+            "pt-BR": "Corrigida a visualização 3D da janela de análise para que o plano de falha passe pelo centro do bloco, e não pelo centro da face superior",
+            "es": "Se corrigió la vista 3D de la ventana de análisis para que el plano de falla pase por el centro del bloque y no por el centro de la cara superior"
+          }
+        }
+      ]
+    },
+    {
       "version": "7.0.0",
       "date": "2026-11-18",
       "added": [
