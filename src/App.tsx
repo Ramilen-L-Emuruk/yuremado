@@ -3523,7 +3523,7 @@ export function App() {
                 下限を子の下限の合計に合わせ続けなければならず、子が空でも高さを取る。
                 下限は各コンポーネントが自分の外枠に値で書く（`min-height` を書かない子は中身の高さで
                 止まって縮まず、`min-h-0` の子は見出しまで潰れる）。 */}
-            <div className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
+            <div data-tip-bounds className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
               {actionChecklist.state && !checklistOverlay && (
                 <ActionChecklist
                   reason={actionChecklist.state.reason}

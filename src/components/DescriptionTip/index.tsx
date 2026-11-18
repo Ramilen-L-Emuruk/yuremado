@@ -17,6 +17,20 @@ function currentViewport() {
 }
 
 /**
+ * 吹き出しを収める範囲。既定は画面全体。
+ *
+ * 地図の上に乗る凡例などは、`data-tip-bounds` を持つ枠（地図の領域）の中に居る。地図の領域は
+ * 重なりの文脈を作るので、そこから出た吹き出しは隣のパネルの下に隠れる（凡例の「MMI」の吹き出しで、
+ * 右が約 20px 隠れた）。そうした基準は、その枠の右端・下端までに収める。
+ */
+function boundsFor(anchor: HTMLElement) {
+  const box = anchor.closest<HTMLElement>('[data-tip-bounds]')
+  if (!box) return currentViewport()
+  const r = box.getBoundingClientRect()
+  return { width: Math.min(window.innerWidth, r.right), height: Math.min(window.innerHeight, r.bottom) }
+}
+
+/**
  * 吹き出しを出す基準の矩形。ラベルではなく**行全体**を基準にする。
  *
  * パネルが狭いとき（sideNarrow）、行は「ラベル上・コントロール下」の 2 段に折り返す。
@@ -63,7 +77,7 @@ export function DescriptionTip({ label, description, labelClassName = 'text-whit
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [pinned, setPinned] = useState(false)
-  const [placement, setPlacement] = useState<TipPlacement | null>(null)
+  const [placement, setPlacement] = useState<(TipPlacement & { maxWidth: number }) | null>(null)
   const anchorRef = useRef<HTMLButtonElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const tipId = useId()
@@ -97,9 +111,9 @@ export function DescriptionTip({ label, description, labelClassName = 'text-whit
     const anchor = anchorRef.current
     const tip = tipRef.current
     if (!anchor || !tip) return
-    const viewport = currentViewport()
+    const viewport = boundsFor(anchor)
     const maxWidth = tipMaxWidth(viewport.width, rootFontPx())
-    setPlacement(computePlacement(anchorRectFor(anchor), tip.offsetHeight, maxWidth, viewport))
+    setPlacement({ ...computePlacement(anchorRectFor(anchor), tip.offsetHeight, maxWidth, viewport), maxWidth })
     // 図を添えた中身（文でない ReactNode）は描くたびに別の値になり、依存に入れると測るたびに描き直して止まらない。
     // そのため文でない中身は、開いている間に変わっても測り直さない（開いたまま中身が変わる場面は、巻く・外を押すで閉じるので起きにくい）
   }, [open, typeof description === 'string' ? description : null])
@@ -161,7 +175,8 @@ export function DescriptionTip({ label, description, labelClassName = 'text-whit
           style={{
             left: placement?.left ?? 0,
             top: placement?.top ?? 0,
-            maxWidth: tipMaxWidth(window.innerWidth, rootFontPx()),
+            // 収める範囲が画面より狭いとき（地図の領域の凡例）は、位置を決めたときの幅と同じ幅で折り返す
+            maxWidth: placement?.maxWidth ?? tipMaxWidth(window.innerWidth, rootFontPx()),
             // 位置が決まるまでは見せない。display:none にすると高さが測れなくなる。
             visibility: placement ? 'visible' : 'hidden',
           }}
