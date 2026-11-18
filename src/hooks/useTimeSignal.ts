@@ -17,8 +17,10 @@ import { serverNow } from '../utils/clock'
 import { getAudioContext, isAlertSpeechPending, scheduleTimeSignalSound, type TimeSignalSoundHandle } from '../utils/alertSound'
 import {
   isSpeaking, measureSystemSpeechSec, prewarmVoicevox, routesToSystemVoice, speakWithVoicevoxUncounted,
-  type ChunkScheduledListener, type PrewarmedSpeech,
+  type ChunkScheduledListener, type PrewarmedSpeech, type SpeechUtterance,
 } from '../utils/voicevox'
+import type { Locale } from '../i18n/messages'
+import { jaSpeech, speechWordsFor } from '../i18n/speechWords'
 import { isSystemSpeechSupported } from '../utils/systemSpeech'
 import { hasPendingSpeech } from '../utils/pendingSpeech'
 import { nextSpeechId, recordReplayEvent, truncateReplayText } from '../utils/replayEventLog'
@@ -149,12 +151,25 @@ function audioTimeFor(ctx: AudioContext, atMs: number): number {
   return ctx.currentTime + (atMs - now) / 1000
 }
 
-function settingsKey(s: TimeSignalSettings, voicevoxUrl: string): string {
+/** 支度の鍵。読み上げの言語も入れる（言語が変わったら文も声も変わるので、支度をやり直す） */
+function settingsKey(s: TimeSignalSettings, voicevoxUrl: string, locale: Locale): string {
   return JSON.stringify([
     s.timeSignalIntervalMin, s.timeSignalQuietEnabled, s.timeSignalQuietStartMin, s.timeSignalQuietEndMin,
     s.timeSignalSound, s.timeSignalOrder, s.timeSignalPhrase, s.timeSignalClock, s.timeSignalWhileSpeaking,
-    s.timeSignalVolume, s.timeSignalSpeakerId, s.soundVolume, s.ttsEnabled, s.ttsVoice, s.voicevoxSpeakerId, voicevoxUrl,
+    s.timeSignalVolume, s.timeSignalSpeakerId, s.soundVolume, s.ttsEnabled, s.ttsVoice, s.voicevoxSpeakerId, voicevoxUrl, locale,
   ])
+}
+
+/**
+ * 時報の文を、読み上げの言語の語表で組む（設定の窓の選択肢も同じ語表で組む）。語表が無い言語（登録の前）は日本語で組む。
+ * 文と一緒に、組んだ語表の言語を返す（声はこの言語で選ぶ）
+ */
+export function timeSignalUtterance(
+  atMs: number, clock: TimeSignalSettings['timeSignalClock'], phrase: TimeSignalSettings['timeSignalPhrase'], locale: Locale,
+): { text: string; locale: Locale } {
+  const words = speechWordsFor(locale)
+  const used: Locale = words ? locale : 'ja'
+  return { text: timeSignalSpeechText(atMs, clock, phrase, (words ?? jaSpeech).timeSignal.say), locale: used }
 }
 
 const fmt = (ms: number) => new Date(ms).toLocaleTimeString()
@@ -173,10 +188,12 @@ function cancelPlan(plan: Plan, reason: string | null): void {
  *
  * @param voicevoxUrl 読み上げの接続先。入力が落ち着くのを待った値を渡す（`App.tsx` の `debouncedVoicevoxUrl`。
  *   打っている途中の URL へ先行合成を投げないため）
+ * @param speechLocale 読み上げの言語（`utils/speechLocale.ts`）。文はこの言語の語表で組み、日本語以外は端末の声で読む
+ *   （VOICEVOX は日本語だけ）。変わったら次の確認で支度をやり直す
  */
-export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string): void {
-  const latest = useRef({ settings, voicevoxUrl })
-  latest.current = { settings, voicevoxUrl }
+export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string, speechLocale: Locale): void {
+  const latest = useRef({ settings, voicevoxUrl, locale: speechLocale })
+  latest.current = { settings, voicevoxUrl, locale: speechLocale }
 
   useEffect(() => {
     if (!settings.timeSignalEnabled) return
@@ -195,17 +212,23 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
     const warnPrewarm = createLogThrottle(WARN_INTERVAL_MS)
 
     const prepare = (at: number): void => {
-      const { settings: s, voicevoxUrl: url } = latest.current
+      const { settings: s, voicevoxUrl: url, locale } = latest.current
       doneAt = at
       if (s.timeSignalQuietEnabled && isInQuietHours(at, s.timeSignalQuietStartMin, s.timeSignalQuietEndMin)) {
         log.debug(`[timeSignal] ${fmt(at)} は鳴らさない時間帯のため飛ばす`)
         return
       }
-      // 端末の声で読むか（声が「システムの読み上げ」・VOICEVOX の接続先が正しくない・繋がらなかった直後）。読み上げの入口が同じ判定で声を選ぶ
-      const systemVoice = routesToSystemVoice(url)
+      // 読む文と、組んだ語表の言語（語表がまだ無ければ日本語）
+      const utterance = timeSignalUtterance(at, s.timeSignalClock, s.timeSignalPhrase, locale)
+      const text = utterance.text
+      // 読み上げの入口へ渡す形（日本語は素の文字列。→ `voicevox.ts` の `SpeechUtterance`）
+      const speech: SpeechUtterance = utterance.locale === 'ja' ? text : utterance
+      // 端末の声で読むか（日本語以外・声が「システムの読み上げ」・VOICEVOX の接続先が正しくない・繋がらなかった直後）。
+      // 読み上げの入口が同じ判定で声を選ぶ（日本語以外は VOICEVOX を使わない）
+      const systemVoice = utterance.locale !== 'ja' || routesToSystemVoice(url)
       const wantSpeech = s.ttsEnabled && (!systemVoice || isSystemSpeechSupported())
       if (s.timeSignalSound === 'none' && !wantSpeech) {
-        const key = settingsKey(s, url)
+        const key = settingsKey(s, url, locale)
         if (silentConfigWarnedKey !== key) {
           silentConfigWarnedKey = key
           log.warn('[timeSignal] 音を「鳴らさない」にしていて、読み上げも使えない（読み上げが切か、端末の声が使えない）ため、時報は何も鳴らない')
@@ -235,11 +258,10 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
         log.debug(`[timeSignal] ${fmt(at)} を飛ばす（音を予約できなかった）`)
         return
       }
-      const text = timeSignalSpeechText(at, s.timeSignalClock, s.timeSignalPhrase)
       const speakerId = s.timeSignalSpeakerId ?? s.voicevoxSpeakerId
       const volume = s.timeSignalVolume ?? s.soundVolume
       const skipWhenBusy = s.timeSignalWhileSpeaking === 'skip'
-      const p: Plan = { at, key: settingsKey(s, url), mark, sound, prewarm: null, timers: [], cancelled: false, resyncs: 0 }
+      const p: Plan = { at, key: settingsKey(s, url, locale), mark, sound, prewarm: null, timers: [], cancelled: false, resyncs: 0 }
       plan = p
       log.debug(`[timeSignal] ${fmt(at)} の支度をした（音=${s.timeSignalSound} 順番=${s.timeSignalOrder} 声=${wantSpeech ? text : 'なし'}）`)
 
@@ -270,7 +292,7 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
           }
           if (yieldIfBusy('声')) return
           const rec = recordTimeSignalSpeech(text)
-          void speakWithVoicevoxUncounted(url, text, speakerId, volume, undefined, p.prewarm, rec.chunk).then(
+          void speakWithVoicevoxUncounted(url, speech, speakerId, volume, undefined, p.prewarm, rec.chunk).then(
             outcome => {
               rec.end(outcome.spoke)
               if (!outcome.spoke) log.debug('[timeSignal] 声が鳴らなかった（割り込まれたか、合成できなかった）')
@@ -285,7 +307,7 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
       /** 先に合成する。他の読み上げの最中・控えているときは投げない（電文の合成の前に割り込まないため） */
       const prewarm = (): PrewarmedSpeech | null => {
         if (otherSpeechBusy()) return null
-        p.prewarm = prewarmVoicevox(url, text, speakerId)
+        p.prewarm = prewarmVoicevox(url, speech, speakerId)
         return p.prewarm
       }
 
@@ -307,7 +329,7 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
             speakAt(soundFirstMs)
             return
           }
-          void measureSystemSpeechSec(text).then(sec => {
+          void measureSystemSpeechSec(speech).then(sec => {
             if (p.cancelled) return
             if (sec === null) {
               log.debug('[timeSignal] 声の長さを測れなかったので、この回は音を先に鳴らす')
@@ -363,7 +385,7 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
 
     const tick = (): void => {
       const now = serverNow()
-      const { settings: s, voicevoxUrl: url } = latest.current
+      const { settings: s, voicevoxUrl: url, locale } = latest.current
       // 前の確認から今までに、支度しないまま境を過ぎていないか（裏のタブでタイマーが間引かれた）。
       // **止まっていたかは実際の経過（performance.now）で見る。** 時計の値で見ると、リプレイの停止や較正の
       // 切り替えで時計が跳んだだけのときにも「止まっていた」と誤って警告する
@@ -387,7 +409,7 @@ export function useTimeSignal(settings: TimeSignalSettings, voicevoxUrl: string)
           // 時計が動いた（リプレイの頭出し・停止・較正のし直し）・設定が変わったら、予約を取り消す。境の前なら取り直す
           const ctx = getAudioContext()
           const drifted = ctx !== null && Math.abs(audioTimeFor(ctx, p.at) - p.mark) * 1000 > TIME_SIGNAL_RESYNC_TOLERANCE_MS
-          const changed = p.key !== settingsKey(s, url)
+          const changed = p.key !== settingsKey(s, url, locale)
           if (drifted && !changed && p.resyncs >= MAX_RESYNC_PER_SIGNAL) {
             // 揺れ続ける環境。取り直しを打ち切り、今の予約のまま鳴らす（警告は境ごとに 1 回）
             if (p.resyncs === MAX_RESYNC_PER_SIGNAL) {

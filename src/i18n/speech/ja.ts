@@ -1,10 +1,12 @@
-import type { DomesticTsunami, DomesticTsunamiCode, ForeignTsunamiCode, IntensityScale, QuakeRetractedReport, TsunamiGrade } from '../../types/earthquake'
-import type { QuakeOccurrencePart, QuakeOccurrenceTexts } from '../speechWords'
+import type { DomesticTsunami, DomesticTsunamiCode, ForeignTsunamiCode, IntensityScale, InternationalTsunamiEvaluation, QuakeRetractedReport, TsunamiGrade } from '../../types/earthquake'
+import type { InternationalTsunamiSpeechParts, QuakeOccurrencePart, QuakeOccurrenceTexts } from '../speechWords'
 import { TSUNAMI_GRADE_NAME, TSUNAMI_ALL_LIFTED_SENTENCE, fallbackEvacuationAction } from '../../utils/tsunami'
 import { ja as jaMessages } from '../messages/ja'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from '../../utils/intensity'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
 import { DOMESTIC_TSUNAMI_CODE_TEXT } from '../../utils/domesticTsunamiComment'
+import { EVALUATION_SPEECH, INTERNATIONAL_TSUNAMI_NAME } from '../../utils/internationalTsunamiSpeech'
+import { japaneseClockText, type TimeSignalClock, type TimeSignalPhrase } from '../../utils/timeSignal'
 
 /** 時刻。**分を 0 で埋めない**（「06分」を「ぜろろくふん」と桁で読むため。画面の時刻とは別） */
 const time = (hour: number, minute: number) => `${hour}時${minute}分`
@@ -59,9 +61,9 @@ export const jaSpeech = {
     /** 日付つきの時刻 */
     dayTime: (d: number, hour: number, minute: number) => `${day(d)}${time(hour, minute)}`,
     /**
-     * 取消の理由（電文の文）を別の発話で読むときの前置き。`infoName` は情報の名前。
-     * 呼び出し側（`useLiveEventHandler.ts`）は、津波の取消だけ語表の名前（`TSUNAMI_WARNINGS_ETC_NAME`）を渡し、ほかは日本語の名前を渡している。日本語以外の組はこの前置きを使わない
-     * （理由の文を読まないので手前で null が返る）が、使う形にするなら名前を語表の名前へ引き直す（長周期の段で直す）
+     * 取消の理由（電文の文）を別の発話で読むときの前置き。`infoName` は情報の名前で、呼び出し側（`useLiveEventHandler.ts`）が
+     * 組の名前（`ttsText.ts` の `INFO_NAME`・`reportNameToSay`）から引いて渡す。日本語以外の組はこの前置きを使わない
+     * （理由の文を読まないので手前で null が返る）
      */
     cancelReasonLead: (infoName: string) => `${infoName}が取り消された理由をお伝えします。`,
     /** 情報の名乗り（初報） */
@@ -84,8 +86,11 @@ export const jaSpeech = {
     retracted: '長周期地震動に関する観測情報は取り消されました。',
     /** 発生時刻（名乗りの後ろ） */
     occurredAt: (time: string) => `${time}頃発生した地震で、`,
-    /** 階級ごとの句（`names` は並べた地名） */
-    classAt: (cls: number, names: string) => `階級${cls}を${names}`,
+    /**
+     * 階級ごとの句（`names` は `quake.regionSep` で並べた地名）。`isFirst` は先頭の組か（2 組目から短く言う言語が使う。
+     * 地震情報の `quake.intensityLead` の `isMax` と同じ形）。組と組の間は `quake.intensityGroupSep(false)`、最後に `quake.observedTail` が続く
+     */
+    classAt: (cls: number, names: string, _isFirst: boolean) => `階級${cls}を${names}`,
     /** 地名つきの文 */
     regions: (regionText: string) => `長周期地震動${regionText}`,
     /** 地名を作れないときの文 */
@@ -131,14 +136,20 @@ export const jaSpeech = {
     noticeLabel: '地震・津波に関するお知らせ',
     noticeRetracted: '地震・津波に関するお知らせは取り消されました。',
     noticeLead: '地震・津波に関するお知らせ。',
-    /** 見出し文つき（見出し文は気象庁の文） */
-    noticeWithHeadline: (headline: string) => `地震・津波に関するお知らせ。${headline}。`,
+    /**
+     * 見出し文のある報。`headline` は気象庁の見出し文で、気象庁の文を読まない言語（`common.telegramTextElsewhere` が null でない）には
+     * 読み上げの関数の組が null を渡す（その言語は見出し文の代わりに在処の文を言う）
+     */
+    noticeWithHeadline: (headline: string | null) => (headline === null ? '地震・津波に関するお知らせ。' : `地震・津波に関するお知らせ。${headline}。`),
     /** 北海道・三陸沖後発地震注意情報の名前 */
     kohatsuLabel: '北海道・三陸沖後発地震注意情報',
     kohatsuRetracted: '北海道・三陸沖後発地震注意情報は取り消されました。',
-    /** 見出し文（気象庁の文）つき */
-    kohatsu: (headline: string) =>
-      `北海道・三陸沖後発地震注意情報。${headline}今後、大規模地震の発生可能性が平常時より高まっています。防災対応の確認をしてください。`,
+    /**
+     * 見出し文（気象庁の文。情報の名前を抜いて句点で終えたもの）つき。見出し文が無ければ空の文字列。気象庁の文を読まない言語には、
+     * 見出し文があるとき null が来る（その言語は見出し文の位置で在処の文を言う。空の文字列なら在処の文も言わない）
+     */
+    kohatsu: (headline: string | null) =>
+      `北海道・三陸沖後発地震注意情報。${headline ?? ''}今後、大規模地震の発生可能性が平常時より高まっています。防災対応の確認をしてください。`,
     /** 推計震度分布図（`time` は発生時刻。読めなければ null） */
     estimatedIntensity: (time: string | null, isNew: boolean) =>
       `${time ? `${time}頃発生した地震について、` : ''}気象庁の推計震度分布図${isNew ? 'を受信しました' : 'が更新されました'}。`,
@@ -502,6 +513,8 @@ export const jaSpeech = {
     warningLevelTail: 'では、津波警報に相当する津波を観測しています。',
   },
   eew: {
+    /** 情報の名前（取消の理由を別の発話で読むときの前置きに渡す） */
+    label: '緊急地震速報',
     /** 予報から警報へ切り替わった報の冒頭 */
     upgrade: '緊急地震速報に切り替わりました。',
     /** 警報の対象地方を読む文の締め（句点は文の側で足す） */
@@ -540,5 +553,58 @@ export const jaSpeech = {
     maxScale: (scale: number, orAbove: boolean) => `予想最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}。`,
     /** 予想最大長周期地震動階級（「程度以上」は気象庁の表現） */
     maxLpgmClass: (cls: number, over: boolean) => `予想最大階級${cls}${over ? '程度以上' : ''}。`,
+  },
+  kyoshin: {
+    /**
+     * 揺れ検知（2026-10-31 ユーザー選択「地名だけ・1回 (Recommended)」）。`name` は声にする区域名で、決まらない
+     * （区域の境界データを取れなかった）ときは null（地名を言わない）
+     */
+    detected: (name: string | null) => (name ? `${name}で揺れを検知。` : '揺れを検知。'),
+    /**
+     * 別の地点の揺れ検知（同日ユーザー選択「境を直してから読む (Recommended)」）。区域が決まらないときは「別の地点でも」
+     * （同日「埋める・取れない時は「別の地点でも」 (Recommended)」）
+     */
+    otherRegion: (name: string | null) => (name ? `${name}でも揺れを検知。` : '別の地点でも揺れを検知。'),
+  },
+  internationalTsunami: {
+    /** 情報の名前（名乗りは `common.issued`・`common.updated` で組む） */
+    label: INTERNATIONAL_TSUNAMI_NAME,
+    /** 通信試験の報 */
+    communicationsTest: `${INTERNATIONAL_TSUNAMI_NAME}の通信試験です。`,
+    /** 津波発生の可能性（`EVALUATION`）の言い方。キーは電文の英文の 5 種 */
+    evaluation: EVALUATION_SPEECH satisfies Record<InternationalTsunamiEvaluation, string>,
+    /**
+     * 発生時刻（日本時間の日・時・分）。日本語は 1 日も「1日」と書く（中継のプッシュ通知と同じ文。→ `utils/internationalTsunamiSpeech.ts`。
+     * 地震情報の `common.dayTime` は「ついたち」と書くので借りない）
+     */
+    when: (d: number, hour: number, minute: number) => `${d}日${hour}時${minute}分`,
+    /** 地震カードに結べなかったときの震源（電文の震央の位置） */
+    coordinate: (lat: number, lon: number) =>
+      `${lat < 0 ? '南緯' : '北緯'}${Math.abs(lat).toFixed(1)}度、${lon < 0 ? '西経' : '東経'}${Math.abs(lon).toFixed(1)}度`,
+    /**
+     * 名乗りの後ろの本文。**日本語は中継のプッシュ通知と同じ文**（`utils/internationalTsunamiSpeech.ts` の `internationalTsunamiBody`。
+     * あちらは中継へ写して使うので、このファイルから読まない）。欠けた要素は句ごと落とす
+     */
+    body: (p: InternationalTsunamiSpeechParts) => {
+      const subject = `${p.when ? `${p.when}頃、` : ''}${p.where ? `${p.where}で` : ''}発生した${p.depthKm !== null ? `深さ${p.depthKm}キロメートル、` : ''}${p.magnitude !== null ? `マグニチュード${p.magnitude}の` : ''}地震`
+      return p.evaluation !== null
+        ? `${subject}について、${p.evaluation}と発表されました。`
+        : `${subject}について、${INTERNATIONAL_TSUNAMI_NAME}が発表されました。`
+    },
+  },
+  timeSignal: {
+    /**
+     * 時報の文（2026-11-04 ユーザー選択の 4 形。既定は「15時30分です」）。`hour`・`minute` は端末の現地時刻。
+     * 正時は分を読まない。12 時間制は 0〜11 時に午前・午後を付ける（正午は「午後0時」）
+     */
+    say: (phrase: TimeSignalPhrase, hour: number, minute: number, clock: TimeSignalClock): string => {
+      const t = japaneseClockText(hour, minute, clock)
+      switch (phrase) {
+        case 'oshirase': return `${t}をお知らせします`
+        case 'desu': return `${t}です`
+        case 'narimashita': return `${t}になりました`
+        case 'bare': return t
+      }
+    },
   },
 }

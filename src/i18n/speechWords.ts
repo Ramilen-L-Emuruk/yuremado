@@ -1,5 +1,6 @@
 import type { Locale } from './messages'
 import { jaSpeech } from './speech/ja'
+import { log } from '../utils/logger'
 
 /**
  * 語表の値の型を広げる（画面の辞書の `Widen` と同じ作りで、文字列以外を返す関数も引数と戻り値の型のまま残す）。
@@ -47,32 +48,68 @@ export type QuakeOccurrencePart =
   | { kind: 'text'; text: string }
 
 /**
- * 訳し終えた区分だけを持つ語表（日本語以外。`speech/<言語>.ts`）。区分ごとに段を分けて訳している（段1 は緊急地震速報、
- * 段2 は地震情報・震度速報と共通の語、段3 は津波）。
+ * 国際津波関連情報の本文で、その報が言える要素（`internationalTsunami.body` が受け取る）。言えない要素は null。
  *
- * **全区分がそろうまで読み上げには使わない**（2026-11-17 ユーザー選択「全段そろうまで出さない」。1 つの言語の中で
- * 報ごとに日本語と訳が入れ替わらないため）。そろった言語は {@link SpeechWords} の形になり、下の `SPEECH_WORDS` へ移る。
- * それまでは読み上げの関数の組に通すテスト（`utils/ttsTextLocales.test.ts`）だけが読む。
- *
- * **ここから語表を静的に import しない。** 語表は画面の辞書（`messages/<言語>.ts`）から語を引くので、静的に読むと、言語ごとに
- * 後から読む画面の辞書（`messages.ts` の `LOADERS`）が 6 言語ぶん本体の束へ入る。移すときも言語ごとに後から読む
+ * - `when`: 発生時刻（`internationalTsunami.when` で組んだ文字列。日本時間）
+ * - `where`: 震源（地震カードに結べたときは画面の言語の震源名、結べなければ `internationalTsunami.coordinate` の文字列）
+ * - `depthKm`: 深さ（電文にあるときだけ。100 km 以深の地震だけ書かれる）
+ * - `magnitude`: 規模（小数 1 桁の文字列。小数点の言い方は言語が直す）
+ * - `evaluation`: 津波発生の可能性（`internationalTsunami.evaluation` の文）。読めない報は null（言語は「情報が発表された」で結ぶ）
  */
-export type SpeechWordsInProgress = {
-  common: SpeechWords['common']
-  eew: SpeechWords['eew']
-  quake: SpeechWords['quake']
-  tsunami: SpeechWords['tsunami']
+export type InternationalTsunamiSpeechParts = {
+  when: string | null
+  where: string | null
+  depthKm: number | null
+  magnitude: string | null
+  evaluation: string | null
 }
 
 /**
- * 語表を持つ言語。**ここに無い言語の画面では、読み上げは日本語の文で読む**（2026-11-16 ユーザー選択
- * 「日本語で読む＋設定に出す (Recommended)」。声も日本語の声）。全区分を訳し終えた言語だけをここへ足す（→ {@link SpeechWordsInProgress}）。
+ * 語表を持つ言語。日本語は起動の束に入れ、ほかの言語は画面の辞書と同じ読み込みで後から読んで登録する
+ * （→ `messages.ts` の `LOADERS`。2026-11-18 ユーザー選択「辞書と一緒に後から読む (Recommended)」）。
+ * **登録されていない言語の画面では、読み上げは日本語の文で読む**（2026-11-16 ユーザー選択「日本語で読む＋設定に出す (Recommended)」。
+ * 声も日本語の声。語表を読めなかった言語もここへ来る）。
+ *
+ * **ここから日本語以外の語表を静的に import しない。** 語表は画面の辞書（`messages/<言語>.ts`）から語を引くので、静的に読むと、
+ * 言語ごとに後から読む画面の辞書が 6 言語ぶん起動の束へ入る（`utils/ttsTextLocaleImports.test.ts` が止める）
  */
 const SPEECH_WORDS: Partial<Record<Locale, SpeechWords>> = {
   ja: jaSpeech,
 }
 
+const speechWordsListeners = new Set<() => void>()
+
 /** 画面の言語の語表。持っていなければ null（呼び出し側は日本語で読む）。 */
 export function speechWordsFor(locale: Locale): SpeechWords | null {
   return SPEECH_WORDS[locale] ?? null
+}
+
+/**
+ * 日本語以外の語表を登録する（`messages.ts` の読み込みが、画面の辞書を返す前に呼ぶ）。初めて登録したときだけ知らせる
+ * （読み上げの言語の決め直し。→ `hooks/useSpeechLocale.ts`）
+ */
+export function registerSpeechWords(locale: Exclude<Locale, 'ja'>, words: SpeechWords): void {
+  if (SPEECH_WORDS[locale] === words) return
+  SPEECH_WORDS[locale] = words
+  // 1 つの購読者が投げても、残りへは知らせる（言語の決め直しが一部だけ漏れないように）
+  for (const listener of speechWordsListeners) {
+    try {
+      listener()
+    } catch (err) {
+      log.error('[tts] 読み上げの語表の登録を知らせる途中で失敗', err)
+    }
+  }
+}
+
+/** 語表が登録されたら呼ぶ。外すための関数を返す */
+export function subscribeSpeechWords(listener: () => void): () => void {
+  speechWordsListeners.add(listener)
+  return () => { speechWordsListeners.delete(listener) }
+}
+
+export function __resetSpeechWordsForTest(): void {
+  for (const key of Object.keys(SPEECH_WORDS) as Locale[]) {
+    if (key !== 'ja') delete SPEECH_WORDS[key]
+  }
+  speechWordsListeners.clear()
 }

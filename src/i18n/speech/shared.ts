@@ -122,6 +122,35 @@ export function koreanParticle(word: string, particle: KoreanParticle): string {
   }
 }
 
+/**
+ * 全角の数字を半角へ直す（南海トラフ地震関連解説情報の号数。見出し文の「（第１号）」から全角のまま来る。2026-11-18 ユーザー選択
+ * 「この案で入れる (Recommended)」の 5 節の 7。日本語の語表は全角のまま読む）
+ */
+export function halfWidthDigits(value: string): string {
+  return value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+}
+
+/** 英語の時報の 12 時間制の時（0 時と 12 時は 12。「12:30 a.m.」「12:30 p.m.」） */
+export function twelveHour(hour: number): number {
+  return hour % 12 === 0 ? 12 : hour % 12
+}
+
+/**
+ * 時報の 12 時間制の時間帯と時（中国語・韓国語・ポルトガル語・スペイン語。2026-11-18 ユーザー選択「言語ごとの時間帯の語で言う (Recommended)」）。
+ * 0〜5 時は未明（`small`。時は 0〜5 のまま）、6〜11 時は午前（`morning`）、12 時台は正午（`noon`。時は 12）、13 時以降は午後（`afternoon`。時は 1〜11）。
+ * どの語を当てるかは言語が決める（韓国語は未明も「오전」）。
+ *
+ * `nightFrom` を渡した言語は、その時刻以降を夜（`night`。時は午後と同じく 1〜11）にする（2026-11-18 ユーザー選択「夜の語を足す (Recommended)」。
+ * 境は言語で違う: 中国語・ポルトガル語は 18 時、スペイン語は 20 時。英語・韓国語は渡さない）
+ */
+export function dayPeriodOf(hour: number, nightFrom?: number): { period: 'small' | 'morning' | 'noon' | 'afternoon' | 'night'; hour: number } {
+  if (hour < 6) return { period: 'small', hour }
+  if (hour < 12) return { period: 'morning', hour }
+  if (hour === 12) return { period: 'noon', hour: 12 }
+  if (nightFrom !== undefined && hour >= nightFrom) return { period: 'night', hour: hour - 12 }
+  return { period: 'afternoon', hour: hour - 12 }
+}
+
 /** 規模の小数点をコンマにする（ポルトガル語・スペイン語。「6.5」→「6,5」） */
 export function decimalComma(value: string): string {
   return value.replace('.', ',')

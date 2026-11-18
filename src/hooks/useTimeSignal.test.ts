@@ -57,6 +57,8 @@ vi.mock('../utils/pendingSpeech', () => ({
 
 // 対象はモックを張ったあとで読む（トップレベルで読むと、テスト本体の 1 件目に読み込みの待ちが乗らない）
 const { useTimeSignal } = await import('./useTimeSignal')
+const { registerSpeechWords, __resetSpeechWordsForTest } = await import('../i18n/speechWords')
+const { enSpeech } = await import('../i18n/speech/en')
 
 const URL = 'http://localhost:50021'
 const settings = (over: Partial<AppSettings> = {}): AppSettings => ({
@@ -93,7 +95,7 @@ const warnedWith = (s: string) => warn.mock.calls.some((c: unknown[]) => c.some(
 
 describe('useTimeSignal', () => {
   it('境の 10 秒前に音を予約し、音が鳴り終わってから「16時です」と読む', async () => {
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     expect(h.schedule).toHaveBeenCalledTimes(1)
     const [kind, mark, volume] = h.schedule.mock.calls[0]
     expect(kind).toBe('pips')
@@ -113,7 +115,7 @@ describe('useTimeSignal', () => {
 
   it('他の読み上げの最中なら、音だけ鳴らして声を省く（既定）。先の合成も投げない', async () => {
     h.busy = true
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     await advance(15_000)
     expect(h.schedule).toHaveBeenCalledTimes(1)
     expect(h.cancel).not.toHaveBeenCalled()
@@ -123,14 +125,14 @@ describe('useTimeSignal', () => {
 
   it('電文の読み上げが控えている（まだ読み始めていない）ときも声を省く', async () => {
     h.pending = true
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     await advance(15_000)
     expect(h.speak).not.toHaveBeenCalled()
   })
 
   it('空いていれば読む（対照: 控えが解けたあとは省かない）', async () => {
     h.pending = true
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     await advance(5_000)
     h.pending = false
     await advance(10_000)
@@ -139,14 +141,14 @@ describe('useTimeSignal', () => {
 
   it('「鳴らさない」を選んでいれば、他の読み上げの最中は音も取り消す', async () => {
     h.busy = true
-    renderHook(() => useTimeSignal(settings({ timeSignalWhileSpeaking: 'skip' }), URL))
+    renderHook(() => useTimeSignal(settings({ timeSignalWhileSpeaking: 'skip' }), URL, 'ja'))
     await advance(15_000)
     expect(h.cancel).toHaveBeenCalled()
     expect(h.speak).not.toHaveBeenCalled()
   })
 
   it('読み上げが先で「鳴らさない」のとき、声の時点で他の読み上げが始まっていれば音も取り消す', async () => {
-    renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', timeSignalWhileSpeaking: 'skip' }), URL))
+    renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', timeSignalWhileSpeaking: 'skip' }), URL, 'ja'))
     await advance(1_000)
     h.busy = true
     await advance(15_000)
@@ -157,18 +159,18 @@ describe('useTimeSignal', () => {
   it('鳴らさない時間帯の境は支度しない。時間帯の外の境は鳴らす', async () => {
     // 16:00 を含む時間帯
     const quiet = settings({ timeSignalQuietEnabled: true, timeSignalQuietStartMin: 15 * 60 + 30, timeSignalQuietEndMin: 16 * 60 + 5 })
-    const first = renderHook(() => useTimeSignal(quiet, URL))
+    const first = renderHook(() => useTimeSignal(quiet, URL, 'ja'))
     await advance(15_000)
     expect(h.schedule).not.toHaveBeenCalled()
     first.unmount()
     // 終わりの 16:05 は含まない（5 分ごとにして確かめる）
     vi.setSystemTime(new Date(2026, 10, 4, 16, 4, 50))
-    renderHook(() => useTimeSignal({ ...quiet, timeSignalIntervalMin: 5 }, URL))
+    renderHook(() => useTimeSignal({ ...quiet, timeSignalIntervalMin: 5 }, URL, 'ja'))
     expect(h.schedule).toHaveBeenCalledTimes(1)
   })
 
   it('支度のあとで時計が動いたら、予約を取り消して取り直す（リプレイの頭出し・較正のし直し）', async () => {
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     expect(h.schedule).toHaveBeenCalledTimes(1)
     // 時計が 3 秒進んだ（境まで 7 秒）
     h.clockJump = 3_000
@@ -180,7 +182,7 @@ describe('useTimeSignal', () => {
   })
 
   it('時計が少し揺れただけなら取り直さない', async () => {
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     h.clockJump = 100
     await advance(1_000)
     expect(h.cancel).not.toHaveBeenCalled()
@@ -188,7 +190,7 @@ describe('useTimeSignal', () => {
   })
 
   it('時計が境の向こうへ跳んだら（リプレイの停止）、予約した音を取り消し、その境は取り直さない', async () => {
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     expect(h.schedule).toHaveBeenCalledTimes(1)
     h.clockJump = 20_000
     await advance(1_000)
@@ -199,7 +201,7 @@ describe('useTimeSignal', () => {
   })
 
   it('時計の揺れが続いても、同じ境の取り直しは上限で打ち切って警告する', async () => {
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     for (let i = 0; i < 8; i++) {
       h.clockJump = i % 2 === 0 ? 400 : 0
       await advance(1_000)
@@ -215,7 +217,7 @@ describe('useTimeSignal', () => {
     let perfJump = 0
     const realPerf = performance.now.bind(performance)
     const perf = vi.spyOn(performance, 'now').mockImplementation(() => realPerf() + perfJump)
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     expect(h.schedule).not.toHaveBeenCalled()
     // 次の確認までに 3 分止まっていた（時計も実際の経過も進んだ）
     h.clockJump = 180_000
@@ -227,7 +229,7 @@ describe('useTimeSignal', () => {
 
   it('時計だけが跳んだとき（リプレイの停止・較正の切り替え）は、鳴らせなかったと警告しない', async () => {
     vi.setSystemTime(new Date(2026, 10, 4, 15, 58, 0))
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     h.clockJump = 180_000
     await advance(1_000)
     expect(warnedWith('鳴らせなかった')).toBe(false)
@@ -235,13 +237,13 @@ describe('useTimeSignal', () => {
 
   it('境の 75 秒前には支度が始まる（タブが裏に回って 1 分に 1 回しか起きなくても窓に入る）', async () => {
     vi.setSystemTime(new Date(2026, 10, 4, 15, 58, 50))
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     expect(h.schedule).toHaveBeenCalledTimes(1)
   })
 
   it('音声出力が止まっていれば飛ばし、続く間の警告は 1 回だけ', async () => {
     h.ctxState = 'suspended'
-    renderHook(() => useTimeSignal(settings({ timeSignalIntervalMin: 5 }), URL))
+    renderHook(() => useTimeSignal(settings({ timeSignalIntervalMin: 5 }), URL, 'ja'))
     await advance(5 * 60_000)
     expect(h.schedule).not.toHaveBeenCalled()
     const n = warn.mock.calls.filter((c: unknown[]) => c.some(a => typeof a === 'string' && a.includes('音声出力がまだ使えない'))).length
@@ -249,7 +251,7 @@ describe('useTimeSignal', () => {
   })
 
   it('読み上げが先なら、合成した長さから逆算してピッの前に読み終わる', async () => {
-    renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst' }), URL))
+    renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst' }), URL, 'ja'))
     // 声 1.2 秒・前置き 3 秒・間 0.3 秒 → 境の 4.5 秒前に読み始める（今から 5.5 秒後）
     await advance(5_400)
     expect(h.speak).not.toHaveBeenCalled()
@@ -260,7 +262,7 @@ describe('useTimeSignal', () => {
   describe('端末の声（システムの読み上げ）で読みが先', () => {
     it('正: 1 分前に黙って測った長さから逆算してピッの前に読み終わり、VOICEVOX へは合成を頼まない', async () => {
       h.systemVoice = true
-      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL))
+      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL, 'ja'))
       // 境まで 10 秒（1 分前はもう過ぎている）ので、すぐ測る
       await advance(10)
       expect(h.measure).toHaveBeenCalledWith('16時です')
@@ -275,7 +277,7 @@ describe('useTimeSignal', () => {
     it('対照: 測れなかった回は、音が先にする（音が鳴り終わってから読む）', async () => {
       h.systemVoice = true
       h.measureSec = null
-      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL))
+      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL, 'ja'))
       await advance(10_000 + 1_400)
       expect(h.speak).not.toHaveBeenCalled()
       await advance(200)
@@ -285,15 +287,54 @@ describe('useTimeSignal', () => {
     it('安全弁: 他の読み上げの最中なら測らない（測る発話が読み上げを待たせない）', async () => {
       h.systemVoice = true
       h.busy = true
-      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL))
+      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst', ttsVoice: 'system' }), URL, 'ja'))
       await advance(15_000)
       expect(h.measure).not.toHaveBeenCalled()
       expect(h.speak).not.toHaveBeenCalled()
     })
   })
 
+  // 時報は読み上げの言語の文で、日本語以外は端末の声で読む（2026-11-18 ユーザー選択「時刻を数字で書く (Recommended)」）
+  describe('読み上げの言語', () => {
+    afterEach(() => { __resetSpeechWordsForTest() })
+
+    it('正: 英語なら英語の文を、言語を添えて読む（先の合成へも言語を添える。日本語以外は合成の口が何もしない）', async () => {
+      registerSpeechWords('en', enSpeech)
+      renderHook(() => useTimeSignal(settings(), URL, 'en'))
+      await advance(12_000)
+      expect(h.speak).toHaveBeenCalledTimes(1)
+      expect(h.speak.mock.calls[0][1]).toEqual({ text: "It's 16:00.", locale: 'en' })
+      expect(h.prewarm.mock.calls.every(c => typeof c[0] === 'object' && c[0].locale === 'en')).toBe(true)
+    })
+
+    it('正: 英語で読みが先なら、端末の声の長さを英語の文で測る', async () => {
+      registerSpeechWords('en', enSpeech)
+      renderHook(() => useTimeSignal(settings({ timeSignalOrder: 'speechFirst' }), URL, 'en'))
+      await advance(10)
+      expect(h.measure).toHaveBeenCalledWith({ text: "It's 16:00.", locale: 'en' })
+    })
+
+    it('安全弁: 語表がまだ無い言語は、日本語の文を日本語で読む', async () => {
+      renderHook(() => useTimeSignal(settings(), URL, 'en'))
+      await advance(12_000)
+      expect(h.speak.mock.calls[0][1]).toBe('16時です')
+    })
+
+    it('対照: 言語を変えたら、支度をやり直して新しい言語で読む', async () => {
+      registerSpeechWords('en', enSpeech)
+      const { rerender } = renderHook(({ l }) => useTimeSignal(settings(), URL, l), { initialProps: { l: 'ja' as 'ja' | 'en' } })
+      expect(h.schedule).toHaveBeenCalledTimes(1)
+      rerender({ l: 'en' })
+      await advance(1_000)
+      expect(h.cancel).toHaveBeenCalledTimes(1)
+      expect(h.schedule).toHaveBeenCalledTimes(2)
+      await advance(11_000)
+      expect(h.speak.mock.calls.map(c => c[1])).toEqual([{ text: "It's 16:00.", locale: 'en' }])
+    })
+  })
+
   it('切ると、支度した予約を取り消す', async () => {
-    const { rerender } = renderHook(({ s }) => useTimeSignal(s, URL), { initialProps: { s: settings() } })
+    const { rerender } = renderHook(({ s }) => useTimeSignal(s, URL, 'ja'), { initialProps: { s: settings() } })
     expect(h.schedule).toHaveBeenCalledTimes(1)
     rerender({ s: settings({ timeSignalEnabled: false }) })
     expect(h.cancel).toHaveBeenCalledTimes(1)
@@ -304,7 +345,7 @@ describe('useTimeSignal', () => {
   it('録画ツール向けの記録に、音は鳴り始めに、声は始まりと終わりを載せる', async () => {
     const { peekReplayEvents } = await import('../utils/replayEventLog')
     const before = peekReplayEvents().events.length
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     // 予約した時点では載せない（最初のピッは境の 3 秒前 = 今から 7 秒後）
     expect(peekReplayEvents().events.length).toBe(before)
     await advance(7_100)
@@ -318,7 +359,7 @@ describe('useTimeSignal', () => {
   })
 
   it('同じ境を二度鳴らさない', async () => {
-    renderHook(() => useTimeSignal(settings(), URL))
+    renderHook(() => useTimeSignal(settings(), URL, 'ja'))
     await advance(30_000)
     expect(h.schedule).toHaveBeenCalledTimes(1)
     expect(h.speak).toHaveBeenCalledTimes(1)

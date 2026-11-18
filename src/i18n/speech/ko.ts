@@ -1,7 +1,7 @@
-import type { SpeechWordsInProgress } from '../speechWords'
+import type { SpeechWords } from '../speechWords'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
 import { ko } from '../messages/ko'
-import { firstWaveKindIn, intensityIn, koreanParticle, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn, withKoreanParticle as p } from './shared'
+import { firstWaveKindIn, halfWidthDigits, intensityIn, koreanParticle, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn, dayPeriodOf, withKoreanParticle as p } from './shared'
 
 const intensity = intensityIn(ko)
 /** 原因地震の呼び方（1 つ目の地震か、2 つ目以降の地震か） */
@@ -14,21 +14,45 @@ const UNIT: Readonly<Record<UnreceivedUnit, string>> = { '地点': '개 지점',
 const estimated = `진도 ${intensity(45)} 이상으로 추정되지만, 미수신입니다. `
 const atLeastOf = (atLeast: string) => (atLeast ? ` ${atLeast}` : '')
 
+const ELSEWHERE = '일본 기상청의 원문은 전문 로그에 있습니다.'
+const NANKAI = ko.telegramLog.controlTitle['南海トラフ地震臨時情報']
+const COMMENTARY = ko.telegramLog.controlTitle['南海トラフ地震関連解説情報']
+const COUNT = ko.telegramLog.controlTitle['地震回数に関する情報']
+const NOTICE = ko.telegramLog.controlTitle['地震・津波に関するお知らせ']
+const KOHATSU = ko.telegramLog.controlTitle['北海道・三陸沖後発地震注意情報']
+const LPGM = ko.quake.infoName.lpgm
+const INTERNATIONAL_TSUNAMI = ko.quake.infoName.internationalTsunami
+const WATCH = '향후 정보에 주의하십시오.'
+/** 情報の取消（助詞は名前の終わりで選ぶ） */
+const cancelledName = (name: string) => `${p(name, '은/는')} 취소되었습니다.`
+/** 長周期地震動階級の句（「계급 4를」。助詞は数字の読みの終わりで選ぶ） */
+const lpgmClass = (cls: number) => p(`계급 ${cls}`, '을/를')
+/** 時報の時刻（正時は分を言わない。12 時間制は「오전」「오후」） */
+// 夜の区切りは置かない（13 時以降はいつも 오후。2026-11-18 ユーザー選択「夜の語を足す (Recommended)」の範囲外）
+const PERIOD = { small: '오전', morning: '오전', noon: '낮', afternoon: '오후', night: '오후' } as const
+/** 12 時間制は時間帯の語（2026-11-18 ユーザー選択「言語ごとの時間帯の語で言う (Recommended)」。0 時台は「오전 0시」、12 時台は「낮 12시」） */
+const signalClock = (hour: number, minute: number, clock: '24h' | '12h') => {
+  const p = dayPeriodOf(hour)
+  const h = clock === '24h' ? `${hour}시` : `${PERIOD[p.period]} ${p.hour}시`
+  return minute === 0 ? h : `${h} ${minute}분`
+}
+
 /**
- * 読み上げの文の語表（韓国語。訳し終えた区分だけ → `SpeechWordsInProgress`）。
- * 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表。気象庁の多言語辞書の定型文（강한 흔들림을 주의・지진 발생・취소）と
- * 画面の辞書の訳（긴급 지진 속보・예상 최대 진도など）にそろえた。
+ * 読み上げの文の語表（韓国語）。
+ * 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表（緊急地震速報・地震情報・津波）と、2026-11-18 ユーザー選択
+ * 「この案で入れる (Recommended)」の表（長周期・特別情報・揺れ検知・国際津波関連情報。時報は同日「時刻を数字で書く (Recommended)」）。
+ * 気象庁の多言語辞書の定型文（강한 흔들림을 주의・지진 발생・취소）と画面の辞書の訳（긴급 지진 속보・예상 최대 진도など）にそろえた。
  *
  * 助詞（을/를・으로/로・은/는・이/가）は直前の語の終わりで選ぶ（`shared.ts` の `withKoreanParticle`）。
  * 地震情報の断片は区切りを挟まずにつなぐので、文の終わりになる語は後ろに空白を 1 つ持つ
  */
-export const koSpeech: SpeechWordsInProgress = {
+export const koSpeech: SpeechWords = {
   common: {
     listSep: ', ',
     sentenceSep: ' ',
     intensity,
     time: (hour, minute) => `${hour}시 ${minute}분`,
-    telegramTextElsewhere: '일본 기상청의 원문은 전문 로그에 있습니다.',
+    telegramTextElsewhere: ELSEWHERE,
     day: (d) => `${d}일`,
     dayTime: (d, hour, minute) => `${d}일 ${hour}시 ${minute}분`,
     cancelReasonLead: (infoName) => `${p(infoName, '이/가')} 취소된 이유를 전해 드립니다. `,
@@ -40,6 +64,7 @@ export const koSpeech: SpeechWordsInProgress = {
     telegramTextLead: (label) => `${label}에 대해 기상청의 발표문을 전해 드립니다. `,
   },
   eew: {
+    label: ko.quake.jmaNoteHeading.eew,
     upgrade: '긴급 지진 속보로 전환되었습니다.',
     warningRegionsClosing: '강한 흔들림을 주의하십시오',
     lpgmClassZero: '예상 최대 장주기 지진동 계급 0.',
@@ -264,5 +289,82 @@ export const koSpeech: SpeechWordsInProgress = {
     // 観測点の名前の終わりで助詞（은/는）が変わらない形
     missingTail: '의 데이터는 결측 상태입니다. ',
     warningLevelTail: '에서는 지진해일 경보에 상당하는 지진해일을 관측하고 있습니다. ',
+  },
+  lpgm: {
+    label: LPGM,
+    retracted: cancelledName(LPGM),
+    occurredAt: (time) => `${time}경 발생한 지진으로 `,
+    classAt: (cls, names, _isFirst) => `${lpgmClass(cls)} ${names}`,
+    regions: (regionText) => `장주기 지진동 ${regionText}`,
+    maxClassOnly: (cls) => `장주기 지진동 ${lpgmClass(cls)} 관측했습니다.`,
+  },
+  special: {
+    nankaiLabel: NANKAI,
+    // 名詞句にして「(으)로 인해」で受ける（助詞は関数の中で選ぶ）
+    nankaiTrigger: {
+      '111': '감시 영역 내 규모 6.8 이상의 지진 발생',
+      '112': '변형률계의 유의미한 변화 관측',
+      '113': '평소와 다른 현상 관측',
+    },
+    nankaiRetracted: cancelledName(NANKAI),
+    nankaiEnded: `${NANKAI}, 조사 종료. 난카이 해곡 지진의 발생 가능성은 평상시 범위 내였습니다.`,
+    nankaiInvestigating: (trigger) =>
+      `${NANKAI}, 조사 중. ${trigger ? `${p(trigger, '으로/로')} 인해 ` : ''}난카이 해곡 지진의 발생 가능성을 조사하고 있습니다. ${WATCH}`,
+    nankaiMajorWarning: `${NANKAI}, 거대 지진 경계. 난카이 해곡 지진의 상정 진원역 내에서 대규모 지진이 발생했습니다. 즉시 방재 대응을 취하십시오.`,
+    nankaiMajorAdvisory: `${NANKAI}, 거대 지진 주의. 난카이 해곡 지진의 상정 진원역 내에서 지진이 발생했습니다. 방재 대응을 확인하십시오.`,
+    nankaiOther: `${NANKAI}. 난카이 해곡 지진에 관한 임시 정보가 발표되었습니다. ${WATCH}`,
+    commentaryLabel: COMMENTARY,
+    commentaryRetracted: cancelledName(COMMENTARY),
+    commentaryRegular: `${COMMENTARY}. 난카이 해곡 지진 평가 검토회의 정례 회합 조사 결과가 발표되었습니다.`,
+    commentary: (serial) =>
+      `${COMMENTARY}${serial ? `, 제${halfWidthDigits(serial)}호` : ''}. 난카이 해곡 지진의 상정 진원역 상황에 대한 해설 정보가 발표되었습니다.`,
+    countLabel: COUNT,
+    countRetracted: cancelledName(COUNT),
+    countLead: `${COUNT}. `,
+    countSpanUnknown: '지금까지',
+    countSpan: (from, to) => `${from}부터 ${to}까지`,
+    countFeltOnly: (span, felt) => `${span} 진도 1 이상을 관측한 지진은 ${felt}회입니다. `,
+    countOccurred: (span, count) => `${span} 지진이 ${count}회 발생했습니다. `,
+    countFeltOf: (felt) => `그중 진도 1 이상을 관측한 것은 ${felt}회입니다. `,
+    countFeltNone: '그중 진도 1 이상을 관측한 지진은 없습니다. ',
+    noticeLabel: NOTICE,
+    noticeRetracted: cancelledName(NOTICE),
+    noticeLead: `${NOTICE}. `,
+    noticeWithHeadline: (_headline) => `${NOTICE}. ${ELSEWHERE}`,
+    kohatsuLabel: KOHATSU,
+    kohatsuRetracted: cancelledName(KOHATSU),
+    kohatsu: (headline) =>
+      `${KOHATSU}. ${headline === null ? `${ELSEWHERE} ` : ''}앞으로 대규모 지진의 발생 가능성이 평상시보다 높아져 있습니다. 방재 대응을 확인하십시오.`,
+    estimatedIntensity: (time, isNew) =>
+      `${time ? `${time}경 발생한 지진에 대해 ` : ''}기상청의 추계 진도 분포도${isNew ? '를 수신했습니다.' : '가 갱신되었습니다.'}`,
+  },
+  kyoshin: {
+    detected: (name) => (name ? `${name}에서 흔들림 감지.` : '흔들림 감지.'),
+    otherRegion: (name) => (name ? `${name}에서도 흔들림 감지.` : '다른 지점에서도 흔들림 감지.'),
+  },
+  internationalTsunami: {
+    label: INTERNATIONAL_TSUNAMI,
+    communicationsTest: `${INTERNATIONAL_TSUNAMI}: 통신 시험입니다.`,
+    // 画面の通知の名詞形のまま読む（2026-11-18 ユーザー選択「この案で入れる (Recommended)」の 7 節）
+    evaluation: ko.alertText.internationalTsunamiEvaluation,
+    when: (d, hour, minute) => `${d}일 ${hour}시 ${minute}분`,
+    coordinate: (lat, lon) =>
+      `${lat < 0 ? '남위' : '북위'} ${Math.abs(lat).toFixed(1)}도, ${lon < 0 ? '서경' : '동경'} ${Math.abs(lon).toFixed(1)}도`,
+    body: (q) => {
+      const details = [q.where, q.depthKm !== null ? `깊이 ${q.depthKm}킬로미터` : null, q.magnitude !== null ? `규모 ${q.magnitude}` : null]
+        .filter((s): s is string => s !== null && s !== '')
+      return `${q.when ? `${q.when}경 발생한 지진` : '지진'}${details.length > 0 ? `: ${details.join(', ')}` : ''}. ${q.evaluation !== null ? `${q.evaluation}.` : `${p(INTERNATIONAL_TSUNAMI, '이/가')} 발표되었습니다.`}`
+    },
+  },
+  timeSignal: {
+    say: (phrase, hour, minute, clock) => {
+      const t = signalClock(hour, minute, clock)
+      switch (phrase) {
+        case 'oshirase': return `${p(t, '을/를')} 알려 드립니다.`
+        case 'desu': return `${t}입니다.`
+        case 'narimashita': return `${p(t, '이/가')} 되었습니다.`
+        case 'bare': return t
+      }
+    },
   },
 }

@@ -1,7 +1,7 @@
-import type { SpeechWordsInProgress } from '../speechWords'
+import type { SpeechWords } from '../speechWords'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
 import { en } from '../messages/en'
-import { clockTime, englishOrdinal, firstWaveKindIn, intensityIn, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn } from './shared'
+import { clockTime, englishOrdinal, firstWaveKindIn, halfWidthDigits, intensityIn, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn, twelveHour } from './shared'
 
 const intensity = intensityIn(en)
 const lead = {
@@ -32,14 +32,33 @@ const theQuake = (first: boolean) => (first ? 'this earthquake' : 'the other ear
 const STEM_UPDATED = 'updated to'
 const STEM_OBSERVED = 'observed'
 
+/** 南海トラフ地震臨時情報の名前（画面の `telegramLog.controlTitle`） */
+const NANKAI = en.telegramLog.controlTitle['南海トラフ地震臨時情報']
+/** 南海トラフ地震関連解説情報の名前 */
+const COMMENTARY = en.telegramLog.controlTitle['南海トラフ地震関連解説情報']
+/** 地震回数に関する情報の名前 */
+const COUNT = en.telegramLog.controlTitle['地震回数に関する情報']
+/** 地震・津波に関するお知らせの名前 */
+const NOTICE = en.telegramLog.controlTitle['地震・津波に関するお知らせ']
+/** 北海道・三陸沖後発地震注意情報の名前 */
+const KOHATSU = en.telegramLog.controlTitle['北海道・三陸沖後発地震注意情報']
+const WATCH = 'Please watch for further information.'
+/** 地震の数（1 だけ単数） */
+const earthquakes = (n: number) => `${n} ${n === 1 ? 'earthquake' : 'earthquakes'}`
+/** 時報の時刻（24 時間制は「15:30」、12 時間制は「3:30 p.m.」） */
+const signalClock = (hour: number, minute: number, clock: '24h' | '12h') =>
+  (clock === '24h' ? clockTime(hour, minute) : `${clockTime(twelveHour(hour), minute)} ${hour < 12 ? 'a.m.' : 'p.m.'}`)
+
 /**
- * 読み上げの文の語表（英語。訳し終えた区分だけ → `SpeechWordsInProgress`）。
- * 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表。気象庁「緊急地震速報・津波警報の多言語辞書」の定型文
- * （Watch out for strong tremors など）と画面の辞書の訳にそろえた。震央・対象地方・観測した地名は「:」で示す（前置詞が地名の訳とぶつかるため）。
+ * 読み上げの文の語表（英語）。
+ * 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表（緊急地震速報・地震情報・津波）と、2026-11-18 ユーザー選択
+ * 「この案で入れる (Recommended)」の表（長周期・特別情報・揺れ検知・国際津波関連情報。時報は同日「時刻を数字で書く (Recommended)」）。
+ * 気象庁「緊急地震速報・津波警報の多言語辞書」の定型文（Watch out for strong tremors など）と画面の辞書の訳にそろえた。
+ * 震央・対象地方・観測した地名は「:」で示す（前置詞が地名の訳とぶつかるため）。
  *
  * 地震情報の断片は区切りを挟まずにつなぐので、文の終わりになる語は後ろに空白を 1 つ持つ
  */
-export const enSpeech: SpeechWordsInProgress = {
+export const enSpeech: SpeechWords = {
   common: {
     listSep: ', ',
     sentenceSep: ' ',
@@ -57,6 +76,7 @@ export const enSpeech: SpeechWordsInProgress = {
     telegramTextLead: (label) => `Here is JMA's text on the ${label}. `,
   },
   eew: {
+    label: en.quake.jmaNoteHeading.eew,
     upgrade: 'Upgraded to an Earthquake Early Warning.',
     warningRegionsClosing: 'watch out for strong tremors',
     lpgmClassZero: 'Maximum forecast long-period ground motion class 0.',
@@ -279,5 +299,87 @@ export const enSpeech: SpeechWordsInProgress = {
     missingObservedTail: '. Data are now missing. ',
     missingTail: ': no data. ',
     warningLevelTail: ': a tsunami at the Tsunami Warning level is being observed. ',
+  },
+  lpgm: {
+    label: en.quake.infoName.lpgm,
+    retracted: `The ${en.quake.infoName.lpgm} has been cancelled.`,
+    occurredAt: (time) => `Earthquake at around ${time}. `,
+    // 2 組目からは短く言う（2026-11-18 ユーザー選択「この案で入れる (Recommended)」の 5 節の 1）
+    classAt: (cls, names, isFirst) => `${isFirst ? 'Long-period ground motion class' : 'Class'} ${cls} observed: ${names}`,
+    regions: (regionText) => regionText,
+    maxClassOnly: (cls) => `Long-period ground motion class ${cls} observed.`,
+  },
+  special: {
+    nankaiLabel: NANKAI,
+    nankaiTrigger: {
+      '111': 'an earthquake of magnitude 6.8 or greater occurred within the monitoring area',
+      '112': 'a significant change was observed by strainmeters',
+      '113': 'a phenomenon different from usual was observed',
+    },
+    nankaiRetracted: `The ${NANKAI} has been cancelled.`,
+    nankaiEnded: `${NANKAI}: Investigation completed. The possibility of a Nankai Trough earthquake was within the normal range.`,
+    nankaiInvestigating: (trigger) =>
+      `${NANKAI}: Under investigation. ${trigger ? `Because ${trigger}, JMA is investigating` : 'JMA is investigating'} the possibility of a Nankai Trough earthquake. ${WATCH}`,
+    nankaiMajorWarning: `${NANKAI}: Megathrust Earthquake Alert. A large earthquake has occurred within the assumed source area of a Nankai Trough earthquake. Take disaster prevention actions immediately.`,
+    nankaiMajorAdvisory: `${NANKAI}: Megathrust Earthquake Attention. An earthquake has occurred within the assumed source area of a Nankai Trough earthquake. Check your disaster prevention actions.`,
+    nankaiOther: `${NANKAI}. Extra information on a Nankai Trough earthquake has been issued. ${WATCH}`,
+    commentaryLabel: COMMENTARY,
+    commentaryRetracted: `The ${COMMENTARY} has been cancelled.`,
+    // 会の英名は気象庁の英語のリーフレットの名前（2026-11-18 ユーザー選択「この案で入れる (Recommended)」の 13 節）
+    commentaryRegular: `${COMMENTARY}. The results of the regular meeting of the Nankai Trough Earthquake Assessment Committee have been issued.`,
+    commentary: (serial) =>
+      `${COMMENTARY}${serial ? `, No. ${halfWidthDigits(serial)}` : ''}. Commentary on the situation in the assumed source area of a Nankai Trough earthquake has been issued.`,
+    countLabel: COUNT,
+    countRetracted: `The ${COUNT} has been cancelled.`,
+    countLead: `${COUNT}. `,
+    countSpanUnknown: 'So far',
+    countSpan: (from, to) => `From ${from} to ${to}`,
+    countFeltOnly: (span, felt) => `${span}, ${earthquakes(felt)} with seismic intensity 1 or higher ${felt === 1 ? 'was' : 'were'} observed. `,
+    countOccurred: (span, count) => `${span}, ${earthquakes(count)} ${count === 1 ? 'has' : 'have'} occurred. `,
+    countFeltOf: (felt) => `Of these, ${felt} had seismic intensity 1 or higher. `,
+    countFeltNone: 'None of these had seismic intensity 1 or higher. ',
+    noticeLabel: NOTICE,
+    noticeRetracted: `The ${NOTICE} has been cancelled.`,
+    noticeLead: `${NOTICE}. `,
+    // 気象庁の見出し文は読まず、在処の文を言う（読み上げの関数の組が見出し文の代わりに null を渡す）
+    noticeWithHeadline: (_headline) => `${NOTICE}. ${ELSEWHERE}`,
+    kohatsuLabel: KOHATSU,
+    kohatsuRetracted: `The ${KOHATSU} has been cancelled.`,
+    // 見出し文があれば（null）その位置で在処の文を言う。見出し文の無い報（空の文字列）では言わない
+    kohatsu: (headline) =>
+      `${KOHATSU}. ${headline === null ? `${ELSEWHERE} ` : ''}The possibility of a large earthquake is now higher than usual. Check your disaster prevention actions.`,
+    estimatedIntensity: (time, isNew) =>
+      `JMA's ${en.quake.infoName.estimatedIntensity}${time ? ` for the earthquake at around ${time}` : ''} has been ${isNew ? 'received' : 'updated'}.`,
+  },
+  kyoshin: {
+    detected: (name) => (name ? `Shaking detected: ${name}.` : 'Shaking detected.'),
+    otherRegion: (name) => (name ? `Shaking also detected: ${name}.` : 'Shaking also detected at another location.'),
+  },
+  internationalTsunami: {
+    label: en.quake.infoName.internationalTsunami,
+    communicationsTest: `${en.quake.infoName.internationalTsunami}: communications test.`,
+    evaluation: en.alertText.internationalTsunamiEvaluation,
+    when: (d, hour, minute) => `${clockTime(hour, minute)} on the ${englishOrdinal(d)}`,
+    coordinate: (lat, lon) =>
+      `latitude ${Math.abs(lat).toFixed(1)} degrees ${lat < 0 ? 'south' : 'north'}, longitude ${Math.abs(lon).toFixed(1)} degrees ${lon < 0 ? 'west' : 'east'}`,
+    body: (p) => {
+      const details = [p.where, p.depthKm !== null ? `depth ${kilometers(p.depthKm)}` : null, p.magnitude !== null ? `magnitude ${p.magnitude}` : null]
+        .filter((s): s is string => s !== null && s !== '')
+      return `Earthquake${p.when ? ` at around ${p.when}` : ''}${details.length > 0 ? `: ${details.join(', ')}` : ''}. ${p.evaluation !== null ? `${p.evaluation}.` : `${en.quake.infoName.internationalTsunami} has been issued.`}`
+    },
+  },
+  timeSignal: {
+    // 2026-11-18 ユーザー選択「時刻を数字で書く (Recommended)」の形
+    say: (phrase, hour, minute, clock) => {
+      const t = signalClock(hour, minute, clock)
+      // 12 時間制は「p.m.」の点で文が終わる（句点を重ねない）
+      const end = t.endsWith('.') ? '' : '.'
+      switch (phrase) {
+        case 'oshirase': return `The time is ${t}${end}`
+        case 'desu': return `It's ${t}${end}`
+        case 'narimashita': return `It is now ${t}${end}`
+        case 'bare': return t
+      }
+    },
   },
 }

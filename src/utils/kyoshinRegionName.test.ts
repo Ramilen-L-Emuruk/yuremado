@@ -9,13 +9,16 @@ import { describe, it, expect } from 'vitest'
 import {
   dominantRegionName,
   dominantRegionPeak,
-  kyoshinDetectSpeechText,
-  kyoshinOtherRegionSpeechText,
   kyoshinPointRegionName,
   SAGAMI_BAY_SEAFLOOR_NAME,
   type RegionPoint,
 } from './kyoshinRegionName'
 import { nearestSubRegionName, type SubRegion } from './subregions'
+import { JA_SPEECH_TEXT } from './ttsText'
+
+// 揺れ検知の文は読み上げの言語の組が組む（日本語の文はここで固定する。ほかの言語は `ttsTextLocales.test.ts`）
+const kyoshinDetectSpeechText = (regionName: string | null) => JA_SPEECH_TEXT.kyoshinDetectionText({ kind: 'detected', regionName })
+const kyoshinOtherRegionSpeechText = (regionName: string | null) => JA_SPEECH_TEXT.kyoshinDetectionText({ kind: 'otherRegion', regionName })
 
 /** 緯度 35〜36 の 2 つの正方形の区域（西が「西区域」・東が「東区域」）。 */
 const SUBREGIONS: SubRegion[] = [

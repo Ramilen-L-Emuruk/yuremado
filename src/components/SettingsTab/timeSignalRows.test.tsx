@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { DEFAULTS, type AppSettings } from '../../hooks/useSettings'
+import { setSpeechLocale, __resetSpeechLocaleForTest } from '../../utils/speechLocale'
+import { registerSpeechWords, __resetSpeechWordsForTest } from '../../i18n/speechWords'
 
-// 設定の窓の本体はトップレベルで読む（テスト本体の 1 件目に読み込みの待ちを乗せない）
+// 設定の窓の本体と英語の語表はトップレベルで読む（テスト本体の 1 件目に読み込みの待ちを乗せない）
 const { TimeSignalRows } = await import('./index')
+const { enSpeech } = await import('../../i18n/speech/en')
 
 const SPEAKERS = [{ name: '四国めたん', speaker_uuid: 'u', styles: [{ name: 'ノーマル', id: 2 }] }]
 
@@ -44,6 +47,28 @@ describe('TimeSignalRows', () => {
     setup({ timeSignalEnabled: true, ttsEnabled: true, timeSignalClock: '12h' })
     expect(has('午後3時30分です')).toBe(true)
     expect(has('15時30分です')).toBe(false)
+  })
+
+  // 読み上げの文の例は、時報が実際に読む言語（読み上げの言語）の文で出す（2026-11-18 ユーザー選択「時刻を数字で書く (Recommended)」）
+  describe('読み上げの文の例の言語', () => {
+    afterEach(() => {
+      __resetSpeechLocaleForTest()
+      __resetSpeechWordsForTest()
+    })
+
+    it('正: 読み上げの言語が英語なら、例を英語の文で出す', () => {
+      registerSpeechWords('en', enSpeech)
+      setSpeechLocale('en')
+      setup({ timeSignalEnabled: true, ttsEnabled: true })
+      for (const l of ['The time is 15:30.', "It's 15:30.", 'It is now 15:30.', '15:30']) expect(has(l)).toBe(true)
+      expect(has('15時30分です')).toBe(false)
+    })
+
+    it('安全弁: 読み上げの言語の語表がまだ無ければ、日本語の文で出す（時報も日本語で読む）', () => {
+      setSpeechLocale('en')
+      setup({ timeSignalEnabled: true, ttsEnabled: true })
+      expect(has('15時30分です')).toBe(true)
+    })
   })
 
   it('「通知音と同じ」を外すと、いまの共通の音量から始める。戻すと null', () => {

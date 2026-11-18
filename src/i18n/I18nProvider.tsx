@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { log } from '../utils/logger'
-import { JA_MESSAGES, loadMessages, localeTag, type Locale, type Messages } from './messages'
+import { JA_MESSAGES, clearSpeechWordsLoadFailedMark, hasSpeechWordsLoadFailed, loadMessages, loadSpeechWordsFor, localeTag, type Locale, type Messages } from './messages'
+import { speechWordsFor } from './speechWords'
 import { JA_PLACE_NAMES, placeNameLookup, type PlaceNameLookup } from './placeNames'
 import { getCachedPlaceNames, loadPlaceNames } from './placeNameLoader'
 
@@ -20,6 +21,12 @@ const SetLocaleContext = createContext<(locale: Locale) => void>(() => {})
 
 /** 選んだのに辞書を読めず、日本語で出している言語（読めていれば null）。設定の窓の言語の行が知らせを出すのに使う */
 const LoadFailedContext = createContext<Locale | null>(null)
+
+/**
+ * 画面の言語の読み上げのデータ（読み上げの語表・地名の表）を読めなかった言語（読めている・読んでいる途中・日本語の画面なら null）。
+ * 設定の窓の「読み上げの声」の行の下に知らせを出すのに使う（2026-11-18 ユーザー選択「出す (Recommended)」）
+ */
+const SpeechDataFailedContext = createContext<Locale | null>(null)
 
 /** 地名の訳の引き方。辞書と別の文脈に置く（表は辞書の後から届くので、届いたときに地名を出す部品だけを起こす） */
 const PlaceNamesContext = createContext<PlaceNameLookup>(JA_PLACE_NAMES)
@@ -107,6 +114,8 @@ export function I18nProvider({ locale, preloaded, children }: { locale: Locale; 
   const [placeNames, setPlaceNames] = useState<{ locale: Locale; lookup: PlaceNameLookup }>(() => ({ locale: value.locale, lookup: cachedLookup(value.locale) }))
   // 地名の表を読めなかった言語。回線が戻ったら読み直す（辞書の読み直しと同じ扱い）
   const [placeNamesFailed, setPlaceNamesFailed] = useState<Locale | null>(null)
+  // 回線が戻って地名の表を読み直している言語（読み直しの成否が出るまで、読めなかった知らせを出し続ける）
+  const [placeNamesRetrying, setPlaceNamesRetrying] = useState<Locale | null>(null)
   useEffect(() => {
     const locale = value.locale
     const lookup = cachedLookup(locale)
@@ -114,38 +123,109 @@ export function I18nProvider({ locale, preloaded, children }: { locale: Locale; 
     if (locale === 'ja' || lookup !== JA_PLACE_NAMES || placeNamesFailed === locale) return
     let cancelled = false
     loadPlaceNames(locale).then(
-      () => { if (!cancelled) setPlaceNames({ locale, lookup: cachedLookup(locale) }) },
+      () => {
+        // 読み直しの印は、言語を変えて効果が片付いた後でも外す（外さないと、表がそろってその言語へ戻ったとき知らせが残る）
+        setPlaceNamesRetrying(endRetryFor(locale))
+        if (cancelled) return
+        setPlaceNames({ locale, lookup: cachedLookup(locale) })
+      },
       (err) => {
         log.error(`[i18n] 言語「${locale}」の地名の表を読めず、地名は日本語で出す`, err)
-        if (!cancelled) setPlaceNamesFailed(locale)
+        setPlaceNamesRetrying(endRetryFor(locale))
+        if (cancelled) return
+        setPlaceNamesFailed(locale)
       },
     )
     return () => { cancelled = true }
   }, [value.locale, placeNamesFailed])
 
+  useRetryWhenOnline(placeNamesFailed, value.locale, setPlaceNamesFailed, setPlaceNamesRetrying, '地名の表')
+
+  // 読み上げの語表。辞書と一緒に読む（→ messages.ts の `loadMessages`）が、語表だけ読めなかったときは辞書を読み直さないので、
+  // ここで印を拾い、回線が戻ったら読み直す（地名の表と同じ口。2026-11-18 ユーザー選択「そろうまで日本語、回線で読み直す (Recommended)」）
+  const [speechWordsFailed, setSpeechWordsFailed] = useState<Locale | null>(null)
+  // 回線が戻って語表を読み直している言語（地名の表と同じく、成否が出るまで知らせを出し続ける）
+  const [speechWordsRetrying, setSpeechWordsRetrying] = useState<Locale | null>(null)
   useEffect(() => {
-    if (placeNamesFailed === null) return
-    // 言語を選び直したら、読めなかった言語の印を外す（次にその言語へ戻ったときにまた読む）
-    if (placeNamesFailed !== value.locale) { setPlaceNamesFailed(null); return }
-    const retry = () => {
-      log.info(`[i18n] 回線が戻ったので言語「${placeNamesFailed}」の地名の表を読み直す`)
-      setPlaceNamesFailed(null)
-    }
-    window.addEventListener('online', retry)
-    return () => window.removeEventListener('online', retry)
-  }, [placeNamesFailed, value.locale])
+    const locale = value.locale
+    if (locale === 'ja' || speechWordsFailed === locale || speechWordsFor(locale) !== null) return
+    if (hasSpeechWordsLoadFailed(locale)) { setSpeechWordsFailed(locale); return }
+    let cancelled = false
+    loadSpeechWordsFor(locale).then(
+      // 読み直しの印は、言語を変えて効果が片付いた後でも外す（地名の表と同じ）
+      () => { setSpeechWordsRetrying(endRetryFor(locale)) },
+      () => {
+        // 失敗の記録は `loadSpeechWordsFor` が 1 度だけ残す（辞書の読み込みと並んでも重ねない）
+        setSpeechWordsRetrying(endRetryFor(locale))
+        if (cancelled) return
+        setSpeechWordsFailed(locale)
+      },
+    )
+    return () => { cancelled = true }
+  }, [value.locale, speechWordsFailed])
+  useRetryWhenOnline(speechWordsFailed, value.locale, (next) => {
+    // 印を外す前に、読み込みの側の印も外す（外さないと、上の効果が印を見て読み直さずに失敗へ戻る）
+    if (next === null) clearSpeechWordsLoadFailedMark(speechWordsFailed)
+    setSpeechWordsFailed(next)
+  }, setSpeechWordsRetrying, '読み上げの語表')
+
+  // 読み上げのデータ（語表・地名の表）を読めなかった言語。設定の窓が「読めないので日本語で読んでいる」を出すのに使う。
+  // **読み直しの最中も出し続け、読み直しが成功したら消す**（2026-11-18 ユーザー選択「出す (Recommended)」。失敗したらそのまま残る）
+  const speechDataFailed = value.locale !== 'ja'
+    && [placeNamesFailed, placeNamesRetrying, speechWordsFailed, speechWordsRetrying].includes(value.locale)
+    ? value.locale
+    : null
 
   return (
     <SetLocaleContext.Provider value={setLocale}>
       <LoadFailedContext.Provider value={failedLocale !== null && failedLocale === requested ? failedLocale : null}>
-        <I18nContext.Provider value={value}>
-          {/* 言語を切り替えた最初の描画では state がまだ前の言語なので、手元の表から今の言語の引き方を出す
-              （辞書と地名の言語を 1 回の描画もずらさない） */}
-          <PlaceNamesContext.Provider value={placeNames.locale === value.locale ? placeNames.lookup : cachedLookup(value.locale)}>{children}</PlaceNamesContext.Provider>
-        </I18nContext.Provider>
+        <SpeechDataFailedContext.Provider value={speechDataFailed}>
+          <I18nContext.Provider value={value}>
+            {/* 言語を切り替えた最初の描画では state がまだ前の言語なので、手元の表から今の言語の引き方を出す
+                （辞書と地名の言語を 1 回の描画もずらさない） */}
+            <PlaceNamesContext.Provider value={placeNames.locale === value.locale ? placeNames.lookup : cachedLookup(value.locale)}>{children}</PlaceNamesContext.Provider>
+          </I18nContext.Provider>
+        </SpeechDataFailedContext.Provider>
       </LoadFailedContext.Provider>
     </SetLocaleContext.Provider>
   )
+}
+
+/** 読み直しの印の更新: その言語の読み込みの成否が出たら、印がその言語のものなら外す（ほかの言語の読み直しの印は残す） */
+function endRetryFor(locale: Locale): (prev: Locale | null) => Locale | null {
+  return (prev) => (prev === locale ? null : prev)
+}
+
+/**
+ * 読めなかった言語の印を、回線が戻ったら外す（外すと読み込みの効果が走り直して読み直す）。言語を選び直したら印を外す
+ * （次にその言語へ戻ったときにまた読む）。地名の表と読み上げの語表が同じこの口を使う
+ */
+function useRetryWhenOnline(
+  failed: Locale | null,
+  current: Locale,
+  setFailed: (next: Locale | null) => void,
+  /** 読み直している言語（読み直しを始めたら failed を、言語を選び直したら null を渡す。成否が出たら呼び出し側が null に戻す） */
+  setRetrying: (next: Locale | null) => void,
+  what: string,
+): void {
+  // 呼び出し側が毎回作る関数を渡しても効果を張り直さない（最新の関数をここから呼ぶ）
+  const setFailedRef = useRef(setFailed)
+  const setRetryingRef = useRef(setRetrying)
+  useLayoutEffect(() => {
+    setFailedRef.current = setFailed
+    setRetryingRef.current = setRetrying
+  })
+  useEffect(() => {
+    if (failed === null) return
+    if (failed !== current) { setRetryingRef.current(null); setFailedRef.current(null); return }
+    const retry = () => {
+      log.info(`[i18n] 回線が戻ったので言語「${failed}」の${what}を読み直す`)
+      setRetryingRef.current(failed)
+      setFailedRef.current(null)
+    }
+    window.addEventListener('online', retry)
+    return () => window.removeEventListener('online', retry)
+  }, [failed, current, what])
 }
 
 /** いまの言語の辞書。 */
@@ -192,6 +272,11 @@ export function useLocale(): Locale {
 /** 選んだのに辞書を読めず、日本語で出している言語。読めていれば null。 */
 export function useLocaleLoadFailed(): Locale | null {
   return useContext(LoadFailedContext)
+}
+
+/** 画面の言語の読み上げのデータを読めず、日本語で読んでいる言語。読めている・読んでいる途中・日本語の画面なら null。 */
+export function useSpeechDataLoadFailed(): Locale | null {
+  return useContext(SpeechDataFailedContext)
 }
 
 /** 出す言語を変える。同じ言語を渡しても何も起きない。 */

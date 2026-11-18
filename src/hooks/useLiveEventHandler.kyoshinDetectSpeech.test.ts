@@ -20,6 +20,9 @@ import { renderHook, act } from '@testing-library/react'
 import { useLiveEventHandler } from './useLiveEventHandler'
 import { DEFAULTS, type AppSettings } from './useSettings'
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
+import { registerSpeechWords, __resetSpeechWordsForTest } from '../i18n/speechWords'
+import { enSpeech } from '../i18n/speech/en'
+import { setSpeechLocale, __resetSpeechLocaleForTest } from '../utils/speechLocale'
 
 const speakMock = vi.fn((..._args: unknown[]) => Promise.resolve({ spoke: true, spokenChunks: [] as string[] }))
 vi.mock('../utils/voicevox', async (importOriginal) => ({
@@ -36,6 +39,8 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
 })
 vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn(), replaceBrowserNotificationQuietly: vi.fn(), notificationWouldShow: vi.fn(() => true) }))
 
+/** 検知の予約に渡す言うこと（文は受信処理が読み上げの言語の組で組む。日本語の組では下の文になる） */
+const DETECT_PHRASE = { kind: 'detected', regionName: '石川県能登' } as const
 const DETECT_TEXT = '石川県能登で揺れを検知。'
 /** 地震情報の間（2.8 秒以下）より長く取る —— 地震情報の間が先に明け、検知はまだ間を置いている形を作る */
 const DETECT_DELAY_MS = 6000
@@ -67,7 +72,7 @@ async function deliver(h: Handler, event: Parameters<Handler['handleLiveEvent']>
 /** 検知を予約する。`drop` は声に出す直前の見直し（既定は捨てない） */
 async function speakDetection(h: Handler, drop: () => boolean = () => false) {
   await act(async () => {
-    h.speakKyoshinDetection(DETECT_TEXT, DETECT_DELAY_MS, drop)
+    h.speakKyoshinDetection(DETECT_PHRASE, DETECT_DELAY_MS, drop)
     await flushMicrotasks()
   })
 }
@@ -251,12 +256,29 @@ describe('揺れ検知の読み上げの、声に出す直前の見直し', () =
 })
 
 describe('揺れ検知どうしの重なり', () => {
+  it('正: 読み上げの言語が英語なら、揺れ検知を英語の文で、言語を添えて読む（地名は地名の表の引き。表が無ければ日本語の名前）', async () => {
+    registerSpeechWords('en', enSpeech)
+    setSpeechLocale('en')
+    try {
+      const h = setup()
+      await act(async () => {
+        h.speakKyoshinDetection({ kind: 'detected', regionName: null }, DETECT_DELAY_MS, () => false)
+        await flushMicrotasks()
+      })
+      await advance(DETECT_DELAY_MS + 2000)
+      expect(speakMock.mock.calls.map(c => c[1])).toEqual([{ text: 'Shaking detected.', locale: 'en' }])
+    } finally {
+      __resetSpeechLocaleForTest()
+      __resetSpeechWordsForTest()
+    }
+  })
+
   it('正: 最初の検知を待っている間に別の地点の検知が来ても、両方が順に読まれる', async () => {
     const h = setup()
     await speakDetection(h)
     await advance(1000)
     await act(async () => {
-      h.speakKyoshinDetection('茨城県南部でも揺れを検知。', DETECT_DELAY_MS, () => false)
+      h.speakKyoshinDetection({ kind: 'otherRegion', regionName: '茨城県南部' }, DETECT_DELAY_MS, () => false)
       await flushMicrotasks()
     })
     await advance(DETECT_DELAY_MS * 2 + 2000)

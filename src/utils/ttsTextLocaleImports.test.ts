@@ -71,6 +71,22 @@ function wholeModuleAccesses(src: string): string[] {
   return found
 }
 
+/** 日本語以外の語表・画面の辞書のパス（`speech/en`・`messages/ko` など。`shared.ts` は語表の部品） */
+const OTHER_LOCALE_MODULE = /(?:^|\/)(?:speech\/(?:en|zhHans|zhHant|ko|ptBR|es|shared)|messages\/(?:en|zhHans|zhHant|ko|ptBR|es))(?:\.ts)?$/
+
+/**
+ * 静的な `import`・`export … from` で読む日本語以外の語表・画面の辞書のパス。動的 import（`import('…')`）と型だけの読み込み
+ * （`import type`）は束に入れないので拾わない。文の途中の引用符や括弧を越えて次の文へ伸びないよう、`from` の前に引用符・括弧を許さない
+ */
+function staticImportsOfOtherLocales(src: string): string[] {
+  const found: string[] = []
+  const re = /(?:^|\n)[ \t]*(?:import|export)\s+(?!type\b)(?:[^;'"()]*?\sfrom\s+)?['"]([^'"]+)['"]/g
+  for (const m of src.matchAll(re)) {
+    if (OTHER_LOCALE_MODULE.test(m[1])) found.push(m[1])
+  }
+  return found
+}
+
 /**
  * 日本語の組（`JA_SPEECH_TEXT`）を本体で使ってよいファイル。既読の鍵だけを取って声にしない経路だけ（→ ttsText.ts の createSpeechText）。
  * 使う所を足すときは、声にしない経路であることを確かめてからここへ足す
@@ -100,15 +116,36 @@ describe('本体は読み上げの文を組む関数を画面の言語の組か�
   })
 
   // 日本語以外の語表（`i18n/speech/<言語>.ts`）は画面の辞書（`messages/<言語>.ts`）から語を引く。本体が静的に読むと、
-  // 言語ごとに後から読む画面の辞書が 6 言語ぶん起動の束へ入る（→ `i18n/speechWords.ts` の `SpeechWordsInProgress`）
-  it('本体は日本語以外の語表を静的に読まない', () => {
+  // 言語ごとに後から読む画面の辞書が 6 言語ぶん起動の束へ入る。語表と辞書は `i18n/messages.ts` の `LOADERS` が動的 import で一緒に読む
+  // （2026-11-18 ユーザー選択「辞書と一緒に後から読む (Recommended)」。→ `i18n/speechWords.ts`）。動的 import は通し、静的な読み込みだけを止める
+  it('本体は日本語以外の語表と画面の辞書を静的に読まない', () => {
     const offenders: string[] = []
-    const re = /(?:import|export)\s[^;]*?from\s+['"][^'"]*speech\/(?:en|zhHans|zhHant|ko|ptBR|es|shared)['"]/g
     for (const [rel, src] of SOURCES) {
+      // 語表どうし（語表は自分の言語の辞書と `shared.ts` を静的に読む。どちらも同じ言語の後読みの束に乗る）
       if (/^src\/i18n\/speech\//.test(rel)) continue
-      for (const m of src.matchAll(re)) offenders.push(`${rel}: ${m[0]}`)
+      for (const target of staticImportsOfOtherLocales(src)) offenders.push(`${rel}: ${target}`)
     }
     expect(offenders).toEqual([])
+  })
+
+  // 対照: 静的な読み込みを拾い、動的 import と型だけの読み込みは拾わない（拾えないと上のテストは何も見ずに通る）
+  it('照合は静的な読み込みだけを拾う', () => {
+    expect(staticImportsOfOtherLocales("import { enSpeech } from './speech/en'")).toEqual(['./speech/en'])
+    expect(staticImportsOfOtherLocales("import {\n  ko,\n} from '../i18n/messages/ko'")).toEqual(['../i18n/messages/ko'])
+    expect(staticImportsOfOtherLocales("export { esSpeech } from './speech/es'")).toEqual(['./speech/es'])
+    expect(staticImportsOfOtherLocales("import './speech/shared'")).toEqual(['./speech/shared'])
+    expect(staticImportsOfOtherLocales("const load = () => import('./speech/en').then((m) => m.enSpeech)")).toEqual([])
+    expect(staticImportsOfOtherLocales("import type { SpeechWords } from './speech/en'")).toEqual([])
+    expect(staticImportsOfOtherLocales("import { ja } from './messages/ja'")).toEqual([])
+  })
+
+  // 正: 6 言語とも、辞書と語表を同じ読み込みの口で動的に読む（片方だけの言語があると、その言語は読み上げが日本語のまま残る）
+  it('辞書の読み込みの口は、6 言語の辞書と語表を動的 import で読む', () => {
+    const src = SOURCES.get('src/i18n/messages.ts') ?? ''
+    for (const file of ['en', 'zhHans', 'zhHant', 'ko', 'ptBR', 'es']) {
+      expect(src).toContain(`import('./messages/${file}')`)
+      expect(src).toContain(`import('./speech/${file}')`)
+    }
   })
 
   it('照合は組を丸ごと取る書き方を拾う', () => {

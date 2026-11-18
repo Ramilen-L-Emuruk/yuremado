@@ -15,7 +15,7 @@ import { reachRadiusKm } from '../utils/travelTime'
 import { eewFeltRadiusKm, isProvisionalHypocenter } from '../utils/eew'
 import { isBundleTiedToEew } from '../utils/eewSpreadHold'
 import type { ConfirmedShock, DetectedPoint } from '../utils/kyoshinDetectionView'
-import { dominantRegionName, dominantRegionPeak, kyoshinDetectSpeechText, kyoshinOtherRegionSpeechText, type RegionPoint } from '../utils/kyoshinRegionName'
+import { dominantRegionName, dominantRegionPeak, type KyoshinDetectionPhrase, type RegionPoint } from '../utils/kyoshinRegionName'
 import { getSubRegionsCache, loadSubRegions, type SubRegion } from '../utils/subregions'
 import { notificationAllowed } from '../utils/notificationGate'
 
@@ -772,10 +772,16 @@ export interface ReonsetSignal {
 /** 揺れ検知の読み上げが区域の境界データを待つ上限（ms）。過ぎたら地名を言わずに読む（→ `speakPendingDetection`）。 */
 export const DETECT_SPEECH_REGION_WAIT_MS = 10_000
 
-/** 読み上げると決めた揺れ 1 件（区域名を決める点と、名前から文を作る口）。 */
+/** 記録に書く検知の種類の名前 */
+const DETECTION_KIND_LABEL: Readonly<Record<KyoshinDetectionPhrase['kind'], string>> = {
+  detected: '揺れの検知',
+  otherRegion: '別の地点の揺れの検知',
+}
+
+/** 読み上げると決めた揺れ 1 件（区域名を決める点と、最初の検知か別の地点の検知か）。 */
 interface PendingDetectionSpeech {
   points: readonly RegionPoint[]
-  textOf: (regionName: string | null) => string
+  kind: KyoshinDetectionPhrase['kind']
   /** 声に出す直前に呼ぶ見直し。真なら読まずに捨てる（→ `eewReachedRecheck`） */
   dropBeforeSpeaking: () => boolean
 }
@@ -867,11 +873,12 @@ export interface KyoshinAlertsDeps {
    */
   detectedPoints: readonly DetectedPoint[]
   /**
-   * 揺れ検知を読み上げる（`useLiveEventHandler` の `speakKyoshinDetection`）。`delayMs` は音が鳴り始めてから
+   * 揺れ検知を読み上げる（`useLiveEventHandler` の `speakKyoshinDetection`）。`phrase` は言うこと（区域名と検知の種類）で、
+   * 文は受け手が読み上げの言語で組む。`delayMs` は音が鳴り始めてから
    * 声を出すまでの間。`dropBeforeSpeaking` は声に出す直前（間が明けた時と、他の読み上げの順番を待ち終えた時）に
    * 呼ばれ、真なら読まずに捨てる（→ `eewReachedRecheck`）。**必須にしている**（渡し忘れると設定を入れても黙って読まないため）。
    */
-  speakDetection: (text: string, delayMs: number, dropBeforeSpeaking: () => boolean) => void
+  speakDetection: (phrase: KyoshinDetectionPhrase, delayMs: number, dropBeforeSpeaking: () => boolean) => void
 }
 
 export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () => void } {
@@ -1036,7 +1043,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
             }
             // 時刻が読めないので、読む直前の見直しも捨てない側へ倒れる（→ `eewReachedRecheck`）
             pendingSpeechesRef.current.push({
-              points: detectedPointsRef.current, textOf: kyoshinDetectSpeechText,
+              points: detectedPointsRef.current, kind: 'detected',
               dropBeforeSpeaking: eewReachedRecheck(shocks, nowMs, activeEEWsRef),
             })
           } else {
@@ -1047,13 +1054,13 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
               // 一部だけ届いていた。届いていない揺れの点だけで区域名を決める（全体の点では届いた側の名前になる）
               log.info(`[kyoshin] 緊急地震速報の揺れ（P 波）が届いた揺れ ${shocks.length - unreached.length} 件を除き、残り ${unreached.length} 件を読む`)
               pendingSpeechesRef.current.push({
-                points: unreached.flatMap((s) => s.points), textOf: kyoshinDetectSpeechText,
+                points: unreached.flatMap((s) => s.points), kind: 'detected',
                 dropBeforeSpeaking: eewReachedRecheck(unreached, nowMs, activeEEWsRef),
               })
             } else {
               // 積む時点で届いていなくても、読む直前にもう一度見る（確定の後に速報が届くことがある）
               pendingSpeechesRef.current.push({
-                points: detectedPointsRef.current, textOf: kyoshinDetectSpeechText,
+                points: detectedPointsRef.current, kind: 'detected',
                 dropBeforeSpeaking: eewReachedRecheck(shocks, nowMs, activeEEWsRef),
               })
             }
@@ -1227,7 +1234,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         log.info(`[kyoshin] 別の地点の揺れに緊急地震速報の揺れ（P 波）が届いていたため読み上げを省略: ${alert.lat.toFixed(2)},${alert.lng.toFixed(2)}`)
       } else {
         pendingSpeechesRef.current.push({
-          points: alert.shock.points, textOf: kyoshinOtherRegionSpeechText,
+          points: alert.shock.points, kind: 'otherRegion',
           dropBeforeSpeaking: eewReachedRecheck([alert.shock], nowMs, activeEEWsRef),
         })
       }
@@ -1260,7 +1267,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   const speakPendingDetection = (item: PendingDetectionSpeech, delayMs: number): void => {
     const cached = getSubRegionsCache()
     if (cached) {
-      speakDetectionRef.current(item.textOf(dominantRegionName(item.points, cached)), delayMs, item.dropBeforeSpeaking)
+      speakDetectionRef.current({ kind: item.kind, regionName: dominantRegionName(item.points, cached) }, delayMs, item.dropBeforeSpeaking)
       return
     }
     const gen = speechGenRef.current
@@ -1282,15 +1289,15 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
           subs = null
         }
         if (gen !== speechGenRef.current) {
-          log.info(`[kyoshin] 区域の境界データを待つ間にリプレイの開始・停止があったため、揺れ検知を読まない: ${item.textOf(null)}`)
+          log.info(`[kyoshin] 区域の境界データを待つ間にリプレイの開始・停止があったため、揺れ検知を読まない: ${DETECTION_KIND_LABEL[item.kind]}`)
           return
         }
         const name = subs ? dominantRegionName(item.points, subs) : null
-        speakDetectionRef.current(item.textOf(name), Math.max(0, delayMs - (performance.now() - startedAt)), item.dropBeforeSpeaking)
+        speakDetectionRef.current({ kind: item.kind, regionName: name }, Math.max(0, delayMs - (performance.now() - startedAt)), item.dropBeforeSpeaking)
       })
       // 待ち明けの処理は effect の外で走るので、ここで落ちた例外は React に届かない。黙って消さずに残す
       .catch((err: unknown) => {
-        log.error(`[kyoshin] 揺れ検知の読み上げを予約できなかった: ${item.textOf(null)}`, err)
+        log.error(`[kyoshin] 揺れ検知の読み上げを予約できなかった: ${DETECTION_KIND_LABEL[item.kind]}`, err)
       })
   }
 

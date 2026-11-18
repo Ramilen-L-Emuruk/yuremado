@@ -15,8 +15,8 @@ import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLa
 import type { RelayUpstreamStatus } from '../../services/dmdata'
 import { useMessages } from '../../i18n/I18nProvider'
 import { LOCALE_LOAD_FAILED_EN, LOCALE_LOAD_FAILED_JA, LOCALES, type Locale, type LocaleSetting, type Messages } from '../../i18n/messages'
-import { useLocaleLoadFailed, usePlaceNames } from '../../i18n/I18nProvider'
-import { useSpeechLocale, useSpeechLocaleDecision } from '../../hooks/useSpeechLocale'
+import { useLocaleLoadFailed, usePlaceNames, useSpeechDataLoadFailed } from '../../i18n/I18nProvider'
+import { useSpeechLocale, useSpeechVoiceMissing } from '../../hooks/useSpeechLocale'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, intensityLabel, intensityShortLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
 import { kyoshinIndexLabelText, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
@@ -49,9 +49,10 @@ import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
 import {
   TIME_SIGNAL_CLOCKS, TIME_SIGNAL_INTERVALS, TIME_SIGNAL_ORDERS, TIME_SIGNAL_PHRASES, TIME_SIGNAL_SOUNDS, TIME_SIGNAL_WHILE_SPEAKING,
-  minuteToTimeValue, timeSignalSpeechText, timeValueToMinute,
+  minuteToTimeValue, timeValueToMinute,
   type TimeSignalClock, type TimeSignalIntervalMin, type TimeSignalOrder, type TimeSignalPhrase, type TimeSignalSound, type TimeSignalWhileSpeaking,
 } from '../../utils/timeSignal'
+import { timeSignalUtterance } from '../../hooks/useTimeSignal'
 import { ReleaseNotesDialog } from '../ReleaseNotesDialog'
 import { allNotes, type ReleaseNoteEntry } from '../../utils/releaseNotes'
 import { useIsSettingsCategoryActive, type SettingsCategoryId } from './SettingsDialog'
@@ -792,6 +793,8 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
   const { settings: w, formats: fw } = useMessages()
   const selectClass = 'bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white'
   const speech = settings.ttsEnabled
+  // 読み上げの文の選択肢は、時報が実際に読む言語（読み上げの言語）の文で出す
+  const speechLocale = useSpeechLocale()
   return (
     <>
       <Row label={w.timeSignal.enabled.label} description={w.timeSignal.enabled.description}>
@@ -823,7 +826,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
                 <select value={settings.timeSignalPhrase} className={selectClass}
                   onChange={e => onUpdate('timeSignalPhrase', e.target.value as TimeSignalPhrase)}>
                   {TIME_SIGNAL_PHRASES.map(v => (
-                    <option key={v} value={v}>{timeSignalSpeechText(TIME_SIGNAL_EXAMPLE_AT, settings.timeSignalClock, v)}</option>
+                    <option key={v} value={v}>{timeSignalUtterance(TIME_SIGNAL_EXAMPLE_AT, settings.timeSignalClock, v, speechLocale).text}</option>
                   ))}
                 </select>
               </Row>
@@ -1379,8 +1382,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   // 試聴は本番の読み上げと同じ組（読み上げの言語）で組む
   const speechLocale = useSpeechLocale()
   const speechText = speechTextFor(speechLocale, usePlaceNames())
-  // 画面の言語の声が端末に無く、日本語で読んでいるか（読み上げの声の行の下に出す）
-  const { missingVoice } = useSpeechLocaleDecision()
+  // 画面の言語の声が端末に無く、日本語で読んでいるか（読み上げの声の行の下に出す）。App が決めた値を読む（自分で決め直さない。
+  // 決め直すと、読んでいる言語と注記が食い違う。→ utils/speechLocale.ts）
+  const missingVoice = useSpeechVoiceMissing()
+  // 画面の言語の読み上げのデータを読めず、日本語で読んでいるか（同じ行の下に出す）
+  const speechDataFailed = useSpeechDataLoadFailed()
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -1674,6 +1680,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {/* 画面の言語の声が端末に無いので日本語で読んでいる（日本語の画面・語表がまだ無い言語では出ない。→ hooks/useSpeechLocale.ts） */}
         {settings.ttsEnabled && missingVoice && (
           <div className="px-3 pb-2 text-[11px] text-secondary leading-snug">{w.rows.ttsVoice.noLocaleVoice}</div>
+        )}
+        {/* 画面の言語の読み上げのデータ（語表・地名の表）を読めず、日本語で読んでいる（読み込みの途中・日本語の画面では出ない。
+            回線が戻って読み直せたら消える。2026-11-18 ユーザー選択「出す (Recommended)」。→ i18n/I18nProvider.tsx） */}
+        {settings.ttsEnabled && speechDataFailed !== null && (
+          <div className="px-3 pb-2 text-[11px] text-secondary leading-snug">{w.rows.ttsVoice.speechDataLoadFailed}</div>
         )}
         {/* 時報も鳴らすので数える（時報の「通知音と同じ」はこの音量を指す。切ると行ごと消えて辿れない） */}
         {(settings.soundEnabled || settings.ttsEnabled || settings.timeSignalEnabled) && (

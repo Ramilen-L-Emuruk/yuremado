@@ -16,9 +16,9 @@ vi.mock('../i18n/speechWords', async (importOriginal) => {
 
 const { decideSpeechLocale: decideWith } = await import('./useSpeechLocale')
 
-// 第 4 引数（声の一覧を待ち終えたか）は、待っている途中の判定を見る形にそろえる
-const decideSpeechLocale = (l: Locale, v: (x: Locale) => boolean | null, b: (x: Locale) => boolean, settled = false) =>
-  decideWith(l, v, b, settled)
+// 第 4 引数（声の一覧を待ち終えたか）は、待っている途中の判定を見る形にそろえる。第 5 引数（地名の表が読めているか）は読めている形
+const decideSpeechLocale = (l: Locale, v: (x: Locale) => boolean | null, b: (x: Locale) => boolean, settled = false, placeNamesReady = true) =>
+  decideWith(l, v, b, settled, placeNamesReady)
 const anyVoice = () => true
 const noVoice = () => false
 const voicesNotYet = () => null
@@ -52,6 +52,15 @@ describe('読み上げの言語の決め方', () => {
 
   it('声の一覧を待ち終えても空なら、声が無いとして設定の窓に出す（安全弁。理由が分からないまま日本語に固定しない）', () => {
     withKoWords(() => expect(decideSpeechLocale('ko', voicesNotYet, buildable, true)).toEqual({ speechLocale: 'ja', missingVoice: true }))
+  })
+
+  // 2026-11-18 ユーザー選択「そろうまで日本語、回線で読み直す (Recommended)」
+  it('語表があっても地名の表がまだ無ければ、声があっても日本語で読み、「声が無い」とも出さない（対照）', () => {
+    withKoWords(() => expect(decideSpeechLocale('ko', anyVoice, buildable, true, false)).toEqual({ speechLocale: 'ja', missingVoice: false }))
+  })
+
+  it('地名の表があっても語表がまだ無ければ日本語で読む（対照）', () => {
+    expect(decideSpeechLocale('en', anyVoice, buildable, true, true)).toEqual({ speechLocale: 'ja', missingVoice: false })
   })
 
   it('組を作れない言語は、声があっても日本語で読む（安全弁。文だけ日本語へ落ちて声が食い違うのを防ぐ）', () => {

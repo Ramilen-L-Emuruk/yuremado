@@ -127,7 +127,7 @@ import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
 import { loadTtsEpicenterAccents } from './utils/ttsEpicenterAccents'
 import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed, setSpeechVoice, clearVoicevoxDown } from './utils/voicevox'
-import { setSpeechLocale } from './utils/speechLocale'
+import { setSpeechLocaleDecision } from './utils/speechLocale'
 import { useSpeechLocale, useSpeechLocaleDecision } from './hooks/useSpeechLocale'
 import { unlockSystemSpeech } from './utils/systemSpeech'
 import { speechTextFor } from './utils/ttsText'
@@ -228,10 +228,13 @@ export function App() {
   // 同じく、通知の本文の地名を呼ばれた時点の言語で訳すための参照
   const placeNamesRef = usePlaceNamesRef()
   // 読み上げの言語（文と声）。画面の言語と端末の声から決め、下の effect で読み上げへ渡す（→ hooks/useSpeechLocale.ts）
+  // 決めるのはここだけで、設定の窓などは下の effect で置き場へ渡した値を読む（→ utils/speechLocale.ts）
   const speechLocaleDecision = useSpeechLocaleDecision()
+  // 置き場へ渡した読み上げの言語（下の effect が渡した後の値。文を組む側はこれで組を引く）
+  const speechLocale = useSpeechLocale()
   // 緊急地震速報の切り出し語（読み上げの作り置き）。本番の読み上げと同じ読み上げの言語の組から採る
   // 句と一緒に組の言語も渡す（作り置きを飛ばすかは、いまの言語の状態ではなく句を組んだ組の言語で決める）
-  const speechLeadText = speechTextFor(useSpeechLocale(), placeNames)
+  const speechLeadText = speechTextFor(speechLocale, placeNames)
   const speechLeadPhrases = speechLeadText.EEW_LEAD_PHRASES
   const speechLeadLocale = speechLeadText.locale
   const tabNames = messages.nav
@@ -1500,9 +1503,10 @@ export function App() {
     setSpeechVoice(settings.ttsVoice)
   }, [settings.ttsVoice])
   // 読み上げの言語。文を組む側はこの値で組（`speechTextFor`）を引き、声は組が文に添えた言語で選ぶ（→ `utils/speechLocale.ts`）
+  // 「声が無いので日本語で読んでいる」も一緒に渡す（設定の窓は自分で決め直さずにこれを読む。読んでいる言語と注記がずれない）
   useEffect(() => {
-    setSpeechLocale(speechLocaleDecision.speechLocale)
-  }, [speechLocaleDecision.speechLocale])
+    setSpeechLocaleDecision(speechLocaleDecision)
+  }, [speechLocaleDecision])
   // 接続先・話者を直したら「VOICEVOX に繋がらない」の印を解く（直した設定を次の報からすぐ試す）
   useEffect(() => {
     clearVoicevoxDown()
@@ -1521,8 +1525,8 @@ export function App() {
     opts: ttsSpeechOptions,
   })
 
-  // 時報（→ hooks/useTimeSignal.ts）。読み上げの接続先は作り置きと同じく、入力が落ち着いた値を使う
-  useTimeSignal(settings, debouncedVoicevoxUrl)
+  // 時報（→ hooks/useTimeSignal.ts）。読み上げの接続先は作り置きと同じく、入力が落ち着いた値を使う。文は読み上げの言語で組む
+  useTimeSignal(settings, debouncedVoicevoxUrl, speechLocale)
 
   // ブラウザの自動再生制限に対応: 利用者の操作で音声を有効化する
   useEffect(() => {

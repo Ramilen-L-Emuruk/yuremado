@@ -914,6 +914,7 @@ export const ptBR: Messages = {
         description: 'Sem conexão com o VOICEVOX, usa a leitura do sistema',
         system: 'Leitura do sistema',
         noLocaleVoice: 'Este dispositivo não tem voz em português, por isso a leitura em voz alta é feita em japonês.',
+        speechDataLoadFailed: 'Não foi possível carregar os dados de leitura em português, por isso, por enquanto, a leitura em voz alta é feita em japonês.',
       },
       volume: {
         label: 'Volume',
@@ -1007,7 +1008,7 @@ export const ptBR: Messages = {
       },
       locale: {
         label: 'Idioma (Language)',
-        description: 'Idioma das telas e das notificações. A leitura em voz alta continua em japonês.',
+        description: 'Idioma das telas, das notificações e da leitura em voz alta. A leitura em idiomas diferentes do japonês usa a voz do dispositivo; se o dispositivo não tiver voz nesse idioma, a leitura é feita em japonês.',
         auto: 'Igual ao dispositivo',
       },
       uiScale: {
@@ -1647,12 +1648,12 @@ export const ptBR: Messages = {
       },
       foreignQuakeInternationalTsunami: {
         label: 'Terremoto distante e Informação internacional sobre tsunami (inglês)',
-        description: 'Terremoto distante perto da Indonésia M7.0 (dados reais) e a Informação internacional sobre tsunami (inglês) do mesmo terremoto – som earthquakeInfo / 3 s depois chega o texto em inglês, e o cartão do terremoto distante ganha um campo com o original. Ao chegar o texto em inglês, tocam o som earthquakeInfo e a notificação, e um resumo é lido em japonês',
+        description: 'Terremoto distante perto da Indonésia M7.0 (dados reais) e a Informação internacional sobre tsunami (inglês) do mesmo terremoto – som earthquakeInfo / 3 s depois chega o texto em inglês, e o cartão do terremoto distante ganha um campo com o original. Ao chegar o texto em inglês, tocam o som earthquakeInfo e a notificação, e um resumo é lido no idioma escolhido',
         button: 'Teste internacional de tsunami',
       },
       internationalTsunamiDomesticAndOnly: {
         label: 'Terremoto no Japão e informação internacional só em inglês',
-        description: 'Informação sobre o hipocentro e a intensidade de 日向灘 M7.1 (dados reais) e a Informação internacional sobre tsunami (inglês) do mesmo terremoto – som earthquakeInfo / 3 s depois chega o texto em inglês, e o original é anexado ao cartão de 日向灘 / 6 s depois chega o texto em inglês de um terremoto sem informação sobre terremotos, e aparece na lista um cartão só em inglês (Informação internacional sobre tsunami) / 9 s depois chega o teste de comunicação em inglês (som, notificação, leitura e faixa só com "Receber boletins de teste (verificação)" ativado; desativado, fica só no registro de telegramas). Ao chegar o texto em inglês, tocam o som earthquakeInfo e a notificação, e um resumo é lido em japonês',
+        description: 'Informação sobre o hipocentro e a intensidade de 日向灘 M7.1 (dados reais) e a Informação internacional sobre tsunami (inglês) do mesmo terremoto – som earthquakeInfo / 3 s depois chega o texto em inglês, e o original é anexado ao cartão de 日向灘 / 6 s depois chega o texto em inglês de um terremoto sem informação sobre terremotos, e aparece na lista um cartão só em inglês (Informação internacional sobre tsunami) / 9 s depois chega o teste de comunicação em inglês (som, notificação, leitura e faixa só com "Receber boletins de teste (verificação)" ativado; desativado, fica só no registro de telegramas). Ao chegar o texto em inglês, tocam o som earthquakeInfo e a notificação, e um resumo é lido no idioma escolhido',
         button: 'Teste só em inglês',
       },
       headlineOnlyCity: {
