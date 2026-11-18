@@ -910,6 +910,7 @@ export const zhHant: Messages = {
         label: '朗讀語音',
         description: '無法連線到 VOICEVOX 時，改用系統朗讀',
         system: '系統朗讀',
+        noLocaleVoice: '此裝置沒有中文語音，因此以日語朗讀。',
       },
       volume: {
         label: '音量',

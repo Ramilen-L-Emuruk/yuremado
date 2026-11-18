@@ -910,6 +910,7 @@ export const zhHans: Messages = {
         label: '朗读语音',
         description: '无法连接 VOICEVOX 时，使用系统朗读',
         system: '系统朗读',
+        noLocaleVoice: '此设备没有中文语音，因此用日语朗读。',
       },
       volume: {
         label: '音量',

@@ -295,7 +295,7 @@ describe('録画モードの予算', () => {
 
 describe('投機的先行合成', () => {
   it('渡した文のチャンクを焼いて控えへ入れる（正）', async () => {
-    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'ja')
     await advance(100)
 
     expect(speechAudioCacheStats().entries).toBe(4)
@@ -307,6 +307,17 @@ describe('投機的先行合成', () => {
     expect(sources).toHaveLength(4)
   })
 
+  // 日本語以外の組で組んだ文は端末の声で読むので、VOICEVOX で焼かない（焼いても使われない）。
+  // 決めるのは渡した組の言語で、いまの読み上げの言語の状態ではない（組が日本語へ落ちた回は焼く）
+  it('日本語以外の組の文は焼かない（対照。同じ文でも組の言語が日本語なら上の正のとおり焼く）', async () => {
+    synthCallCount = 0
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'en')
+    await advance(100)
+
+    expect(synthCallCount).toBe(0)
+    expect(speechAudioCacheStats().entries).toBe(0)
+  })
+
   // **本番を邪魔しないことが最優先。** 読み上げの最中に投機を投げると、VOICEVOX の
   // 直列処理を占有して、これから読む方が後ろで待つ。
   it('読み上げの最中は投げない（安全弁）', async () => {
@@ -315,7 +326,7 @@ describe('投機的先行合成', () => {
     await advance(50)
 
     const before = synthCallCount
-    prefetchSpeechTexts('http://vv', ['別の地震の文です。これも焼きたい文です。'], 1)
+    prefetchSpeechTexts('http://vv', ['別の地震の文です。これも焼きたい文です。'], 1, 'ja')
     await advance(100)
     // 投機による合成は 1 件も増えていない（増えた分は本番のパイプライン）
     expect(synthesizedTexts).not.toContain('別の地震の文です。')
@@ -331,7 +342,7 @@ describe('投機的先行合成', () => {
   it('打ち切れば、残りのチャンクは焼かない（安全弁）', async () => {
     // 2 件目の合成に時間をかけ、その最中に打ち切る
     synthDelaysMs = [0, 5000, 0, 0]
-    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'ja')
     await advance(10)
     // **打ち切る前に 1 件は焼けていること。** ここを確かめないと「そもそも投機が
     // 動いていない」ときも通ってしまう（0 < 4 は真）。
@@ -348,7 +359,7 @@ describe('投機的先行合成', () => {
   // ほしい区間の立ち上がりで 1 周期ぶん空振りする。
   it('打ち切った直後でも、次の投機はその場で走る（正）', async () => {
     synthDelaysMs = [5000, 0, 0, 0]
-    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'ja')
     await advance(10)
 
     // 本番の読み上げが始まったときと同じ打ち切り（`speakOnce` の冒頭が呼ぶもの）
@@ -356,25 +367,25 @@ describe('投機的先行合成', () => {
 
     // 間を置かずに次のバッチを積む。旗が降りていなければ、ここが無言でスキップされる。
     synthCallCount = 0
-    prefetchSpeechTexts('http://vv', [OTHER_FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [OTHER_FOUR_CHUNKS], 1, 'ja')
     await advance(200)
     expect(synthCallCount).toBeGreaterThan(0)
   })
 
   it('控えに既にあるチャンクは焼き直さない（対照）', async () => {
-    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'ja')
     await advance(100)
     const first = synthCallCount
     // 1 回目で実際に焼けていること（0 と 0 を比べて通る形にしない）
     expect(first).toBe(4)
 
-    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'ja')
     await advance(100)
     expect(synthCallCount).toBe(first)
   })
 
   it('同じチャンクが複数の文に現れても 1 回しか焼かない（対照）', async () => {
-    prefetchSpeechTexts('http://vv', ['同じ文です。ちがう文です。', '同じ文です。'], 1)
+    prefetchSpeechTexts('http://vv', ['同じ文です。ちがう文です。', '同じ文です。'], 1, 'ja')
     await advance(100)
     // 「同じ文です。」「ちがう文です。」の 2 つだけ。ただし末尾の間の有無で
     // 「同じ文です。」は 2 通りになる（1 つ目の文では後続があり、2 つ目では最後）。
@@ -393,7 +404,7 @@ describe('投機的先行合成', () => {
           rejectOnAbort(init?.signal),
         ])))
 
-    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'ja')
     await advance(1000)
     // まだ 1 件目を待っている
     expect(speechAudioCacheStats().entries).toBe(0)
@@ -406,7 +417,7 @@ describe('投機的先行合成', () => {
     // VOICEVOX が復帰したあと、次の投機がちゃんと動く（固まっていない）
     installFetch()
     synthCallCount = 0
-    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1)
+    prefetchSpeechTexts('http://vv', [FOUR_CHUNKS], 1, 'ja')
     await advance(200)
     expect(synthCallCount).toBeGreaterThan(0)
     expect(speechAudioCacheStats().entries).toBeGreaterThan(0)

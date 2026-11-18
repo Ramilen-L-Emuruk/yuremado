@@ -6,12 +6,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   speakWithVoicevox, stopSpeech, isAudioPlaying, prewarmVoicevox, setSpeechVoice, splitIntoSystemSentences, splitIntoChunks,
-  measureSystemSpeechSec, clearVoicevoxDown, SYSTEM_SPEECH_MEASURE_MARGIN_SEC,
+  measureSystemSpeechSec, clearVoicevoxDown, SYSTEM_SPEECH_MEASURE_MARGIN_SEC, splitForeignSpeechUnits,
   __resetSpeechVoiceForTest, __resetAudioPlaybackStateForTest,
 } from './voicevox'
 import {
   SYSTEM_SPEECH_RATE, pickJapaneseVoice, speakSystemUtterance, unlockSystemSpeech, __resetSystemSpeechForTest,
 } from './systemSpeech'
+
+import { setSpeechLocale, __resetSpeechLocaleForTest } from './speechLocale'
 
 vi.mock('./ttsPhraseBreakDict', () => ({
   loadTtsPhraseBreakDict: () => Promise.resolve(null),
@@ -107,6 +109,7 @@ beforeEach(() => {
   // VOICEVOX は繋がらない（未起動のときの fetch の失敗）
   vi.stubGlobal('fetch', vi.fn(() => { fetchCalls++; return Promise.reject(new TypeError('Failed to fetch')) }))
   __resetSpeechVoiceForTest()
+  __resetSpeechLocaleForTest()
   __resetAudioPlaybackStateForTest()
   __resetSystemSpeechForTest()
 })
@@ -275,15 +278,63 @@ describe('声を VOICEVOX にして、VOICEVOX に繋がらないとき', () => 
   })
 })
 
+describe('読み上げの言語が日本語以外のとき（VOICEVOX は日本語だけ）', () => {
+  const EN_TEXT = 'Earthquake Early Warning. Earthquake: Off the Coast of Sanriku.'
+
+  it('正: 言語を添えた文は、声が VOICEVOX でも VOICEVOX を試さずに端末の声で、その言語の言語タグで読む', async () => {
+    const p = speakWithVoicevox(URL_OK, { text: EN_TEXT, locale: 'en' }, 1, 1)
+    await vi.advanceTimersByTimeAsync(5000)
+    const o = await p
+    expect(fetchCalls).toBe(0)
+    expect(o.spokenChunks).toEqual(splitForeignSpeechUnits(EN_TEXT, false, 'en'))
+    expect(started.map(u => u.lang)).toEqual(['en-US', 'en-US'])
+  })
+
+  it('正: 言語を添えた文は、先行合成を VOICEVOX へ投げない', () => {
+    expect(prewarmVoicevox(URL_OK, { text: EN_TEXT, locale: 'en' }, 1)).toBeNull()
+  })
+
+  it('正: 文の言語は文と一緒に届いた値で決まる（訳の無い地名・地名の中黒が混じっても、その言語で読む）', async () => {
+    const p = speakWithVoicevox(URL_OK, { text: 'Earthquake Early Warning. Earthquake: 三陸沖.', locale: 'en' }, 1, 1)
+    await vi.advanceTimersByTimeAsync(5000)
+    await p
+    expect(started.map(u => u.lang)).toEqual(['en-US', 'en-US'])
+    started = []
+    const p2 = speakWithVoicevox(URL_OK, { text: '緊急地震警報。壹岐・對馬近海發生地震。', locale: 'zh-Hant' }, 1, 1)
+    await vi.advanceTimersByTimeAsync(5000)
+    await p2
+    expect(started.map(u => u.lang)).toEqual(['zh-TW', 'zh-TW'])
+  })
+
+  it('安全弁: 読み上げの言語が日本語以外でも、素の文字列（日本語の文。時報・揺れ検知など）は VOICEVOX を試し、日本語で読む', async () => {
+    setSpeechLocale('en')
+    expect(prewarmVoicevox(URL_OK, '震度3以上の揺れを観測しました。', 1)).not.toBeNull()
+    const before = fetchCalls
+    const p = speakWithVoicevox(URL_OK, '震度3以上の揺れを観測しました。', 1, 1)
+    await vi.advanceTimersByTimeAsync(20_000)
+    await p
+    expect(fetchCalls).toBeGreaterThan(before)
+    expect(started.every(u => u.lang === 'ja-JP')).toBe(true)
+  })
+
+  it('対照: 素の文字列は、声を「システムの読み上げ」にしていれば日本語の言語タグで読む', async () => {
+    setSpeechVoice('system')
+    const p = speakWithVoicevox(URL_OK, '震度3以上の揺れを観測しました。', 1, 1)
+    await vi.advanceTimersByTimeAsync(5000)
+    await p
+    expect(started.map(u => u.lang)).toEqual(['ja-JP'])
+  })
+})
+
 describe('1 発話の部品（speakSystemUtterance）', () => {
   it('安全弁: 鳴り始めない発話を見切っても、その後に渡した別の発話は止めない', async () => {
     // 1 本目は黙る（onstart が来ない）。2 本目は鳴る
     const speak = vi.spyOn(fakeSynth, 'speak')
     speak.mockImplementationOnce(() => { /* 黙る */ })
-    const first = speakSystemUtterance('一本目', 1, () => {})
+    const first = speakSystemUtterance('一本目', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(10)
     // 1 本目が見切られる前に 2 本目を渡す（1 本目は「止めた」で終わる）
-    const second = speakSystemUtterance('二本目の文です', 1, () => {})
+    const second = speakSystemUtterance('二本目の文です', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(10_000)
     expect(await first).toBe('cancelled')
     expect(await second).toBe('ended')
@@ -294,7 +345,7 @@ describe('1 発話の部品（speakSystemUtterance）', () => {
     vi.spyOn(fakeSynth, 'speak').mockImplementationOnce((u: FakeUtterance) => {
       setTimeout(() => { u.onstart?.(); setTimeout(() => u.onerror?.({ error: 'synthesis-failed' }), 50) }, 0)
     })
-    const result = speakSystemUtterance('壊れる文', 1, () => {})
+    const result = speakSystemUtterance('壊れる文', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(1000)
     expect(await result).toBe('failed')
   })
@@ -302,20 +353,20 @@ describe('1 発話の部品（speakSystemUtterance）', () => {
   it('正: 最初の操作の空の発話が残っていても、本番の発話はすぐ鳴る（空の発話を止めてから渡す）', async () => {
     vi.spyOn(fakeSynth, 'speak').mockImplementationOnce(() => { /* 空の発話は鳴り終わらないまま残る */ })
     unlockSystemSpeech()
-    const result = speakSystemUtterance('本番の文です', 1, () => {})
+    const result = speakSystemUtterance('本番の文です', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(1000)
     expect(await result).toBe('ended')
   })
 
   it('対照: 声の一覧が空なら届くまで待ってから渡し、届かなければ 1 秒で見切って渡す。待つのは最初の 1 回だけ', async () => {
     vi.spyOn(fakeSynth, 'getVoices').mockReturnValue([])
-    const result = speakSystemUtterance('一覧の無い文', 1, () => {})
+    const result = speakSystemUtterance('一覧の無い文', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(900)
     expect(started).toHaveLength(0)
     await vi.advanceTimersByTimeAsync(1000)
     expect(await result).toBe('ended')
     // 2 本目は待たずに渡す（声が 1 つも無い端末で、チャンクごとに 1 秒遅れない）
-    const second = speakSystemUtterance('二本目の文です', 1, () => {})
+    const second = speakSystemUtterance('二本目の文です', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(10)
     expect(started).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(1000)
@@ -349,7 +400,7 @@ describe('端末の声の有効化（unlockSystemSpeech）', () => {
 
   it('安全弁: 本番の発話が一度でも鳴り始めていれば、有効化の発話を渡さずに要らないと返す', async () => {
     const speak = vi.spyOn(fakeSynth, 'speak')
-    const result = speakSystemUtterance('本番の文です', 1, () => {})
+    const result = speakSystemUtterance('本番の文です', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(10)
     expect(unlockSystemSpeech()).toBe(true)
     expect(speak).toHaveBeenCalledTimes(1)
@@ -361,7 +412,7 @@ describe('端末の声の有効化（unlockSystemSpeech）', () => {
     const speak = vi.spyOn(fakeSynth, 'speak')
     speak.mockImplementationOnce(() => { /* 本番の発話はまだ鳴り始めていない */ })
     const cancel = vi.spyOn(fakeSynth, 'cancel')
-    const result = speakSystemUtterance('本番の文です', 1, () => {})
+    const result = speakSystemUtterance('本番の文です', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(2000)
     expect(speak).toHaveBeenCalledTimes(1)
     expect(unlockSystemSpeech()).toBe(false)
@@ -398,7 +449,7 @@ describe('端末の声の有効化（unlockSystemSpeech）', () => {
   it('正: 見切った後に遅れて鳴り始めても、端末の声は使えるとして以後は有効化しない', async () => {
     let late: FakeUtterance | null = null
     vi.spyOn(fakeSynth, 'speak').mockImplementationOnce((u: FakeUtterance) => { late = u })
-    const result = speakSystemUtterance('本番の文です', 1, () => {})
+    const result = speakSystemUtterance('本番の文です', 1, () => {}, 'ja')
     await vi.advanceTimersByTimeAsync(4100)
     expect(await result).toBe('failed')
     ;(late as FakeUtterance | null)?.onstart?.()

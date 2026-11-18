@@ -15,8 +15,9 @@
  * §4-8 で実際にそうなりかけた）。
  *
  * **このモジュールは外部依存を持たない。** 読み上げ文を組む側（`ttsText.ts`）と
- * 合成へ渡す側（`voicevox.ts`）の両方から読まれるので、どちらにも依存できない。
+ * 合成へ渡す側（`voicevox.ts`）の両方から読まれるので、どちらにも依存できない（言語の型だけは型として読む）。
  */
+import type { Locale } from '../i18n/messages'
 
 /**
  * 文の終わりとみなす記号。
@@ -36,3 +37,18 @@ export const SENTENCE_END_RE = new RegExp(`[${[...SENTENCE_END].join('')}]$`)
  * 読点を含むのは、長い文を途中で区切って合成の単位を短くするため（文の終わりではない）。
  */
 export const CHUNK_BREAK_PUNCTUATION = [...SENTENCE_END, '、'].join('')
+
+/**
+ * 日本語以外の読み上げの文の区切り（端末の声で読む単位を決める。VOICEVOX は日本語だけなので、上の集合とは別に持つ）。
+ *
+ * - `sentenceEnd` … 文の終わり。中国語は日本語と同じ全角の句点など。英語・韓国語・ポルトガル語・スペイン語は半角の `.!?` で、
+ *   **後ろに空白か文の終わりが来るときだけ**（`6.5` のような数の中の点で割らない）
+ * - `chunkBreak` … 文の中の区切り（{@link CHUNK_BREAK_PUNCTUATION} の読点にあたる）。**`sentenceEnd` を含む**（上と同じ理由）
+ *
+ * どちらも、記号の直後の位置で一致する（`lastIndex` がそこまでを 1 つの単位にする位置）。
+ */
+export const FOREIGN_SPEECH_BREAKS: Readonly<Record<Exclude<Locale, 'ja'>, { sentenceEnd: RegExp; chunkBreak: RegExp }>> = (() => {
+  const cjk = { sentenceEnd: /[。！？]/g, chunkBreak: /[。！？、，：；]/g }
+  const latin = { sentenceEnd: /[.!?](?=\s|$)/g, chunkBreak: /[.!?,:;](?=\s|$)/g }
+  return { 'zh-Hans': cjk, 'zh-Hant': cjk, en: latin, ko: latin, 'pt-BR': latin, es: latin }
+})()

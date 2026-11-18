@@ -149,12 +149,12 @@ describe('読み上げ辞書の合成', () => {
     const { warmFixedPhrases } = await freshVoicevox()
     const phrases = ['石川県能登で、']
     correctionFailure = 'status'
-    warmFixedPhrases('http://vv', 0, phrases)
+    warmFixedPhrases('http://vv', 0, phrases, 'ja')
     await vi.waitFor(() => expect(synthesisCalls).toBe(1))
     correctionFailure = null
-    warmFixedPhrases('http://vv', 0, phrases)
+    warmFixedPhrases('http://vv', 0, phrases, 'ja')
     await vi.waitFor(() => expect(synthesisCalls).toBe(2))
-    warmFixedPhrases('http://vv', 0, phrases)
+    warmFixedPhrases('http://vv', 0, phrases, 'ja')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(synthesisCalls).toBe(2)
   })
@@ -162,7 +162,7 @@ describe('読み上げ辞書の合成', () => {
   it('本再生からの作り置き補充も、補正に失敗した音を残さない', async () => {
     const { warmFixedPhrases, speakWithVoicevox: speak } = await freshVoicevox()
     correctionFailure = 'status'
-    warmFixedPhrases('http://vv', 0, ['石川県能登で、'])
+    warmFixedPhrases('http://vv', 0, ['石川県能登で、'], 'ja')
     await vi.waitFor(() => expect(synthesisCalls).toBe(1))
     const text = '石川県能登で、続報をお伝えします。'
     await speak('http://vv', text, 0, 1)

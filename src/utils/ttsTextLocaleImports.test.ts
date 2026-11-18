@@ -11,7 +11,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const ALLOWED = new Set([
-  'speechTextFor', 'createSpeechText', 'JA_SPEECH_TEXT',
+  'speechTextFor', 'createSpeechText', 'canBuildSpeechText', 'JA_SPEECH_TEXT',
   'createQuakeSpokenState', 'applySpokenRefs', 'applyTsunamiSpokenRefs',
   'selectObservationUpdatesToSpeak', 'selectArrivalsToSpeak', 'selectMissingToSpeak', 'selectWarningLevelToSpeak',
   'selectMaxHeightTimeUpdatesToSpeak', 'selectFirstWaveUpdatesToSpeak',
@@ -90,6 +90,19 @@ describe('本体は読み上げの文を組む関数を画面の言語の組か�
       .toEqual(['earthquakeToText', 'JA_SPEECH_TEXT'])
     expect(importedValues("import type { TtsSpeechOptions } from './ttsText'")).toEqual([])
     expect(importedValues("import {\n  speechTextFor, // 組を引く\n  lpgmToText,\n} from './ttsText.ts'")).toEqual(['speechTextFor', 'lpgmToText'])
+  })
+
+  // 日本語以外の語表（`i18n/speech/<言語>.ts`）は画面の辞書（`messages/<言語>.ts`）から語を引く。本体が静的に読むと、
+  // 言語ごとに後から読む画面の辞書が 6 言語ぶん起動の束へ入る（→ `i18n/speechWords.ts` の `SpeechWordsInProgress`）
+  it('本体は日本語以外の語表を静的に読まない', () => {
+    const offenders: string[] = []
+    const re = /(?:import|export)\s[^;]*?from\s+['"][^'"]*speech\/(?:en|zhHans|zhHant|ko|ptBR|es|shared)['"]/g
+    for (const file of sourceFiles('src')) {
+      const rel = relative('.', file).replace(/\\/g, '/')
+      if (/^src\/i18n\/speech\//.test(rel)) continue
+      for (const m of readFileSync(file, 'utf8').matchAll(re)) offenders.push(`${rel}: ${m[0]}`)
+    }
+    expect(offenders).toEqual([])
   })
 
   it('照合は組を丸ごと取る書き方を拾う', () => {

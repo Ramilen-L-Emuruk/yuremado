@@ -920,6 +920,7 @@ export const ko: Messages = {
         label: '읽기 음성',
         description: 'VOICEVOX에 연결되지 않으면 시스템 음성으로 읽습니다',
         system: '시스템 음성',
+        noLocaleVoice: '이 기기에는 한국어 음성이 없어 일본어로 읽습니다.',
       },
       volume: {
         label: '음량',

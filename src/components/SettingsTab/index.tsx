@@ -14,8 +14,9 @@ import type { ConnectionStatus } from '../../types/earthquake'
 import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLabel'
 import type { RelayUpstreamStatus } from '../../services/dmdata'
 import { useMessages } from '../../i18n/I18nProvider'
-import { LOCALE_LOAD_FAILED_EN, LOCALE_LOAD_FAILED_JA, LOCALES, type LocaleSetting, type Messages } from '../../i18n/messages'
-import { useLocaleLoadFailed, useLocale, usePlaceNames } from '../../i18n/I18nProvider'
+import { LOCALE_LOAD_FAILED_EN, LOCALE_LOAD_FAILED_JA, LOCALES, type Locale, type LocaleSetting, type Messages } from '../../i18n/messages'
+import { useLocaleLoadFailed, usePlaceNames } from '../../i18n/I18nProvider'
+import { useSpeechLocale, useSpeechLocaleDecision } from '../../hooks/useSpeechLocale'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, intensityLabel, intensityShortLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
 import { kyoshinIndexLabelText, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
@@ -1085,10 +1086,16 @@ function TestButton({ color, onClick, children, disabled }: {
  * `speakSequentially` が Promise を返す前に起きるため `catch` に入らず、押しても無音のまま
  * 画面には何も出ない。
  */
-async function speakVoicevoxPreview(speechText: SpeechText, baseUrl: string, speakerId: number, volume: number): Promise<void> {
+async function speakVoicevoxPreview(
+  speechText: SpeechText,
+  /** `speechText` を引いた読み上げの言語（文と一緒に読み上げへ渡す。→ `SpeechUtterance`） */
+  locale: Locale,
+  baseUrl: string, speakerId: number, volume: number,
+): Promise<void> {
   // 試聴は VOICEVOX をもう一度試す（「繋がらない」の印が残ったままだと、VOICEVOX が直っていても端末の声で鳴る）
   clearVoicevoxDown()
-  await speakSequentially(baseUrl, speechText.voicevoxPreviewTexts(), speakerId, volume)
+  const texts = speechText.voicevoxPreviewTexts().map(text => (locale === 'ja' ? text : { text, locale }))
+  await speakSequentially(baseUrl, texts, speakerId, volume)
 }
 
 // 震度別の色付き小ボタン（通知音テスト用）。表記と色は強震モニタのインデックスから引く
@@ -1369,8 +1376,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   const w = m.settings
   const fw = m.formats
   const localeLoadFailed = useLocaleLoadFailed()
-  // 試聴は本番の読み上げと同じ組（画面の言語）で組む
-  const speechText = speechTextFor(useLocale(), usePlaceNames())
+  // 試聴は本番の読み上げと同じ組（読み上げの言語）で組む
+  const speechLocale = useSpeechLocale()
+  const speechText = speechTextFor(speechLocale, usePlaceNames())
+  // 画面の言語の声が端末に無く、日本語で読んでいるか（読み上げの声の行の下に出す）
+  const { missingVoice } = useSpeechLocaleDecision()
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -1655,11 +1665,15 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               {/* 試聴は今の声で読む（VOICEVOX に繋がらなければ端末の声へ落ちるのも本番と同じ）。通信先はデバウンス後の URL（下の VOICEVOX の試聴と同じ理由） */}
               <TestButton color="blue" onClick={() => {
                 unlockAudio()
-                speakVoicevoxPreview(speechText, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                speakVoicevoxPreview(speechText, speechLocale, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
                   .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
               }}>{w.common.preview}</TestButton>
             </div>
           </Row>
+        )}
+        {/* 画面の言語の声が端末に無いので日本語で読んでいる（日本語の画面・語表がまだ無い言語では出ない。→ hooks/useSpeechLocale.ts） */}
+        {settings.ttsEnabled && missingVoice && (
+          <div className="px-3 pb-2 text-[11px] text-secondary leading-snug">{w.rows.ttsVoice.noLocaleVoice}</div>
         )}
         {/* 時報も鳴らすので数える（時報の「通知音と同じ」はこの音量を指す。切ると行ごと消えて辿れない） */}
         {(settings.soundEnabled || settings.ttsEnabled || settings.timeSignalEnabled) && (
@@ -1783,7 +1797,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                       文字列を書くと、緊急地震速報の文型を変えたとき試聴だけ古い形で残る。 */}
                   <TestButton color="blue" onClick={() => {
                     unlockAudio()
-                    speakVoicevoxPreview(speechText, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                    speakVoicevoxPreview(speechText, speechLocale, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
                       .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
                   }}>{w.common.preview}</TestButton>
                 </Row>
