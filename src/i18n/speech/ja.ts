@@ -24,6 +24,10 @@ const day = (d: number) => (d === 1 ? 'ついたち' : `${d}日`)
 /** 震源名と深さの間（地震の発生の文と、津波の文の震源の句が使う） */
 const hypocenterDepthSep = '、'
 
+/** 津波の観測点の句の述語の語幹（更新・観測） */
+const STEM_UPDATED = 'へ更新'
+const STEM_OBSERVED = 'を観測'
+
 /**
  * 読み上げの文の語表（日本語）。読み上げの関数の組（`utils/ttsText.ts` の `createSpeechText`）が文面をここから引く。
  *
@@ -56,7 +60,7 @@ export const jaSpeech = {
     dayTime: (d: number, hour: number, minute: number) => `${day(d)}${time(hour, minute)}`,
     /**
      * 取消の理由（電文の文）を別の発話で読むときの前置き。`infoName` は情報の名前。
-     * 呼び出し側（`useLiveEventHandler.ts`）はいま日本語の名前を渡している。日本語以外の組はこの前置きを使わない
+     * 呼び出し側（`useLiveEventHandler.ts`）は、津波の取消だけ語表の名前（`TSUNAMI_WARNINGS_ETC_NAME`）を渡し、ほかは日本語の名前を渡している。日本語以外の組はこの前置きを使わない
      * （理由の文を読まないので手前で null が返る）が、使う形にするなら名前を語表の名前へ引き直す（長周期の段で直す）
      */
     cancelReasonLead: (infoName: string) => `${infoName}が取り消された理由をお伝えします。`,
@@ -324,8 +328,21 @@ export const jaSpeech = {
     } as Record<string, string>,
     /** 観測した波高に「以上」を補う（画面の辞書と同じ付け方） */
     heightLabel: { height: (description: string, over: boolean) => jaMessages.tsunami.height(description, over) },
-    /** 地名の後ろの波高 */
-    heightAt: (height: string) => `で${height}`,
+    /**
+     * 区域名どうしの区切り（予想波高の文・等級の文）。区域名の訳がコンマを含む言語では、区域の切れ目を聞き分けられる区切りにする
+     * （地震情報の `quake.regionSep` と同じ考え方）
+     */
+    areaSep: '、',
+    /** 予想波高の組（同じ波高の区域の並び）どうしの区切り */
+    heightGroupSep: '、',
+    /** 観測点の文で、区域名と観測点名の間 */
+    districtStationSep: '、',
+    /** 観測点の文で、観測点どうし・区域の組どうしの区切り */
+    stationSep: '、',
+    /** 区域名の後ろの予想波高。予想と観測を言い分ける言語は、ここで「予想」を言う */
+    forecastHeightAt: (height: string) => `で${height}`,
+    /** 観測点名の後ろの観測した波高（欠測の前に観測できていた分の文） */
+    observedHeightAt: (height: string) => `で${height}`,
     /** 波高を並べた文の締め */
     heightsExpected: 'が予想されています。',
     /** 波高が無い区域にも同じ等級が出ている */
@@ -350,7 +367,10 @@ export const jaSpeech = {
     areaGradeChanged: (from: string, to: string, raised: boolean) => `の${from}が${to}に${raised ? '引き上げられました' : '切り替えられました'}。`,
     /** 予想波高だけが変わった報の頭 */
     forecastHeightChanged: '予想される津波の高さが変わりました。',
-    /** 気象庁の付加文が採れなかったときの避難の呼びかけ（画面と同じ文） */
+    /**
+     * 気象庁の付加文が採れなかったときの避難の呼びかけ（画面と同じ文）。気象庁の文を読まない言語はいつもこれ。
+     * 日本語の画面の辞書を引く `fallbackEvacuationAction` は日本語の語表だけが使う（ほかの言語は自分の画面の辞書を引く）
+     */
     fallbackEvacuation: (grade: TsunamiGrade) => fallbackEvacuationAction(grade),
     /** 原因地震の震源の文の頭（1 つ目の地震） */
     sourceLead: 'この地震の震源は',
@@ -358,6 +378,8 @@ export const jaSpeech = {
     sourceLeadOther: 'また、もう一つの地震の震源は',
     /** 原因地震の規模の前 */
     sourceMagnitudeLead: '、マグニチュードは',
+    /** 原因地震の規模の数値（小数点の読み方が違う言語はここで直す） */
+    sourceMagnitude: (magnitude: string) => magnitude,
     /** 原因地震の文の締め */
     sourceTail: 'です。',
     /** 原因地震の震源名が変わった */
@@ -368,12 +390,19 @@ export const jaSpeech = {
     sourceMagnitudeAmended: (first: boolean, predicate: string) => `${first ? 'この地震の' : 'もう一つの地震の'}マグニチュードが更新されました。${predicate}`,
     /** 原因地震の深さが変わった */
     sourceDepthAmendedTo: (first: boolean, depth: string) => `${first ? 'この地震の' : 'もう一つの地震の'}震源の深さは${depth}に更新されました。`,
-    /** 失効時刻（等級を名乗る文の後ろ。値の前） */
-    expiryLead: (grade: string) => `この${grade}の失効時刻は、`,
+    /**
+     * 失効時刻（等級を名乗る文の後ろ。値の前）。`time` は後ろに続く時刻の文字列（時刻の前の語が時で変わる言語が使う。
+     * ポルトガル語・スペイン語の 1 時台の冠詞）
+     */
+    expiryLead: (grade: string, _time: string) => `この${grade}の失効時刻は、`,
     /** 失効時刻（値の後ろ） */
     expiryTail: 'です。',
-    /** 失効時刻が動いた（値の前） */
-    expiryChangeLead: (grade: string) => `${grade}の失効時刻が、`,
+    /**
+     * 失効時刻が動いた（値の前）。`extended` は延びたか（早まったなら偽）。延長か変更かを時刻の前で言う言語は、ここで言う
+     * （2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 15 節。日本語は値の後ろの `expiryExtended`・`expiryChanged` で言う）。
+     * `time` は {@link expiryLead} と同じ
+     */
+    expiryChangeLead: (grade: string, _extended: boolean, _time: string) => `${grade}の失効時刻が、`,
     /** 失効時刻が延びた（値の後ろ。2026-10-24 ユーザー選択「延長と言う (Recommended)」） */
     expiryExtended: 'に延長されました。',
     /** 失効時刻が早まった（値の後ろ） */
@@ -390,19 +419,22 @@ export const jaSpeech = {
     offshoreRetracted: '沖合の津波観測に関する情報は取り消されました。',
     /** 第 1 波の押し引き（電文の「押し」「引き」）。無ければ「第一波」 */
     firstWaveKind: (initial: string | undefined) => (initial ? `${initial}波` : '第一波'),
-    /** 観測点の波高の句。`firstWave` は織り込む第 1 波、`at` は最大波の時刻、`stem` は述語の語幹 */
-    heightClause: (firstWave: { time: string; initial: string } | null, at: string | null, value: string, stem: string) =>
-      `で${firstWave ? `、${firstWave.time}に${firstWave.initial}が到達し、` : ''}${at ? `${at}に` : ''}${value}${stem}`,
-    /** 観測情報の名乗り（後ろに気象庁の見出し文が続く） */
+    /**
+     * 観測点の波高の句。`firstWave` は織り込む第 1 波、`at` は最大波の時刻、`value` は波高、`updated` は前に読んだ波高から
+     * 上がったか（偽なら初めての観測）。述語の語幹（`stemUpdated`・`stemObserved`）を句のどこに置くかは言語が決める
+     */
+    heightClause: (firstWave: { time: string; initial: string } | null, at: string | null, value: string, updated: boolean) =>
+      `で${firstWave ? `、${firstWave.time}に${firstWave.initial}が到達し、` : ''}${at ? `${at}に` : ''}${value}${updated ? STEM_UPDATED : STEM_OBSERVED}`,
+    /** 観測情報の名乗り（日本語は後ろに気象庁の見出し文が続く。気象庁の文を読まない言語は在処の文が続く） */
     observationInfoLead: '津波観測に関する情報。',
     /** 最大波が上がった観測点の文の頭 */
     maxWaveUpdatedLead: '次の地点で最大波が更新されました。',
     /** 初めて観測した観測点の文の頭 */
     newlyObservedLead: '新たに、次の地点で津波を観測しました。',
-    /** 述語の語幹（更新） */
-    stemUpdated: 'へ更新',
-    /** 述語の語幹（観測） */
-    stemObserved: 'を観測',
+    /** 述語の語幹（更新。`heightClause` が句に入れる） */
+    stemUpdated: STEM_UPDATED,
+    /** 述語の語幹（観測。`heightClause` が句に入れる） */
+    stemObserved: STEM_OBSERVED,
     /** 述語の結び（更新） */
     tailUpdated: 'されました。',
     /** 述語の結び（観測・確認） */
@@ -449,7 +481,7 @@ export const jaSpeech = {
     observationNoChange: '津波観測に関する情報。観測された波高に変わりはありません。',
     /** 読んだ波高より下がった観測点がある観測情報（下がった値は読まない。2026-10-19 ユーザー承認） */
     observationLowered: '津波観測に関する情報が発表されました。',
-    /** 満潮時刻の報の名乗り（電文が見出し文を持たないとき） */
+    /** 満潮時刻の報の名乗り（電文が見出し文を持たないとき。気象庁の文を読まない言語はいつもこれ） */
     tideFallbackHeadline: '各地の満潮時刻と津波到達予想時刻をお知らせします。',
     /** 満潮時刻の報で変わったもの */
     tide: {

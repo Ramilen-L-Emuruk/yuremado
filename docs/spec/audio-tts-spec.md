@@ -1948,12 +1948,12 @@ UniDic の `地方`（aType=1）はどちらも「チ」なので、放ってお
 - `createSpeechText(語表, 地名の引き)` が、下の関数を全部持つ組を返す（2026-11-17 ユーザー選択「言語ごとに関数の組を作る (Recommended)」）。**何を読むかの判断（差分・既読・件数・順序）はこの中の 1 か所だけ**で、言語で変わるのは文面と地名だけ
 - 既読と追従の鍵（`SpeechRef`）は言語によらない値で持つ。地名は日本語の名前、津波の失効時刻は `日/時:分`（日付を添えないときは `時:分`。作り方は `expiryTextAndKey`）
 - 読み上げる経路（`useLiveEventHandler`・先読み・設定の窓の試聴・切り出し語の作り置き）は `speechTextFor(読み上げの言語, 地名の引き)` で引いた組から呼ぶ。言語は画面の言語ではなく読み上げの言語（§3「日本語以外の読み上げ」。声と同じ値）
-- 語表を持たない言語では `speechTextFor` が日本語の組を返す（地名も日本語のまま。声が日本語なので訳した地名を混ぜない）。いまは全区分の語表が日本語だけなので、どの言語の画面でも日本語で読む（進め方は [`i18n-spec.md`](i18n-spec.md) §5「読み上げの文」）
-- 日本語以外の語表は区分ごとに訳す（`src/i18n/speech/<言語>.ts`。形は `SpeechWordsInProgress`）。訳し終えた区分と、いつから読み上げに使うかは [`i18n-spec.md`](i18n-spec.md) §5「読み上げの文」。緊急地震速報・地震情報の文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 6 言語の表で、気象庁の多言語辞書の定型文と画面の訳にそろえた（`ttsTextLocales.test.ts` が表の文を固定する）
+- 語表を持たない言語では `speechTextFor` が日本語の組を返す（地名も日本語のまま。声が日本語なので訳した地名を混ぜない）。日本語以外の語表は全区分そろうまで読み上げには使わない（2026-11-17 ユーザー選択「全段そろうまで出さない」）ので、どの言語の画面でも日本語で読む（進め方は [`i18n-spec.md`](i18n-spec.md) §5「読み上げの文」）
+- 日本語以外の語表は区分ごとに訳す（`src/i18n/speech/<言語>.ts`。形は `SpeechWordsInProgress`）。訳し終えた区分と、いつから読み上げに使うかは [`i18n-spec.md`](i18n-spec.md) §5「読み上げの文」。緊急地震速報・地震情報・津波の文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 6 言語の表で、気象庁の多言語辞書の定型文と画面の訳にそろえた。文面の正は `src/i18n/speech/<言語>.ts` と、その文を固定する `ttsTextLocales.test.ts`
 - **地震の発生の文の語順は言語が決める**（2026-11-17 ユーザー選択「言語の側で決める (Recommended)」）。震源名・深さ・規模・数値でない規模の文はそれぞれ既読の鍵を持つ断片なので 1 つの文字列にできない。語表の `quake.occurrence` が言える要素の文字列を受けて並び（要素と語の断片の列）を返し、`quakeOccurrenceSegments` はその順に、要素には鍵を付けて並べる。鍵の組は言語によらず同じ。英語・ポルトガル語・スペイン語は「地震が起きた」を先に言い、震源を後の文で言う（「Around 12:34, an earthquake of magnitude 6.5 occurred. Hypocenter: Noto, Ishikawa Prefecture, depth 10 kilometers.」）
 - **地震情報の地名を並べる区切りは `quake.regionSep`**（観測した地域・未入電の地名。2026-11-17 ユーザー選択「「; 」で区切る (Recommended)」）。英語・ポルトガル語・スペイン語は地名の訳がコンマを含む（`Noto, Ishikawa Prefecture`）ので「; 」、中国語は「、」、韓国語は「, 」、日本語は `listSep` と同じ「、」。緊急地震速報の地方名は `common.listSep` のまま
 - **観測した地域の階級と階級の間は `quake.intensityGroupSep`**（2026-11-17 ユーザー選択「階級ごとに文を切る (Recommended)」）。日本語・中国語は「、」、韓国語は「, 」で、述語を最後の句と共有する。英語・ポルトガル語・スペイン語は階級ごとに文を切る。続報で初めて観測した地域の文では、次の文の頭にも「新たに」（Newly など）を置く（2026-11-17 ユーザー選択「文ごとに繰り返す (Recommended)」）
-- 地名の表に無い名前（観測した地域・未入電の地名・震央地名）は、日本語の名前のまま読む（2026-11-17 ユーザー選択「日本語の名前のまま読む (Recommended)」。画面の地名の決め〈[`i18n-spec.md`](i18n-spec.md)「地名の訳」の「どの表にも無い名前は日本語のまま出す」〉と同じ扱い）。日本語以外の組では、言語と種類ごとに 1 度だけ警告を残す（`warnUnknownPlaceName`。表がまだ届いていないときと、空の名前では残さない）
+- 地名の表に無い名前（観測した地域・未入電の地名・震央地名）は、日本語の名前のまま読む（2026-11-17 ユーザー選択「日本語の名前のまま読む (Recommended)」。画面の地名の決め〈[`i18n-spec.md`](i18n-spec.md)「地名の訳」の「どの表にも無い名前は日本語のまま出す」〉と同じ扱い）。日本語以外の組では、名前ごとに 1 度だけ警告を残す（`warnUnknownPlaceName`。言語と種類ごとに名前の数の上限 `UNREADABLE_VALUE_LOG_KINDS` を超えたら、黙らずに時間で間引いて出し続ける。表がまだ届いていないときと、空の名前では残さない）
 - **遠地地震の付加文（`forecastText`）**。日本語は付加文の原文をそのまま読む。日本語以外は次のとおり
   - 何を言うか: 原文は読まず、コードから引く決まった文を訳して言う（2026-11-17 ユーザー選択「022x の文を訳して読む (Recommended)」）。022x 系の文（`quake.foreignTsunamiCode`）と国内の津波のコードの文で、国内は区分ではなくコードの文を読む（区分は 0229・0230 のような遠地地震のコードも丸めた値で、コードの文のほうが原文に近い）。最後に在処の文（`common.telegramTextElsewhere`。訳さない言い回しと知らないコードの文を受け持つ。2026-11-16 ユーザー選択「読まずに「画面にある」と言う」）。022x 系のコードは解読の段（`dmdataParser.ts`）が `earthquake.foreignTsunamiCodes` に残す。その欄を持たない古いカードでも、原文の中のコード表の文から同じ文を言う
   - 並び順: 付加文の原文と同じ順（2026-11-17 ユーザー選択「原文と同じ順 (Recommended)」）。各文が原文のどこに現れるかで並べる（`translatedForecastSegments`）。テストボタンの 2 通（実電文 1 通と気象庁のサンプル電文 1 通）では 022x 系が先で国内の文が後
@@ -1967,13 +1967,31 @@ UniDic の `地方`（aType=1）はどちらも「チ」なので、放ってお
     | 無し | 区分 | 区分の文。海外への見通し（`foreignTsunamiText`）があれば在処の文を続け、無ければ在処の文を言わない |
 - 規模の説明が知らない表記のとき、日本語以外は表記（日本語）を読まず「数値で発表されていない」と言い（`quake.magnitudeConditionUnknown`）、在処の文を発話の末尾に 1 度だけ足す（遠地地震の付加文の在処の文と重ねない。2026-11-17 ユーザー選択「数値でないと言い、在処を言う (Recommended)」）。日本語は表記をそのまま読む
 - 種類を名指しした取消は、取り消された報の種別を `quake.reportName` で名前へ引く（日本語は種別の名前、ほかの言語は画面の `quake.issueType` の訳）。引けなければ種別の名前のまま言い、1 度だけ警告を残す
+- **津波の区域・観測点の区切りは 4 つのキーに分けてある**（`tsunami.areaSep` 区域名どうし・`heightGroupSep` 予想波高の組どうし・`districtStationSep` 観測点の文の区域名と観測点名の間・`stationSep` 観測点どうしと区域の組どうし）。区域名の訳がコンマを含む言語（英語・ポルトガル語・スペイン語の `Noto Area, Ishikawa Prefecture`）で、1 つの区切りがこの 4 つを兼ねると、どこで区域が変わったか聞き分けられないため。日本語はどれも「、」。英語・ポルトガル語・スペイン語の観測点の文は「Noto Area, Ishikawa Prefecture: Wajimako, …; Toyama Prefecture: Toyama, …」の形
+- **津波の波高は、予想と観測を別のキーで言う**（`tsunami.forecastHeightAt`・`observedHeightAt`）。英語・中国語・ポルトガル語・スペイン語は予想を波高の側で言う（「: estimated height 5 meters」）。同じキーにすると、欠測の文の観測した高さまで「予想」になる。日本語はどちらも「で」
+  - 表記（「１ｍ」「10m超」「0.2m未満」）は語表の `heightToSpeech` が数と限りに分けて組む（分け方は `utils/tsunami.ts` の `parseTsunamiHeight`）。観測値の「以上」は、日本語の `heightLabel` が日本語の画面の辞書で補い、ほかの言語の `heightLabel` は電文の表記の「以上」で補ってから訳す（`shared.ts` の `markHeightOrMore`）
+  - 予想波高も観測した波高も `heightPhrase` を通り、「巨大」「高い」は語表の `nonNumericHeight` で引く。それ以外の数でない表記は電文の語のまま読み、日本語以外の組では記録を残す。控えで数えた表記の種類は `heightToSay` のコメントにある（読めない形は 0 件）
+  - 観測点の波高の句（`heightClause`）は、述語の語幹（観測・更新）を句のどこに置くかを言語が決め、更新は観測した時刻だと分かる形にする
+- **津波の失効時刻と原因地震の規模**。失効時刻の延長・変更は、時刻の前で言う言語がある（「The Tsunami Forecast (slight sea-level change) has been extended; it now expires at 14:00 on the 19th.」）。`tsunami.expiryChangeLead` が延びたかを受け、日本語は時刻の後ろの `expiryExtended`・`expiryChanged` で言う。`expiryLead`・`expiryChangeLead` は時刻の文字列も受ける（ポルトガル語・スペイン語の 1 時台の冠詞）。原因地震の規模の数値は `sourceMagnitude` に通す（小数点のコンマ。既読の鍵は電文の値のまま）
+- **津波予報の名前は括弧つきで読む**（2026-11-17 ユーザー選択「括弧つきで読む (Recommended)」。「Tsunami Forecast (slight sea-level change)」）。等級の名前と避難の文は、その言語の画面の辞書（`tsunami.grade`・`tsunami.evacuationByGrade`）から引く（`shared.ts` の `tsunamiGradeNamesIn`・`tsunamiEvacuationIn`）。日本語の画面の辞書を引く `TSUNAMI_GRADE_NAME`・`fallbackEvacuationAction` は日本語の語表だけが使う。等級が不明なら名前を言わない
+- **津波の文で気象庁が書いた文**:
+
+  | 場所 | 日本語 | 日本語以外 |
+  |---|---|---|
+  | 避難の呼びかけ（発表文・区域ごとの等級の動き） | 付加文の 1 行目。無ければ等級ごとの文 | 画面の決め（2026-11-10 ユーザー選択「等級ごとの訳文を出す (Recommended)」）にそろえて、読み上げでも付加文を採らず等級ごとの訳文を読む（2026-11-17 ユーザー選択「この案で入れる (Recommended)」。`evacuationActionToSay`）。在処の文は足さない（付加文の全文は「気象庁の発表文」の発話が受ける）。等級が不明の区域だけの報は、等級の文も避難の文も組まない（読む等級の並び `GRADE_ORDER` が不明を外す。語表の文も不明には空を返す） |
+  | 観測情報の見出し文 | 名乗りの後ろにそのまま | 読まず、名乗りの後ろに在処の文（2026-11-17 ユーザー選択「報ごとに在処を言う」）。在処の文を言うのは、日本語が見出し文を読む所だけ（2026-11-18 ユーザー選択「日本語が気象庁の文を読む所だけ (Recommended)」）。見出し文の無い報と、波高の文を持たず到達・欠測などだけを読む報（名乗りは `tsunamiObservationLeadSegments`。日本語も見出し文を読まない）では言わない |
+  | 満潮時刻の報の見出し文 | そのまま（無ければ `tideFallbackHeadline`） | 読まず、いつも `tideFallbackHeadline` の訳で名乗る |
+
+- 原因地震の知らない規模の表記と、表に無い区域名・観測点名は地震情報と同じ。津波の入口は `withElsewhereForUnknownSourceMagnitude` と `tsunamiPlaceToSay`。訳せない押し引き（「押し」「引き」以外）は「第一波」と言い、型の外の等級は名前を言わず、どちらも記録を残す
+- 津波の誤報の取消の長い理由を別の発話で読むときの前置きには、語表の `warningsEtc` を渡す（`TSUNAMI_WARNINGS_ETC_NAME`。取消の文の名乗りと同じ語）
 - 言語ごとの細かい書き分け（語表のキー）:
   - 文の終わりの空白（英語・韓国語・ポルトガル語・スペイン語）: 文の終わりになるキー全般。断片は区切りを挟まずにつなぐ（`joinSegments`）ため
-  - 韓国語の助詞（을/를・으로/로・은/는・이/가）: `shared.ts` の `withKoreanParticle`（`intensityLead`・`updated`・`depthAmendKm` など）
+  - 韓国語の助詞（을/를・으로/로・은/는・이/가）: `shared.ts` の `withKoreanParticle`（`intensityLead`・`updated`・`depthAmendKm` など。津波は等級の名前・波高・時刻・押し引きの後ろ）
   - 韓国語の「ほか」の前にコンマを置かない: `unreceivedOmitted`・`regionsOmitted`（2026-11-17 ユーザー選択「コンマを外す (Recommended)」）
-  - ポルトガル語・スペイン語の規模の小数点のコンマ: `magnitudeOf`・`magnitudeAmendedTo`・`magnitudeValue`
-  - ポルトガル語・スペイン語の 1 時台の単数の冠詞（「à 1:40」「a la 1:40」）: `atAround`・`cancelledAt`・`reportCancelledAt`・`prominentAmendHead`・`eew.cancelledAt`
-  - 英語・ポルトガル語・スペイン語の 1 キロメートルの単数: `depthOf`・`depthKm`・`depthAmendKm`
+  - ポルトガル語・スペイン語の規模の小数点のコンマ: `magnitudeOf`・`magnitudeAmendedTo`・`magnitudeValue`・`tsunami.sourceMagnitude`・`tsunami.sourceMagnitudeAmendedTo`。波高の小数点も同じ（`tsunami.heightToSpeech`）
+  - ポルトガル語・スペイン語の 1 時台の単数の冠詞（「à 1:40」「a la 1:40」）: `atAround`・`cancelledAt`・`reportCancelledAt`・`prominentAmendHead`・`eew.cancelledAt`・津波の時刻を言うキー（`expiryLead`・`expiryChangeLead`・`heightClause`・`firstWaveObservedClause`・`firstWaveUpdatedClause`、スペイン語は `updatedAtClause` も）
+  - ポルトガル語・スペイン語の等級の名前の性: 冠詞と過去分詞を名前で選ぶ（`gradeIssued`・`issuedForAreas`・`areaLifted`）。等級が動いた文（`areaGradeChanged`）は「名前, 名詞句」の形にして性の一致を避ける
+  - 英語・ポルトガル語・スペイン語の 1 キロメートルの単数: `depthOf`・`depthKm`・`depthAmendKm`。1 メートル・1 地点の単数も同じ（`tsunami.heightToSpeech`・`omitted*`）
   - 時刻が読めない報の文頭の大文字: 語表ではなく `quakeOccurrenceSegments` が先頭の小文字を大文字にする（大文字の無い字は変わらない）
 - 本体はこの語表を静的に読まない。語表は画面の辞書を引くので、静的に読むと言語ごとに後から読む辞書が起動の束に入る（`ttsTextLocaleImports.test.ts` が止める）
 - 文と文は語表の区切り（`common.sentenceSep`）で続ける（`joinSentences`）。日本語と中国語は空、英語など語を空白で分ける言語は空白
@@ -1983,8 +2001,8 @@ UniDic の `地方`（aType=1）はどちらも「チ」なので、放ってお
 - 語表の形（`SpeechWords`）は日本語の語表から作る（画面の辞書の `Messages` と同じ作り。`src/i18n/speechWords.ts`）。値を差し込む文は差し込む値を引数に取る関数にする（言語ごとに置く位置が違うため）
 - 電文の文（気象庁が書いた取消の理由・見出し文・付加文）を直す処理は、電文が日本語なので日本語の語のまま行う（遠地地震の 0211 の文の置き換えなど）
 - 後の段で直すこと:
-  - 長周期の区分を訳すとき: 長周期地震動の文（`lpgmToText`）は地名と階級の間をまだ `common.listSep` で並べている（地震情報と同じ `quake.regionSep`・`quake.intensityGroupSep` へそろえる）。取消の理由の前置き（`common.cancelReasonLead`）には呼び出し側が日本語の名前を渡している（日本語以外では理由の文を読まないので、いまは使われない）
-  - 津波の区分を訳すとき: 津波の電文が原因地震の震源を語る句（`oneSourceHypocenterSegments` の `magnitudeConditionSentence`）は、規模が知らない表記でも在処の文を足していない。地震情報と同じく発話の末尾に 1 度だけ足す（`withElsewhereForUnknownMagnitude` と同じ扱い）
+  - 長周期の区分を訳すとき: 長周期地震動の文（`lpgmToText`）は地名と階級の間をまだ `common.listSep` で並べている（地震情報と同じ `quake.regionSep`・`quake.intensityGroupSep` へそろえる）
+  - 取消の理由の前置き（`common.cancelReasonLead`）: 受信処理（`useLiveEventHandler.ts` の `speakDeferredCancelReason` を呼ぶ所）が、情報の名前を日本語で直に書いて渡している。日本語以外では理由の文を読まず手前で null が返るので、いまは声にならない。直す相手は「長周期地震動に関する観測情報」「地震回数に関する情報」「地震・津波に関するお知らせ」「南海トラフ地震関連解説情報」「南海トラフ地震臨時情報」「北海道・三陸沖後発地震注意情報」「地震情報」（種類を名指しした取消は電文の種別の名前）「緊急地震速報」。津波（「津波警報等」）は語表の `warningsEtc` を渡す形にしてある
 
 ### 主要関数
 
@@ -7154,3 +7172,4 @@ return
 - 2026-11-17: §4 に「文面は語表から引く（言語ごとの関数の組）」を足した。読み上げの文面を日本語の語表（`src/i18n/speech/ja.ts`）へ移し、`ttsText.ts` を語表と地名の引きから関数の組を作る形にした。日本語の文は一字も変わらない（骨格の計測台 `ttsSentenceSweep.probe.test.ts` の全文を移す前と突き合わせた）。津波の失効時刻の既読の鍵を、読み上げる文から言語に依らない値へ替えた
 - 2026-11-17: §3 に「日本語以外の読み上げ（読み上げの言語）」を足し、§4「文面は語表から引く」に日本語以外の語表・文の区切り・気象庁の文の扱い・地方名の照合を足した。緊急地震速報の区分を 6 言語で訳した。全区分がそろうまで読み上げには使わないので、読み上げは今も日本語のまま（日本語の文は変わらない）。文の言語は、字の種類から推し量らず文と一緒に渡す形にした（推し量る作りは、訳の無い地名 1 つ・地名の訳の中黒で判定を誤った）
 - 2026-11-17: 地震情報・震度速報の区分と共通の語を 6 言語で訳した（文の組み立ての決めは §4「文面は語表から引く」）。読み上げは今も日本語のまま（日本語の文は骨格の計測台の全文 960 組で一字も変わらない）
+- 2026-11-18: 津波の区分を 6 言語で訳した（§4「津波の区域・観測点の区切り」から「津波の文で気象庁が書いた文」まで）。区域・観測点の区切りを 4 つのキーに分け、予想と観測の波高・失効時刻の延長の文・観測点の句の語幹の位置を言語が決める形にした。日本語以外は避難の付加文・観測情報と満潮時刻の見出し文を読まない。原因地震の規模が知らない表記なら、日本語以外は在処の文を発話の末尾に足す。訳せない地名・値の記録を、値ごとに出し上限を超えたら時間で間引く形にした（地震情報の地名も）。読み上げは今も日本語のまま。日本語の文は、骨格の計測台の全文 960 組で一字も変わらず、計測台が通らない津波の文 31 項目（満潮時刻・最大波の時刻・第1波・失効時刻の変化・予想波高の変化など）も前の段のコードと突き合わせて差 0 件だった

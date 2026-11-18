@@ -1,7 +1,7 @@
 import type { SpeechWordsInProgress } from '../speechWords'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
 import { en } from '../messages/en'
-import { clockTime, englishOrdinal, intensityIn, regionNameIn, reportNameIn, showsApproxAbove } from './shared'
+import { clockTime, englishOrdinal, firstWaveKindIn, intensityIn, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn } from './shared'
 
 const intensity = intensityIn(en)
 const lead = {
@@ -22,6 +22,15 @@ const kilometers = (km: number) => `${km} ${km === 1 ? 'kilometer' : 'kilometers
 const ELSEWHERE = "JMA's original text is in the Telegram Log."
 const notReceived = 'but the intensity has not been received.'
 const fiveLowerOrHigher = `${intensity(45)} or higher`
+/** 波高（1 だけ単数） */
+const meters = (value: string) => `${value} ${value === '1' ? 'meter' : 'meters'}`
+/** 上限で読まなかった観測点の数（1 だけ単数） */
+const otherSites = (n: number) => `${n} other ${n === 1 ? 'site' : 'sites'}`
+/** 原因地震の呼び方（1 つ目の地震か、2 つ目以降の地震か） */
+const theQuake = (first: boolean) => (first ? 'this earthquake' : 'the other earthquake')
+/** 津波の観測点の句の述語の語幹（更新・観測） */
+const STEM_UPDATED = 'updated to'
+const STEM_OBSERVED = 'observed'
 
 /**
  * 読み上げの文の語表（英語。訳し終えた区分だけ → `SpeechWordsInProgress`）。
@@ -173,5 +182,102 @@ export const enSpeech: SpeechWordsInProgress = {
       '0226': 'There is a possibility of a tsunami near the hypocenter. ',
       '0228': 'Generally, when an earthquake of this size occurs in a shallow area under the sea, a tsunami may be generated. ',
     },
+  },
+  tsunami: {
+    infoLabel: 'Tsunami Information',
+    gradeName: tsunamiGradeNamesIn(en),
+    heightToSpeech: tsunamiHeightIn(({ value, limit }) => {
+      const m = meters(value)
+      return limit === 'over' ? `over ${m}` : limit === 'under' ? `under ${m}` : limit === 'orMore' ? `${m} or more` : m
+    }),
+    nonNumericHeight: { 巨大: 'huge', 高い: 'high' },
+    heightLabel: { height: markHeightOrMore },
+    // 区域名の訳はコンマを含む（「Noto Area, Ishikawa Prefecture」）ので、区域・観測点の区切りは「; 」、区域と観測点の間は「: 」
+    areaSep: '; ',
+    heightGroupSep: '. ',
+    districtStationSep: ': ',
+    stationSep: '; ',
+    forecastHeightAt: (h) => `: estimated height ${h}`,
+    observedHeightAt: (h) => `, ${h}`,
+    heightsExpected: '. ',
+    alsoIssued: (g) => `: ${g} also in effect. `,
+    // 必ず「Also, 」の後ろに来るので小文字で始める
+    issuedForAreasBelow: (g) => `a ${g} has been issued for the following coastal regions of Japan. `,
+    issuedFor: (g) => `: ${g} in effect. `,
+    issuedForAreas: (g) => `: ${g} issued. `,
+    gradeIssued: (g) => `${g} issued. `,
+    downgradedBelow: (g) => `Downgraded to ${g}. A ${g} is now in effect for the following coastal regions of Japan. `,
+    downgradedLead: (g) => `Downgraded to ${g}. Currently, `,
+    areaLifted: (g) => `: ${g} lifted. `,
+    warningsEtc: 'tsunami warnings and advisories',
+    areaGradeChanged: (from, to, raised) => `: ${from} ${raised ? 'upgraded' : 'downgraded'} to ${to}. `,
+    forecastHeightChanged: 'The estimated maximum tsunami heights have changed. ',
+    fallbackEvacuation: tsunamiEvacuationIn(en, ' '),
+    sourceLead: 'Hypocenter of this earthquake: ',
+    sourceLeadOther: 'Also, hypocenter of the other earthquake: ',
+    sourceMagnitudeLead: ', magnitude ',
+    sourceMagnitude: (magnitude) => magnitude,
+    sourceTail: '. ',
+    sourceHypocenterAmended: (first, name) => `Hypocenter of ${theQuake(first)} updated: ${name}. `,
+    sourceMagnitudeAmendedTo: (first, magnitude) => `The magnitude of ${theQuake(first)} has been updated to ${magnitude}. `,
+    sourceMagnitudeAmended: (first, predicate) => `The magnitude of ${theQuake(first)} has been updated. ${predicate}`,
+    sourceDepthAmendedTo: (first, depth) => `The hypocenter depth of ${theQuake(first)} has been updated to ${depth}. `,
+    expiryLead: (g, _time) => `This ${g} expires at `,
+    expiryTail: '. ',
+    // 延長か変更かを時刻の前で言う（2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 15 節）
+    expiryChangeLead: (g, extended, _time) => `The ${g} has been ${extended ? 'extended' : 'changed'}; it now expires at `,
+    expiryExtended: '. ',
+    expiryChanged: '. ',
+    retracted: 'The tsunami warnings and advisories were issued in error and have been cancelled.',
+    expired: 'The Tsunami Forecast has expired.',
+    allLifted: 'All tsunami warnings and advisories have been lifted.',
+    infoRetracted: 'The Tsunami Information has been cancelled.',
+    offshoreRetracted: 'The Offshore Tsunami Observation Information has been cancelled.',
+    firstWaveKind: firstWaveKindIn('initial rise', 'initial drop', 'initial wave'),
+    // 語幹を値の前に置く。更新は観測した時刻だと分かる形にする（「updated to 0.9 meters, observed at 16:41」。同日の 15 節）
+    heightClause: (firstWave, at, value, updated) =>
+      `, ${firstWave ? `${firstWave.initial} arrived at ${firstWave.time}, ` : ''}${updated
+        ? `${STEM_UPDATED} ${value}${at ? `, observed at ${at}` : ''}`
+        : `${STEM_OBSERVED} ${value}${at ? ` at ${at}` : ''}`}`,
+    observationInfoLead: 'Tsunami Observation Information. ',
+    maxWaveUpdatedLead: 'The maximum wave has been updated at the following sites. ',
+    newlyObservedLead: 'A tsunami has been newly observed at the following sites. ',
+    stemUpdated: STEM_UPDATED,
+    stemObserved: STEM_OBSERVED,
+    tailUpdated: '. ',
+    tailObserved: '. ',
+    omittedObserving: (n) => `A tsunami is also being observed at ${otherSites(n)}. `,
+    omittedArrival: (n) => `Arrival has also been confirmed at ${otherSites(n)}. `,
+    omittedUpdated: (n) => `Updates have also been made at ${otherSites(n)}. `,
+    omittedMissing: (n) => `Data are also missing at ${otherSites(n)}. `,
+    omittedWarningLevel: (n) => `A tsunami at the Tsunami Warning level is also being observed at ${otherSites(n)}. `,
+    arrivalLead: 'Tsunami arrival has been confirmed at the following sites. ',
+    firstWaveObservedClause: (time, initial) => `, ${initial} observed at ${time}`,
+    firstWaveUpdatedClause: (time, initial) => `, updated to ${initial} at ${time}`,
+    arrivalConfirmedClause: ', arrival confirmed',
+    arrivalConfirmedTail: ': arrival confirmed. ',
+    maxHeightObserving: 'Maximum wave height: information pending. ',
+    maxHeightWeak: 'Maximum wave height: weak. ',
+    updatedAtClause: (at) => (at ? `, updated to ${at}` : ', updated'),
+    maxHeightTimeLead: 'The observation time of the maximum wave has been updated at the following sites. ',
+    maxHeightTimeTail: ': the observation time of the maximum wave has been updated. ',
+    missingMaxHeightTimeLead: 'At sites where data are missing, the observation time of the maximum wave has been updated. ',
+    missingPrefix: 'Sites with missing data. ',
+    firstWaveUpdatedLead: 'The initial wave has been updated at the following sites. ',
+    firstWaveArrivedLead: 'Arrival of the initial tsunami wave has been confirmed at the following sites. ',
+    observationNoChange: 'Tsunami Observation Information. There is no change in the observed wave heights. ',
+    observationLowered: 'Tsunami Observation Information has been issued. ',
+    tideFallbackHeadline: 'Here are the high tide times and the estimated initial tsunami arrival times for each area. ',
+    tide: {
+      tide: 'The high tide times have been updated. ',
+      arrival: 'The tsunami arrival status has been updated. ',
+      arrivalTime: 'The estimated tsunami arrival times have been updated. ',
+      none: 'There is no change in the content. ',
+    },
+    missingObservedLead: 'The following was observed before data became unavailable. ',
+    weakTsunamiAt: ', a weak tsunami',
+    missingObservedTail: '. Data are now missing. ',
+    missingTail: ': no data. ',
+    warningLevelTail: ': a tsunami at the Tsunami Warning level is being observed. ',
   },
 }

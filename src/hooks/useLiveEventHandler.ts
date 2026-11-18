@@ -49,7 +49,7 @@ import { internationalTsunamiToText } from '../utils/internationalTsunamiSpeech'
 // 読み上げの文を組む関数は、画面の言語の組（`speechTextFor`）から引く（下の `sp`）。ここで直に読むのは言語に依らないものだけ
 import { selectObservationUpdatesToSpeak, selectArrivalsToSpeak, selectMissingToSpeak, selectWarningLevelToSpeak, applyTsunamiSpokenRefs, createQuakeSpokenState, applySpokenRefs, selectMaxHeightTimeUpdatesToSpeak, selectFirstWaveUpdatesToSpeak, speechTextFor, JA_SPEECH_TEXT, type SpeechText, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
-import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, quakeTelegramTextTarget, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
+import { joinSegments, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, quakeTelegramTextTarget, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
 import { TAB_PRIORITY, type TabPriority } from '../utils/tabPriority'
 import { hasPendingEewSpeech } from '../utils/eewPendingSpeech'
@@ -4016,7 +4016,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 理由（`cancelText`）を運ぶのは誤報の取消だけ。解除・失効の本体は「津波警報等」を名乗らない
             // （→ `tsunamiCancelToText`）ので、前置きと名乗りがずれないよう取消に限る。
             event.cancelReason === 'retracted'
-              ? () => speakDeferredCancelReason('津波警報等', event.cancelText, `tsunami:${event.eventId || event.id}`)
+              // 前置きの名前は読み上げの言語の語表から引く（取消の文の名乗りと同じ語）
+              ? () => speakDeferredCancelReason(sp().TSUNAMI_WARNINGS_ETC_NAME, event.cancelText, `tsunami:${event.eventId || event.id}`)
               : undefined,
           )
         }
@@ -5677,8 +5678,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 名乗り（「津波観測に関する情報。」）は波高の文が自前で持つ（`tsunamiObservationUpdateToSegments`）。
             ttsSegments = sp().joinWithAlso(updateSegments, rest)
           } else if (rest.length > 0) {
-            // 波高の文が無い電文では名乗りが誰も付けないので、ここで足す。
-            ttsSegments = [plain('津波観測に関する情報。'), ...rest]
+            // 波高の文が無い電文では名乗りが誰も付けないので、ここで足す（語表の名乗り。→ `tsunamiObservationLeadSegments`）。
+            // 日本語もこの報では気象庁の見出し文を読まないので、日本語以外も在処の文を言わない
+            ttsSegments = [...sp().tsunamiObservationLeadSegments(), ...rest]
           }
           // **最大波の時刻だけが動いた報も、他の観測情報と同じ層で読む。** かつて最下位に
           // 置いていたのは「伝える変化が無い報」だったからで、いまは新しい観測時刻という

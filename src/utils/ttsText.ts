@@ -1,6 +1,6 @@
 import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter, QuakeRetractedReport, ForeignTsunamiCode } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
-import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
+import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, parseTsunamiHeight, evacuationActionLine, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
 import { joinSegments, plain, type SpeechSegment, type SpeechRef, type QuakeFact, type SpokenObservation } from './ttsFollow'
 import { getSubRegionsCache } from './subregions'
@@ -9,7 +9,7 @@ import { getStationCoordsCache, getAreaPrefIndexCache, stationPrefIndexOf, prefA
 import { isAreaPoint, isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel } from './quakePoints'
 import { hasMagnitude, hasDepth, readDateTime } from './formatters'
 import { tsunamiSourceHypocenter } from './borrowFromTsunami'
-import { createLogThrottle, createPerLabelLogGate, log } from './logger'
+import { createLogThrottle, createPerLabelLogGate, log, UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS } from './logger'
 import { hasKnownEpicenter } from './geo'
 import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
 import { DOMESTIC_TSUNAMI_CODE_TEXT, warnIfDomesticTsunamiSentenceMissing, withoutDomesticTsunamiSentences } from './domesticTsunamiComment'
@@ -493,14 +493,28 @@ const warnNoRegionNames = createLogThrottle(NO_REGION_LOG_THROTTLE_MS)
 /** 規模の説明のうち、未知の値を記録した値。同じ地震の続報で何度も来るので 1 度だけ出す（言語ごとの組で共有する）。 */
 const reportedUnknownMagnitudeConditions = new Set<string>()
 
-/**
- * 地名の表に無く、日本語の名前のまま読んだ地名を記録した「言語:種類」。表の欠けは同じ言語・種類で何度も出るので 1 度だけ出す
- * （日本語の組は表を引かないので出さない）
- */
-const reportedUnknownPlaceNames = new Set<string>()
-
 /** 取消で名指す情報の名前を語表で引けなかった「言語:種別」（1 度だけ出す） */
 const reportedUnknownReportNames = new Set<string>()
+
+/**
+ * 訳せない値の記録の間引き（{@link boilerplateMismatchGate} と同じ仕組み）。**札は「言語:種類」、値ごとに 1 度だけ出す**
+ * （同じ地名・表記は続報のたびに来るので、値で数える）。種類ごとに上限を超えても黙らせず、時間で間引いて出し続ける（→ `logger.ts`）。
+ * 日本語の組は表を引かず、電文の語をそのまま読むので出さない
+ *
+ * - `unknownPlaceNameGate`: 地名の表に無く、日本語の名前のまま読んだ地名
+ * - `untranslatedTsunamiValueGate`: 津波の文で語表が訳せない値（知らない波高の表記・押し引き・型の外の等級）
+ */
+let unknownPlaceNameGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+let untranslatedTsunamiValueGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+
+/**
+ * 訳せない値の記録の控え（{@link unknownPlaceNameGate}・{@link untranslatedTsunamiValueGate}）を空に戻す。**テストのためのもの**
+ * （控えはモジュールに 1 つで、テストの実行順で「最初の 1 回」が変わらないように、記録を見るテストの前に呼ぶ）
+ */
+export function resetUntranslatedValueLogGates(): void {
+  unknownPlaceNameGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+  untranslatedTsunamiValueGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+}
 
 /**
  * 定型文の落とし漏れの記録の間引き。**電文種別 × 項目**を札にし、同じ組は 1 度だけ出す。
@@ -543,24 +557,50 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   }
 
   /**
-   * 地名の表で引けず日本語の名前のまま読むことを、言語と種類ごとに 1 度だけ残す。日本語の組は表を引かないので出さない。
-   * 黙ると、表の欠けで日本語の地名が別の言語の声で読まれていることに気づけない
+   * 地名の表で引けず日本語の名前のまま読むことを、名前ごとに 1 度だけ残す（札は言語と種類。→ {@link unknownPlaceNameGate}）。
+   * 日本語の組は表を引かないので出さない。黙ると、表の欠けで日本語の地名が別の言語の声で読まれていることに気づけない
    */
   function warnUnknownPlaceName(kind: string, name: string): void {
     if (locale === 'ja') return
     // 表がまだ届いていない過渡状態（日本語の引き方で組を作った回）と空の名前は、表の欠けではないので記録しない。
-    // ここで 1 度きりの枠を使うと、表が届いた後の本当の欠けが記録に残らない。中身が空の表は読み込みの検査
+    // ここで枠を使うと、表が届いた後の本当の欠けの記録が間引かれる。中身が空の表は読み込みの検査
     // （`validatePlaceNameTable`）が止め、引き方は日本語の引き方のままになる
     if (place === JA_PLACE_NAMES || name.trim() === '') return
-    const key = `${locale}:${kind}`
-    if (reportedUnknownPlaceNames.has(key)) return
-    reportedUnknownPlaceNames.add(key)
-    log.warn(`[tts] 地名の表に無い名前を日本語のまま読みます（言語 ${locale}・種類 ${kind}・最初の名前 ${name}）`)
+    unknownPlaceNameGate(`${locale}:${kind}`, name, (overflowed) => {
+      log.warn(`[tts] 地名の表に無い名前を日本語のまま読みます（言語 ${locale}・種類 ${kind}・名前 ${name}）${overflowed ? '（以後は間引きます）' : ''}`)
+    })
   }
 
-  /** 津波の等級の呼び名。日本語はカードの「等級が移り変わった」行と同じ語（`TSUNAMI_GRADE_NAME`） */
+  /**
+   * 津波の等級の呼び名。日本語はカードの「等級が移り変わった」行と同じ語（`TSUNAMI_GRADE_NAME`）、ほかの言語は画面の
+   * `tsunami.grade` の訳。**自前のキーだけを引く**（型の外の値で継いだ関数に当たらないように）。型の外の等級は名前を言わず
+   * （不明と同じ）、日本語以外の組では記録を残す
+   */
   function tsunamiGradeLabel(grade: TsunamiGrade): string {
-    return w.tsunami.gradeName[grade]
+    const table: Readonly<Record<string, string>> = w.tsunami.gradeName
+    if (Object.prototype.hasOwnProperty.call(table, grade)) return table[grade]
+    warnUntranslatedTsunamiValue('grade', String(grade), '名前を言いません')
+    return ''
+  }
+
+  /**
+   * 津波の文の区域名・観測点名を声にする名前へ引く。表に無ければ日本語の名前のまま（日本語以外の組では記録を残す）。
+   * **鍵（`SpeechRef`）には日本語の名前を入れること**（既読と追従は言語によらない）
+   */
+  function tsunamiPlaceToSay(kind: 'tsunamiArea' | 'tsunamiStation', name: string): string {
+    if (!place.has(kind, name)) warnUnknownPlaceName(kind, name)
+    return place(kind, name)
+  }
+
+  /**
+   * 津波の文で語表が訳せない値を、どう読んだかと一緒に値ごとに 1 度だけ残す（札は言語と種類。→ {@link untranslatedTsunamiValueGate}）。
+   * 日本語の組は電文の語をそのまま読むので出さない。黙ると、日本語の語が別の言語の声で読まれていることに気づけない
+   */
+  function warnUntranslatedTsunamiValue(kind: string, value: string, howRead: string): void {
+    if (locale === 'ja') return
+    untranslatedTsunamiValueGate(`${locale}:${kind}`, value, (overflowed) => {
+      log.warn(`[tts] 津波の文で語表が訳せない値がありました。${howRead}（言語 ${locale}・種類 ${kind}・値 ${value}）${overflowed ? '（以後は間引きます）' : ''}`)
+    })
   }
 
   /** 情報の名乗り（「地震情報。」／続報は「地震情報が更新されました。」） */
@@ -2438,8 +2478,8 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
           ? [plain(speakableForecast(forecastOriginal))]
           : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(foreign)] : [])])
         : (forecastOriginal
-          ? [...translatedForecastSegments(event, forecastOriginal), plain(elsewhere)]
-          : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(elsewhere)] : [])])
+          ? [...translatedForecastSegments(event, forecastOriginal), elsewhereSegment(elsewhere)]
+          : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [elsewhereSegment(elsewhere)] : [])])
       // 時刻が日時として読めなければ句ごと落とす（上の地震情報と同じ扱い）。
       const dayTime = formatDayTime(event.earthquake.time)
       return [
@@ -2558,7 +2598,15 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     if (elsewhere === null || !isUnknownMagnitudeCondition(event.earthquake.hypocenter)) return segments
     const toldMagnitude = segments.some(s => s.refs.some(r => r.kind === 'quakeFact' && r.fact === 'magnitude'))
     if (!toldMagnitude || segments.some(s => s.text.includes(elsewhere))) return segments
-    return [...segments, plain(elsewhere)]
+    return [...segments, elsewhereSegment(elsewhere)]
+  }
+
+  /**
+   * 在処の文の断片（文の区切りつき）。断片は区切りを挟まずにつなぐので、後ろに別の文が続いても（「また、」で継ぐ受信処理の経路）
+   * 1 語につながらないよう、文の区切り（`common.sentenceSep`）を添える。在処の文を発話へ足す所はどれもこれを使う
+   */
+  function elsewhereSegment(elsewhere: string): SpeechSegment {
+    return plain(`${elsewhere}${w.common.sentenceSep}`)
   }
 
   /** 規模が数値でなく、説明が語表に無い表記か（→ {@link magnitudeConditionPredicate}） */
@@ -2607,7 +2655,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   }
 
   /**
-   * 数値で表せない予想波高（気象庁の「巨大」「高い」）を、文に馴染む言い方に直す。
+   * 数値で表せない予想波高（気象庁の「巨大」「高い」）を、文に馴染む言い方に直す（予想波高と観測した波高の両方が通る）。
    *
    * この 2 つは規模が大きく数値化できないときの定型表記で、そのまま並べると
    * 「岩手県で巨大が予想されています」と崩れる。活用が違う（「巨大」は形容動詞、「高い」は
@@ -2618,12 +2666,32 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   const NON_NUMERIC_HEIGHT_PHRASE: Readonly<Record<string, string>> = w.tsunami.nonNumericHeight
 
   function heightPhrase(description: string): string {
-    const spoken = tsunamiHeightToSpeech(description)
+    const spoken = heightToSay(description)
     if (/\d/.test(spoken)) return spoken
-    const phrase = NON_NUMERIC_HEIGHT_PHRASE[spoken.trim()]
+    const phrase = Object.prototype.hasOwnProperty.call(NON_NUMERIC_HEIGHT_PHRASE, spoken.trim()) ? NON_NUMERIC_HEIGHT_PHRASE[spoken.trim()] : undefined
     // 素通しした表記は記録に残す。読み上げは崩れた文のまま流れるので、聞くまで気づけない
-    if (!phrase) log.debug('[tts] 予想波高の表記が表に無い（そのまま読む）', spoken)
+    if (!phrase) log.debug('[tts] 波高の表記が表に無い（そのまま読む）', spoken)
     return phrase ?? spoken
+  }
+
+  /**
+   * 予想・観測の波高の表記を声にする形へ（語表の `heightToSpeech`）。
+   *
+   * 日本語以外の語表が読むのは数の表記（「1m」「10m超」「0.2m未満」「1.2m以上」）と「巨大」「高い」だけ。**それ以外の表記は
+   * 電文の語のまま読む**ので、値ごとに記録を残す（知らない表記を作り変えて壊すより、そのまま読むほうがまし）。
+   *
+   * 控え（`.cache/dmdata-archive-cache/telegram-earthquake` の日ごとの束 2,147 日。津波の電文は 2020-12-21〜2026-10-15 の
+   * VTSE41 184 通・VTSE51 426 通・VTSE52 41 通）で数えると、予想波高の表記は 11 種（「０．２ｍ未満」「１ｍ」「３ｍ」「５ｍ」「１０ｍ」
+   * 「１０ｍ超」「高い」「巨大」と、頭に全角の空白が付いた「１ｍ」「３ｍ」「５ｍ」）、観測した波高は数と「以上」の形だけで、
+   * どれもこの関数の扱う形に入る（2026-11-18 に数えた）。表記が空のもの（予想波高の 570 件）は、解読の段が値から作る
+   * （値が数なら「数m」の形で、ここで読める。値が無ければ波高を作らず、ここへは届かない）
+   */
+  function heightToSay(description: string): string {
+    if (locale !== 'ja' && parseTsunamiHeight(description) === null
+      && !Object.prototype.hasOwnProperty.call(NON_NUMERIC_HEIGHT_PHRASE, description.trim())) {
+      warnUntranslatedTsunamiValue('height', description, '波高の表記を電文の語のまま読みます')
+    }
+    return tsunamiHeightToSpeech(description)
   }
 
   /**
@@ -2661,13 +2729,16 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     return { text, refs: [{ kind: 'grade', grade }] }
   }
 
-  /** 区域名を読点で連結した断片列を作る（各区域名が自分を指す参照を持つ）。 */
+  /**
+   * 区域名を区切り（語表の `tsunami.areaSep`。日本語は読点）で連結した断片列を作る（各区域名が自分を指す参照を持つ）。
+   * 区切りを地名の区切りと分けるのは、区域名の訳がコンマを含む言語で、名前の中のコンマと区域の切れ目を聞き分けるため
+   */
   function areaNameSegments(areas: readonly TsunamiArea[]): SpeechSegment[] {
     const segments: SpeechSegment[] = []
     areas.forEach((a, i) => {
-      if (i > 0) segments.push(plain(w.common.listSep))
+      if (i > 0) segments.push(plain(w.tsunami.areaSep))
       // 声にするのは画面の言語の名前、鍵は日本語の名前（既読と追従は言語によらない）
-      segments.push({ text: place('tsunamiArea', a.name), refs: [{ kind: 'area', code: a.code, name: a.name }] })
+      segments.push({ text: tsunamiPlaceToSay('tsunamiArea', a.name), refs: [{ kind: 'area', code: a.code, name: a.name }] })
     })
     return segments
   }
@@ -2705,9 +2776,10 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
 
     const segments: SpeechSegment[] = []
     groups.forEach((g, i) => {
-      if (i > 0) segments.push(plain(w.common.listSep))
+      // 組どうしの区切りは区域どうしの区切りと分ける（英語などは組ごとに文を切る。→ 語表の `tsunami.heightGroupSep`）
+      if (i > 0) segments.push(plain(w.tsunami.heightGroupSep))
       segments.push(...areaNameSegments(g.areas))
-      segments.push(plain(w.tsunami.heightAt(heightPhrase(g.heightLabel!))))
+      segments.push(plain(w.tsunami.forecastHeightAt(heightPhrase(g.heightLabel!))))
     })
     segments.push(plain(w.tsunami.heightsExpected))
     return segments
@@ -2885,7 +2957,8 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       const numeric = hasMagnitude(hypocenter.magnitude) ? magnitudeText(hypocenter.magnitude) : ''
       if (tellable.has('magnitude') && numeric) {
         segments.push({ text: w.tsunami.sourceMagnitudeLead, refs: [follow] })
-        segments.push({ text: numeric, refs: magRef })
+        // 数値も語表に通す（小数点をコンマで読む言語。鍵は電文の値のまま）
+        segments.push({ text: w.tsunami.sourceMagnitude(numeric), refs: magRef })
       }
       segments.push({ text: w.tsunami.sourceTail, refs: [follow] })
       // 数値にならない規模（「Ｍ８を超える巨大地震」）は別の文で伝える。句へ差し込むと
@@ -3023,7 +3096,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     if (!expiry) return []
     if (spoken?.expiry?.facts.get('tsunamiExpiry') === expiry.key) return []
     return [
-      plain(w.tsunami.expiryLead(gradeLabel)),
+      plain(w.tsunami.expiryLead(gradeLabel, expiry.text)),
       { text: expiry.text, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value: expiry.key }] },
       plain(w.tsunami.expiryTail),
     ]
@@ -3074,10 +3147,13 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     // **読み上げで同じ時刻に聞こえる変化は言わない**（分より細かい違いだけの延長。「16時22分に延長されました」と
     // 前と同じ時刻を言うことになる）。鍵は読み上げる単位（日・時・分）で作るので、鍵の一致で見分けられる。
     if (expiryTextAndKey(event.time, previousValidDateTime)?.key === expiry.key) return []
+    // 延長か変更かは、時刻の前で言う言語（英語など）と後ろで言う言語（日本語）がある。前は語表の `expiryChangeLead` が、
+    // 後ろは `expiryExtended`・`expiryChanged` が受け持つ（2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 15 節）
+    const extended = now > prev
     return [
-      plain(w.tsunami.expiryChangeLead(tsunamiGradeLabel(topGrade))),
+      plain(w.tsunami.expiryChangeLead(tsunamiGradeLabel(topGrade), extended, expiry.text)),
       { text: expiry.text, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value: expiry.key }] },
-      plain(now > prev ? w.tsunami.expiryExtended : w.tsunami.expiryChanged),
+      plain(extended ? w.tsunami.expiryExtended : w.tsunami.expiryChanged),
     ]
   }
 
@@ -3094,7 +3170,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     // 波高の文はグループの境界が電文順で決まるため、並べ替える前のものを渡す
     const rawTopAreas = event.areas.filter(a => a.grade === topGrade)
     const gradeLabel = tsunamiGradeLabel(topGrade)
-    const action = evacuationActionLine(event.warningComments) ?? w.tsunami.fallbackEvacuation(topGrade)
+    const action = evacuationActionToSay(event, topGrade)
     const heights = areaHeightSentence(rawTopAreas, observations)
     // **震源は後ろに置く。** 等級・行動・区域を言い終えてから足す（→ `sourceHypocenterSegments`）。
     const source = sourceHypocenterSegments(event, quakeSpoken, opts)
@@ -3105,14 +3181,14 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     // **等級と行動を先に言い切る。** 区域を全部読んでから避難を促すと、予報区が多いほど行動指示が
     // 遅れる。区域名は次の文で波高と一緒に挙げるので、聞き手が待たされるのは高さの情報だけ。
     if (heights.length > 0) {
-      return [
+      return withElsewhereForUnknownSourceMagnitude([
         gradeSegment(w.tsunami.gradeIssued(gradeLabel) + action, topGrade),
         ...heights,
         ...areasWithoutHeightSentence(rawTopAreas, observations, gradeLabel),
         ...lowerGradeSentence(event.areas, topGrade, observations),
         ...source,
         ...expiry,
-      ]
+      ], event, quakeSpoken)
     }
     // 波高がまだ付いていない（続報で後から付く）場合は、区域名を直接挙げる。
     //
@@ -3120,14 +3196,49 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     // §4-10・§5）。「〈区域〉に発表されました」は区域が述語の前に来るので、頭の `${gradeLabel}。` を
     // 外すと**等級が判るまで区域名を全部聞くことになる**（予報区が多いほど遅れる）。上の波高あり経路が
     // 等級と行動を先に言い切っているのと同じ理由で、重複のほうを受け入れる。
-    return [
+    return withElsewhereForUnknownSourceMagnitude([
       plain(w.common.issued(gradeLabel)),
       ...areaNameSegments(orderAreasForSpeech(rawTopAreas, observations)),
       plain(w.tsunami.issuedForAreas(gradeLabel) + action),
       ...lowerGradeSentence(event.areas, topGrade, observations),
       ...source,
       ...expiry,
-    ]
+    ], event, quakeSpoken)
+  }
+
+  /**
+   * 気象庁の付加文の 1 行目（避難の呼びかけ）を採り、採れなければ等級ごとの文（語表の `fallbackEvacuation`）。
+   *
+   * **気象庁の文を読まない言語は付加文を採らず、いつも等級ごとの訳文を読む**（画面と同じ。2026-11-10 ユーザー選択
+   * 「等級ごとの訳文を出す (Recommended)」）。付加文の全文は「気象庁の発表文」の発話が在処の文で受けるので、ここでは在処を言わない
+   */
+  function evacuationActionToSay(event: JMATsunami, grade: TsunamiGrade): string {
+    const telegramLine = w.common.telegramTextElsewhere === null ? evacuationActionLine(event.warningComments) : undefined
+    return telegramLine ?? w.tsunami.fallbackEvacuation(grade)
+  }
+
+  /**
+   * 原因地震の規模が知らない表記で、その文（「数値で発表されていない」）を言った発話の末尾に、在処の文を 1 度だけ足す
+   * （気象庁の文を読まない言語だけ。地震情報の {@link withElsewhereForUnknownMagnitude} と同じ。2026-11-17 ユーザー選択
+   * 「数値でないと言い、在処を言う (Recommended)」）。
+   *
+   * 規模の文を言ったかは、その原因地震の規模の既読の鍵を持つ断片があるかで見る（知らない表記の規模は数値でないので、その鍵を
+   * 持つのは規模の文だけ）。発話に在処の文が既にあれば足さない（区切りは {@link elsewhereSegment}）
+   */
+  function withElsewhereForUnknownSourceMagnitude(
+    segments: SpeechSegment[],
+    event: JMATsunami,
+    quakeSpoken: TsunamiQuakeSpoken | undefined,
+  ): SpeechSegment[] {
+    const elsewhere = w.common.telegramTextElsewhere
+    if (elsewhere === null) return segments
+    const unknownSources = new Set(tsunamiSourceSpokens(event, quakeSpoken)
+      .flatMap((entry, index) => (isUnknownMagnitudeCondition(tsunamiSourceHypocenter(entry.source)) ? [index] : [])))
+    if (unknownSources.size === 0) return segments
+    const toldUnknown = segments.some(s => s.refs.some(r =>
+      r.kind === 'quakeFact' && r.fact === 'magnitude' && r.sourceIndex !== undefined && unknownSources.has(r.sourceIndex)))
+    if (!toldUnknown || segments.some(s => s.text.includes(elsewhere))) return segments
+    return [...segments, elsewhereSegment(elsewhere)]
   }
 
   function tsunamiToText(
@@ -3271,7 +3382,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   function tsunamiAreaGradeChangeActionSegments(event: JMATsunami): SpeechSegment[] {
     const topWarningGrade = GRADE_ORDER.find(g => g !== 'Forecast' && event.areas.some(a => a.grade === g))
     if (!topWarningGrade) return []
-    const action = evacuationActionLine(event.warningComments) ?? w.tsunami.fallbackEvacuation(topWarningGrade)
+    const action = evacuationActionToSay(event, topWarningGrade)
     return action ? [plain(action)] : []
   }
 
@@ -3305,6 +3416,12 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   function tsunamiAreaGradeChangeToText(changes: readonly TsunamiAreaGradeChange[]): string {
     return joinSegments(tsunamiAreaGradeChangeToSegments(changes))
   }
+
+  /**
+   * 誤報の取消（`tsunamiCancelToText` の `retracted`）が名乗る情報の名前。取消の長い理由を別の発話で読むときの前置きに渡す
+   * （→ `useLiveEventHandler.ts` の `speakDeferredCancelReason`）。前置きと名乗りを同じ語にするため、語表から引く
+   */
+  const TSUNAMI_WARNINGS_ETC_NAME = w.tsunami.warningsEtc
 
   /** VTSE41/51/52 津波警報等 全解除の読み上げテキストを cancelReason ごとに生成する。 */
   function tsunamiCancelToText(cancelReason: JMATsunami['cancelReason'], cancelText?: string): string {
@@ -3354,22 +3471,30 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   ): SpeechSegment[] {
     const segments: SpeechSegment[] = []
     groupObservationsByDistrict(items).forEach((g, gi) => {
-      if (gi > 0) segments.push(plain(w.common.listSep))
-      if (g.districtName) {
-        segments.push({
-          text: place('tsunamiArea', g.districtName),
-          refs: [{ kind: 'area', code: g.districtCode, name: g.districtName }],
-        })
-        segments.push(plain(w.common.listSep))
-      }
+      if (gi > 0) segments.push(plain(w.tsunami.stationSep))
+      segments.push(...districtNameSegments(g))
       g.items.forEach((o, i) => {
-        if (i > 0) segments.push(plain(w.common.listSep))
-        segments.push({ text: place('tsunamiStation', o.name), refs: [{ kind: 'station', name: o.name }] })
+        if (i > 0) segments.push(plain(w.tsunami.stationSep))
+        segments.push({ text: tsunamiPlaceToSay('tsunamiStation', o.name), refs: [{ kind: 'station', name: o.name }] })
         const rest = renderStation(o)
         if (rest) segments.push(plain(rest))
       })
     })
     return segments
+  }
+
+  /**
+   * 観測点の組の頭の区域名と、観測点名との区切り（区域名を持たない組は空）。
+   *
+   * **区切りは 3 つに分けてある**（語表の `tsunami.districtStationSep`・`stationSep`）。日本語はどれも読点だが、区域名の訳が
+   * コンマを含む言語では、1 つの区切りが「区域と観測点」「観測点どうし」「区域の組どうし」を兼ねると、どこで区域が変わったか聞き分けられない
+   */
+  function districtNameSegments(g: { districtName: string | null; districtCode?: string }): SpeechSegment[] {
+    if (!g.districtName) return []
+    return [
+      { text: tsunamiPlaceToSay('tsunamiArea', g.districtName), refs: [{ kind: 'area', code: g.districtCode, name: g.districtName }] },
+      plain(w.tsunami.districtStationSep),
+    ]
   }
 
   /**
@@ -3399,17 +3524,11 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     const total = items.length
     let spokenCount = 0
     groupObservationsByDistrict(items).forEach((g, gi) => {
-      if (gi > 0) segments.push(plain(w.common.listSep))
-      if (g.districtName) {
-        segments.push({
-          text: place('tsunamiArea', g.districtName),
-          refs: [{ kind: 'area', code: g.districtCode, name: g.districtName }],
-        })
-        segments.push(plain(w.common.listSep))
-      }
+      if (gi > 0) segments.push(plain(w.tsunami.stationSep))
+      segments.push(...districtNameSegments(g))
       g.items.forEach((o, i) => {
-        if (i > 0) segments.push(plain(w.common.listSep))
-        segments.push({ text: place('tsunamiStation', o.name), refs: [{ kind: 'station', name: o.name }] })
+        if (i > 0) segments.push(plain(w.tsunami.stationSep))
+        segments.push({ text: tsunamiPlaceToSay('tsunamiStation', o.name), refs: [{ kind: 'station', name: o.name }] })
         spokenCount += 1
         segments.push(plain(renderStation(o) + (spokenCount === total ? tail : '')))
       })
@@ -3434,8 +3553,16 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   function firstWaveParts(o: TsunamiObservation): { time: string; initial: string } | null {
     const time = o.arrivalTime ? formatTime(o.arrivalTime) : null
     if (!time) return null
+    // 日本語以外の語表が訳せる押し引きは電文の「押し」「引き」だけ。ほかの語は「第一波」と言い（語表の `firstWaveKind` が受け持つ）、
+    // 押し引きを言わなかったことを 1 度だけ残す
+    if (o.initial !== undefined && !KNOWN_FIRST_WAVE_INITIALS.has(o.initial)) {
+      warnUntranslatedTsunamiValue('firstWaveInitial', o.initial, '押し引きを言わず第一波と言います')
+    }
     return { time, initial: w.tsunami.firstWaveKind(o.initial) }
   }
+
+  /** 電文の第 1 波の押し引き（`Initial`）の語（→ `docs/spec/tsunami-spec.md`）。日本語以外の語表はこの 2 つを訳す */
+  const KNOWN_FIRST_WAVE_INITIALS: ReadonlySet<string> = new Set(['押し', '引き'])
 
   /** 「まだ第1波を声にしていない観測点名」を引ける最小の形（`Set` でも `Map` でもそのまま渡せる）。 */
   /**
@@ -3485,7 +3612,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   // 「以上」の補完はカード・地図と同じ `overSuffixedHeight` に通す（補ってから単位を読み替える順）。
   // この 2 つは可換で、どちらを先に通しても同じ文字列になる。順序に意味を持たせていない。
   function observedHeightSuffix(o: TsunamiObservation): string {
-    return w.tsunami.heightAt(tsunamiHeightToSpeech(overSuffixedHeight(o.height!, w.tsunami.heightLabel)))
+    return w.tsunami.observedHeightAt(heightPhrase(overSuffixedHeight(o.height!, w.tsunami.heightLabel)))
   }
 
   /** 観測点更新で読み上げる件数の上限（多いときは波高の大きい順に絞る）。 */
@@ -3556,7 +3683,13 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     const inReadingOrder = obs.filter(o => chosen.has(o))
     // 見出し文の前処理は満潮時刻の報と共有する（→ {@link speakableHeadline}）。
     // **末尾の句点もそこで足る** —— 直後に観測点の文が続くので、無いと 1 文に聞こえる。
-    const headlinePart = speakableHeadline(headline)
+    // **気象庁の文を読まない言語は、見出し文の代わりに在処の文を言う**（報ごと。2026-11-17 ユーザー選択「報ごとに在処を言う」）。
+    // 言うのは日本語が見出し文を読む所だけ（2026-11-18 ユーザー選択「日本語が気象庁の文を読む所だけ (Recommended)」）。
+    // 見出し文が無い報と、波高の文を持たない報（名乗りは `tsunamiObservationLeadSegments`）では言わない
+    const elsewhere = w.common.telegramTextElsewhere
+    const headlinePart = elsewhere === null
+      ? speakableHeadline(headline)
+      : headline?.trim() ? `${elsewhere}${w.common.sentenceSep}` : ''
     // **選抜した結果を分けるだけ。** 群ごとに選抜し直すと上限が実質 2 倍になり、既読を記録する側
     // （`selectObservationUpdatesToSpeak` を使う）と読み上げた集合が食い違う。
     const raised = inReadingOrder.filter(o => spokenHeights?.has(o.name) ?? false)
@@ -3571,7 +3704,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
      * 第1波を織り込む地点は句の中に読点が入るので、地点の切れ目は語幹（`stem`）が示す
      * （→ {@link observationListSegments}）。
      */
-    const clauseOf = (o: TsunamiObservation, stem: string): string => {
+    const clauseOf = (o: TsunamiObservation, updated: boolean): string => {
       // **折り込むのは初出の第1波だけ。** 訂正（前に別の内容を声にした地点）はここへ入れない ——
       // この句の言い回しは「〜に◯◯波が到達し」で、**初出の形**（動詞が続くので助詞は「に」）。訂正は
       // 「〜の◯◯波へ更新されました」という別の文型で読む決まりなので（→ {@link tsunamiFirstWaveToSegments}）、
@@ -3583,8 +3716,9 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       // 波高だけ上がる形も起きる）。前が無い（初出）なら読む —— 聞き手はその時刻を知らない。
       const spokenAt = spokenMaxHeightTimes?.get(o.name)
       const at = o.maxHeightDateTime && o.maxHeightDateTime !== spokenAt ? formatTime(o.maxHeightDateTime) : null
-      const value = tsunamiHeightToSpeech(overSuffixedHeight(o.height!, w.tsunami.heightLabel))
-      return w.tsunami.heightClause(fw, at, value, stem)
+      // 予想波高と同じ `heightPhrase` に通す（数字の無い語が来ても、表で引き直し、訳せなければ記録が残る）
+      const value = heightPhrase(overSuffixedHeight(o.height!, w.tsunami.heightLabel))
+      return w.tsunami.heightClause(fw, at, value, updated)
     }
     /**
      * 群ごとの一文。**見出しで出来事を言い切り、地点は次に並べる**（等級の発表文
@@ -3603,7 +3737,8 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
           // 着点が「に」のままだと「16時41分に更新した」とも読める。着点を「へ」にすれば
           // 「に」＝いつ観測したか・「へ」＝何に変わったか、と役割で分かれる
           // （→ {@link tsunamiMaxHeightTimeToSegments} / {@link tsunamiFirstWaveToSegments} と同じ規律）。
-          o => clauseOf(o, isRaised ? w.tsunami.stemUpdated : w.tsunami.stemObserved),
+          // 述語の語幹（日本語の「へ更新」「を観測」）を句のどこに置くかは語表の `heightClause` が決める
+          o => clauseOf(o, isRaised),
           isRaised ? w.tsunami.tailUpdated : w.tsunami.tailObserved,
         ),
       ]
@@ -3936,6 +4071,15 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
    * 走査しても、波高・最大波の時刻・到達確認・欠測のいずれも動かない報は 1 通も無かった。
    * 構造としては起こりうるので用意してあるが、実際に声になるところは確かめていない。
    */
+  /**
+   * 観測情報の名乗りだけの断片（「津波観測に関する情報。」）。波高の文を持たず、到達・欠測・第1波などの文だけを読む報の頭に、
+   * 受信処理（`useLiveEventHandler`）が足す。**気象庁の見出し文も在処の文も付けない** —— この報では日本語も見出し文を読まないので、
+   * 置き換える文が無い（在処の文の範囲は {@link tsunamiObservationUpdateToSegments}）
+   */
+  function tsunamiObservationLeadSegments(): SpeechSegment[] {
+    return [plain(w.tsunami.observationInfoLead)]
+  }
+
   function tsunamiObservationNoChangeSegments(): SpeechSegment[] {
     return [plain(w.tsunami.observationNoChange)]
   }
@@ -3977,7 +4121,8 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     // （観測情報の見出しと同じ前処理。2 か所に分けない → {@link speakableHeadline}）。
     // **末尾の句点を落とさない** —— 下の `tail` が直に続くので、無いと 1 つの文に聞こえる
     // （{@link endTelegramSentence}。断片へ分けても同じで、逃げ道は無い）。
-    const headlinePart = speakableHeadline(headline) || TIDE_REPORT_FALLBACK_HEADLINE
+    // **気象庁の文を読まない言語は、見出し文を読まずにいつも決まった名乗り（見出し文と同じ内容の定型文の訳）を使う**
+    const headlinePart = (w.common.telegramTextElsewhere === null ? speakableHeadline(headline) : '') || TIDE_REPORT_FALLBACK_HEADLINE
     const tail = change === 'tide' ? w.tsunami.tide.tide
       : change === 'arrival' ? w.tsunami.tide.arrival
       : change === 'arrivalTime' ? w.tsunami.tide.arrivalTime
@@ -5091,13 +5236,13 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     applyTsunamiSpokenRefs, tsunamiExpiryChangeSegments, tsunamiToSegments, tsunamiToText,
     tsunamiDowngradeToSegments, tsunamiDowngradeToText,
     tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiAreaGradeChangeToText,
-    tsunamiCancelToText, tsunamiPartialRetractionToText,
+    tsunamiCancelToText, tsunamiPartialRetractionToText, TSUNAMI_WARNINGS_ETC_NAME,
     OBS_UPDATE_SPEAK_MAX_POINTS, selectObservationUpdatesToSpeak, tsunamiObservationUpdateToSegments, tsunamiObservationUpdateToText,
     joinWithAlso,
     ARRIVAL_SPEAK_MAX_POINTS, selectArrivalsToSpeak, tsunamiArrivalToSegments, tsunamiArrivalToText,
     MAX_HEIGHT_TIME_SPEAK_MAX_POINTS, selectMaxHeightTimeUpdatesToSpeak, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments,
     FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS, selectFirstWaveUpdatesToSpeak, tsunamiFirstWaveToSegments,
-    tsunamiObservationNoChangeSegments, tsunamiObservationLoweredSegments, tsunamiTideToSegments,
+    tsunamiObservationLeadSegments, tsunamiObservationNoChangeSegments, tsunamiObservationLoweredSegments, tsunamiTideToSegments,
     MISSING_SPEAK_MAX_POINTS, selectMissingToSpeak, tsunamiMissingToSegments, tsunamiMissingToText,
     WARNING_LEVEL_SPEAK_MAX_POINTS, selectWarningLevelToSpeak, tsunamiWarningLevelToSegments, tsunamiWarningLevelToText,
     nankaiToText, nankaiCommentaryToText, earthquakeCountToText, quakeNoticeToText, kohatsuToText, lpgmToText,
