@@ -162,6 +162,8 @@ export function visibleFaces(faces: readonly BlockFace[], frame: FaultFrame, vie
 export const BLOCK_DEPTH = 1
 /** ずれきったときの動く量（箱の大きさに対する見やすさのための飾りの量で、実際のずれの量ではない） */
 export const SLIP_SHIFT = 0.34
+/** 箱（立体）の中心。断層面はここを通し、回す中心と力の軸の根元もここに置く（2026-11-18 ユーザー選択「立体の中心を通す (Recommended)」） */
+export const BLOCK_CENTRE: Vec3 = [0, 0, BLOCK_DEPTH / 2]
 
 function boxFaces(): { points: Vec3[]; normal: Vec3; kind: 'top' | 'side' }[] {
   const h = BLOCK_DEPTH
@@ -184,23 +186,24 @@ const BOX_HALF_SPACES: readonly { n: Vec3; d: number }[] = [
 ]
 
 /**
- * 地表から深さ方向へ向けた箱を、地表の原点を通る断層面で下盤と上盤の 2 つに切り、上盤だけをすべりの向きへ `slip`（0〜1）に応じて動かした面の並び。
- * 上盤は断層面の法線の側（`n·p ≥ 0`）
+ * 地表から深さ方向へ向けた箱を、箱の中心（`BLOCK_CENTRE`）を通る断層面で下盤と上盤の 2 つに切り、上盤だけをすべりの向きへ `slip`（0〜1）に応じて動かした面の並び。
+ * 上盤は断層面の法線の側（`n·(p − 中心) ≥ 0`）
  */
 export function blockFaces(frame: FaultFrame, slip: number): BlockFace[] {
   const faces: BlockFace[] = []
   const shiftOf = (moving: boolean): Vec3 => (moving ? scale(frame.slip, slip * SLIP_SHIFT) : [0, 0, 0])
+  const d = dot(frame.normal, BLOCK_CENTRE)
   for (const moving of [false, true]) {
     const keep: 1 | -1 = moving ? 1 : -1
     const shift = shiftOf(moving)
     for (const f of boxFaces()) {
-      const poly = clipPolygon(f.points, frame.normal, 0, keep)
+      const poly = clipPolygon(f.points, frame.normal, d, keep)
       if (poly.length >= 3) faces.push({ points: poly.map(p => add(p, shift)), normal: f.normal, kind: f.kind, moving })
     }
-    // 断層面の切り口: 断層面に沿った大きな四角形を箱で切る
+    // 断層面の切り口: 箱の中心を通る、断層面に沿った大きな四角形を箱で切る
     let cap: Vec3[] = [
-      add(scale(frame.strike, -3), scale(frame.dip, -3)), add(scale(frame.strike, 3), scale(frame.dip, -3)),
-      add(scale(frame.strike, 3), scale(frame.dip, 3)), add(scale(frame.strike, -3), scale(frame.dip, 3)),
+      add(BLOCK_CENTRE, add(scale(frame.strike, -3), scale(frame.dip, -3))), add(BLOCK_CENTRE, add(scale(frame.strike, 3), scale(frame.dip, -3))),
+      add(BLOCK_CENTRE, add(scale(frame.strike, 3), scale(frame.dip, 3))), add(BLOCK_CENTRE, add(scale(frame.strike, -3), scale(frame.dip, 3))),
     ]
     for (const h of BOX_HALF_SPACES) cap = cap.length >= 3 ? clipPolygon(cap, h.n, h.d, 1) : cap
     if (cap.length >= 3) faces.push({ points: cap.map(p => add(p, shift)), normal: moving ? scale(frame.normal, -1) : frame.normal, kind: 'cut', moving })
