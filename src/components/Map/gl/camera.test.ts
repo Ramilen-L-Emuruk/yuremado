@@ -14,6 +14,9 @@ import {
   flyToPoint,
   beginCaptureFraming,
   subscribeFlightTarget,
+  followsPaneResize,
+  subscribeFramingSettled,
+  RESIZE_REFIT_DELAY_MS,
   type FlightTarget,
   EEW_ZOOM_SNAP,
   INTERACTION_HOLD_SEC,
@@ -730,6 +733,302 @@ describe('mapContainsBounds', () => {
       const map = mapWithPane(800, 600, 0, [[135, 35]])
       expect(mapContainsBounds(map, rect(130, 30, 146, 46))).toBe(false)
     })
+  })
+})
+
+// 地図の大きさが変わったら最後の自動の寄せをやり直す（`followsPaneResize`）。下部の波形が出て地図の
+// 高さが削れると、区域集約の閾値（いまの大きさの寄り上限）だけが下がり、前の大きさで寄せた深さが
+// 閾値を超えて自前の推定の面へ切り替わっていた。
+describe('地図の大きさが変わったときの寄せ直し', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** 2 点の寄せを、寄り上限を関数で渡して行う（地震カードの寄せと同じ形） */
+  function fitWithCap(map: ReturnType<typeof createFakeMap>) {
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 48, maxZoom: (m) => fitMaxZoomForPane(Math.min(m.getContainer().clientWidth, m.getContainer().clientHeight)) })
+  }
+
+  it('正: 地図が縮んだら、止まってから新しい大きさの寄り上限で 1 回だけ寄せ直す', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    expect(map.cameraForBounds.mock.calls[0][1]).toMatchObject({ maxZoom: fitMaxZoomForPane(1000) })
+    expect(followsPaneResize(map)).toBe(true)
+
+    // 波形が出て高さが削れる（つまみを引くように続けて来る）
+    pane.height = 900
+    map.fire('resize')
+    pane.height = 850
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS - 1)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1)
+
+    expect(map.flyTo).toHaveBeenCalledTimes(2)
+    expect(map.cameraForBounds.mock.calls[1][1]).toMatchObject({ maxZoom: fitMaxZoomForPane(850) })
+    // 前提: この 2 つの大きさで寄り上限が違う（同じなら寄せ直しても何も変わらず、このテストは何も確かめない）
+    expect(fitMaxZoomForPane(850)).toBeLessThan(fitMaxZoomForPane(1000))
+    expect(flyToEventDataOf(map, 1)).toMatchObject({ appAutoCamera: true })
+  })
+
+  /** 寄せて、その飛行を着地させる（`moveend` に飛行の印を載せて出す） */
+  function fitAndLand(map: ReturnType<typeof createFakeMap>) {
+    fitWithCap(map)
+    map.fire('moveend', flyToEventDataOf(map, map.flyTo.mock.calls.length - 1))
+  }
+
+  /** 構図が落ち着いた知らせの回数を数える */
+  function countSettled(map: ReturnType<typeof createFakeMap>) {
+    const counter = { n: 0 }
+    subscribeFramingSettled(map, () => { counter.n++ })
+    return counter
+  }
+
+  it('正: 落ち着いた知らせは、寄せ直しの着地で 1 回だけ（`resize()` が出す `moveend` では来ない）', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    const settled = countSettled(map)
+    pane.height = 850
+    map.fire('resize')
+    map.fire('moveend') // MapLibre の resize() が直後に出すもの（印なし）
+    expect(settled.n).toBe(0)
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(settled.n).toBe(0) // 飛び始めただけ
+    map.fire('moveend', flyToEventDataOf(map, 1))
+    expect(settled.n).toBe(1)
+  })
+
+  it('正: 寄せ直しが飛行を割り込んでも、割り込まれた側の `moveend` では知らせない', () => {
+    // 新しい地震への寄せ（1 本目）の途中で地図が縮み、寄せ直し（2 本目）が割り込む並び
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    const first = flyToEventDataOf(map, 0)
+    const settled = countSettled(map)
+    pane.height = 850
+    map.fire('resize')
+    // 1 本目が待ちの間に着地しても、カメラは前の大きさの深さにいるので知らせない
+    map.fire('moveend', first)
+    expect(settled.n).toBe(0)
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    map.fire('moveend', first) // MapLibre の flyTo が先頭の stop() で出す、割り込まれた側の moveend
+    expect(settled.n).toBe(0)
+    map.fire('moveend', flyToEventDataOf(map, 1))
+    expect(settled.n).toBe(1)
+  })
+
+  it('正: 寄せ直しを飛ばずに終えたら、その場で知らせる（同じ寸法へ戻った・寸法 0）', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitAndLand(map)
+    const settled = countSettled(map)
+    pane.height = 850
+    map.fire('resize')
+    pane.height = 1000 // 待ちの間に元へ戻った
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+    expect(settled.n).toBe(1)
+
+    pane.height = 0
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(settled.n).toBe(2)
+  })
+
+  it('正: 待ちの間に利用者が触ったら、待ちを捨ててその場で知らせる', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitAndLand(map)
+    const settled = countSettled(map)
+    pane.height = 850
+    map.fire('resize')
+    map.fire('dragstart')
+    expect(settled.n).toBe(1)
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('正: 寄せ直しの飛行を利用者が割り込んだら、割り込まれた飛行の `moveend` で知らせる', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitAndLand(map)
+    const settled = countSettled(map)
+    pane.height = 850
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS) // 寄せ直しが飛び始める
+    map.fire('dragstart') // 飛行中なので、ここでは知らせない
+    expect(settled.n).toBe(0)
+    map.fire('moveend', flyToEventDataOf(map, 1)) // MapLibre は止めた飛行の印つきで moveend を出す
+    expect(settled.n).toBe(1)
+  })
+
+  it('対照: 待ちの間に別の寄せが飛び始めたら、飛ばずに終えた知らせはその飛行の着地まで出さない', () => {
+    // 波形が出て縮んだ直後に、成長フォローや新しい地震の寄せが飛ぶ並び
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitAndLand(map)
+    const settled = countSettled(map)
+    pane.height = 850
+    map.fire('resize')
+    fitWithCap(map) // 新しい大きさで寄せる（寸法を覚え直すので、寄せ直しは「同じ寸法」で見送る）
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(2)
+    expect(settled.n).toBe(0)
+    map.fire('moveend', flyToEventDataOf(map, 1))
+    expect(settled.n).toBe(1)
+  })
+
+  it('安全弁: 寄せ直しが投げても、記録して知らせる（閾値を古いまま残さない）', () => {
+    ;(log.warn as Mock).mockClear()
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitAndLand(map)
+    const settled = countSettled(map)
+    map.cameraForBounds.mockImplementation(() => { throw new Error('テスト用の失敗') })
+    pane.height = 850
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(settled.n).toBe(1)
+    expect((log.warn as Mock).mock.calls.some(c => String(c[0]).includes('寄せ直しに失敗'))).toBe(true)
+  })
+
+  it('安全弁: 飛行の番号が進んでから `flyTo` 自身が投げても、飛行中の印を落として知らせる', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitAndLand(map)
+    const settled = countSettled(map)
+    map.flyTo.mockImplementationOnce(() => { throw new Error('テスト用の失敗') })
+    pane.height = 850
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(settled.n).toBe(1)
+    expect(isProgrammaticFlight(map)).toBe(false)
+  })
+
+  it('対照: 番号が進む前に投げたら、飛んでいる別の寄せの印は落とさない', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitAndLand(map)
+    const settled = countSettled(map)
+    pane.height = 850
+    map.fire('resize')
+    fitWithCap(map) // 待ちの間に別の寄せが飛び始める（新しい寸法を覚えるので、寄せ直しは寸法をもう一度変えて走らせる）
+    pane.height = 800
+    map.cameraForBounds.mockImplementationOnce(() => { throw new Error('テスト用の失敗') })
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(isProgrammaticFlight(map)).toBe(true)
+    expect(settled.n).toBe(0)
+    map.fire('moveend', flyToEventDataOf(map, 1))
+    expect(settled.n).toBe(1)
+  })
+
+  it('安全弁: 地図を破棄したら、待っていた寄せ直しは走らない', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    pane.height = 850
+    map.fire('resize')
+    map.fire('remove')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('対照: 寸法の変化が無い普段の寄せでも、着地で知らせる（閾値は同じ値のまま取り直される）', () => {
+    const map = createFakeMap({ width: 1400, height: 1000 })
+    const settled = countSettled(map)
+    fitWithCap(map)
+    map.fire('moveend', flyToEventDataOf(map, 0))
+    expect(settled.n).toBe(1)
+  })
+
+  it('正: 1 点への寄せも、寄り上限を新しい大きさで決め直す', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    flyToPoint(map, [36, 139], (m) => fitMaxZoomForPane(m.getContainer().clientHeight))
+    pane.height = 650
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo.mock.calls[1][0]).toMatchObject({ zoom: fitMaxZoomForPane(650) })
+  })
+
+  it('対照: 利用者が地図を触った後は、大きさが変わっても寄せ直さない', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    map.fire('dragstart') // 印の無いイベント＝利用者の操作
+    expect(followsPaneResize(map)).toBe(false)
+    pane.height = 850
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS * 4)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('対照: アプリの寄せが起こすイベント（印つき）は、利用者の操作に数えない', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    map.fire('zoomstart', flyToEventDataOf(map, 0))
+    expect(followsPaneResize(map)).toBe(true)
+  })
+
+  it('対照: 触った後でも、アプリがまた寄せたら追い直す', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    map.fire('zoomstart')
+    fitWithCap(map)
+    pane.height = 850
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(3)
+  })
+
+  it('対照: 寸法が寄せたときと同じなら寄せ直さない', () => {
+    const map = createFakeMap({ width: 1400, height: 1000 })
+    fitWithCap(map)
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全弁: 共有カードの撮影の間は寄せ直さない（撮影が自前で寄せ直す）', () => {
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    const framing = beginCaptureFraming(map)
+    expect(followsPaneResize(map)).toBe(false)
+    pane.height = 630
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+    framing.restore()
+  })
+
+  it('安全弁: 共有カードの撮影が覚える上限は、関数で渡しても寄せた時点の値のまま', () => {
+    // 撮影の寄せ直しは、明示された上限を画面の大きさで決めた値で使う（関数にした前と同じ）
+    const pane = { width: 1400, height: 1000 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    map.cameraForBounds.mockClear()
+    const framing = beginCaptureFraming(map)
+    pane.height = 630
+    framing.refit()
+    expect(map.cameraForBounds.mock.calls[0][1]).toMatchObject({ maxZoom: fitMaxZoomForPane(1000) })
+    framing.restore()
+  })
+
+  it('安全弁: 寸法待ちで保留している間は、保留の側だけが寄せる（二重に寄せない）', () => {
+    const pane = { width: 430, height: 0 }
+    const map = createFakeMap(pane)
+    fitWithCap(map)
+    expect(followsPaneResize(map)).toBe(false)
+    pane.height = 300
+    map.fire('resize')
+    vi.advanceTimersByTime(RESIZE_REFIT_DELAY_MS)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -162,7 +162,8 @@ export function QuakeFitGL({
     }
     lastFitRef.current = signature
     log.debug(`[mapGL] quake fit (${positions.length}点${explicit ? ' 明示選択' : ''}・上限 ${zoomPolicy})`)
-    fitToPositions(map, positions, { padding: 48, durationSec: 1.0, maxZoom: maxZoomForPolicy(map, zoomPolicy) })
+    // 寄り上限は関数で渡す（地図の大きさが変わって寄せ直すとき、新しい大きさで決め直すため。→ `ZoomCap`）
+    fitToPositions(map, positions, { padding: 48, durationSec: 1.0, maxZoom: (m) => maxZoomForPolicy(m, zoomPolicy) })
     // lastConsumedTickRef は ref なので依存配列に入れない（参照の同一性は保たれる）。
   }, [map, signature, positions, zoomPolicy, selectionTick, isUserInteracting, resetUserInteraction])
   return null
@@ -400,7 +401,7 @@ export function FitToDetectionGL({
           log.debug(
             `[mapGL] 揺れ検知フィット (初回・揺れフォーカスへ直接 ${shakeFocus.lat.toFixed(2)},${shakeFocus.lng.toFixed(2)})`,
           )
-          flyToPoint(map, [shakeFocus.lat, shakeFocus.lng], fitMaxZoom(map), 0.8)
+          flyToPoint(map, [shakeFocus.lat, shakeFocus.lng], fitMaxZoom, 0.8)
           return
         }
         // 古い要求はここで即座に見送る（他の見送りと同じく `dropShakeFocus` で記録する）。素通しに
@@ -448,7 +449,7 @@ export function FitToDetectionGL({
         refitBlindRef.current = false
         suppressFollowUntilRef.current = Date.now() + SHAKE_FOCUS_SUPPRESS_MS
         log.debug(`[mapGL] 揺れフォーカス (${shakeFocus.lat.toFixed(2)},${shakeFocus.lng.toFixed(2)})`)
-        flyToPoint(map, [shakeFocus.lat, shakeFocus.lng], fitMaxZoom(map), 0.8)
+        flyToPoint(map, [shakeFocus.lat, shakeFocus.lng], fitMaxZoom, 0.8)
         return
       }
     }
@@ -475,12 +476,15 @@ export function FitToDetectionGL({
     }
     const bounds = boundsFromPositions(points.map(dp2ll))
     if (!bounds) return
+    // 寄り直しの見積もり（`refitDeltaForBounds`）はいまの大きさの数値で測り、寄せは関数で渡す
+    // （地図の大きさが変わって寄せ直すとき、新しい大きさで決め直すため。→ `ZoomCap`）
     const fitOpts = { padding: DETECTION_FIT_PADDING, maxZoom: fitMaxZoom(map) }
+    const flyOpts = { padding: DETECTION_FIT_PADDING, maxZoom: fitMaxZoom, durationSec: 0.8 }
     if (!mapContainsBounds(map, bounds, DETECTION_FIT_PADDING)) {
       refitSinceRef.current = 0
       refitBlindRef.current = false
       log.debug(`[mapGL] 揺れ検知 成長フォロー (${points.length}点)`)
-      flyToBoundsSnapped(map, bounds, { ...fitOpts, durationSec: 0.8 })
+      flyToBoundsSnapped(map, bounds, flyOpts)
       return
     }
     // 収め直しフォロー: 画に収まっていても、範囲が狭まったり別の場所へ移ったりすると、成長
@@ -517,7 +521,7 @@ export function FitToDetectionGL({
     if (now - refitSinceRef.current < REFIT_HOLD_MS) return
     refitSinceRef.current = 0
     log.debug(`[mapGL] 揺れ検知 収め直しフォロー (${points.length}点・${reason})`)
-    flyToBoundsSnapped(map, bounds, { ...fitOpts, durationSec: 0.8 })
+    flyToBoundsSnapped(map, bounds, flyOpts)
     // hasCandidate を参照するのは上の検知終了分岐だけだが、古い値を掴まないよう deps には含める
     // （成長・収め直しフォローの分岐が余分に再評価されるが、収まっていてずれてもいなければ何もしない）。
     // lastConsumedFocusTickRef は ref なので依存配列に入れない（QuakeFitGL と同じ流儀）。
@@ -588,7 +592,7 @@ export function FitToCandidateGL({
     fittedIdRef.current = candidateId
     log.debug(`[mapGL] 候補クラスタフィット (${points.length}点 id=${candidateId})`)
     if (points.length === 1) {
-      flyToPoint(map, dp2ll(points[0]), fitMaxZoom(map), 1.0)
+      flyToPoint(map, dp2ll(points[0]), fitMaxZoom, 1.0)
       return
     }
     fitToPositions(map, points.map(dp2ll), { padding: 60, durationSec: 1.0 })
@@ -886,7 +890,7 @@ export function FitToEEWGL({
         return
       }
       log.debug('[mapGL] EEW新規 震源へフィット')
-      flyToPoint(map, target.point, fitMaxZoom(map), 0.8)
+      flyToPoint(map, target.point, fitMaxZoom, 0.8)
       return
     }
     // ここから入室フィット（このマウントで 1 回だけ）。目標は成長フォローと同一の合成範囲にする。
@@ -921,7 +925,7 @@ export function FitToEEWGL({
     // あればそこへ寄せ、無ければ寄せる先が無いことを記録して留まる。
     if (epicenter) {
       log.debug('[mapGL] EEW入室フィット 座標なし 震源へフィット')
-      flyToPoint(map, epicenter, fitMaxZoom(map), 0.8)
+      flyToPoint(map, epicenter, fitMaxZoom, 0.8)
     } else {
       log.debug('[mapGL] EEW入室フィット 寄せる先なし（震源の座標・予想区域・検知点のいずれも無い）')
     }
@@ -964,7 +968,7 @@ export function FitToEEWGL({
     }
     suppressGrowthUntilRef.current = Date.now() + SHAKE_FOCUS_SUPPRESS_MS
     log.debug(`[mapGL] 揺れフォーカス (EEW中 ${shakeFocus.lat.toFixed(2)},${shakeFocus.lng.toFixed(2)})`)
-    flyToPoint(map, [shakeFocus.lat, shakeFocus.lng], fitMaxZoom(map), 0.8)
+    flyToPoint(map, [shakeFocus.lat, shakeFocus.lng], fitMaxZoom, 0.8)
     // lastConsumedFocusTickRef・suppressGrowthUntilRef は ref なので依存配列に入れない。
   }, [shakeFocus, eews.length, map, isUserInteracting])
 
@@ -1028,7 +1032,7 @@ export function FitToEEWGL({
         const { latitude, longitude } = latest.earthquake.hypocenter
         if (hasKnownEpicenter(latitude, longitude)) {
           log.debug('[mapGL] EEW数減少・座標なし 震源へ再フィット')
-          flyToPoint(map, [latitude, longitude], fitMaxZoom(map), 0.8)
+          flyToPoint(map, [latitude, longitude], fitMaxZoom, 0.8)
         }
       }
       return
@@ -1580,7 +1584,7 @@ export function FocusObsGL({
     // **寄り上限は `FocusTargetGL` と同じ**（`focusMaxZoom`）。どちらも「一覧の 1 点を指す行を
     // 押した」という同じ操作で、着地の深さが一覧によって違う理由が無い。観測棒は細いので、
     // 自動フィットの上限では隣の点と見分けが付かない。
-    flyToPoint(map, [bar.lat, bar.lng], focusMaxZoom(map), 1.0)
+    flyToPoint(map, [bar.lat, bar.lng], focusMaxZoom, 1.0)
     // **着地したら、その観測点の印の吹き出しを開く**（2026-10-21 ユーザー選択「吹き出しも開く (Recommended)」）。
     // 印を描いていない観測点（予測だけの観測点）は寄せるだけで終わる。購読はカメラを動かした「あと」に張り、
     // 動いていなければその場で開く —— 理由は `FocusTargetGL` の同じ箇所。
@@ -1656,11 +1660,11 @@ export function FocusTargetGL({ focusTarget, hiddenPointPopupHtml }: {
     closeMapPopup(map)
     closeTsunamiMarkerPopups(map)
     if (positions.length !== 1) {
-      fitToPositions(map, positions, { durationSec: 1.0, maxZoom: focusMaxZoom(map) })
+      fitToPositions(map, positions, { durationSec: 1.0, maxZoom: focusMaxZoom })
       return
     }
     const [lat, lng] = positions[0]
-    fitToPositions(map, positions, { durationSec: 1.0, maxZoom: focusMaxZoom(map) })
+    fitToPositions(map, positions, { durationSec: 1.0, maxZoom: focusMaxZoom })
     const openPopup = () => {
       // 着地した時点の表示で決める（飛んでいる間にモードが切り替わることがある）。
       const html = hiddenPopupRef.current(positions[0], focusTarget.stationName)
