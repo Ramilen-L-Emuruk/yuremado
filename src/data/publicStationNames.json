@@ -1,0 +1,162 @@
+{
+  "えりも": {
+    "en": "Erimo",
+    "pt-BR": "Erimo",
+    "es": "Erimo",
+    "zh-Hans": "襟裳",
+    "zh-Hant": "襟裳",
+    "ko": "에리모"
+  },
+  "上川朝日": {
+    "en": "Kamikawa Asahi",
+    "pt-BR": "Kamikawa Asahi",
+    "es": "Kamikawa Asahi",
+    "zh-Hans": "上川朝日",
+    "zh-Hant": "上川朝日",
+    "ko": "가미카와 아사히"
+  },
+  "与那国島": {
+    "en": "Yonagunijima",
+    "pt-BR": "Yonagunijima",
+    "es": "Yonagunijima",
+    "zh-Hans": "与那国岛",
+    "zh-Hant": "與那國島",
+    "ko": "요나구니지마"
+  },
+  "京都和知": {
+    "en": "Kyoto Wachi",
+    "pt-BR": "Kyoto Wachi",
+    "es": "Kyoto Wachi",
+    "zh-Hans": "京都和知",
+    "zh-Hant": "京都和知",
+    "ko": "교토 와치"
+  },
+  "佐渡島銀山": {
+    "en": "Sadogashima Ginzan",
+    "pt-BR": "Sadogashima Ginzan",
+    "es": "Sadogashima Ginzan",
+    "zh-Hans": "佐渡岛银山",
+    "zh-Hant": "佐渡島銀山",
+    "ko": "사도가시마 긴잔"
+  },
+  "八丈島三根": {
+    "en": "Hachijojima Mitsune",
+    "pt-BR": "Hachijojima Mitsune",
+    "es": "Hachijojima Mitsune",
+    "zh-Hans": "八丈岛三根",
+    "zh-Hant": "八丈島三根",
+    "ko": "하치조지마 미쓰네"
+  },
+  "南大東島池之沢": {
+    "en": "Minamidaitojima Ikenosawa",
+    "pt-BR": "Minamidaitojima Ikenosawa",
+    "es": "Minamidaitojima Ikenosawa",
+    "zh-Hans": "南大东岛池之泽",
+    "zh-Hant": "南大東島池之澤",
+    "ko": "미나미다이토지마 이케노사와"
+  },
+  "大分中津江": {
+    "en": "Oita Nakatsue",
+    "pt-BR": "Oita Nakatsue",
+    "es": "Oita Nakatsue",
+    "zh-Hans": "大分中津江",
+    "zh-Hant": "大分中津江",
+    "ko": "오이타 나카쓰에"
+  },
+  "宮城丸森": {
+    "en": "Miyagi Marumori",
+    "pt-BR": "Miyagi Marumori",
+    "es": "Miyagi Marumori",
+    "zh-Hans": "宫城丸森",
+    "zh-Hant": "宮城丸森",
+    "ko": "미야기 마루모리"
+  },
+  "対馬上県": {
+    "en": "Tsushima Kamiagata",
+    "pt-BR": "Tsushima Kamiagata",
+    "es": "Tsushima Kamiagata",
+    "zh-Hans": "对马上县",
+    "zh-Hant": "對馬上縣",
+    "ko": "쓰시마 가미아가타"
+  },
+  "岐阜黒川": {
+    "en": "Gifu Kurokawa",
+    "pt-BR": "Gifu Kurokawa",
+    "es": "Gifu Kurokawa",
+    "zh-Hans": "岐阜黑川",
+    "zh-Hant": "岐阜黑川",
+    "ko": "기후 구로카와"
+  },
+  "広島西城": {
+    "en": "Hiroshima Saijo",
+    "pt-BR": "Hiroshima Saijo",
+    "es": "Hiroshima Saijo",
+    "zh-Hans": "广岛西城",
+    "zh-Hant": "廣島西城",
+    "ko": "히로시마 사이조"
+  },
+  "恵庭": {
+    "en": "Eniwa",
+    "pt-BR": "Eniwa",
+    "es": "Eniwa",
+    "zh-Hans": "惠庭",
+    "zh-Hant": "惠庭",
+    "ko": "에니와"
+  },
+  "沖縄国頭": {
+    "en": "Okinawa Kunigami",
+    "pt-BR": "Okinawa Kunigami",
+    "es": "Okinawa Kunigami",
+    "zh-Hans": "冲绳国头",
+    "zh-Hant": "沖繩國頭",
+    "ko": "오키나와 구니가미"
+  },
+  "父島三日月山": {
+    "en": "Chichijima Mikazukiyama",
+    "pt-BR": "Chichijima Mikazukiyama",
+    "es": "Chichijima Mikazukiyama",
+    "zh-Hans": "父岛三日月山",
+    "zh-Hant": "父島三日月山",
+    "ko": "지치지마 미카즈키야마"
+  },
+  "茨城八郷": {
+    "en": "Ibaraki Yasato",
+    "pt-BR": "Ibaraki Yasato",
+    "es": "Ibaraki Yasato",
+    "zh-Hans": "茨城八乡",
+    "zh-Hant": "茨城八鄉",
+    "ko": "이바라키 야사토"
+  },
+  "青森天間林": {
+    "en": "Aomori Temmabayashi",
+    "pt-BR": "Aomori Temmabayashi",
+    "es": "Aomori Temmabayashi",
+    "zh-Hans": "青森天间林",
+    "zh-Hant": "青森天間林",
+    "ko": "아오모리 덴마바야시"
+  },
+  "静岡相良": {
+    "en": "Shizuoka Sagara",
+    "pt-BR": "Shizuoka Sagara",
+    "es": "Shizuoka Sagara",
+    "zh-Hans": "静冈相良",
+    "zh-Hant": "靜岡相良",
+    "ko": "시즈오카 사가라"
+  },
+  "高知物部": {
+    "en": "Kochi Monobe",
+    "pt-BR": "Kochi Monobe",
+    "es": "Kochi Monobe",
+    "zh-Hans": "高知物部",
+    "zh-Hant": "高知物部",
+    "ko": "고치 모노베"
+  },
+  "鹿児島錫山": {
+    "en": "Kagoshima Suzuyama",
+    "pt-BR": "Kagoshima Suzuyama",
+    "es": "Kagoshima Suzuyama",
+    "zh-Hans": "鹿儿岛锡山",
+    "zh-Hant": "鹿兒島錫山",
+    "ko": "가고시마 스즈야마"
+  }
+}

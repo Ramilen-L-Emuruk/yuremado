@@ -7,6 +7,9 @@ import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { escapeHtml } from './gl/popupHtml'
 import { ensurePublicStationIcons, PUBLIC_STATION_ICON_BASE_RADIUS, publicStationIconId } from './gl/publicStationIcons'
 import { publicStationHeading } from '../SeismoWaveChart'
+import { useLocale } from '../../i18n/I18nProvider'
+import type { Locale } from '../../i18n/messages'
+import { publicStationNameFor } from '../../i18n/publicStationNames'
 
 // 公開観測点（波形を出している気象庁の観測点）の位置に、波形の見出しと同じ番号の三角を置く
 // （`docs/public-waveform-design.md` §0・§7）。印の焼き方は gl/publicStationIcons.ts。
@@ -31,14 +34,15 @@ export interface PublicStationMarker {
 
 const EMPTY_FC: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] }
 
-function buildFC(markers: readonly PublicStationMarker[], iconScale: number): FeatureCollection<Point> {
+function buildFC(markers: readonly PublicStationMarker[], iconScale: number, locale: Locale): FeatureCollection<Point> {
   const iconSize = (DISPLAY_RADIUS_PX * iconScale) / PUBLIC_STATION_ICON_BASE_RADIUS
   const features: Feature<Point>[] = markers.map((m) => ({
     type: 'Feature',
     properties: {
       icon: publicStationIconId(m.number),
       iconSize,
-      heading: publicStationHeading(m.number, m.nameJa),
+      // 吹き出しは開いた時の言語ではなく、流し込んだ時の言語の名前（言語を切り替えると下の署名が変わって流し込み直す）
+      heading: publicStationHeading(m.number, publicStationNameFor(locale, m.nameJa)),
       // **若い番号を手前へ**（`symbol-sort-key` は値が大きいほど手前）。重なったとき #1 が読めるように。
       sortKey: -m.number,
     },
@@ -64,6 +68,7 @@ export function PublicStationMarkersGL({ markers, iconScale, visible }: Props) {
   /** 最後に流し込んだ内容の署名。**同じなら流し込まない**（参照が変わるたびに geojson を作り直すと空回りする）。 */
   const lastSigRef = useRef<string | null>(null)
   const popupRef = useRef<PopupHandle | null>(null)
+  const locale = useLocale()
 
   useEffect(() => {
     if (!map) return
@@ -104,13 +109,13 @@ export function PublicStationMarkersGL({ markers, iconScale, visible }: Props) {
 
   useEffect(() => {
     if (!map || !addedRef.current) return
-    const sig = `${iconScale}|${markers.map((m) => `${m.code},${m.number},${m.nameJa},${m.lat},${m.lon}`).join(';')}`
+    const sig = `${iconScale}|${locale}|${markers.map((m) => `${m.code},${m.number},${m.nameJa},${m.lat},${m.lon}`).join(';')}`
     if (sig === lastSigRef.current) return
     const src = map.getSource(SRC) as GeoJSONSource | undefined
     if (src === undefined) return
-    src.setData(buildFC(markers, iconScale))
+    src.setData(buildFC(markers, iconScale, locale))
     lastSigRef.current = sig
-  }, [map, markers, iconScale])
+  }, [map, markers, iconScale, locale])
 
   useEffect(() => {
     if (!map || !map.getLayer(LYR)) return

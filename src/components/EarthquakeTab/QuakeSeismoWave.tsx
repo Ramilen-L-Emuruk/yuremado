@@ -511,7 +511,8 @@ function HistoryWave({
   return (
     <div className="rounded-sm bg-black/30 px-2 py-1">
       <div className="flex items-center gap-2 text-[10px] roomy:text-xs leading-none mb-1">
-        <span className="text-white truncate max-w-32 roomy:max-w-56">
+        {/* 狭い画面の上限は 160px（公開観測点の名前の訳で一番長い韓国語 152px が入る。2026-11-16 ユーザー選択「欄を 160px に広げる」） */}
+        <span className="text-white truncate max-w-40 roomy:max-w-56">
           {wave.displayName}
         </span>
         {/* **震度は観測点名と同じ行へ置く**（行を増やさない。2026-10-05 のユーザー判断）。 */}
