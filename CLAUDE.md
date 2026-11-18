@@ -1297,6 +1297,7 @@ README は「一般利用者・フォーカー・貢献者への導線」であ�
 ## コミット
 
 - **Conventional Commits**（`feat` / `fix` / `refactor` / `docs` / `test` / `chore` / `perf` / `ci`）。説明は日本語。
+- **コミットしたら、手順 10 の `git merge main` の前に `npm run check-commit-messages -- --range main..HEAD` を流す。** 止まったら、最後の 1 本なら `git commit --amend`、それより前なら `git rebase -i` で直す（英語の語・コマンド・パスはバッククォートで囲む）。push の前のフックが止めるのはリリースの push のときで、そのころにはマージの奥に埋まり、送る範囲ごと書き換えることになる（2026-11-16、6.17.0 で 5 本・6 行が止まった）。
 - コミットメッセージ末尾に必ず付与する。**モデル名はその時作業している Claude モデルに合わせる**（ハーネスが指定するモデル名を使用する。特定モデルに固定しない）:
   ```
   Co-Authored-By: Claude <モデル名> <noreply@anthropic.com>
