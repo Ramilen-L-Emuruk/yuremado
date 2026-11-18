@@ -47,7 +47,7 @@ export function kyoshinPointRegionName(lat: number, lng: number, subregions: rea
 
 /**
  * 検知に入った点から、揺れている区域の名前を 1 つ決める。検知カードの区域名と、揺れ検知の
- * 読み上げ（「〇〇で揺れを検知。」「〇〇でも揺れを検知。」）が同じ値を使う。
+ * 読み上げ（「〇〇で揺れを検知。」「〇〇でも揺れを検知。」。→ {@link KyoshinDetectionPhrase}）が同じ値を使う。
  *
  * **区域ごとに「点の数×強さ」を足し、いちばん大きい区域を選ぶ**（2026-10-31 ユーザー選択
  * 「点数×強さ (Recommended)」、カードも「揃える (Recommended)」）。強さは計測震度 +3.5
@@ -125,18 +125,14 @@ function tally(
 }
 
 /**
- * 揺れ検知の読み上げ文（2026-10-31 ユーザー選択「地名だけ・1回 (Recommended)」）。
- * 区域が決まらない（境界データを取れなかった）ときは地名を言わない。
+ * 揺れ検知の読み上げで言うこと。文は読み上げの言語の組が読む直前に組む（`ttsText.ts` の `kyoshinDetectionText`。
+ * 語表の `kyoshin`）ので、ここでは文にしない。
+ *
+ * - `kind`: `detected` は最初の検知（「〇〇で揺れを検知。」）、`otherRegion` は別の地点の検知（「〇〇でも揺れを検知。」。
+ *   2026-10-31 ユーザー選択「境を直してから読む (Recommended)」）
+ * - `regionName`: 日本語の区域名（{@link dominantRegionName}）。決まらない（境界データを取れなかった）ときは null で、地名を言わない
  */
-export function kyoshinDetectSpeechText(regionName: string | null): string {
-  return regionName ? `${regionName}で揺れを検知。` : '揺れを検知。'
-}
-
-/**
- * 「別の地点で揺れを検知」の読み上げ文（2026-10-31 ユーザー選択「境を直してから読む (Recommended)」、
- * 選択肢の説明「別地点でも「茨城県南部でも揺れを検知。」と 1 回読む」）。区域が決まらない（境界データを
- * 取れなかった）ときは「別の地点でも揺れを検知。」（同日「埋める・取れない時は「別の地点でも」 (Recommended)」）。
- */
-export function kyoshinOtherRegionSpeechText(regionName: string | null): string {
-  return regionName ? `${regionName}でも揺れを検知。` : '別の地点でも揺れを検知。'
+export interface KyoshinDetectionPhrase {
+  readonly kind: 'detected' | 'otherRegion'
+  readonly regionName: string | null
 }

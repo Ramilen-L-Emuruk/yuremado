@@ -1,7 +1,7 @@
-import type { SpeechWordsInProgress } from '../speechWords'
+import type { SpeechWords } from '../speechWords'
 import type { UnreceivedUnit } from '../../utils/quakePoints'
 import { es } from '../messages/es'
-import { clockTime, decimalComma, firstWaveKindIn, intensityIn, isOneOClock, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn } from './shared'
+import { clockTime, decimalComma, firstWaveKindIn, halfWidthDigits, intensityIn, isOneOClock, markHeightOrMore, regionNameIn, reportNameIn, showsApproxAbove, tsunamiEvacuationIn, tsunamiGradeNamesIn, tsunamiHeightIn, dayPeriodOf } from './shared'
 
 const intensity = intensityIn(es)
 /** 未入電の単位（単数・複数）。「件」は観測点と地域が混ざったとき */
@@ -47,14 +47,39 @@ const ofTheQuake = (first: boolean) => (first ? 'de este terremoto' : 'del otro 
 const STEM_UPDATED = 'actualización a'
 const STEM_OBSERVED = 'observación de'
 
+const NANKAI = es.telegramLog.controlTitle['南海トラフ地震臨時情報']
+const COMMENTARY = es.telegramLog.controlTitle['南海トラフ地震関連解説情報']
+const COUNT = es.telegramLog.controlTitle['地震回数に関する情報']
+const NOTICE = es.telegramLog.controlTitle['地震・津波に関するお知らせ']
+const KOHATSU = es.telegramLog.controlTitle['北海道・三陸沖後発地震注意情報']
+const LPGM = es.quake.infoName.lpgm
+const INTERNATIONAL_TSUNAMI = es.quake.infoName.internationalTsunami
+const WATCH = 'Esté atento a la información posterior.'
+/** 想定震源域（「zona de origen prevista de un terremoto de la Fosa de Nankai」） */
+const SOURCE_AREA = 'de la zona de origen prevista de un terremoto de la Fosa de Nankai'
+const MEASURES = 'medidas preventivas contra desastres'
+const PERIOD = { small: 'de la madrugada', morning: 'de la mañana', noon: 'del mediodía', afternoon: 'de la tarde', night: 'de la noche' } as const
 /**
- * 読み上げの文の語表（スペイン語。訳し終えた区分だけ → `SpeechWordsInProgress`）。
- * 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表。気象庁の多言語辞書の定型文（Manténgase alerta contra fuertes temblores・canceló）と
- * 画面の辞書の訳（Alerta Temprana de Terremoto・Intensidad máx. prevista など）にそろえた。震央・対象地方・観測した地名は「:」で示す。
+ * 時報の時刻（数字で書く。2026-11-18 ユーザー選択「時刻を数字で書く (Recommended)」）。12 時間制は時間帯の語
+ * （同日「言語ごとの時間帯の語で言う (Recommended)」。0 時台は「las 0:30 de la madrugada」、12 時台は「las 12:30 del mediodía」）。
+ * 20 時以降は「de la noche」（同日「夜の語を足す (Recommended)」）
+ */
+const signalClock = (hour: number, minute: number, clock: '24h' | '12h') => {
+  if (clock === '24h') return clockTime(hour, minute)
+  const p = dayPeriodOf(hour, 20)
+  return `${clockTime(p.hour, minute)} ${PERIOD[p.period]}`
+}
+
+/**
+ * 読み上げの文の語表（スペイン語）。
+ * 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表（緊急地震速報・地震情報・津波）と、2026-11-18 ユーザー選択
+ * 「この案で入れる (Recommended)」の表（長周期・特別情報・揺れ検知・国際津波関連情報。時報は同日「時刻を数字で書く (Recommended)」）。
+ * 気象庁の多言語辞書の定型文（Manténgase alerta contra fuertes temblores・canceló）と画面の辞書の訳（Alerta Temprana de Terremoto・
+ * Intensidad máx. prevista など）にそろえた。震央・対象地方・観測した地名は「:」で示す。
  *
  * 規模の小数点はコンマにする。地震情報の断片は区切りを挟まずにつなぐので、文の終わりになる語は後ろに空白を 1 つ持つ
  */
-export const esSpeech: SpeechWordsInProgress = {
+export const esSpeech: SpeechWords = {
   common: {
     listSep: ', ',
     sentenceSep: ' ',
@@ -72,6 +97,7 @@ export const esSpeech: SpeechWordsInProgress = {
     telegramTextLead: (label) => `A continuación, el texto de la Agencia Meteorológica de Japón sobre la ${label}. `,
   },
   eew: {
+    label: es.quake.jmaNoteHeading.eew,
     upgrade: 'Elevado a Alerta Temprana de Terremoto.',
     warningRegionsClosing: 'manténgase alerta contra fuertes temblores',
     lpgmClassZero: 'Clase máxima prevista de movimiento sísmico de período largo 0.',
@@ -300,5 +326,86 @@ export const esSpeech: SpeechWordsInProgress = {
     missingObservedTail: '. Actualmente, sin datos. ',
     missingTail: ': sin datos. ',
     warningLevelTail: ': se observa un tsunami de nivel de Alerta de Tsunami. ',
+  },
+  lpgm: {
+    label: LPGM,
+    retracted: `La ${LPGM} fue cancelada.`,
+    occurredAt: (time) => `Terremoto ocurrido alrededor ${around(time)}. `,
+    // 2 組目からは短く言う（2026-11-18 ユーザー選択「この案で入れる (Recommended)」の 5 節の 1）
+    classAt: (cls, names, isFirst) => `Clase ${cls}${isFirst ? ' de movimiento sísmico de período largo' : ''} observada: ${names}`,
+    regions: (regionText) => regionText,
+    maxClassOnly: (cls) => `Clase ${cls} de movimiento sísmico de período largo observada.`,
+  },
+  special: {
+    nankaiLabel: NANKAI,
+    // 主語と動詞を持つ形（「Como 〈きっかけ〉,」で受ける）
+    nankaiTrigger: {
+      '111': 'se produjo un terremoto de magnitud 6,8 o superior en la zona vigilada',
+      '112': 'se observó un cambio significativo en los extensómetros',
+      '113': 'se observó un fenómeno distinto de lo habitual',
+    },
+    nankaiRetracted: `La ${NANKAI} fue cancelada.`,
+    nankaiEnded: `${NANKAI}: investigación concluida. La posibilidad de un terremoto en la Fosa de Nankai estaba dentro de lo normal.`,
+    nankaiInvestigating: (trigger) =>
+      `${NANKAI}: en investigación. ${trigger ? `Como ${trigger}, se está investigando` : 'Se está investigando'} la posibilidad de un terremoto en la Fosa de Nankai. ${WATCH}`,
+    nankaiMajorWarning: `${NANKAI}: Alerta ante megaterremoto. Se ha producido un gran terremoto dentro ${SOURCE_AREA}. Tome inmediatamente ${MEASURES}.`,
+    nankaiMajorAdvisory: `${NANKAI}: Precaución ante megaterremoto. Se ha producido un terremoto dentro ${SOURCE_AREA}. Revise sus ${MEASURES}.`,
+    nankaiOther: `${NANKAI}. Se ha emitido información extraordinaria sobre un terremoto de la Fosa de Nankai. ${WATCH}`,
+    commentaryLabel: COMMENTARY,
+    commentaryRetracted: `El ${COMMENTARY} fue cancelado.`,
+    commentaryRegular: `${COMMENTARY}. Se han publicado los resultados de la reunión ordinaria del Comité de Evaluación de Terremotos de la Fosa de Nankai.`,
+    // 号数は語で言う（画面の「n.º」は声で崩れる）
+    commentary: (serial) =>
+      `${COMMENTARY}${serial ? `, número ${halfWidthDigits(serial)}` : ''}. Se ha emitido un comentario sobre la situación en la zona de origen prevista de un terremoto de la Fosa de Nankai.`,
+    countLabel: COUNT,
+    countRetracted: `La ${COUNT} fue cancelada.`,
+    countLead: `${COUNT}. `,
+    countSpanUnknown: 'Hasta ahora',
+    countSpan: (from, to) => `Desde ${isOneOClock(from) ? 'la' : 'las'} ${from} hasta ${isOneOClock(to) ? 'la' : 'las'} ${to}`,
+    countFeltOnly: (span, felt) =>
+      `${span}, ${felt === 1 ? 'se observó 1 terremoto' : `se observaron ${felt} terremotos`} con intensidad sísmica 1 o superior. `,
+    countOccurred: (span, count) => `${span}, ${count === 1 ? 'se ha producido 1 terremoto' : `se han producido ${count} terremotos`}. `,
+    countFeltOf: (felt) => `De ellos, ${felt} ${felt === 1 ? 'tuvo' : 'tuvieron'} intensidad sísmica 1 o superior. `,
+    countFeltNone: 'Ninguno de ellos tuvo intensidad sísmica 1 o superior. ',
+    noticeLabel: NOTICE,
+    noticeRetracted: `El ${NOTICE} fue cancelado.`,
+    noticeLead: `${NOTICE}. `,
+    noticeWithHeadline: (_headline) => `${NOTICE}. ${ELSEWHERE}`,
+    kohatsuLabel: KOHATSU,
+    kohatsuRetracted: `El ${KOHATSU} fue cancelado.`,
+    kohatsu: (headline) =>
+      `${KOHATSU}. ${headline === null ? `${ELSEWHERE} ` : ''}La posibilidad de un gran terremoto es mayor de lo habitual. Revise sus ${MEASURES}.`,
+    estimatedIntensity: (time, isNew) =>
+      `Se ha ${isNew ? 'recibido' : 'actualizado'} el ${es.quake.infoName.estimatedIntensity} de la Agencia Meteorológica de Japón${time ? ` para el terremoto de alrededor ${around(time)}` : ''}.`,
+  },
+  kyoshin: {
+    detected: (name) => (name ? `Movimiento detectado: ${name}.` : 'Movimiento detectado.'),
+    otherRegion: (name) => (name ? `También se detectó movimiento: ${name}.` : 'También se detectó movimiento en otro lugar.'),
+  },
+  internationalTsunami: {
+    label: INTERNATIONAL_TSUNAMI,
+    communicationsTest: `${INTERNATIONAL_TSUNAMI}: prueba de comunicación.`,
+    evaluation: es.alertText.internationalTsunamiEvaluation,
+    when: (d, hour, minute) => `${clockTime(hour, minute)} del día ${d}`,
+    coordinate: (lat, lon) =>
+      `latitud ${decimalComma(Math.abs(lat).toFixed(1))} grados ${lat < 0 ? 'sur' : 'norte'}, longitud ${decimalComma(Math.abs(lon).toFixed(1))} grados ${lon < 0 ? 'oeste' : 'este'}`,
+    body: (p) => {
+      const details = [p.where, p.depthKm !== null ? `profundidad ${kilometers(p.depthKm)}` : null, p.magnitude !== null ? `magnitud ${decimalComma(p.magnitude)}` : null]
+        .filter((s): s is string => s !== null && s !== '')
+      return `Terremoto${p.when ? ` alrededor ${around(p.when)}` : ''}${details.length > 0 ? `: ${details.join(', ')}` : ''}. ${p.evaluation !== null ? `${p.evaluation}.` : `Se ha emitido la ${INTERNATIONAL_TSUNAMI}.`}`
+    },
+  },
+  timeSignal: {
+    // 1 時台だけ単数の冠詞（「Es la 1:30」）
+    say: (phrase, hour, minute, clock) => {
+      const t = signalClock(hour, minute, clock)
+      const one = isOneOClock(t)
+      switch (phrase) {
+        case 'oshirase': return `Hora exacta: ${one ? 'la' : 'las'} ${t}.`
+        case 'desu': return `${one ? 'Es la' : 'Son las'} ${t}.`
+        case 'narimashita': return `Ya ${one ? 'es la' : 'son las'} ${t}.`
+        case 'bare': return `${one ? 'La' : 'Las'} ${t}`
+      }
+    },
   },
 }

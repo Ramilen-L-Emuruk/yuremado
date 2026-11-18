@@ -76,24 +76,27 @@ export function isInQuietHours(atMs: number, startMin: number, endMin: number): 
     : m >= startMin || m < endMin
 }
 
-/** 時刻の読み。正時は分を読まない（「15時」）。12 時間制は 0〜11 時に午前・午後を付ける（正午は「午後0時」）。 */
-export function timeSignalClockText(atMs: number, clock: TimeSignalClock): string {
-  const d = new Date(atMs)
-  const h = d.getHours()
-  const m = d.getMinutes()
-  const hour = clock === '24h' ? `${h}時` : `${h < 12 ? '午前' : '午後'}${h % 12}時`
-  return m === 0 ? hour : `${hour}${m}分`
+/**
+ * 日本語の時刻の読み（時と分から）。正時は分を読まない（「15時」）。12 時間制は 0〜11 時に午前・午後を付ける（正午は「午後0時」）。
+ * 日本語の読み上げの語表（`i18n/speech/ja.ts` の `timeSignal`）が使う
+ */
+export function japaneseClockText(hour: number, minute: number, clock: TimeSignalClock): string {
+  const h = clock === '24h' ? `${hour}時` : `${hour < 12 ? '午前' : '午後'}${hour % 12}時`
+  return minute === 0 ? h : `${h}${minute}分`
 }
 
-/** 読み上げる文。 */
-export function timeSignalSpeechText(atMs: number, clock: TimeSignalClock, phrase: TimeSignalPhrase): string {
-  const t = timeSignalClockText(atMs, clock)
-  switch (phrase) {
-    case 'oshirase': return `${t}をお知らせします`
-    case 'desu': return `${t}です`
-    case 'narimashita': return `${t}になりました`
-    case 'bare': return t
-  }
+/**
+ * 読み上げる文。`say` は読み上げの言語の語表の時報の文（`SpeechWords['timeSignal']['say']`）で、時刻は端末の現地時刻で渡す。
+ * 設定の窓の選択肢も同じ関数で組む（2026-11-18 ユーザー選択「時刻を数字で書く (Recommended)」の時報の形）
+ */
+export function timeSignalSpeechText(
+  atMs: number,
+  clock: TimeSignalClock,
+  phrase: TimeSignalPhrase,
+  say: (phrase: TimeSignalPhrase, hour: number, minute: number, clock: TimeSignalClock) => string,
+): string {
+  const d = new Date(atMs)
+  return say(phrase, d.getHours(), d.getMinutes(), clock)
 }
 
 /**

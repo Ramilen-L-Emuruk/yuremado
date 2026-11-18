@@ -45,7 +45,7 @@ import {
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
 import { internationalTsunamiTarget } from '../utils/internationalTsunami'
-import { internationalTsunamiToText } from '../utils/internationalTsunamiSpeech'
+import type { KyoshinDetectionPhrase } from '../utils/kyoshinRegionName'
 // 読み上げの文を組む関数は、画面の言語の組（`speechTextFor`）から引く（下の `sp`）。ここで直に読むのは言語に依らないものだけ
 import { selectObservationUpdatesToSpeak, selectArrivalsToSpeak, selectMissingToSpeak, selectWarningLevelToSpeak, applyTsunamiSpokenRefs, createQuakeSpokenState, applySpokenRefs, selectMaxHeightTimeUpdatesToSpeak, selectFirstWaveUpdatesToSpeak, speechTextFor, JA_SPEECH_TEXT, type SpeechText, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
@@ -2884,10 +2884,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    *   鍵の両方に入れる —— 種別だけにすると、別の事象の取消が同じ文面の理由を運んだとき 2 通目が黙り、
    *   数秒内に続いた別の事象の取消どうしでは先の理由が後の予約に追い越されて落ちる。
    */
-  const speakDeferredCancelReason = (infoName: string, cancelText: string | undefined, subject: string) => {
+  const speakDeferredCancelReason = (infoNameOf: (st: SpeechText) => string, cancelText: string | undefined, subject: string) => {
     if (!settings.ttsEnabled) return
     const st = sp()
-    const text = st.deferredCancelReasonToSpeak(infoName, cancelText)
+    // 前置きの情報の名前は、理由の文を組む組から引く（日本語の名前を直に渡すと、組の言語と名前の言語が食い違いうる）
+    const text = st.deferredCancelReasonToSpeak(infoNameOf(st), cancelText)
     if (!text) return
     // 言語は組んだこの時点で決める（下の待ちの間に読み上げの言語が変わっても、組んだ言語の声で読む）
     const reason = spokenIn(st, text)
@@ -2951,7 +2952,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             spoken(st => st.lpgmToText(lpgmEvent, ttsRegionOptions(settings), false)),
             SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCancel'), `lpgm:${lpgmEvent.eventId}`,
             undefined, undefined, undefined,
-            () => speakDeferredCancelReason('長周期地震動に関する観測情報', lpgmEvent.cancelText, `lpgm:${lpgmEvent.eventId}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.lpgm, lpgmEvent.cancelText, `lpgm:${lpgmEvent.eventId}`),
           )
         } else {
           // 読み上げが無効な端末でも理由は地震カードの報の一覧に残る（→ `lpgmRetraction`）。記録にも残す
@@ -3101,7 +3102,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           speakNonEEWDelayed(
             spoken(st => st.earthquakeCountToText(count)), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCancel'), 'earthquakeCount',
             undefined, undefined, undefined,
-            () => speakDeferredCancelReason('地震回数に関する情報', count.cancelText, `earthquakeCount:${count.id}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.earthquakeCount, count.cancelText, `earthquakeCount:${count.id}`),
           )
         }
         return
@@ -3155,7 +3156,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           speakNonEEWDelayed(
             spoken(st => st.quakeNoticeToText(notice)), SPEECH_PRIORITY.commentary, 0, 'quakeNotice',
             undefined, undefined, undefined,
-            () => speakDeferredCancelReason('地震・津波に関するお知らせ', notice.body, `quakeNotice:${notice.id}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.quakeNotice, notice.body, `quakeNotice:${notice.id}`),
           )
         }
         return
@@ -3197,7 +3198,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           speakNonEEWDelayed(
             spoken(st => st.nankaiCommentaryToText(commentary)), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCancel'),
             'nankaiCommentary', undefined, undefined, undefined,
-            () => speakDeferredCancelReason('南海トラフ地震関連解説情報', commentary.body, `nankaiCommentary:${commentary.eventId}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.nankaiCommentary, commentary.body, `nankaiCommentary:${commentary.eventId}`),
           )
         }
         return
@@ -3268,13 +3269,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // （取り消されたはずの臨時情報を、そのあと読み上げてしまう）。
           // 後発地震注意情報の取消も読む（2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」）。
           // 取消の長い理由は別の発話で読む（→ `speakDeferredCancelReason`。理由は電文の `body`）。
-          const name = event.kind === 'nankai' ? '南海トラフ地震臨時情報' : '北海道・三陸沖後発地震注意情報'
+          const nameOf = (st: SpeechText) => (event.kind === 'nankai' ? st.INFO_NAME.nankai : st.INFO_NAME.kohatsu)
           const retracted = event.data.retracted === true
           speakNonEEWDelayed(
             event.kind === 'nankai' ? spoken(st => st.nankaiToText(event.data)) : spoken(st => st.kohatsuToText(event.data)),
             SPEECH_PRIORITY.high, ttsDelayFor('specialInfoCancel'), event.kind === 'nankai' ? 'nankai' : 'kohatsu',
             undefined, undefined, undefined,
-            retracted ? () => speakDeferredCancelReason(name, event.data.body, `${event.kind}:${event.data.eventId}`) : undefined,
+            retracted ? () => speakDeferredCancelReason(nameOf, event.data.body, `${event.kind}:${event.data.eventId}`) : undefined,
           )
         }
       }
@@ -3318,8 +3319,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       if (settings.ttsEnabled) {
         speakNonEEWDelayed(
-          // 国際津波関連情報の文は組を通さない日本語の文（`internationalTsunamiSpeech.ts`）なので、日本語と添える
-          { text: internationalTsunamiToText(intl, quakeName), locale: 'ja' }, SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeInfo'),
+          // 日本語の文は中継のプッシュ通知と同じ（→ `ttsText.ts` の `internationalTsunamiToText`）
+          spoken(st => st.internationalTsunamiToText(intl, quakeName)), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeInfo'),
           `internationalTsunami:${intl.originTime ?? intl.id}`,
           target ? { tab: 'earthquake', priority: TAB_PRIORITY.quake } : undefined,
           undefined, undefined, target ? selectCard : undefined,
@@ -3711,7 +3712,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           undefined,
           undefined,
           // 前置きの情報名は、本体の文と同じ `retracted` から採る（名乗りを揃える）
-          () => speakDeferredCancelReason(retracted ? retracted.issueType : '地震情報', event.cancelText, `quake:${cancelQuakeKey}`),
+          () => speakDeferredCancelReason(
+            st => (retracted ? st.reportNameToSay(retracted.issueType) : st.INFO_NAME.quake), event.cancelText, `quake:${cancelQuakeKey}`,
+          ),
           // **どの地震について語っているか。** 取消の読み上げのあいだ、一覧を取消カードへ寄せる
           // （→ `quakeSpeakingCard`）。鍵は主題と同じものを渡す。
           cancelQuakeKey,
@@ -4017,7 +4020,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // （→ `tsunamiCancelToText`）ので、前置きと名乗りがずれないよう取消に限る。
             event.cancelReason === 'retracted'
               // 前置きの名前は読み上げの言語の語表から引く（取消の文の名乗りと同じ語）
-              ? () => speakDeferredCancelReason(sp().TSUNAMI_WARNINGS_ETC_NAME, event.cancelText, `tsunami:${event.eventId || event.id}`)
+              ? () => speakDeferredCancelReason(st => st.TSUNAMI_WARNINGS_ETC_NAME, event.cancelText, `tsunami:${event.eventId || event.id}`)
               : undefined,
           )
         }
@@ -4128,7 +4131,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                   eewCancelSpeechRef.current.delete(key)
                   // 本体の文を組み終えてから理由を予約する（組み立てが例外を投げたとき理由だけが鳴らないように）
                   const cancelSpeech = sp().eewCancelToText(event, firstIssueTime)
-                  speakDeferredCancelReason('緊急地震速報', event.cancelText, `eew:${key}`)
+                  speakDeferredCancelReason(st => st.INFO_NAME.eew, event.cancelText, `eew:${key}`)
                   return cancelSpeech
                 },
                 () => followSpeechTab('realtime', TAB_PRIORITY.eewUrgent),
@@ -6953,15 +6956,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * 掛からず、速報を読み終えた後で読まれるので、そこをこの見直しが拾う。
    * 読み始めた検知に速報が割り込んだときは、`speakWithVoicevox` が止めて終わるだけで、続きも読み直しも無い。
    */
-  const speakKyoshinDetection = (text: string, delayMs: number, dropBeforeSpeaking: () => boolean): void => {
+  const speakKyoshinDetection = (phrase: KyoshinDetectionPhrase, delayMs: number, dropBeforeSpeaking: () => boolean): void => {
     if (!settings.ttsEnabled) {
       // 設定「揺れ検知の読み上げ」を入れていても、読み上げ自体が切れていれば鳴らない。黙った理由を残す
-      log.debug(`[kyoshin] 読み上げ（VOICEVOX）が無効のため揺れ検知を読まない: ${text}`)
+      log.debug(`[kyoshin] 読み上げ（VOICEVOX）が無効のため揺れ検知を読まない（種類 ${phrase.kind}・区域 ${phrase.regionName ?? 'なし'}）`)
       return
     }
-    // 揺れ検知の文は `sp()` を通らない日本語の文（`useKyoshinAlerts` が組む）なので、日本語と添える
+    // 文は読み上げの言語の組で、この時点で組む（区域名も画面の言語の名前へ引く）
     speakNonEEWDelayed(
-      { text, locale: 'ja' }, SPEECH_PRIORITY.kyoshinDetect, delayMs, `kyoshinDetect:${++kyoshinDetectSpeechSeqRef.current}`,
+      spoken(st => st.kyoshinDetectionText(phrase)), SPEECH_PRIORITY.kyoshinDetect, delayMs, `kyoshinDetect:${++kyoshinDetectSpeechSeqRef.current}`,
       undefined, undefined, undefined, undefined, undefined, undefined, dropBeforeSpeaking,
     )
   }

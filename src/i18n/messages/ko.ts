@@ -921,6 +921,7 @@ export const ko: Messages = {
         description: 'VOICEVOX에 연결되지 않으면 시스템 음성으로 읽습니다',
         system: '시스템 음성',
         noLocaleVoice: '이 기기에는 한국어 음성이 없어 일본어로 읽습니다.',
+        speechDataLoadFailed: '한국어 음성 읽기 데이터를 불러오지 못해 지금은 일본어로 읽습니다.',
       },
       volume: {
         label: '음량',
@@ -1014,7 +1015,7 @@ export const ko: Messages = {
       },
       locale: {
         label: '언어 (Language)',
-        description: '화면과 알림의 언어입니다. 음성 읽기는 일본어 그대로입니다.',
+        description: '화면, 알림, 음성 읽기의 언어입니다. 일본어 이외의 음성 읽기는 기기의 음성을 사용하며, 기기에 해당 언어의 음성이 없으면 일본어로 읽습니다.',
         auto: '기기 설정에 따름',
       },
       uiScale: {
@@ -1654,12 +1655,12 @@ export const ko: Messages = {
       },
       foreignQuakeInternationalTsunami: {
         label: '원지 지진과 국제 지진해일 관련 정보(영문)',
-        description: '인도네시아 부근 M7.0(실데이터)의 원지 지진과 같은 지진의 국제 지진해일 관련 정보(영문) – earthquakeInfo 소리 / 3초 뒤에 영문이 도착해 원지 지진 카드에 원문 칸이 붙음. 영문이 도착하면 earthquakeInfo 소리와 알림이 나오고 일본어로 요약을 읽음',
+        description: '인도네시아 부근 M7.0(실데이터)의 원지 지진과 같은 지진의 국제 지진해일 관련 정보(영문) – earthquakeInfo 소리 / 3초 뒤에 영문이 도착해 원지 지진 카드에 원문 칸이 붙음. 영문이 도착하면 earthquakeInfo 소리와 알림이 나오고 선택한 언어로 요약을 읽음',
         button: '국제 지진해일 관련 정보 테스트',
       },
       internationalTsunamiDomesticAndOnly: {
         label: '국내 지진과 영문만 있는 국제 지진해일 관련 정보',
-        description: '日向灘 M7.1(실데이터)의 진원·진도 정보와 같은 지진의 국제 지진해일 관련 정보(영문) – earthquakeInfo 소리 / 3초 뒤에 영문이 도착해 日向灘 지진 카드에 원문이 붙음 / 6초 뒤에 지진 정보가 없는 지진의 영문이 도착해 목록에 영문만 있는 카드(국제 지진해일 관련 정보)가 나옴 / 9초 뒤에 통신 시험 영문이 도착함("시험보 수신(검증용)"이 켜져 있을 때만 소리·알림·음성 읽기와 배너가 나옴. 꺼져 있으면 전문 로그에만 남음). 영문이 도착하면 earthquakeInfo 소리와 알림이 나오고 일본어로 요약을 읽음',
+        description: '日向灘 M7.1(실데이터)의 진원·진도 정보와 같은 지진의 국제 지진해일 관련 정보(영문) – earthquakeInfo 소리 / 3초 뒤에 영문이 도착해 日向灘 지진 카드에 원문이 붙음 / 6초 뒤에 지진 정보가 없는 지진의 영문이 도착해 목록에 영문만 있는 카드(국제 지진해일 관련 정보)가 나옴 / 9초 뒤에 통신 시험 영문이 도착함("시험보 수신(검증용)"이 켜져 있을 때만 소리·알림·음성 읽기와 배너가 나옴. 꺼져 있으면 전문 로그에만 남음). 영문이 도착하면 earthquakeInfo 소리와 알림이 나오고 선택한 언어로 요약을 읽음',
         button: '영문만 테스트',
       },
       headlineOnlyCity: {

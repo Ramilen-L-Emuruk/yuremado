@@ -1,4 +1,5 @@
-import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter, QuakeRetractedReport, ForeignTsunamiCode } from '../types/earthquake'
+import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, JMAInternationalTsunami, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter, QuakeRetractedReport, ForeignTsunamiCode } from '../types/earthquake'
+import type { KyoshinDetectionPhrase } from './kyoshinRegionName'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, parseTsunamiHeight, evacuationActionLine, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
@@ -33,6 +34,9 @@ const GRADE_ORDER: TsunamiGrade[] = GRADES_IN_CARD_ORDER.filter(g => g !== 'Unkn
 
 // 震度スケールの降順リスト
 const SCALE_DESCENDING: IntensityScale[] = [70, 60, 55, 50, 45, 40, 30, 20, 10] as IntensityScale[]
+
+/** 日本時間と UTC の差（国際津波関連情報の時刻を日本時間で読む） */
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 // 県内の一次細分区域が全部同じ階級で揃っている場合、区域名の列挙を「〇〇県」1件にまとめる。
 // 入力の出自は問わない（電文の区域点／観測点から逆引きした区域名／都道府県ロールアップ名のどれでも
@@ -489,6 +493,8 @@ export { tsunamiMaxGrade }
 /** 地域名を作れなかった記録を出す間隔。続いている障害を「一度きり」に見せないための間引き。 */
 const NO_REGION_LOG_THROTTLE_MS = 5 * 60_000
 const warnNoRegionNames = createLogThrottle(NO_REGION_LOG_THROTTLE_MS)
+/** 国際津波関連情報の評価を語表で引けなかった記録の間引き（5 分に 1 回） */
+const warnUnknownInternationalTsunamiEvaluation = createLogThrottle(NO_REGION_LOG_THROTTLE_MS)
 
 /** 規模の説明のうち、未知の値を記録した値。同じ地震の続報で何度も来るので 1 度だけ出す（言語ごとの組で共有する）。 */
 const reportedUnknownMagnitudeConditions = new Set<string>()
@@ -4409,7 +4415,10 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     }
     // 見出しは句点を持たないのが通例だが、付いていても二重にしない
     const headline = event.headline.trim().replace(/。$/, '')
-    return headline ? w.special.noticeWithHeadline(headline) : w.special.noticeLead
+    if (!headline) return w.special.noticeLead
+    // **気象庁の文を読まない言語には見出し文を渡さない**（その言語は在処の文を言う。2026-11-18 ユーザー選択「日本語が気象庁の文を
+    // 読む所だけ (Recommended)」）。語表の関数に捨てさせず、ここで決める（捨て忘れても型で止まらないため）
+    return w.special.noticeWithHeadline(w.common.telegramTextElsewhere === null ? headline : null)
   }
 
   /** 北海道・三陸沖後発地震注意情報（VYSE60）の読み上げテキストを生成する。 */
@@ -4420,8 +4429,11 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     if (event.cancelled) return withCancelReason(w.special.kohatsuRetracted, event.body)
     // **句点は無条件に足さない** —— 気象庁の見出し文は句点で終わることが多く、
     // 重ねると「。。」になる（→ {@link endTelegramSentence}）。
+    // 気象庁の文を読まない言語には見出し文を渡さない（→ `quakeNoticeToText`）。見出し文が伝えるきっかけの地震は、電文が構造の欄で
+    // 持たないので、その言語では声にできない（在処の文が代わりに入る）。**見出し文が空の報（日本語も読まない報）では在処の文も
+    // 言わない**（2026-11-18 ユーザー選択「日本語が気象庁の文を読む所だけ (Recommended)」）ので、そのときは空の文字列を渡す
     const headline = endTelegramSentence(event.headline.replace(/北海道・三陸沖後発地震注意情報/g, ''))
-    return w.special.kohatsu(headline)
+    return w.special.kohatsu(w.common.telegramTextElsewhere === null || headline === '' ? headline : null)
   }
 
   // 一次細分区域名のリストのうち、県内全区域が同じ階級で揃っているものを「〇〇県」1件にまとめる。
@@ -4514,12 +4526,14 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       names = sortByRegionOrder(names, regionOrder)
       names.forEach(n => mentioned.add(n))
       const omittedRegionSuffix = omittedCount > 0 ? w.quake.regionsOmitted(omittedCount) : ''
-      parts.push(w.lpgm.classAt(cls, names.map(regionNameToSay).join(w.common.listSep) + omittedRegionSuffix))
+      // 地名どうしは地震情報と同じ区切り（地名の訳がコンマを含む言語は「; 」。2026-11-18 ユーザー選択「この案で入れる (Recommended)」の
+      // 5 節の 1）。2 組目から短く言う言語のために、先頭の組かを渡す
+      parts.push(w.lpgm.classAt(cls, names.map(regionNameToSay).join(w.quake.regionSep) + omittedRegionSuffix, parts.length === 0))
     }
 
     if (parts.length === 0) return ''
-    // 助詞「で」の置き方は buildRegionSegments と同じ（末尾のみ）
-    return parts.join(w.common.listSep) + w.quake.observedTail
+    // 助詞「で」の置き方は buildRegionSegments と同じ（末尾のみ）。階級の組の間も地震情報と同じ区切り（日本語はどれも「、」）
+    return parts.join(w.quake.intensityGroupSep(false)) + w.quake.observedTail
   }
 
   /** VXSE62 長周期地震動情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
@@ -4603,6 +4617,78 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     // 落とすとその区別を失うが、読めない値を声にするよりはよい。読めなかった事実は
     // `readDateTime` が記録に残す。
     return w.special.estimatedIntensity(formatTime(arrivalTime), isNew)
+  }
+
+  /**
+   * 情報の名前（取消の長い理由を別の発話で読むときの前置き `common.cancelReasonLead` に渡す。→ `useLiveEventHandler.ts` の
+   * `speakDeferredCancelReason`）。日本語は電文の情報の名前のまま。地震情報の種類を名指すときは {@link reportNameToSay} で引く
+   */
+  const INFO_NAME = {
+    eew: w.eew.label,
+    quake: w.quake.label.quake,
+    lpgm: w.lpgm.label,
+    earthquakeCount: w.special.countLabel,
+    quakeNotice: w.special.noticeLabel,
+    nankai: w.special.nankaiLabel,
+    nankaiCommentary: w.special.commentaryLabel,
+    kohatsu: w.special.kohatsuLabel,
+  } as const
+
+  /**
+   * 揺れ検知の区域名を声にする名前へ引く。区域は一次細分区域（地名の表の `area`）、海底の「相模湾」は震央地名（`epi`）にある。
+   * どちらにも無ければ日本語の名前のまま（2026-11-17 ユーザー選択「日本語の名前のまま読む (Recommended)」。日本語以外の組では記録を残す）
+   */
+  function kyoshinRegionToSay(name: string): string {
+    if (place.has('area', name)) return place('area', name)
+    if (place.has('epi', name)) return place('epi', name)
+    warnUnknownPlaceName('area', name)
+    return name
+  }
+
+  /**
+   * 強震モニタの揺れ検知の読み上げ文（「〇〇で揺れを検知。」「〇〇でも揺れを検知。」）。`regionName` は日本語の区域名
+   * （`utils/kyoshinRegionName.ts` の `dominantRegionName`）で、決まらなければ null（地名を言わない）
+   */
+  function kyoshinDetectionText(phrase: KyoshinDetectionPhrase): string {
+    const name = phrase.regionName === null ? null : kyoshinRegionToSay(phrase.regionName)
+    return phrase.kind === 'otherRegion' ? w.kyoshin.otherRegion(name) : w.kyoshin.detected(name)
+  }
+
+  /**
+   * 国際津波関連情報（WEPA60）の読み上げ文。初報は名乗り（`common.issued`）、続報（題名の番号が 2 以上）は「更新されました」
+   * （`common.updated`）で始め、本文を続ける（2026-11-06 ユーザー選択「震源つきで評価まで読む (Recommended)」）。
+   *
+   * **日本語の文は中継のプッシュ通知と同じ**（`utils/internationalTsunamiSpeech.ts` の `internationalTsunamiToText`。あちらは中継へ
+   * 写して使うので変えない）。`quakeName` は結んだ地震カードの日本語の震源名で、画面の言語の名前へ引いて読む。
+   * 結べなければ電文の震央の位置を読み、どちらも無ければ震源の句を落とす。英文の本文そのものは読まない
+   */
+  function internationalTsunamiToText(x: JMAInternationalTsunami, quakeName?: string): string {
+    const t = w.internationalTsunami
+    if (x.isCommunicationsTest) return t.communicationsTest
+    const lead = (x.bulletinNumber ?? 1) >= 2 ? w.common.updated(t.label) : w.common.issued(t.label)
+    const name = quakeName?.trim()
+    const evaluations: Readonly<Record<string, string>> = t.evaluation
+    const evaluation = x.evaluation && Object.prototype.hasOwnProperty.call(evaluations, x.evaluation) ? evaluations[x.evaluation] : null
+    if (x.evaluation && evaluation === null) {
+      // 型の外の評価（語表に無い）。評価の句を落として「情報が発表された」で結ぶ。黙ると、評価を言わない理由を追えない
+      warnUnknownInternationalTsunamiEvaluation(() =>
+        log.warn(`[tts] 国際津波関連情報の津波発生の可能性を語表で引けず、評価の句を省いて読みます（言語 ${locale}・値 ${String(x.evaluation)}）`))
+    }
+    return lead + t.body({
+      when: x.originTime ? internationalTsunamiWhen(x.originTime) : null,
+      where: name ? epicenterToSay(name) : x.epicenter ? t.coordinate(x.epicenter.latitude, x.epicenter.longitude) : null,
+      depthKm: x.depthKm !== undefined ? x.depthKm : null,
+      magnitude: x.magnitude !== undefined && Number.isFinite(x.magnitude) ? x.magnitude.toFixed(1) : null,
+      evaluation,
+    })
+  }
+
+  /** 国際津波関連情報の発生時刻（電文の UTC を日本時間で読む）。読めなければ null */
+  function internationalTsunamiWhen(iso: string): string | null {
+    const ms = Date.parse(iso)
+    if (!Number.isFinite(ms)) return null
+    const d = new Date(ms + JST_OFFSET_MS)
+    return w.internationalTsunami.when(d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes())
   }
 
   /**
@@ -5247,6 +5333,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     WARNING_LEVEL_SPEAK_MAX_POINTS, selectWarningLevelToSpeak, tsunamiWarningLevelToSegments, tsunamiWarningLevelToText,
     nankaiToText, nankaiCommentaryToText, earthquakeCountToText, quakeNoticeToText, kohatsuToText, lpgmToText,
     estimatedIntensityToText, warnUnmatchedBoilerplate, telegramTextToSpeak,
+    INFO_NAME, reportNameToSay, kyoshinDetectionText, internationalTsunamiToText,
   }
 }
 

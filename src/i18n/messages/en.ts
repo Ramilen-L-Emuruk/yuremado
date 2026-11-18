@@ -914,6 +914,7 @@ export const en: Messages = {
         description: 'When VOICEVOX cannot be reached, the system voice is used',
         system: 'System voice',
         noLocaleVoice: 'This device has no English voice, so speech is read in Japanese.',
+        speechDataLoadFailed: 'English speech data could not be loaded, so speech is read in Japanese for now.',
       },
       volume: {
         label: 'Volume',
@@ -1007,7 +1008,7 @@ export const en: Messages = {
       },
       locale: {
         label: 'Language',
-        description: 'Language of the screens and notifications. Speech stays in Japanese.',
+        description: 'Language of the screens, notifications and speech. Speech in languages other than Japanese uses the device\'s voice; if the device has no voice for that language, speech is in Japanese.',
         auto: 'Match device',
       },
       uiScale: {
@@ -1647,12 +1648,12 @@ export const en: Messages = {
       },
       foreignQuakeInternationalTsunami: {
         label: 'Distant earthquake and International Tsunami Information (English)',
-        description: 'A distant earthquake near Indonesia, M7.0 (real data), and International Tsunami Information (English) for the same earthquake – earthquakeInfo sound / the English text arrives 3 seconds later and an original-text section is added to the distant earthquake\'s card. When it arrives, the earthquakeInfo sound and a notification play and a summary is read in Japanese',
+        description: 'A distant earthquake near Indonesia, M7.0 (real data), and International Tsunami Information (English) for the same earthquake – earthquakeInfo sound / the English text arrives 3 seconds later and an original-text section is added to the distant earthquake\'s card. When it arrives, the earthquakeInfo sound and a notification play and a summary is read in the chosen language',
         button: 'International tsunami test',
       },
       internationalTsunamiDomesticAndOnly: {
         label: 'A domestic earthquake and English-only International Tsunami Information',
-        description: 'Hypocenter and intensity information for 日向灘 M7.1 (real data) and International Tsunami Information (English) for the same earthquake – earthquakeInfo sound / 3 seconds later the English text arrives and is attached to the 日向灘 card / 6 seconds later, English text for an earthquake without earthquake information arrives and an English-only card (International Tsunami Information) appears in the list / 9 seconds later, a communication test in English arrives (sound, notification, reading and banner only when "Receive test reports (for checking)" is on; when off, it is kept only in the telegram log). When English text arrives, the earthquakeInfo sound and a notification play and a summary is read in Japanese',
+        description: 'Hypocenter and intensity information for 日向灘 M7.1 (real data) and International Tsunami Information (English) for the same earthquake – earthquakeInfo sound / 3 seconds later the English text arrives and is attached to the 日向灘 card / 6 seconds later, English text for an earthquake without earthquake information arrives and an English-only card (International Tsunami Information) appears in the list / 9 seconds later, a communication test in English arrives (sound, notification, reading and banner only when "Receive test reports (for checking)" is on; when off, it is kept only in the telegram log). When English text arrives, the earthquakeInfo sound and a notification play and a summary is read in the chosen language',
         button: 'English-only test',
       },
       headlineOnlyCity: {

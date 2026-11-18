@@ -1,7 +1,15 @@
-// 日本語以外の語表で、緊急地震速報・地震情報・震度速報・津波の読み上げ文が承認した文面どおりに組まれることを固定する。
+// 日本語以外の語表で、緊急地震速報・地震情報・震度速報・津波・長周期・特別情報・揺れ検知・国際津波関連情報・時報の読み上げ文が
+// 承認した文面どおりに組まれることを固定する。
 //
-// 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表（6 言語）。語表はまだ共通・緊急地震速報・地震情報・津波の区分しか
-// 訳していないので（→ `i18n/speechWords.ts` の `SpeechWordsInProgress`）、日本語の語表に訳した区分を重ねた組で、それらの関数だけを通す。
+// 文面は 2026-11-17 ユーザー選択「この案で入れる (Recommended)」の表（緊急地震速報・地震情報・津波。6 言語）と、2026-11-18 ユーザー選択
+// 「この案で入れる (Recommended)」の表（長周期・特別情報・揺れ検知・国際津波関連情報。時報は同日「時刻を数字で書く (Recommended)」）。
+// 長周期以降の期待の文は `ttsTextLocalesRest.fixture.ts`。
+//
+// 長周期以降の分担:
+//   正   ＝ 6 言語とも、長周期（2 組目から短く言う・地名は「; 」）・臨時情報・関連解説（号数は半角）・地震回数（単数・1 時台の冠詞）・
+//          お知らせ・後発地震・推計震度分布図・揺れ検知（区域名を地名の表で引く。相模湾は震央地名）・国際津波・時報が表の文になる
+//   対照 ＝ 日本語の文は今の文のまま（中継へ写した国際津波の日本語の関数と同じ文。取消の理由の前置きの名前も今の名前）
+//   安全弁＝ 日本語以外の文に仮名と気象庁の見出し文が入らない。表に無い区域名は日本語の名前のまま読み、記録を 1 度残す
 //
 // 正・対照・安全弁の分担:
 //   正   ＝ 6 言語とも、名乗り・震央・切り替え・対象地方・予想値・取消が表の文になる。地震情報・震度速報の報（初報・続報・取消・
@@ -16,7 +24,7 @@ import { log, UNREADABLE_VALUE_LOG_KINDS } from './logger'
 import { readFileSync } from 'node:fs'
 import { createSpeechText, speechTextFor, resetUntranslatedValueLogGates, JA_SPEECH_TEXT, type SpeechText, type TtsSpeechOptions } from './ttsText'
 import { joinSegments, type SpeechSegment } from './ttsFollow'
-import { jaSpeech, type SpeechWords, type SpeechWordsInProgress, type QuakeOccurrenceTexts } from '../i18n/speechWords'
+import { jaSpeech, type SpeechWords, type QuakeOccurrenceTexts } from '../i18n/speechWords'
 import { enSpeech } from '../i18n/speech/en'
 import { zhHansSpeech } from '../i18n/speech/zhHans'
 import { zhHantSpeech } from '../i18n/speech/zhHant'
@@ -25,21 +33,23 @@ import { ptBRSpeech } from '../i18n/speech/ptBR'
 import { esSpeech } from '../i18n/speech/es'
 import { JA_PLACE_NAMES, placeNameLookup, validatePlaceNameTable } from '../i18n/placeNames'
 import type { Locale } from '../i18n/messages'
-import type { EEWAlert, EarthquakePoint, IntensityScale, IssueType, JMAQuake, JMATsunami, TsunamiArea, TsunamiObservation, TsunamiSourceEarthquake } from '../types/earthquake'
+import type { EEWAlert, EarthquakePoint, IntensityScale, IssueType, JMAEarthquakeCount, JMAInternationalTsunami, JMAKohatsu, JMALpgm, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAQuake, JMATsunami, TsunamiArea, TsunamiObservation, TsunamiSourceEarthquake } from '../types/earthquake'
+import { internationalTsunamiToText as relayInternationalTsunamiToText } from './internationalTsunamiSpeech'
+import { timeSignalSpeechText, type TimeSignalClock, type TimeSignalPhrase } from './timeSignal'
+import { EXPECTED_REST } from './ttsTextLocalesRest.fixture'
 
 type OtherLocale = Exclude<Locale, 'ja'>
-const SPEECH_WORDS_IN_PROGRESS: Readonly<Record<OtherLocale, SpeechWordsInProgress>> = {
+const SPEECH_WORDS_BY_LOCALE: Readonly<Record<OtherLocale, SpeechWords>> = {
   en: enSpeech, 'zh-Hans': zhHansSpeech, 'zh-Hant': zhHantSpeech, ko: koSpeech, 'pt-BR': ptBRSpeech, es: esSpeech,
 }
-const LOCALES = Object.keys(SPEECH_WORDS_IN_PROGRESS) as OtherLocale[]
+const LOCALES = Object.keys(SPEECH_WORDS_BY_LOCALE) as OtherLocale[]
 
-/** 日本語の語表に、訳した区分を重ねた語表（訳した区分の関数だけが訳を引く） */
+/** その言語の語表（全区分を訳し終えた形） */
 function wordsWithDraft(locale: OtherLocale): SpeechWords {
-  const draft = SPEECH_WORDS_IN_PROGRESS[locale]
-  return { ...jaSpeech, common: draft.common, eew: draft.eew, quake: draft.quake, tsunami: draft.tsunami }
+  return SPEECH_WORDS_BY_LOCALE[locale]
 }
 
-/** 訳した区分を重ねた組（地名は画面の言語の表から引く） */
+/** その言語の組（地名は画面の言語の表から引く） */
 function speechTextWithDraft(locale: OtherLocale): SpeechText {
   const table: unknown = JSON.parse(readFileSync(new URL(`../../public/data/place-names/${locale}.json`, import.meta.url), 'utf8'))
   validatePlaceNameTable(table)
@@ -174,7 +184,7 @@ describe('日本語以外の緊急地震速報の読み上げ文（2026-11-17 �
   })
 
   it.each(LOCALES)('%s: 予想震度が無い報の文（正）', (locale) => {
-    const nf = SPEECH_WORDS_IN_PROGRESS[locale].eew.noForecast
+    const nf = SPEECH_WORDS_BY_LOCALE[locale].eew.noForecast
     // 4 つとも空でなく、互いに違う（理由を言い分けている）
     const all = [nf.singleStation, nf.deep, nf.belowScale1, nf.unknown]
     expect(all.every(s => s.trim() !== '')).toBe(true)
@@ -186,7 +196,7 @@ describe('日本語以外の緊急地震速報の読み上げ文（2026-11-17 �
     const longReason = 'あ'.repeat(st.CANCEL_REASON_INLINE_MAX_CHARS + 1) + '。'
     expect(st.deferredCancelReasonToSpeak('緊急地震速報', longReason)).toBeNull()
     expect(st.eewCancelToText({ ...EVENT, cancelled: true, cancelText: longReason }, null))
-      .toBe(`${EXPECTED[locale].cancelled}${SPEECH_WORDS_IN_PROGRESS[locale].common.sentenceSep}${SPEECH_WORDS_IN_PROGRESS[locale].common.telegramTextElsewhere}`)
+      .toBe(`${EXPECTED[locale].cancelled}${SPEECH_WORDS_BY_LOCALE[locale].common.sentenceSep}${SPEECH_WORDS_BY_LOCALE[locale].common.telegramTextElsewhere}`)
   })
 
   it.each(LOCALES)('%s: 警報の締めの句は文の中にそのまま入る（鳴った文の判定が部分一致で見るため）', (locale) => {
@@ -536,7 +546,7 @@ describe('日本語以外の地震情報・震度速報の読み上げ文（2026
   })
 
   it('en・pt-BR・es: 深さ 1 キロメートルは単数（正）、10 は複数（対照）', () => {
-    const one = (l: OtherLocale) => SPEECH_WORDS_IN_PROGRESS[l].quake
+    const one = (l: OtherLocale) => SPEECH_WORDS_BY_LOCALE[l].quake
     expect(one('en').depthOf(1, '')).toBe('depth 1 kilometer')
     expect(one('en').depthKm(1, '')).toBe('1 kilometer')
     expect(one('en').depthAmendKm(1, '')).toBe('Hypocenter depth updated to 1 kilometer')
@@ -552,7 +562,7 @@ describe('日本語以外の地震情報・震度速報の読み上げ文（2026
     const odd = quakeOf('震源情報', [], { hypocenter: { name: '石川県能登地方', latitude: 0, longitude: 0, depth: 10, magnitude: NaN, magnitudeCondition: 'Ｍ不定' } })
     const text = textOf(speechTextWithDraft(locale).earthquakeToSegments(odd, QUAKE_OPTS, true))
     expect(text).not.toContain('不定')
-    expect(text).toContain(SPEECH_WORDS_IN_PROGRESS[locale].common.telegramTextElsewhere!)
+    expect(text).toContain(SPEECH_WORDS_BY_LOCALE[locale].common.telegramTextElsewhere!)
     expect(textOf(JA_SPEECH_TEXT.earthquakeToSegments(odd, QUAKE_OPTS, true))).toContain('マグニチュードは不定です。')
     vi.restoreAllMocks()
   })
@@ -560,7 +570,7 @@ describe('日本語以外の地震情報・震度速報の読み上げ文（2026
   // 在処の文は発話の末尾に 1 度だけ足す（規模の文は持たない）
   it('en: 知らない規模の表記の文（正）', () => {
     vi.spyOn(log, 'warn').mockImplementation(() => {})
-    expect(SPEECH_WORDS_IN_PROGRESS.en.quake.magnitudeConditionUnknown('不定')).toBe('The magnitude is not given as a number. ')
+    expect(SPEECH_WORDS_BY_LOCALE.en.quake.magnitudeConditionUnknown('不定')).toBe('The magnitude is not given as a number. ')
     const odd = quakeOf('震源情報', [], { hypocenter: { name: '石川県能登地方', latitude: 0, longitude: 0, depth: 10, magnitude: NaN, magnitudeCondition: 'Ｍ不定' } })
     expect(textOf(speechTextWithDraft('en').earthquakeToSegments(odd, QUAKE_OPTS, true)))
       .toBe("Earthquake Information. Around 12:34, an earthquake occurred. Hypocenter: Noto, Ishikawa Prefecture, depth 10 kilometers. The magnitude is not given as a number. This earthquake poses no tsunami risk. JMA's original text is in the Telegram Log.")
@@ -586,7 +596,7 @@ describe('日本語以外の地震情報・震度速報の読み上げ文（2026
       QUAKE_OPTS, true,
     ))
     expect(text).not.toContain(foreign)
-    expect(text.endsWith(SPEECH_WORDS_IN_PROGRESS[locale].common.telegramTextElsewhere!)).toBe(true)
+    expect(text.endsWith(SPEECH_WORDS_BY_LOCALE[locale].common.telegramTextElsewhere!)).toBe(true)
   })
 
   // 既読と追従の鍵は言語によらない（→ `utils/ttsFollow.ts`）。発生の文の語順を言語が変えても、付く鍵の組は日本語と同じ
@@ -612,7 +622,7 @@ describe('日本語以外の地震情報・震度速報の読み上げ文（2026
   // 「読まずに「画面にある」と言う」）。鍵は原文の文のまま持ち、同じ文を運ぶ続報では在処を言い直さない
   it.each(LOCALES)('%s: 気象庁の発表文は読まずに在処だけを言い、鍵は日本語と同じ（安全弁）', (locale) => {
     const st = speechTextWithDraft(locale)
-    const elsewhere = SPEECH_WORDS_IN_PROGRESS[locale].common.telegramTextElsewhere!
+    const elsewhere = SPEECH_WORDS_BY_LOCALE[locale].common.telegramTextElsewhere!
     const opts: TtsSpeechOptions = { ...QUAKE_OPTS, readTelegramText: true }
     const event = quakeOf('震源・震度情報', OBSERVED, {}, { freeText: FREE_TEXT })
     const ja = JA_SPEECH_TEXT.telegramTextToSpeak(event, opts)!
@@ -658,7 +668,7 @@ describe('日本語以外の地震情報・震度速報の読み上げ文（2026
 
   // 韓国語の助詞は直前の語の終わりで選ぶ（받침の有無。数字は読みの終わり）
   it('ko: 助詞を直前の語の終わりで選ぶ（正）', () => {
-    const ko = SPEECH_WORDS_IN_PROGRESS.ko
+    const ko = SPEECH_WORDS_BY_LOCALE.ko
     expect(ko.quake.intensityLead(false, '4')).toBe('진도 4를 ')
     expect(ko.quake.intensityLead(false, '5약')).toBe('진도 5약을 ')
     expect(ko.quake.intensityLead(false, '1')).toBe('진도 1을 ')
@@ -672,7 +682,7 @@ describe('日本語以外の地震情報・震度速報の読み上げ文（2026
   })
 
   it('en: 単数・複数と序数を数で選ぶ（正）', () => {
-    const en = SPEECH_WORDS_IN_PROGRESS.en
+    const en = SPEECH_WORDS_BY_LOCALE.en
     expect(en.quake.regionsOmitted(1)).toBe(', and 1 other area')
     expect(en.quake.regionsOmitted(3)).toBe(', and 3 other areas')
     expect(en.quake.unreceivedOmitted(1, '件')).toBe(', and 1 other place')
@@ -796,7 +806,7 @@ describe('遠地地震の付加文の実電文の形', () => {
   // 規模の表記が知らないもので、付加文もある遠地地震: 在処の文は末尾の 1 回だけ
   it.each(LOCALES)('%s: 知らない規模の表記と付加文が重なっても、在処の文は 1 回（安全弁）', (locale) => {
     vi.spyOn(log, 'warn').mockImplementation(() => {})
-    const elsewhere = SPEECH_WORDS_IN_PROGRESS[locale].common.telegramTextElsewhere!
+    const elsewhere = SPEECH_WORDS_BY_LOCALE[locale].common.telegramTextElsewhere!
     const text = textOf(speechTextWithDraft(locale).earthquakeToSegments(
       distantOf('c0226_0230', { magnitude: NaN, magnitudeCondition: 'Ｍ不定' }), QUAKE_OPTS, true,
     ))
@@ -1201,7 +1211,7 @@ describe('日本語以外の津波の読み上げ文（2026-11-17 承認の表�
 
   // 見出し文を持つ報だけ、名乗りの後に在処の文を言う（見出し文が無い報では、置き換える文が無い）
   it.each(LOCALES)('%s: 観測情報の在処の文は、見出し文を持つ報で 1 回、持たない報では言わない（対照）', (locale) => {
-    const elsewhere = SPEECH_WORDS_IN_PROGRESS[locale].common.telegramTextElsewhere!
+    const elsewhere = SPEECH_WORDS_BY_LOCALE[locale].common.telegramTextElsewhere!
     const produced = produceTsunami(speechTextWithDraft(locale))
     expect(produced.observation.split(elsewhere).length - 1).toBe(1)
     expect(produced.observationOmitted).not.toContain(elsewhere)
@@ -1217,7 +1227,7 @@ describe('日本語以外の津波の読み上げ文（2026-11-17 承認の表�
   it.each(LOCALES)('%s: 原因地震の規模が知らない表記なら数値でないと言い、在処の文を発話の末尾に 1 度だけ言う（正）', (locale) => {
     vi.spyOn(log, 'warn').mockImplementation(() => {})
     const st = speechTextWithDraft(locale)
-    const words = SPEECH_WORDS_IN_PROGRESS[locale]
+    const words = SPEECH_WORDS_BY_LOCALE[locale]
     const elsewhere = words.common.telegramTextElsewhere!
     const unknown = { hypocenterName: '石川県能登地方', depth: 10, magnitudeCondition: 'Ｍ不明の新しい表記' }
     // 2 つの地震がどちらも知らない表記でも、在処の文は 1 回
@@ -1258,18 +1268,18 @@ describe('日本語以外の津波の読み上げ文（2026-11-17 承認の表�
     const [thisQuake, otherQuake] = EXPECTED_SOURCE_AMENDED[locale]
     expect(text).toContain(thisQuake)
     // 2 つ目の地震の文は「また、」の後ろ（英葡西は大文字のまま続く）
-    expect(text).toContain(`${SPEECH_WORDS_IN_PROGRESS[locale].common.also}${otherQuake}`)
+    expect(text).toContain(`${SPEECH_WORDS_BY_LOCALE[locale].common.also}${otherQuake}`)
   })
 
   // 取消の長い理由を別の発話で読むときの前置きの名前（11 節の 10）。日本語以外は理由を読まないので今は声にならないが、名乗りと同じ語にしておく
   it.each(LOCALES)('%s: 誤報の取消の前置きに渡す名前は語表の名前（正）', (locale) => {
-    expect(speechTextWithDraft(locale).TSUNAMI_WARNINGS_ETC_NAME).toBe(SPEECH_WORDS_IN_PROGRESS[locale].tsunami.warningsEtc)
+    expect(speechTextWithDraft(locale).TSUNAMI_WARNINGS_ETC_NAME).toBe(SPEECH_WORDS_BY_LOCALE[locale].tsunami.warningsEtc)
   })
 
   // 波高の文を持たず、到達・欠測などだけを読む報の名乗り（受信処理が足す）。日本語もこの報では見出し文を読まないので、
   // 日本語以外も在処の文を言わない（2026-11-18 ユーザー選択「日本語が気象庁の文を読む所だけ (Recommended)」）
   it.each(LOCALES)('%s: 到達・欠測だけの報の名乗りは語表の名乗りで、在処の文を付けない（正）', (locale) => {
-    const words = SPEECH_WORDS_IN_PROGRESS[locale]
+    const words = SPEECH_WORDS_BY_LOCALE[locale]
     const text = joinSegments(speechTextWithDraft(locale).tsunamiObservationLeadSegments())
     expect(text).toBe(words.tsunami.observationInfoLead)
     expect(text).not.toContain(words.common.telegramTextElsewhere!)
@@ -1283,7 +1293,7 @@ describe('日本語以外の津波の読み上げ文（2026-11-17 承認の表�
   it.each(LOCALES)('%s: 観測した波高に数字の無い語が来ても、予想波高と同じ表で引き直す（安全弁）', (locale) => {
     const odd: TsunamiObservation[] = [{ name: '輪島港', districtName: '石川県能登', height: { value: NaN, description: '巨大' } }]
     const text = textOf(speechTextWithDraft(locale).tsunamiObservationUpdateToSegments(odd, undefined, 5, undefined, new Map(), new Map()))
-    expect(text).toContain(SPEECH_WORDS_IN_PROGRESS[locale].tsunami.nonNumericHeight['巨大'])
+    expect(text).toContain(SPEECH_WORDS_BY_LOCALE[locale].tsunami.nonNumericHeight['巨大'])
     expect(text).not.toMatch(KANA)
   })
 })
@@ -1334,5 +1344,254 @@ describe('日本語の津波の文は今の文のまま（対照）', () => {
   it('同じ報で今の文になる（区切り・予想と観測の波高・延長の文・避難の付加文・見出し文）', () => {
     expect(produceTsunami(JA_SPEECH_TEXT)).toEqual(EXPECTED_TSUNAMI_JA)
     expect(JA_SPEECH_TEXT.TSUNAMI_WARNINGS_ETC_NAME).toBe('津波警報等')
+  })
+})
+
+// ---- 長周期・特別情報・揺れ検知・国際津波関連情報・時報（2026-11-18 の表） ----
+
+/** 端末の時刻帯での時刻 */
+const localAt = (y: number, mo: number, d: number, h: number, mi: number) => new Date(y, mo - 1, d, h, mi).toISOString()
+const REST_OPTS: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
+/** お知らせ・後発地震注意情報の気象庁の見出し文（日本語の組だけが読む） */
+const NOTICE_HEADLINE = '緊急地震速報（警報）について'
+const KOHATSU_HEADLINE = '北海道・三陸沖後発地震注意情報を発表しました。１２月８日２３時１５分頃、青森県東方沖でマグニチュード７．５の地震が発生しました。'
+
+function lpgmOf(regions: { name: string; maxLgInt: number }[], extra: Partial<JMALpgm> = {}): JMALpgm {
+  return {
+    id: 'locale-lpgm', eventId: '20240101161000', time: localAt(2024, 1, 1, 16, 12), originTime: localAt(2024, 1, 1, 16, 10),
+    maxClass: 4, cancelled: false, regions: regions.map((r, i) => ({ code: String(i), ...r })), ...extra,
+  }
+}
+const nankaiOf = (kindCode: string, kindName: string, extra: Partial<JMANankai> = {}) =>
+  ({ id: 'n', time: '', eventId: 'n', kindCode, kindName, headline: '', body: '', cancelled: false, ...extra }) as JMANankai
+const commentaryOf = (serialName: string, headline: string, extra: Partial<JMANankaiCommentary> = {}) =>
+  ({ id: 'c', time: '', eventId: 'c', serialCode: '', serialName, headline, body: '本文', cancelled: false, reportDateTime: '', expireAt: '', ...extra }) as JMANankaiCommentary
+const countOf = (number: number | null, feltNumber: number | null, start = localAt(2026, 1, 9, 15, 0), end = localAt(2026, 1, 10, 12, 0), extra: Partial<JMAEarthquakeCount> = {}) =>
+  ({ id: 'q', time: '', eventId: 'q', headline: '', cancelled: false, items: [{ type: '累積地震回数', startTime: start, endTime: end, number, feltNumber }], ...extra }) as JMAEarthquakeCount
+const noticeOf = (headline: string, extra: Partial<JMAQuakeNotice> = {}) =>
+  ({ id: 'o', time: '', eventId: 'o', headline, body: '本文', cancelled: false, reportDateTime: '', expireAt: '', ...extra }) as JMAQuakeNotice
+const kohatsuOf = (headline: string, extra: Partial<JMAKohatsu> = {}) =>
+  ({ id: 'k', time: '', eventId: 'k', headline, body: '', cancelled: false, ...extra }) as JMAKohatsu
+const intlOf = (extra: Partial<JMAInternationalTsunami> = {}): JMAInternationalTsunami => ({
+  id: 'i', title: 'WEPA60', time: '', originTime: '2026-03-24T23:43:00Z', isCommunicationsTest: false, text: '',
+  epicenter: { latitude: 13.9, longitude: 120.5 }, magnitude: 7.0, depthKm: 139, bulletinNumber: 1, evaluation: 'localNearEpicenter', ...extra,
+})
+const NOTO_LPGM = [{ name: '石川県能登', maxLgInt: 4 }, { name: '石川県加賀', maxLgInt: 3 }, { name: '富山県東部', maxLgInt: 3 }]
+
+/** 長周期以降の文を、実運用と同じ関数から組む（キーは `ttsTextLocalesRest.fixture.ts`） */
+function produceRest(st: SpeechText, words: SpeechWords): Record<string, string> {
+  const at = (h: number, m: number) => new Date(2026, 0, 1, h, m).getTime()
+  const time = (h: number, m: number, clock: TimeSignalClock, phrase: TimeSignalPhrase) =>
+    timeSignalSpeechText(at(h, m), clock, phrase, words.timeSignal.say)
+  return {
+    lpgm2: st.lpgmToText(lpgmOf(NOTO_LPGM), REST_OPTS, true),
+    lpgm2update: st.lpgmToText(lpgmOf(NOTO_LPGM), REST_OPTS, false),
+    lpgm3class: st.lpgmToText(lpgmOf([{ name: '石川県能登', maxLgInt: 4 }, { name: '石川県加賀', maxLgInt: 3 }, { name: '富山県東部', maxLgInt: 2 }]), { ...REST_OPTS, intensityLevels: 4 }, true),
+    lpgmOmitted: st.lpgmToText(lpgmOf([{ name: '石川県能登', maxLgInt: 3 }, { name: '石川県加賀', maxLgInt: 3 }, { name: '富山県東部', maxLgInt: 3 }]), { ...REST_OPTS, maxRegions: 1 }, true),
+    lpgmMaxOnly: st.lpgmToText(lpgmOf([]), REST_OPTS, true),
+    lpgmRetracted: st.lpgmToText(lpgmOf(NOTO_LPGM, { cancelled: true, cancelText: REASON }), REST_OPTS, false),
+    nankai111: st.nankaiToText(nankaiOf('111', '調査中')),
+    nankai112: st.nankaiToText(nankaiOf('112', '調査中')),
+    nankai113: st.nankaiToText(nankaiOf('113', '調査中')),
+    nankaiInvestigatingNone: st.nankaiToText(nankaiOf('999', '調査中')),
+    nankaiEnded: st.nankaiToText(nankaiOf('190', '調査終了')),
+    nankaiWarning: st.nankaiToText(nankaiOf('120', '巨大地震警戒')),
+    nankaiAdvisory: st.nankaiToText(nankaiOf('130', '巨大地震注意')),
+    nankaiOther: st.nankaiToText(nankaiOf('100', 'その他')),
+    nankaiRetracted: st.nankaiToText(nankaiOf('120', '巨大地震警戒', { retracted: true, body: REASON })),
+    commentaryRegular: st.nankaiCommentaryToText(commentaryOf('定例解説', '南海トラフ地震関連解説情報')),
+    commentary1: st.nankaiCommentaryToText(commentaryOf('臨時解説', '南海トラフ地震関連解説情報（第１号）')),
+    commentary12: st.nankaiCommentaryToText(commentaryOf('臨時解説', '南海トラフ地震関連解説情報（第１２号）')),
+    commentaryRetracted: st.nankaiCommentaryToText(commentaryOf('臨時解説', '', { cancelled: true, body: REASON })),
+    count5felt1: st.earthquakeCountToText(countOf(5, 1)),
+    count1felt0: st.earthquakeCountToText(countOf(1, 0)),
+    count5felt3: st.earthquakeCountToText(countOf(5, 3)),
+    countFeltOnly1: st.earthquakeCountToText(countOf(null, 1)),
+    countFeltOnly3: st.earthquakeCountToText(countOf(null, 3)),
+    countSpanUnknown: st.earthquakeCountToText(countOf(5, 1, '壊れた値', '壊れた値')),
+    countOneOClock: st.earthquakeCountToText(countOf(5, 1, localAt(2026, 1, 9, 1, 0), localAt(2026, 1, 10, 1, 0))),
+    countRetracted: st.earthquakeCountToText(countOf(5, 1, undefined, undefined, { cancelled: true, cancelText: REASON })),
+    noticeHeadline: st.quakeNoticeToText(noticeOf(NOTICE_HEADLINE)),
+    noticeEmpty: st.quakeNoticeToText(noticeOf('')),
+    noticeRetracted: st.quakeNoticeToText(noticeOf('', { cancelled: true, body: REASON })),
+    kohatsu: st.kohatsuToText(kohatsuOf(KOHATSU_HEADLINE)),
+    kohatsuRetracted: st.kohatsuToText(kohatsuOf('', { cancelled: true, retracted: true, body: REASON })),
+    estimatedNew: st.estimatedIntensityToText(localAt(2026, 1, 1, 12, 34), true),
+    estimatedUpdate: st.estimatedIntensityToText(localAt(2026, 1, 1, 12, 34), false),
+    estimatedOneOClock: st.estimatedIntensityToText(localAt(2026, 1, 1, 1, 5), true),
+    estimatedNoTime: st.estimatedIntensityToText('壊れた値', true),
+    kyoshinDetected: st.kyoshinDetectionText({ kind: 'detected', regionName: '石川県能登' }),
+    kyoshinDetectedNull: st.kyoshinDetectionText({ kind: 'detected', regionName: null }),
+    kyoshinOther: st.kyoshinDetectionText({ kind: 'otherRegion', regionName: '茨城県南部' }),
+    kyoshinOtherNull: st.kyoshinDetectionText({ kind: 'otherRegion', regionName: null }),
+    kyoshinSagami: st.kyoshinDetectionText({ kind: 'detected', regionName: '相模湾' }),
+    intlFull: st.internationalTsunamiToText(intlOf(), 'フィリピン付近'),
+    intlCoord: st.internationalTsunamiToText(intlOf()),
+    intlSouthWest: st.internationalTsunamiToText(intlOf({ epicenter: { latitude: -13.9, longitude: -120.5 }, depthKm: undefined })),
+    intlUpdate: st.internationalTsunamiToText(intlOf({ bulletinNumber: 2, evaluation: 'none' })),
+    intlNoEval: st.internationalTsunamiToText(intlOf({ evaluation: undefined })),
+    intlOneOClock: st.internationalTsunamiToText(intlOf({ originTime: '2026-03-01T16:05:00Z', evaluation: 'oceanWide' })),
+    intlTest: st.internationalTsunamiToText(intlOf({ isCommunicationsTest: true })),
+    time_15_30_24h_oshirase: time(15, 30, '24h', 'oshirase'),
+    time_15_30_24h_desu: time(15, 30, '24h', 'desu'),
+    time_15_30_24h_narimashita: time(15, 30, '24h', 'narimashita'),
+    time_15_30_24h_bare: time(15, 30, '24h', 'bare'),
+    time_15_0_24h_desu: time(15, 0, '24h', 'desu'),
+    time_15_30_12h_desu: time(15, 30, '12h', 'desu'),
+    time_15_30_12h_oshirase: time(15, 30, '12h', 'oshirase'),
+    time_1_30_24h_desu: time(1, 30, '24h', 'desu'),
+    time_1_30_24h_narimashita: time(1, 30, '24h', 'narimashita'),
+    time_1_30_24h_oshirase: time(1, 30, '24h', 'oshirase'),
+    time_1_30_24h_bare: time(1, 30, '24h', 'bare'),
+    time_13_5_12h_desu: time(13, 5, '12h', 'desu'),
+  }
+}
+
+describe('長周期・特別情報・揺れ検知・国際津波関連情報・時報の文（2026-11-18 の表）', () => {
+  for (const locale of LOCALES) {
+    it(`${locale}: 表の文になる（正）`, () => {
+      expect(produceRest(speechTextWithDraft(locale), wordsWithDraft(locale))).toEqual(EXPECTED_REST[locale])
+    })
+  }
+
+  it('日本語以外の文に仮名と気象庁の見出し文が入らない（安全弁）', () => {
+    for (const locale of LOCALES) {
+      const texts = produceRest(speechTextWithDraft(locale), wordsWithDraft(locale))
+      for (const [key, text] of Object.entries(texts)) {
+        expect(KANA.test(text), `${locale} ${key}: ${text}`).toBe(false)
+        expect(text).not.toContain('緊急地震速報（警報）について')
+        expect(text).not.toContain('青森県東方沖')
+        expect(text).not.toContain(REASON)
+      }
+    }
+  })
+
+  it('日本語以外は、長い取消の理由を別の発話へ回さない（安全弁）', () => {
+    const long = '取消の理由です。'.repeat(40)
+    for (const locale of LOCALES) {
+      const st = speechTextWithDraft(locale)
+      expect(st.deferredCancelReasonToSpeak(st.INFO_NAME.lpgm, long)).toBeNull()
+      expect(st.lpgmToText(lpgmOf(NOTO_LPGM, { cancelled: true, cancelText: long }), REST_OPTS, false)).not.toContain('取消の理由')
+    }
+  })
+
+  it('表に無い区域名は日本語の名前のまま読み、記録を 1 度だけ残す（安全弁）', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    const st = speechTextWithDraft('en')
+    expect(st.kyoshinDetectionText({ kind: 'detected', regionName: '架空の揺れ区域' })).toBe('Shaking detected: 架空の揺れ区域.')
+    expect(st.kyoshinDetectionText({ kind: 'otherRegion', regionName: '架空の揺れ区域' })).toBe('Shaking also detected: 架空の揺れ区域.')
+    expect(warn.mock.calls.filter(c => String(c[0]).includes('地名の表に無い名前') && String(c[0]).includes('架空の揺れ区域'))).toHaveLength(1)
+  })
+
+  // 12 時間制の時間帯の語（2026-11-18 ユーザー選択「言語ごとの時間帯の語で言う (Recommended)」）
+  it('時報の 12 時間制は言語ごとの時間帯の語で言う（0:30・6:30・12:30・13:30）（正）', () => {
+    const EXPECTED_PERIOD: Record<OtherLocale, readonly [string, string, string, string]> = {
+      en: ["It's 12:30 a.m.", "It's 6:30 a.m.", "It's 12:30 p.m.", "It's 1:30 p.m."],
+      'zh-Hans': ['现在是凌晨0点30分。', '现在是上午6点30分。', '现在是中午12点30分。', '现在是下午1点30分。'],
+      'zh-Hant': ['現在是凌晨0點30分。', '現在是上午6點30分。', '現在是中午12點30分。', '現在是下午1點30分。'],
+      ko: ['오전 0시 30분입니다.', '오전 6시 30분입니다.', '낮 12시 30분입니다.', '오후 1시 30분입니다.'],
+      'pt-BR': ['São 0:30 da madrugada.', 'São 6:30 da manhã.', 'São 12:30 da tarde.', 'É 1:30 da tarde.'],
+      es: ['Son las 0:30 de la madrugada.', 'Son las 6:30 de la mañana.', 'Son las 12:30 del mediodía.', 'Es la 1:30 de la tarde.'],
+    }
+    const at = (h: number, m: number) => new Date(2026, 0, 1, h, m).getTime()
+    for (const locale of LOCALES) {
+      const say = wordsWithDraft(locale).timeSignal.say
+      expect([0, 6, 12, 13].map(h => timeSignalSpeechText(at(h, 30), '12h', 'desu', say)), locale).toEqual(EXPECTED_PERIOD[locale])
+    }
+    // 正時・ほかの形への当て方は今の作りのまま
+    expect(timeSignalSpeechText(at(0, 0), '12h', 'desu', zhHansSpeech.timeSignal.say)).toBe('现在是凌晨0点整。')
+    expect(timeSignalSpeechText(at(12, 0), '12h', 'oshirase', koSpeech.timeSignal.say)).toBe('낮 12시를 알려 드립니다.')
+    expect(timeSignalSpeechText(at(0, 30), '12h', 'bare', esSpeech.timeSignal.say)).toBe('Las 0:30 de la madrugada')
+    expect(timeSignalSpeechText(at(1, 30), '12h', 'narimashita', ptBRSpeech.timeSignal.say)).toBe('Agora é 1:30 da madrugada.')
+  })
+
+  // 夜の語（2026-11-18 ユーザー選択「夜の語を足す (Recommended)」）。境は中国語・ポルトガル語が 18 時、スペイン語が 20 時。英語・韓国語は変えない
+  it('時報の 12 時間制の夜（18:30・19:30・20:30・22:30）（正・対照）', () => {
+    const EXPECTED_NIGHT: Record<OtherLocale, readonly [string, string, string, string]> = {
+      en: ["It's 6:30 p.m.", "It's 7:30 p.m.", "It's 8:30 p.m.", "It's 10:30 p.m."],
+      'zh-Hans': ['现在是晚上6点30分。', '现在是晚上7点30分。', '现在是晚上8点30分。', '现在是晚上10点30分。'],
+      'zh-Hant': ['現在是晚上6點30分。', '現在是晚上7點30分。', '現在是晚上8點30分。', '現在是晚上10點30分。'],
+      ko: ['오후 6시 30분입니다.', '오후 7시 30분입니다.', '오후 8시 30분입니다.', '오후 10시 30분입니다.'],
+      'pt-BR': ['São 6:30 da noite.', 'São 7:30 da noite.', 'São 8:30 da noite.', 'São 10:30 da noite.'],
+      es: ['Son las 6:30 de la tarde.', 'Son las 7:30 de la tarde.', 'Son las 8:30 de la noche.', 'Son las 10:30 de la noche.'],
+    }
+    const at = (h: number, m: number) => new Date(2026, 0, 1, h, m).getTime()
+    for (const locale of LOCALES) {
+      const say = wordsWithDraft(locale).timeSignal.say
+      expect([18, 19, 20, 22].map(h => timeSignalSpeechText(at(h, 30), '12h', 'desu', say)), locale).toEqual(EXPECTED_NIGHT[locale])
+    }
+    // 境の手前（17 時台）は午後の語のまま（対照）
+    expect(timeSignalSpeechText(at(17, 30), '12h', 'desu', zhHansSpeech.timeSignal.say)).toBe('现在是下午5点30分。')
+    expect(timeSignalSpeechText(at(17, 30), '12h', 'desu', ptBRSpeech.timeSignal.say)).toBe('São 5:30 da tarde.')
+    expect(timeSignalSpeechText(at(22, 30), '12h', 'bare', esSpeech.timeSignal.say)).toBe('Las 10:30 de la noche')
+  })
+
+  it('後発地震注意情報は、見出し文が無い報では在処の文を言わない（対照。日本語も見出し文を読まない報）', () => {
+    for (const locale of LOCALES) {
+      const text = speechTextWithDraft(locale).kohatsuToText(kohatsuOf(''))
+      expect(text, locale).not.toContain(wordsWithDraft(locale).common.telegramTextElsewhere!)
+      // 見出し文がある報では言う
+      expect(speechTextWithDraft(locale).kohatsuToText(kohatsuOf(KOHATSU_HEADLINE))).toContain(wordsWithDraft(locale).common.telegramTextElsewhere!)
+    }
+    expect(JA_SPEECH_TEXT.kohatsuToText(kohatsuOf(''))).toBe('北海道・三陸沖後発地震注意情報。今後、大規模地震の発生可能性が平常時より高まっています。防災対応の確認をしてください。')
+  })
+
+  it('国際津波関連情報の評価が語表に無い値なら、評価の句を省いて「情報が発表された」で結び、記録を残す（安全弁）', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    const x = intlOf({ evaluation: 'unknownValue' as JMAInternationalTsunami['evaluation'] })
+    expect(speechTextWithDraft('en').internationalTsunamiToText(x)).toBe(EXPECTED_REST.en.intlNoEval)
+    expect(warn.mock.calls.some(c => String(c[0]).includes('津波発生の可能性を語表で引けず'))).toBe(true)
+  })
+
+  it('全角の号数は日本語では全角のまま、ほかの言語では半角で読む（対照）', () => {
+    const c = commentaryOf('臨時解説', '南海トラフ地震関連解説情報（第１号）')
+    expect(JA_SPEECH_TEXT.nankaiCommentaryToText(c)).toContain('第１号')
+    for (const locale of LOCALES) expect(speechTextWithDraft(locale).nankaiCommentaryToText(c)).not.toMatch(/[０-９]/)
+  })
+})
+
+describe('日本語の長周期以降の文は今の文のまま（対照）', () => {
+  it('長周期・特別情報・揺れ検知・時報が今の文になる', () => {
+    const st = JA_SPEECH_TEXT
+    expect(st.lpgmToText(lpgmOf(NOTO_LPGM), REST_OPTS, true))
+      .toBe('長周期地震動に関する観測情報。16時10分頃発生した地震で、長周期地震動階級4を石川県能登、階級3を石川県加賀、富山県東部で観測しました。')
+    expect(st.quakeNoticeToText(noticeOf(NOTICE_HEADLINE))).toBe('地震・津波に関するお知らせ。緊急地震速報（警報）について。')
+    expect(st.quakeNoticeToText(noticeOf(''))).toBe('地震・津波に関するお知らせ。')
+    expect(st.kohatsuToText(kohatsuOf('１２月８日２３時１５分頃、青森県東方沖でマグニチュード７．５の地震が発生しました。')))
+      .toBe('北海道・三陸沖後発地震注意情報。１２月８日２３時１５分頃、青森県東方沖でマグニチュード７．５の地震が発生しました。今後、大規模地震の発生可能性が平常時より高まっています。防災対応の確認をしてください。')
+    expect(st.nankaiCommentaryToText(commentaryOf('臨時解説', '南海トラフ地震関連解説情報（第１号）')))
+      .toBe('南海トラフ地震関連解説情報、第１号。南海トラフ地震の想定震源域の状況について解説情報が発表されました。')
+    expect(st.kyoshinDetectionText({ kind: 'detected', regionName: '相模湾' })).toBe('相模湾で揺れを検知。')
+    expect(st.kyoshinDetectionText({ kind: 'otherRegion', regionName: null })).toBe('別の地点でも揺れを検知。')
+    expect(timeSignalSpeechText(new Date(2026, 0, 1, 12, 0).getTime(), '12h', 'oshirase', jaSpeech.timeSignal.say)).toBe('午後0時をお知らせします')
+  })
+
+  it('国際津波関連情報は、中継へ写した日本語の関数と同じ文になる', () => {
+    const cases: [JMAInternationalTsunami, string | undefined][] = [
+      [intlOf(), 'フィリピン付近'],
+      [intlOf(), undefined],
+      [intlOf({ epicenter: { latitude: -13.9, longitude: -120.5 }, depthKm: undefined }), undefined],
+      [intlOf({ bulletinNumber: 2, evaluation: 'none' }), '  '],
+      [intlOf({ evaluation: undefined }), undefined],
+      [intlOf({ originTime: undefined, epicenter: undefined, magnitude: undefined, depthKm: undefined, evaluation: undefined }), undefined],
+      [intlOf({ originTime: '2026-02-28T16:05:00Z', evaluation: 'regional' }), undefined],
+      [intlOf({ originTime: '壊れた値', magnitude: Number.NaN, evaluation: 'verySmall' }), undefined],
+      [intlOf({ isCommunicationsTest: true }), undefined],
+    ]
+    for (const [x, name] of cases) expect(JA_SPEECH_TEXT.internationalTsunamiToText(x, name)).toBe(relayInternationalTsunamiToText(x, name))
+  })
+
+  it('取消の理由の前置きに渡す情報の名前は、今の名前のまま', () => {
+    expect(JA_SPEECH_TEXT.INFO_NAME).toEqual({
+      eew: '緊急地震速報',
+      quake: '地震情報',
+      lpgm: '長周期地震動に関する観測情報',
+      earthquakeCount: '地震回数に関する情報',
+      quakeNotice: '地震・津波に関するお知らせ',
+      nankai: '南海トラフ地震臨時情報',
+      nankaiCommentary: '南海トラフ地震関連解説情報',
+      kohatsu: '北海道・三陸沖後発地震注意情報',
+    })
+    expect(JA_SPEECH_TEXT.reportNameToSay('震度速報')).toBe('震度速報')
   })
 })

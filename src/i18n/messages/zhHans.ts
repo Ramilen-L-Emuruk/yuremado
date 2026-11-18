@@ -911,6 +911,7 @@ export const zhHans: Messages = {
         description: '无法连接 VOICEVOX 时，使用系统朗读',
         system: '系统朗读',
         noLocaleVoice: '此设备没有中文语音，因此用日语朗读。',
+        speechDataLoadFailed: '无法加载中文朗读数据，因此目前用日语朗读。',
       },
       volume: {
         label: '音量',
@@ -1004,7 +1005,7 @@ export const zhHans: Messages = {
       },
       locale: {
         label: '语言 (Language)',
-        description: '界面和通知的语言。朗读仍为日语。',
+        description: '界面、通知和朗读的语言。日语以外的朗读使用设备的语音；设备没有该语言的语音时，用日语朗读。',
         auto: '跟随设备',
       },
       uiScale: {
@@ -1644,12 +1645,12 @@ export const zhHans: Messages = {
       },
       foreignQuakeInternationalTsunami: {
         label: '远地地震与国际海啸相关信息（英文）',
-        description: '印度尼西亚附近 M7.0（实际数据）的远地地震，以及同一地震的国际海啸相关信息（英文） – earthquakeInfo 提示音 / 3 秒后英文送达，远地地震的卡片上附加原文栏。英文送达时会发出 earthquakeInfo 提示音和通知，并用日语朗读摘要',
+        description: '印度尼西亚附近 M7.0（实际数据）的远地地震，以及同一地震的国际海啸相关信息（英文） – earthquakeInfo 提示音 / 3 秒后英文送达，远地地震的卡片上附加原文栏。英文送达时会发出 earthquakeInfo 提示音和通知，并用所选语言朗读摘要',
         button: '国际海啸相关信息测试',
       },
       internationalTsunamiDomesticAndOnly: {
         label: '国内地震与仅有英文的国际海啸相关信息',
-        description: '日向灘 M7.1（实际数据）的震源、烈度信息，以及同一地震的国际海啸相关信息（英文） – earthquakeInfo 提示音 / 3 秒后英文送达，日向灘的地震卡片附上原文 / 6 秒后，没有地震信息的地震的英文送达，列表中出现仅有英文的卡片（国际海啸相关信息） / 9 秒后通信测试的英文送达（仅在“接收测试报（用于验证）”开启时出现声音、通知、朗读和横幅；关闭时只留在电文记录中）。英文送达时会发出 earthquakeInfo 提示音和通知，并用日语朗读摘要',
+        description: '日向灘 M7.1（实际数据）的震源、烈度信息，以及同一地震的国际海啸相关信息（英文） – earthquakeInfo 提示音 / 3 秒后英文送达，日向灘的地震卡片附上原文 / 6 秒后，没有地震信息的地震的英文送达，列表中出现仅有英文的卡片（国际海啸相关信息） / 9 秒后通信测试的英文送达（仅在“接收测试报（用于验证）”开启时出现声音、通知、朗读和横幅；关闭时只留在电文记录中）。英文送达时会发出 earthquakeInfo 提示音和通知，并用所选语言朗读摘要',
         button: '仅英文测试',
       },
       headlineOnlyCity: {

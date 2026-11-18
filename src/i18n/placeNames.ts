@@ -44,11 +44,12 @@ export const JA_PLACE_NAMES: PlaceNameLookup = Object.assign((_kind: PlaceNameKi
   has: () => false,
 })
 
-/** 表から引き方を作る */
+/**
+ * 表から引き方を作る。**自前のキーだけを見る**（`hasOwnProperty`。「constructor」のような名前で、継いだ関数を訳として返さないため）
+ */
 export function placeNameLookup(table: PlaceNameTable): PlaceNameLookup {
-  return Object.assign((kind: PlaceNameKind, name: string) => table[kind][name] ?? name, {
-    has: (kind: PlaceNameKind, name: string) => table[kind][name] !== undefined,
-  })
+  const has = (kind: PlaceNameKind, name: string) => Object.prototype.hasOwnProperty.call(table[kind], name)
+  return Object.assign((kind: PlaceNameKind, name: string) => (has(kind, name) ? table[kind][name] : name), { has })
 }
 
 /**
