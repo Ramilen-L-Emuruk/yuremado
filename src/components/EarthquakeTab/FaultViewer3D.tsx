@@ -242,7 +242,7 @@ function drawBall(c: HTMLCanvasElement, cssWidth: number, d: Data, view: ViewAng
       if (r2 > 1) continue
       const z = Math.sqrt(1 - r2)
       const z1 = -y * sp + z * cp
-      const n = x * sy + z1 * cy, e = x * cy - z1 * sy, dn = -(y * cp + z * sp)
+      const n = -(x * sy + z1 * cy), e = x * cy - z1 * sy, dn = -(y * cp + z * sp)
       const amp = t.xx * n * n + t.yy * e * e + t.zz * dn * dn + 2 * (t.xy * n * e + t.xz * n * dn + t.yz * e * dn)
       const base = amp > 0 ? PUSH : PULL
       const shade = 0.55 + 0.45 * (-0.35 * x + 0.45 * y + 0.82 * z)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  SLIP_LOOP_MS, SLIP_SHIFT, add, axisVector, blockFaces, clipPolygon, dot, faultFrame, fromScreen, initialView, scale, slipProgress, toScreen, unit, visibleFaces, isDrawableAxis, isDrawablePlane,
+  SLIP_LOOP_MS, SLIP_SHIFT, add, axisVector, blockFaces, clipPolygon, cross, dot, faultFrame, fromScreen, initialView, scale, slipProgress, toScreen, unit, visibleFaces, isDrawableAxis, isDrawablePlane,
   type Vec3,
 } from './faultGeometry'
 
@@ -58,6 +58,23 @@ describe('toScreen / fromScreen', () => {
   it('向きを変えても長さは変わらない', () => {
     const v: Vec3 = [0.3, -0.7, 0.5]
     expect(Math.hypot(...toScreen(v, { yaw: 2, pitch: 0.9 }))).toBeCloseTo(Math.hypot(...v), 9)
+  })
+
+  it('北を上にして下を奥にして見下ろすと、東は右に来る（鏡に映した像にならない。ユーザー発言「北を上にして、下を奥にしたとき、東が左に来る」の直し）', () => {
+    const view = { yaw: 0, pitch: Math.PI / 2 }
+    close(toScreen([1, 0, 0], view), [0, 1, 0], 1e-9)
+    close(toScreen([0, 0, 1], view), [0, 0, -1], 1e-9)
+    close(toScreen([0, 1, 0], view), [1, 0, 0], 1e-9)
+  })
+
+  it('画面の座標は右手系（右 × 上 = 手前）。世界の座標も右手系（北 × 東 = 下）なので、向きを変えても行列式は +1', () => {
+    for (const view of [{ yaw: 0, pitch: 0 }, { yaw: 1.3, pitch: -0.7 }, { yaw: -2.2, pitch: 1.1 }]) {
+      const n = toScreen([1, 0, 0], view), e = toScreen([0, 1, 0], view), d = toScreen([0, 0, 1], view)
+      expect(dot(cross(n, e), d)).toBeCloseTo(1, 9)
+    }
+    // 画面の右 × 上 = 手前（東 × 上 = 手前＝南向き）
+    const e = toScreen([0, 1, 0], { yaw: 0, pitch: 0 }), up = toScreen([0, 0, -1], { yaw: 0, pitch: 0 })
+    close(cross(e, up), [0, 0, 1], 1e-9)
   })
 
   it('真上（上向き）は、見下ろすほど画面の手前側へ向く', () => {

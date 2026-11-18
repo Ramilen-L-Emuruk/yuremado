@@ -358,6 +358,7 @@ export function MechTable({ a, solutions, withSource, selectedKey, onSelect }: {
 }) {
   const w = useMessages().quake.analysis
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
+  const [hovered, setHovered] = useState<string | null>(null)
   // 表と狭い並びは片方だけ組む（CSS で隠すだけだと、見えない側の節・ホバーの解説まで毎回組み立てる）
   const wide = useMediaQuery(WIDE_QUERY)
   const groups = useMemo(() => groupSolutionVersions(solutions), [solutions])
@@ -393,15 +394,27 @@ export function MechTable({ a, solutions, withSource, selectedKey, onSelect }: {
     </span>
   )
   // 節面のある解の行だけが選べる（節面の無い解は 3D に出せない）。選んだ行は、おすすめの解の行より明るい色にする（タブの選択と同じ色）
+  // 1 つの解は表の 2 行（解の行とモーメントテンソルの行）を占めるので、ホバーの色は行ごとの CSS ではなく鍵で持ち、2 行そろえて付ける
   const buildRowProps = (g: (typeof groups)[number]) => {
+    const key = g.latest.key
     const selectable = g.latest.planes !== null
-    const selected = g.latest.key === selectedKey
+    const selected = key === selectedKey
+    const hover = selectable && !selected && hovered === key
+    const pointer = {
+      className: `${selected ? 'bg-[#24303d]' : hover ? 'bg-[#222d3a]' : g.latest.preferred ? 'bg-[#1b2430]' : ''} ${selectable ? 'cursor-pointer' : ''}`.trim() || undefined,
+      onClick: selectable ? () => onSelect(key) : undefined,
+      onMouseEnter: selectable ? () => setHovered(key) : undefined,
+      onMouseLeave: selectable ? () => setHovered(h => (h === key ? null : h)) : undefined,
+    }
     return {
-      className: `${selected ? 'bg-[#24303d]' : g.latest.preferred ? 'bg-[#1b2430]' : ''} ${selectable ? 'cursor-pointer hover:bg-[#222d3a]' : ''}`.trim() || undefined,
-      onClick: selectable ? () => onSelect(g.latest.key) : undefined,
-      tabIndex: selectable ? 0 : undefined,
-      onKeyDown: selectable ? (e: React.KeyboardEvent) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(g.latest.key) } } : undefined,
-      'aria-current': selected ? ('true' as const) : undefined,
+      pointer,
+      /** 解の行（フォーカスと Enter／Space を受ける。2 行目のテンソルの行は `pointer` だけ） */
+      main: {
+        ...pointer,
+        tabIndex: selectable ? 0 : undefined,
+        onKeyDown: selectable ? (e: React.KeyboardEvent) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(key) } } : undefined,
+        'aria-current': selected ? ('true' as const) : undefined,
+      },
     }
   }
   // 行ごとに 1 回だけ作り、表の行・テンソルの行・狭い並びで使い回す
@@ -428,7 +441,7 @@ export function MechTable({ a, solutions, withSource, selectedKey, onSelect }: {
         <tbody>
           {groups.map(g => (
             <Fragment key={g.latest.key}>
-              <tr {...rowProps(g)}>
+              <tr {...rowProps(g).main}>
                 <td className="whitespace-nowrap border-t border-border px-2 py-1.5">{head(g.latest)}</td>
                 {tableCols.map(c => <td key={c.key} className="whitespace-nowrap border-t border-border px-2 py-1.5 text-white">{c.value(g.latest) ?? ''}</td>)}
                 {/* 注記は長い言語で幅を越えるので折り返す（「更新 N 件」の釦だけは折り返さない） */}
@@ -436,7 +449,7 @@ export function MechTable({ a, solutions, withSource, selectedKey, onSelect }: {
               </tr>
               {/* テンソルの 6 成分は列にすると表が窮屈になるので、行の下に表の幅で添える */}
               {tensorCol && tensorCol.value(g.latest) !== null && (
-                <tr className={rowProps(g).className} onClick={rowProps(g).onClick}>
+                <tr {...rowProps(g).pointer}>
                   <td />
                   <td colSpan={tableCols.length + 1} className="px-2 pb-1.5 pt-0 text-[11px] text-secondary">{tensorCol.head} {tensorCol.value(g.latest)}</td>
                 </tr>
@@ -444,14 +457,14 @@ export function MechTable({ a, solutions, withSource, selectedKey, onSelect }: {
               {open.has(g.latest.key) && g.older.map((o, i) => (
                 // 公表時刻の無い版が並んでも鍵が重ならないよう、並びの番号を添える
                 <Fragment key={`${o.publishedAt ?? o.key}#${i}`}>
-                  <tr className="text-secondary">
+                  <tr {...rowProps(g).pointer} className={`text-secondary ${rowProps(g).pointer.className ?? ''}`}>
                     <td className="px-2 py-1" />
                     {tableCols.map(c => <td key={c.key} className="whitespace-nowrap px-2 py-1">{c.value(o) ?? ''}</td>)}
                     <td />
                   </tr>
                   {/* 前の版のテンソルも、最新の版と同じく行の下に添える（狭い並びの 2 行目と同じく値を落とさない） */}
                   {tensorCol && tensorCol.value(o) !== null && (
-                    <tr className="text-secondary">
+                    <tr {...rowProps(g).pointer} className={`text-secondary ${rowProps(g).pointer.className ?? ''}`}>
                       <td />
                       <td colSpan={tableCols.length + 1} className="px-2 pb-1 pt-0 text-[11px]">{tensorCol.head} {tensorCol.value(o)}</td>
                     </tr>
@@ -466,7 +479,7 @@ export function MechTable({ a, solutions, withSource, selectedKey, onSelect }: {
   ) : (
       <div className="flex flex-col">
         {groups.map(g => (
-          <div key={g.latest.key} {...rowProps(g)} className={`border-t border-border py-1.5 ${rowProps(g).className ?? ''}`}>
+          <div key={g.latest.key} {...rowProps(g).main} className={`border-t border-border py-1.5 ${rowProps(g).main.className ?? ''}`}>
             <div className="flex flex-wrap items-center gap-x-2">
               {head(g.latest)}
               {g.latest.mw != null && <b className="text-white">Mw {g.latest.mw.toFixed(1)}</b>}

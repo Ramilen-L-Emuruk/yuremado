@@ -51,9 +51,13 @@ export function clampPitch(pitch: number): number {
   return Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch))
 }
 
-/** 世界の (北, 東, 下) を、画面の (右, 上, 手前) へ。手前は正が見る人の側 */
+/**
+ * 世界の (北, 東, 下) を、画面の (右, 上, 手前) へ。手前は正が見る人の側。
+ * 最初の向きは、南から北を見る向き（東が右・上が上・北が奥）。右手系にするため、手前は北ではなく南向き（−北）に取る
+ * （手前を北に取ると鏡に映した像になり、北を上・下を奥にして見下ろしたとき東が左に来る）
+ */
 export function toScreen(v: Vec3, view: ViewAngles): Vec3 {
-  const e = v[1], u = -v[2], n = v[0]
+  const e = v[1], u = -v[2], n = -v[0]
   const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw), cp = Math.cos(view.pitch), sp = Math.sin(view.pitch)
   const x1 = e * cy + n * sy
   const z1 = -e * sy + n * cy
@@ -67,7 +71,7 @@ export function fromScreen(a: Vec3, view: ViewAngles): Vec3 {
   const z1 = -a[1] * sp + a[2] * cp
   const e = a[0] * cy - z1 * sy
   const n = a[0] * sy + z1 * cy
-  return [n, e, -u]
+  return [-n, e, -u]
 }
 
 /**
@@ -76,7 +80,7 @@ export function fromScreen(a: Vec3, view: ViewAngles): Vec3 {
  */
 export function initialView(p: NodalPlane): ViewAngles {
   const f = p.strike * D2R
-  return faultTypeOf(p) === 'strikeSlip' ? { yaw: -f + 0.35, pitch: 1.15 } : { yaw: -f + 0.45, pitch: 0.5 }
+  return faultTypeOf(p) === 'strikeSlip' ? { yaw: f + 0.35, pitch: 1.15 } : { yaw: f + 0.45, pitch: 0.5 }
 }
 
 /** ずれのループ 1 巡の長さ（ミリ秒） */

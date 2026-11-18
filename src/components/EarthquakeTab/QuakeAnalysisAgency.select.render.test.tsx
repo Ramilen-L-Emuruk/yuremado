@@ -52,6 +52,37 @@ describe('MechTable の行の選択', () => {
     expect(selectedRows(container)).toEqual([rows[0]])
   })
 
+  it('ホバーの色は、解の行とモーメントテンソルの行の 2 行にそろって付き、外すと消える（正と対照）', () => {
+    const { container } = render(<Harness solutions={emsc} />)
+    const rows = [...container.querySelectorAll<HTMLElement>('tbody tr')]
+    const first = rows[0], tensor = rows[1], second = rows[2]
+    const hoverBg = (r: HTMLElement) => r.className.includes('bg-[#222d3a]')
+    expect(hoverBg(first)).toBe(false)
+    fireEvent.mouseEnter(first)
+    expect(hoverBg(first)).toBe(true)
+    expect(hoverBg(tensor)).toBe(true)
+    // [対照] 隣の解の行には付かない
+    expect(hoverBg(second)).toBe(false)
+    // テンソルの行へ移っても、同じ解の 2 行は付いたまま
+    fireEvent.mouseLeave(first)
+    fireEvent.mouseEnter(tensor)
+    expect(hoverBg(first)).toBe(true)
+    expect(hoverBg(tensor)).toBe(true)
+    fireEvent.mouseLeave(tensor)
+    expect(hoverBg(first)).toBe(false)
+    expect(hoverBg(tensor)).toBe(false)
+  })
+
+  it('選んだ行は、ホバーより選んだ色を優先し、2 行そろって選んだ色になる（安全弁）', () => {
+    const { container } = render(<Harness solutions={emsc} />)
+    const rows = [...container.querySelectorAll<HTMLElement>('tbody tr')]
+    fireEvent.click(rows[0])
+    fireEvent.mouseEnter(rows[0])
+    expect(rows[0].className).toContain('bg-[#24303d]')
+    expect(rows[1].className).toContain('bg-[#24303d]')
+    expect(rows[0].className).not.toContain('bg-[#222d3a]')
+  })
+
   it('キーボードでは Enter と Space で選べ、ほかのキーでは選ばない（対照）', () => {
     const { container } = render(<Harness solutions={emsc} />)
     const rows = [...container.querySelectorAll<HTMLElement>('tbody tr[tabindex="0"]')]
