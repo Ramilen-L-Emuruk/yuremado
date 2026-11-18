@@ -7,7 +7,7 @@ import type { ReplayEntry, ReplayPayload } from '../types/replay'
 import { intensityLabelWithOrAbove, intensityLabelWithApproxAbove } from '../utils/intensity'
 import { isMaxScaleUnreceived } from '../utils/quakePoints'
 import { magnitudeWithConditionText, magnitudeConditionText } from '../utils/formatters'
-import type { Messages } from '../i18n/messages'
+import type { Locale, Messages } from '../i18n/messages'
 import { useMessagesRef, usePlaceNamesRef } from '../i18n/I18nProvider'
 import type { PlaceNameLookup } from '../i18n/placeNames'
 import {
@@ -35,7 +35,8 @@ import {
   playAlertSound, ttsDelayFor, maxTtsDelay, speechNotBefore, msUntilAudioTime, type AlertSoundType,
 } from '../utils/alertSound'
 import { registerPendingSpeechProbe } from '../utils/pendingSpeech'
-import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
+import { getSpeechLocale } from '../utils/speechLocale'
+import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, type SpeechUtterance, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
 import {
   recordReplayEvent, nextSpeechId, truncateReplayText, withReplayTelegramContext,
   currentReplayTelegram, captureReplayTelegramContext, rememberReplayTelegram, latestReplayTelegram,
@@ -44,10 +45,11 @@ import {
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
 import { internationalTsunamiTarget } from '../utils/internationalTsunami'
-import { internationalTsunamiToText } from '../utils/internationalTsunamiSpeech'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
+import type { KyoshinDetectionPhrase } from '../utils/kyoshinRegionName'
+// 読み上げの文を組む関数は、画面の言語の組（`speechTextFor`）から引く（下の `sp`）。ここで直に読むのは言語に依らないものだけ
+import { selectObservationUpdatesToSpeak, selectArrivalsToSpeak, selectMissingToSpeak, selectWarningLevelToSpeak, applyTsunamiSpokenRefs, createQuakeSpokenState, applySpokenRefs, selectMaxHeightTimeUpdatesToSpeak, selectFirstWaveUpdatesToSpeak, speechTextFor, JA_SPEECH_TEXT, type SpeechText, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
-import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, quakeTelegramTextTarget, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
+import { joinSegments, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, quakeTelegramTextTarget, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
 import { TAB_PRIORITY, type TabPriority } from '../utils/tabPriority'
 import { hasPendingEewSpeech } from '../utils/eewPendingSpeech'
@@ -784,7 +786,8 @@ function rememberTelegramTextAsSpoken(payload: ReplayPayload, spoken: Set<string
   // 境目で読み直す。読み上げを切っている端末で既読にしても、読む機会が無いので害は無い。
   if (payload.kind === 'estimatedIntensity' || payload.kind === 'internationalTsunami') return
   const event: LiveEvent = payload.kind === 'event' ? payload.event : payload
-  const speech = telegramTextToSpeak(event, opts)
+  // 取るのは既読の鍵（電文の文）だけで声にしないので、言語によらず日本語の組で組む
+  const speech = JA_SPEECH_TEXT.telegramTextToSpeak(event, opts)
   if (!speech) return
   for (const u of speech.units) spoken.add(u.key)
 }
@@ -846,7 +849,8 @@ function rememberQuakeSpeechAsSpoken(
   opts: TtsSpeechOptions,
 ): void {
   const state = quakeSpokenStateFor(states, topic)
-  applySpokenRefs(state, earthquakeToSegments(quake, opts, true, state, true).flatMap(seg => seg.refs))
+  // 取るのは既読の鍵（言語によらない）だけで声にしないので、日本語の組で組む
+  applySpokenRefs(state, JA_SPEECH_TEXT.earthquakeToSegments(quake, opts, true, state, true).flatMap(seg => seg.refs))
   if (!isAuthoritativeQuakeReport(quake)) return
   // **既に積んである主題では容量を見ない。** 同じ地震の確定情報は窓の手前に何通もあり、
   // そのたびに判定すると、上限へ届いた後は「積み直すだけ」で記憶が丸ごと消える。
@@ -1164,6 +1168,12 @@ function eewOngoingTitleText(levels: ReadonlyMap<string, 0 | 1 | 2>, event: EEWA
   )
 }
 
+/**
+ * 読み上げる文と、その文の言語。**言語は文を組んだ組の言語**（`SpeechText.locale`）で、読む側でいまの言語を取り直さない。
+ * 組を通さない文（揺れ検知・国際津波の日本語の文）は `'ja'` を書いて渡す。
+ */
+type SpokenText = { readonly text: string; readonly locale: Locale }
+
 export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const {
     settings, title, earthquakesRef, tsunamisRef, nankaiActiveRef,
@@ -1176,8 +1186,33 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   } = deps
   // 通知の文とウィンドウの題名を組む辞書。後から呼ばれる受信処理でも、呼ばれた時点の言語で組む
   const messagesRef = useMessagesRef()
-  // 通知の本文の地名を同じ言語へ訳す表（ウィンドウの題名と読み上げは日本語の名前のまま）
+  // 通知の本文の地名を同じ言語へ訳す表（ウィンドウの題名は日本語の名前のまま。読み上げの地名は `speechTextFor` が言語ごとに決める）
   const placeNamesRef = usePlaceNamesRef()
+  /**
+   * 読み上げの文を組む関数の組（読み上げの言語のもの。→ `ttsText.ts` の `speechTextFor`）。
+   * **このフックの中で読み上げる文は、すべて `sp()` から組む。** 受け取った時点の言語で組むので、
+   * 言語を切り替えた直後に届いた電文から新しい言語で読む。
+   *
+   * **組は読み上げの言語（`getSpeechLocale`）から引く**（画面の言語ではない —— 画面の言語で読めないときは日本語。
+   * → `hooks/useSpeechLocale.ts`）。1 つの発話の中で句を照合するときは、組を持って使い回す。
+   *
+   * **文の言語は、その文を組んだ組の `locale` を添える**（{@link spoken}・{@link spokenIn}）。いまの読み上げの言語を読む側で
+   * 取り直さない —— 組が日本語へ落ちた回（語表から組を作れなかった）や、組んでから読むまでの待ちの間に言語が変わった回に、
+   * 文と声の言語が食い違う。
+   */
+  // 組は呼んだ時点の言語と地名の引きで引く（地名の表の読み込みは再レンダーを起こさないので、レンダー時に固定しない）
+  const sp = (): SpeechText => speechTextFor(getSpeechLocale(), placeNamesRef.current)
+  /** 組 `st` で組んだ文に、その組の言語を添える。 */
+  const spokenIn = (st: SpeechText, text: string): SpokenText => ({ text, locale: st.locale })
+  /** いまの組で文を組み、その組の言語を添える。組んだ文を後で読むときも、言語はここで決まったまま運ばれる。 */
+  const spoken = (build: (st: SpeechText) => string): SpokenText => {
+    const st = sp()
+    return spokenIn(st, build(st))
+  }
+  /**
+   * 読み上げの部品へ渡す形（文と文の言語。→ `SpeechUtterance`）。日本語は素の文字列のまま渡す
+   */
+  const utteranceOf = (text: string, locale: Locale): SpeechUtterance => (locale === 'ja' ? text : { text, locale })
 
   /**
    * 最新の設定。**`useCallback([])` で包んだ関数から読むためだけに持つ**
@@ -2005,6 +2040,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     let speakingCardToken: number | null = null
     const step = () => {
       const spoken = speak()
+      // 文の言語。`speak()` は文をこの瞬間の `sp()` の組で組む（待ちを挟まない）ので、同じ瞬間に引いた組の言語が文の言語になる。
+      // いまの読み上げの言語ではなく組の言語を取るのは、組が日本語へ落ちた回に日本語と添えるため（→ `SpokenText`）
+      const textLocale = sp().locale
       if (spoken === null) return
       const { text, shouldStillPlay, onSettled } = typeof spoken === 'string'
         ? { text: spoken, shouldStillPlay: undefined, onSettled: undefined }
@@ -2031,7 +2069,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       })
       const replayStartedAt = Date.now()
       const playing = speakWithVoicevox(
-        settings.voicevoxUrl, text, settings.voicevoxSpeakerId, settings.soundVolume, shouldStillPlay,
+        settings.voicevoxUrl, utteranceOf(text, textLocale), settings.voicevoxSpeakerId, settings.soundVolume, shouldStillPlay,
         undefined, replayChunkRecorder(replaySpeechId),
       )
       // **終わりは包む前の約束から出す。** 下の `capSpeechWait` は待ちの上限で先に解決するが、
@@ -2331,6 +2369,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    */
   const speakNonEEW = (
     text: string,
+    /** 文の言語（文を組んだ瞬間の読み上げの言語。→ `utteranceOf`） */
+    textLocale: Locale,
     priority: SpeechPriority,
     /** 読み上げの主題。同格どうしで待つかの判定に使う（`MUTUAL_YIELD_TOPICS`）。 */
     topic: SpeechTopic,
@@ -2544,7 +2584,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const notifyFollow = followToken !== undefined || unreceivedToken !== undefined
         || telegramTextToken !== undefined || !!onSpokenRefs
       const done = speakWithVoicevox(
-        settings.voicevoxUrl, text, settings.voicevoxSpeakerId, settings.soundVolume, undefined, prewarmed,
+        settings.voicevoxUrl, utteranceOf(text, textLocale), settings.voicevoxSpeakerId, settings.soundVolume, undefined, prewarmed,
         // **記録を先に置けるのは `replayChunk` が投げないから**（記録層の境界の不変条件）。
         // 投げうる形に戻すなら、追従（`notifyChunk`）が一度も呼ばれなくなるので別々に囲うこと
         // —— `chainEEWSpeech` が `begin` と `follow` を分けて囲っているのと同じ理由。
@@ -2656,7 +2696,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * 割り込んだ側が自分で画面を取るため、放っておけば正しい方へ落ち着く。
    */
   const speakNonEEWDelayed = (
-    text: string,
+    /**
+     * 読み上げる文と、その文の言語（{@link SpokenText}）。**言語を省く形は受けない** —— 省いた文にいまの読み上げの言語を
+     * 当てると、組を通さない日本語の文や、組んでから待った文に別の言語の声が付く。組で組んだ文は `spoken`・`spokenIn` で包む
+     */
+    input: SpokenText,
     priority: SpeechPriority,
     delay: number,
     /** 読み上げの主題（取り下げは同じ主題どうしに限る。理由は `SpeechTopic`）。 */
@@ -2698,6 +2742,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
      */
     dropBeforeSpeaking?: () => boolean,
   ) => {
+    const { text, locale: textLocale } = input
     // 予約した時点で、自分より重い読み上げが走っていたか。**先出しでタブを取るかの判断だけに使う**
     // （取り下げの判定は下の連番で行う。あちらは到来順そのものを見るので、予約時に塞がっていたか
     // を問う必要がない）。
@@ -2730,7 +2775,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     }
     // 間を置いている最中に合成を済ませておく。通知音が鳴り終わってから声が出るまでの空白は、
     // ほぼこの合成時間だった（実測: LAN 越しの VOICEVOX で 150〜350ms）。
-    const prewarmed = prewarmVoicevox(settings.voicevoxUrl, text, settings.voicevoxSpeakerId)
+    const prewarmed = prewarmVoicevox(settings.voicevoxUrl, utteranceOf(text, textLocale), settings.voicevoxSpeakerId)
     /**
      * 自分より後に到来した重い読み上げに追い越されていたら、取り下げて真を返す。
      *
@@ -2783,6 +2828,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         if (dropIfStale()) return
         speakNonEEW(
           text,
+          textLocale,
           priority,
           topic,
           // 声に出す瞬間にまとめて行う（画面を合わせる・読み上げた値を既読へ移す）
@@ -2838,10 +2884,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    *   鍵の両方に入れる —— 種別だけにすると、別の事象の取消が同じ文面の理由を運んだとき 2 通目が黙り、
    *   数秒内に続いた別の事象の取消どうしでは先の理由が後の予約に追い越されて落ちる。
    */
-  const speakDeferredCancelReason = (infoName: string, cancelText: string | undefined, subject: string) => {
+  const speakDeferredCancelReason = (infoNameOf: (st: SpeechText) => string, cancelText: string | undefined, subject: string) => {
     if (!settings.ttsEnabled) return
-    const text = deferredCancelReasonToSpeak(infoName, cancelText)
+    const st = sp()
+    // 前置きの情報の名前は、理由の文を組む組から引く（日本語の名前を直に渡すと、組の言語と名前の言語が食い違いうる）
+    const text = st.deferredCancelReasonToSpeak(infoNameOf(st), cancelText)
     if (!text) return
+    // 言語は組んだこの時点で決める（下の待ちの間に読み上げの言語が変わっても、組んだ言語の声で読む）
+    const reason = spokenIn(st, text)
     const key = `cancelReason:${subject}|${text}`
     const alreadySpoken = () => {
       if (!spokenTelegramTextRef.current.has(key)) return false
@@ -2854,7 +2904,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     scheduleSpeech(TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS, () => {
       if (alreadySpoken()) return
       speakNonEEWDelayed(
-        text,
+        reason,
         SPEECH_PRIORITY.commentary,
         0,
         `cancelReason:${subject}`,
@@ -2899,10 +2949,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         title.releaseTitle('lpgm', lpgmEvent.eventId)
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
-            lpgmToText(lpgmEvent, ttsRegionOptions(settings), false),
+            spoken(st => st.lpgmToText(lpgmEvent, ttsRegionOptions(settings), false)),
             SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCancel'), `lpgm:${lpgmEvent.eventId}`,
             undefined, undefined, undefined,
-            () => speakDeferredCancelReason('長周期地震動に関する観測情報', lpgmEvent.cancelText, `lpgm:${lpgmEvent.eventId}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.lpgm, lpgmEvent.cancelText, `lpgm:${lpgmEvent.eventId}`),
           )
         } else {
           // 読み上げが無効な端末でも理由は地震カードの報の一覧に残る（→ `lpgmRetraction`）。記録にも残す
@@ -2916,9 +2966,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 声が出ない端末では追従でタブが動かないため、受信時に要求してフォールバックする。
       const isNewLpgm = !seenLpgmEventIdsRef.current.has(lpgmEvent.eventId)
       const lpgmSpeech = settings.ttsEnabled
-        ? lpgmToText(lpgmEvent, ttsRegionOptions(settings), isNewLpgm)
-        : ''
-      if (!lpgmSpeech) {
+        ? spoken(st => st.lpgmToText(lpgmEvent, ttsRegionOptions(settings), isNewLpgm))
+        : null
+      if (!lpgmSpeech?.text) {
         log.info('[tab] earthquake を要求 (長周期地震動・読み上げ無し)')
         setActiveTabNonRealtime('earthquake')
       }
@@ -2941,7 +2991,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       title.scheduleTitleRevert('lpgm', lpgmEvent.eventId)
       // 取消の通知で言う地名は、通知を出したときだけ `notifySpecialInfo` が一緒に覚える（取消の電文は震源を持たない）
       notifySpecialInfo({ kind: 'lpgm', data: lpgmEvent })
-      if (lpgmSpeech) {
+      if (lpgmSpeech?.text) {
         // 主題は地震情報と分ける。内容が別軸（震度と長周期地震動階級）なので、片方が
         // もう片方の言い換えにはならない（割り込みは従来どおり許す）。
         speakNonEEWDelayed(
@@ -3014,7 +3064,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // **読み上げ文は常に非空**（`estimatedIntensityToText` は時刻が読めなくても末尾の句を
         // 返す）。長周期のような「文が空なら受信時要求へ落とす」分岐が要らないのはそのため。
         speakNonEEWDelayed(
-          estimatedIntensityToText(ei.arrivalTime, isNew !== false), SPEECH_PRIORITY.normal,
+          spoken(st => st.estimatedIntensityToText(ei.arrivalTime, isNew !== false)), SPEECH_PRIORITY.normal,
           ttsDelayFor('earthquakeInfo'), `estimatedIntensity:${estimatedIntensityTopicKey(estimatedIntensityTopicAnchorsRef.current, ei)}`,
           { tab: 'earthquake', priority: TAB_PRIORITY.quake },
           undefined, undefined, () => openDistribution(true),
@@ -3050,9 +3100,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         title.releaseTitle('earthquakeCount', count.eventId)
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
-            earthquakeCountToText(count), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCancel'), 'earthquakeCount',
+            spoken(st => st.earthquakeCountToText(count)), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCancel'), 'earthquakeCount',
             undefined, undefined, undefined,
-            () => speakDeferredCancelReason('地震回数に関する情報', count.cancelText, `earthquakeCount:${count.id}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.earthquakeCount, count.cancelText, `earthquakeCount:${count.id}`),
           )
         }
         return
@@ -3072,8 +3122,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (settings.ttsEnabled) {
         // 帯で伝える情報なのでタブは動かさない（理由は上）。伝える区間を選べない報
         // （回数を伴わない発表報など）でも `earthquakeCountToText` は種別名を返す。
-        const countSpeech = earthquakeCountToText(count)
-        if (countSpeech) {
+        const countSpeech = spoken(st => st.earthquakeCountToText(count))
+        if (countSpeech.text) {
           speakNonEEWDelayed(
             countSpeech, SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCount'), 'earthquakeCount',
           )
@@ -3104,9 +3154,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // パネルも開かない。
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
-            quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, 0, 'quakeNotice',
+            spoken(st => st.quakeNoticeToText(notice)), SPEECH_PRIORITY.commentary, 0, 'quakeNotice',
             undefined, undefined, undefined,
-            () => speakDeferredCancelReason('地震・津波に関するお知らせ', notice.body, `quakeNotice:${notice.id}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.quakeNotice, notice.body, `quakeNotice:${notice.id}`),
           )
         }
         return
@@ -3119,7 +3169,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       if (settings.ttsEnabled) {
         speakNonEEWDelayed(
-          quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCommentary'), 'quakeNotice',
+          spoken(st => st.quakeNoticeToText(notice)), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCommentary'), 'quakeNotice',
         )
       }
       return
@@ -3146,9 +3196,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         title.releaseTitle('nankaiCommentary', commentary.id)
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
-            nankaiCommentaryToText(commentary), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCancel'),
+            spoken(st => st.nankaiCommentaryToText(commentary)), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCancel'),
             'nankaiCommentary', undefined, undefined, undefined,
-            () => speakDeferredCancelReason('南海トラフ地震関連解説情報', commentary.body, `nankaiCommentary:${commentary.eventId}`),
+            () => speakDeferredCancelReason(st => st.INFO_NAME.nankaiCommentary, commentary.body, `nankaiCommentary:${commentary.eventId}`),
           )
         }
         return
@@ -3168,7 +3218,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 最下位の専用層を使う（理由は SPEECH_PRIORITY の commentary の注記）。
         // 帯で伝える情報なのでタブは動かさない（パネルの展開は expandPanelForSpecialInfo が担う）。
         speakNonEEWDelayed(
-          nankaiCommentaryToText(commentary), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCommentary'),
+          spoken(st => st.nankaiCommentaryToText(commentary)), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCommentary'),
           'nankaiCommentary',
         )
       }
@@ -3188,8 +3238,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 読み上げは soundEnabled と独立に ttsEnabled のみで判定する（AUD-7）。
         if (settings.ttsEnabled) {
           const ttsText = event.kind === 'nankai'
-            ? nankaiToText(event.data)
-            : kohatsuToText(event.data)
+            ? spoken(st => st.nankaiToText(event.data))
+            : spoken(st => st.kohatsuToText(event.data))
           // 帯で伝える情報なのでタブは動かさない（理由は関連解説情報と同じ）
           // 臨時情報と後発地震注意情報は主題を分ける。どちらも `high` だが互いに言い換えでは
           // ないため、まとめると一方の発表がもう一方を無音のまま消す。
@@ -3219,13 +3269,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // （取り消されたはずの臨時情報を、そのあと読み上げてしまう）。
           // 後発地震注意情報の取消も読む（2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」）。
           // 取消の長い理由は別の発話で読む（→ `speakDeferredCancelReason`。理由は電文の `body`）。
-          const name = event.kind === 'nankai' ? '南海トラフ地震臨時情報' : '北海道・三陸沖後発地震注意情報'
+          const nameOf = (st: SpeechText) => (event.kind === 'nankai' ? st.INFO_NAME.nankai : st.INFO_NAME.kohatsu)
           const retracted = event.data.retracted === true
           speakNonEEWDelayed(
-            event.kind === 'nankai' ? nankaiToText(event.data) : kohatsuToText(event.data),
+            event.kind === 'nankai' ? spoken(st => st.nankaiToText(event.data)) : spoken(st => st.kohatsuToText(event.data)),
             SPEECH_PRIORITY.high, ttsDelayFor('specialInfoCancel'), event.kind === 'nankai' ? 'nankai' : 'kohatsu',
             undefined, undefined, undefined,
-            retracted ? () => speakDeferredCancelReason(name, event.data.body, `${event.kind}:${event.data.eventId}`) : undefined,
+            retracted ? () => speakDeferredCancelReason(nameOf, event.data.body, `${event.kind}:${event.data.eventId}`) : undefined,
           )
         }
       }
@@ -3269,7 +3319,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       if (settings.ttsEnabled) {
         speakNonEEWDelayed(
-          internationalTsunamiToText(intl, quakeName), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeInfo'),
+          // 日本語の文は中継のプッシュ通知と同じ（→ `ttsText.ts` の `internationalTsunamiToText`）
+          spoken(st => st.internationalTsunamiToText(intl, quakeName)), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeInfo'),
           `internationalTsunami:${intl.originTime ?? intl.id}`,
           target ? { tab: 'earthquake', priority: TAB_PRIORITY.quake } : undefined,
           undefined, undefined, target ? selectCard : undefined,
@@ -3314,7 +3365,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 出ないが、`ttsReadTelegramText` はそれとは独立に永続化される。読み上げを切った端末で
     // 有効な値が残っていると、マスタートグルを切ったのに声が出る。
     if (!settings.ttsEnabled) return
-    const speech = telegramTextToSpeak(event, ttsRegionOptions(settings))
+    const st = sp()
+    const speech = st.telegramTextToSpeak(event, ttsRegionOptions(settings))
     if (!speech) return
     // **まだ声にしていない文だけを読む。** 既読の更新は**声に出す瞬間**（`onSpeakStart`）で、
     // 予約した時点で更新すると待ちきれず黙った分まで既読になり二度と読まれない（他の既読と同じ規約）。
@@ -3376,7 +3428,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         ? telegramTextSubject(event.kind, quakeTelegramTextTarget(event))
         : telegramTextSubject(event.kind)
     speakNonEEWDelayed(
-      text,
+      spokenIn(st, text),
       SPEECH_PRIORITY.commentary,
       0,
       // **主題は地震（事象）ごと**（2026-10-23 ユーザー選択「地震ごとに分ける (Recommended)」）。
@@ -3650,9 +3702,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 正しく記録する。「差分を組む直前に確定させる」という決まりの対象外
         // （→ docs/spec/audio-tts-spec.md §4「既読になるのは「声になった分」だけ」）。
         speakNonEEWDelayed(
-          retracted
-            ? earthquakeReportCancelToText(retracted.issueType, retracted.reportTime, event.cancelText)
-            : earthquakeCancelToText(original?.time ?? null, event.cancelText),
+          spoken(st => retracted
+            ? st.earthquakeReportCancelToText(retracted.issueType, retracted.reportTime, event.cancelText)
+            : st.earthquakeCancelToText(original?.time ?? null, event.cancelText)),
           SPEECH_PRIORITY.normal,
           ttsDelayFor('earthquakeCancel'),
           `quake:${cancelQuakeKey}`,
@@ -3660,7 +3712,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           undefined,
           undefined,
           // 前置きの情報名は、本体の文と同じ `retracted` から採る（名乗りを揃える）
-          () => speakDeferredCancelReason(retracted ? retracted.issueType : '地震情報', event.cancelText, `quake:${cancelQuakeKey}`),
+          () => speakDeferredCancelReason(
+            st => (retracted ? st.reportNameToSay(retracted.issueType) : st.INFO_NAME.quake), event.cancelText, `quake:${cancelQuakeKey}`,
+          ),
           // **どの地震について語っているか。** 取消の読み上げのあいだ、一覧を取消カードへ寄せる
           // （→ `quakeSpeakingCard`）。鍵は主題と同じものを渡す。
           cancelQuakeKey,
@@ -3890,9 +3944,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         if (retractNotice && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
           showBrowserNotification(retractNotice.title, retractNotice.body, TSUNAMI_OBS_NOTIFICATION_TAG, retractNotice.requireInteraction, retractNotice.open)
         }
-        if (settings.ttsEnabled && (event.headType === 'VTSE51' || event.headType === 'VTSE52')) {
+        const retractedHeadType = event.headType
+        if (settings.ttsEnabled && (retractedHeadType === 'VTSE51' || retractedHeadType === 'VTSE52')) {
           speakNonEEWDelayed(
-            tsunamiPartialRetractionToText(event.headType),
+            spoken(st => st.tsunamiPartialRetractionToText(retractedHeadType)),
             SPEECH_PRIORITY.normal, 0, 'tsunamiObs',
             { tab: 'tsunami', priority: TAB_PRIORITY.tsunami },
           )
@@ -3954,7 +4009,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         }
         if (settings.ttsEnabled) {
           speakNonEEWDelayed(
-            tsunamiCancelToText(event.cancelReason, event.cancelText),
+            spoken(st => st.tsunamiCancelToText(event.cancelReason, event.cancelText)),
             SPEECH_PRIORITY.high,
             ttsDelayFor('tsunamiCancel'),
             'tsunami',
@@ -3964,7 +4019,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 理由（`cancelText`）を運ぶのは誤報の取消だけ。解除・失効の本体は「津波警報等」を名乗らない
             // （→ `tsunamiCancelToText`）ので、前置きと名乗りがずれないよう取消に限る。
             event.cancelReason === 'retracted'
-              ? () => speakDeferredCancelReason('津波警報等', event.cancelText, `tsunami:${event.eventId || event.id}`)
+              // 前置きの名前は読み上げの言語の語表から引く（取消の文の名乗りと同じ語）
+              ? () => speakDeferredCancelReason(st => st.TSUNAMI_WARNINGS_ETC_NAME, event.cancelText, `tsunami:${event.eventId || event.id}`)
               : undefined,
           )
         }
@@ -4074,8 +4130,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                   // 発話するものが決まった（または黙ると決めた）時点で予約は消化された。
                   eewCancelSpeechRef.current.delete(key)
                   // 本体の文を組み終えてから理由を予約する（組み立てが例外を投げたとき理由だけが鳴らないように）
-                  const cancelSpeech = eewCancelToText(event, firstIssueTime)
-                  speakDeferredCancelReason('緊急地震速報', event.cancelText, `eew:${key}`)
+                  const cancelSpeech = sp().eewCancelToText(event, firstIssueTime)
+                  speakDeferredCancelReason(st => st.INFO_NAME.eew, event.cancelText, `eew:${key}`)
                   return cancelSpeech
                 },
                 () => followSpeechTab('realtime', TAB_PRIORITY.eewUrgent),
@@ -4426,8 +4482,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // `scalePhrase` と同じ値を使うため、ここで 1 回だけ読む。
             const noForecastWaited = eewNoForecastSettledRef.current.has(key)
             const text = scaleUnchanged
-              ? (confirmedLpgm === 0 ? EEW_LPGM_CLASS_ZERO_TEXT : eewLpgmOnlyText(confirmedLpgm, confirmedLpgmInfo?.over === true))
-              : eewIntensityText(confirmedScale, confirmedLpgm, latest, noForecastWaited, announceUpgrade, confirmedLpgmInfo?.over === true, ttsRegionOptions(settings))
+              ? (confirmedLpgm === 0 ? sp().EEW_LPGM_CLASS_ZERO_TEXT : sp().eewLpgmOnlyText(confirmedLpgm, confirmedLpgmInfo?.over === true))
+              : sp().eewIntensityText(confirmedScale, confirmedLpgm, latest, noForecastWaited, announceUpgrade, confirmedLpgmInfo?.over === true, ttsRegionOptions(settings))
             if (!text) {
               // 想定外。eewIntensityText 経由なら eewScaleOnlyText が常に非空を返す
               // （noForecastText が全ケースをカバーするため）。scaleUnchanged 経由の
@@ -4459,9 +4515,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // **この発話のどの句がどの値を運ぶか**（下の `onSettled` が既読を戻す単位）。
             // **`text` と同じ材料から作ること** —— 別に組み立てると、文面を変えたときに
             // 判定だけが古い形のまま残る。`eewIntensityText` は内部でこの 2 つを繋いでいる。
-            const scalePhrase = scaleUnchanged ? '' : eewScaleOnlyText(confirmedScale, latest, noForecastWaited)
-            const lpgmPhrase = spokenLpgm.zeroStated ? EEW_LPGM_CLASS_ZERO_TEXT : eewLpgmOnlyText(spokenLpgm.cls, spokenLpgm.over)
-            const upgradePhrase = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
+            const scalePhrase = scaleUnchanged ? '' : sp().eewScaleOnlyText(confirmedScale, latest, noForecastWaited)
+            const lpgmPhrase = spokenLpgm.zeroStated ? sp().EEW_LPGM_CLASS_ZERO_TEXT : sp().eewLpgmOnlyText(spokenLpgm.cls, spokenLpgm.over)
+            const upgradePhrase = announceUpgrade ? sp().EEW_UPGRADE_PHRASE : ''
             // 組み立てとずれていないかの検算。ずれても「声になっていない」側へ倒れて同じ値を
             // 読み直すだけだが、黙ってずれると気づけないので記録に残す。
             // **間引く。** ずれは組み立ての誤りなので、一度起きれば報のたびに繰り返す。
@@ -4889,7 +4945,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               // 順序）。先に書き換えると、生成で例外が出たときに `onSettled` へ到達しないまま
               // catch へ落ち、「警報を伝えた」記録と「鳴っている」記録が残る。以後この EEW では
               // 言い直しも前置きも二度と成立せず、警報が永久に声にならない。
-              const text = eewAlertToText(latest, kind)
+              const text = sp().eewAlertToText(latest, kind)
               // 「緊急地震速報」と切り出した時点で警報だと伝えている。第 2 フェーズで格上げを
               // 読み直さないよう、既読の区分として記録する。記録しないと初報から警報だった
               // EEW でも「切り替わりました」と言ってしまう。**記録は発話の直前だけで行う**——
@@ -4970,7 +5026,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 「〇〇では強い揺れに警戒してください。」が先に出て順序が入れ替わる。
             const announceUpgrade = levelUpgradeOf(latest).upgraded
               && !spokenEEWUpgradePhraseRef.current.has(key)
-            const text = eewWarningRegionsText(speaking, spoken.size > 0, announceUpgrade)
+            // **組はこの発話のあいだ持ち続ける。** 下の `onSettled` で「どの句が鳴ったか」を照合するとき、そのときの組を
+            // 引き直すと、発話の途中で読み上げの言語が変わった回に、鳴らした文と別の言語の句で探して既読を誤る
+            const st = sp()
+            const text = st.eewWarningRegionsText(speaking, spoken.size > 0, announceUpgrade)
             // **前置きは発話の直前に記録する**（第 1・第 2 フェーズと同じ規律）。
             //
             // 読み切ってから（`onSettled`）記録する形では**間に合わない**。チェーンの待ちには
@@ -5057,7 +5116,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 // 重ねて消すと再発報した新しい発話の記録まで巻き込む。**地方名の側だけを
                 // 守る形にしないこと** —— 前置きだけが取り残され、同じ順序で二度読みが戻る。
                 const cancelled = retracted || eewRetractedKeysRef.current.has(key)
-                const upgradeSpoken = outcome.spokenChunks.join('').includes(EEW_UPGRADE_PHRASE)
+                const upgradeSpoken = outcome.spokenChunks.join('').includes(st.EEW_UPGRADE_PHRASE)
                 if (!cancelled && recordsUpgrade && !upgradeSpoken) {
                   spokenEEWUpgradePhraseRef.current.delete(key)
                 }
@@ -5082,11 +5141,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 // のは、地方名と締めがそろって 1 つの意味になるから（欠けた回は全部読み直す）。
                 if (abandoned) return
                 const heard = outcome.spokenChunks.join('')
-                const closingSpoken = heard.includes(EEW_WARNING_REGIONS_CLOSING)
+                const closingSpoken = heard.includes(st.EEW_WARNING_REGIONS_CLOSING)
                 // 地方名はチャンクごとに照合する。繋いだ文字列で探すと、隣り合う 2 つの名前の
                 // 継ぎ目に別の地方名が現れうる（「関東」＋「北陸」に「東北」）。今は読点が
                 // 残るので起きないが、チャンクの割り方に頼らずに済む形にしておく。
-                const nameSpoken = (r: string) => outcome.spokenChunks.some(c => c.includes(r))
+                // **照合は声にした名前で行う**（訳した言語では電文の名前が文に出ない。→ `eewWarningRegionToSay`）
+                const nameSpoken = (r: string) => outcome.spokenChunks.some(c => c.includes(st.eewWarningRegionToSay(r)))
                 if (!closingSpoken || !speaking.every(nameSpoken)) {
                   infoRegionsNotHeard(() => log.info('[eew] 警報の対象地方が最後まで声にならなかったため既読にしない（次の報で読み直す）', {
                     key, regions: speaking, spokenChunks: outcome.spokenChunks.length, closingSpoken, spoke: outcome.spoke,
@@ -5318,6 +5378,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
 
     // VOICEVOX 読み上げ（新しい情報が来たら再生中を割り込み停止して読み直す）
     if (settings.ttsEnabled && !quakeHeldBack) {
+      // 下の文はこの区間の `sp()` で組む。区間に待ちは無いので、どの `sp()` もこの組と同じ組を返す。文の言語はこの組の言語
+      const ttsSpeechText = sp()
       let ttsText: string | null = null
       // 読み上げ文は断片列でも作る。**用途は種別で違う。**
       //   津波 … カードを読み上げに追従させる（どの語がどの区域・観測点を指すか。`ttsFollow`）
@@ -5399,7 +5461,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // **震源距離順**へ反転する。読む区域と「ほか○地域」へ丸める区域の集合まで変わるので、
         // 「震源を持たない電文は距離で選ばない」という決まり（docs/spec/audio-tts-spec.md §4）に
         // 反する ―― 震度速報が津波から震源を借りた瞬間だけ、区域の選び方が静かに変わっていた。
-        ttsSegments = earthquakeToSegments(event, ttsRegionOptions(settings), isNewQuake, quakeSpokenState, readAllRegions)
+        ttsSegments = sp().earthquakeToSegments(event, ttsRegionOptions(settings), isNewQuake, quakeSpokenState, readAllRegions)
         ttsText = joinSegments(ttsSegments)
       } else if (event.kind === 'tsunami') {
         // 津波の読み上げは**原因地震の震源**を語りうる（→ `ttsText.ts` の
@@ -5587,40 +5649,41 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 第 3 引数は省略の意で undefined を渡す。第 5 引数は第1波を織り込むかの判定で、
           // **第 6 引数は最大波の観測時刻を添えるかの判定**（前に声にしたものと同じなら添えない）。
           const updateSegments = updatedObs.length > 0
-            ? tsunamiObservationUpdateToSegments(
+            ? sp().tsunamiObservationUpdateToSegments(
                 updatedObs, event.headline, maxObsPoints, prevMap,
                 spokenObsFirstWaveRef.current, spokenObsMaxHeightTimeRef.current,
               )
             : []
-          const timeSegments = tsunamiMaxHeightTimeToSegments(timeUpdatedObs, maxObsPoints)
+          const timeSegments = sp().tsunamiMaxHeightTimeToSegments(timeUpdatedObs, maxObsPoints)
           // **初出と訂正は文型が違うので別の文にする**（初出＝「〜に押し波を観測しました」／
           // 訂正＝「〜の押し波へ更新されました」。助詞は述語で決まる）。
-          const firstWaveSegments = joinWithAlso(
-            tsunamiFirstWaveToSegments(firstWaveNewObs, 'new', maxObsPoints),
-            tsunamiFirstWaveToSegments(firstWaveUpdatedObs, 'updated', maxObsPoints),
+          const firstWaveSegments = sp().joinWithAlso(
+            sp().tsunamiFirstWaveToSegments(firstWaveNewObs, 'new', maxObsPoints),
+            sp().tsunamiFirstWaveToSegments(firstWaveUpdatedObs, 'updated', maxObsPoints),
           )
-          const arrivalSegments = tsunamiArrivalToSegments(newlyArrivedObs, maxObsPoints, spokenObsFirstWaveRef.current)
+          const arrivalSegments = sp().tsunamiArrivalToSegments(newlyArrivedObs, maxObsPoints, spokenObsFirstWaveRef.current)
           // 欠測であることを先に言ってから時刻を伝える文。欠測の群の後ろに置く（観測できていないものの話）。
-          const missingSegments = joinWithAlso(
-            tsunamiMissingToSegments(newlyMissingObs, maxObsPoints),
-            tsunamiMissingMaxHeightTimeToSegments(missingTimeUpdatedObs, maxObsPoints),
+          const missingSegments = sp().joinWithAlso(
+            sp().tsunamiMissingToSegments(newlyMissingObs, maxObsPoints),
+            sp().tsunamiMissingMaxHeightTimeToSegments(missingTimeUpdatedObs, maxObsPoints),
           )
           // 数値が無いので他のどの文にも乗らない（→ `tsunamiWarningLevelToSegments`）。
           const newlyWarningLevelObs = obsInCardOrder.filter(o => isWarningLevelWorthSpeaking(o))
-          const warningLevelSegments = tsunamiWarningLevelToSegments(newlyWarningLevelObs, maxObsPoints)
+          const warningLevelSegments = sp().tsunamiWarningLevelToSegments(newlyWarningLevelObs, maxObsPoints)
           // 波高の文・到達確認の文・欠測の文はそれぞれ別の話題。接続語なしで並べると切れ目が
           // 耳で分からない（どれも「地名で〜しています」の形になる。理由は `joinWithAlso`）。
           // **確定した事実を先に、観測できていないものを後に**置く。
           // **群の並びは「確定した事実 → 観測できていないもの」。** 波高の更新 → 最大波の時刻
           // だけの更新 → 警報相当 → 到達確認 → 第1波の訂正 → 欠測。
           const rest = [timeSegments, warningLevelSegments, arrivalSegments, firstWaveSegments, missingSegments]
-            .reduce((acc, seg) => joinWithAlso(acc, seg), [] as typeof timeSegments)
+            .reduce((acc, seg) => sp().joinWithAlso(acc, seg), [] as typeof timeSegments)
           if (updateSegments.length > 0) {
             // 名乗り（「津波観測に関する情報。」）は波高の文が自前で持つ（`tsunamiObservationUpdateToSegments`）。
-            ttsSegments = joinWithAlso(updateSegments, rest)
+            ttsSegments = sp().joinWithAlso(updateSegments, rest)
           } else if (rest.length > 0) {
-            // 波高の文が無い電文では名乗りが誰も付けないので、ここで足す。
-            ttsSegments = [plain('津波観測に関する情報。'), ...rest]
+            // 波高の文が無い電文では名乗りが誰も付けないので、ここで足す（語表の名乗り。→ `tsunamiObservationLeadSegments`）。
+            // 日本語もこの報では気象庁の見出し文を読まないので、日本語以外も在処の文を言わない
+            ttsSegments = [...sp().tsunamiObservationLeadSegments(), ...rest]
           }
           // **最大波の時刻だけが動いた報も、他の観測情報と同じ層で読む。** かつて最下位に
           // 置いていたのは「伝える変化が無い報」だったからで、いまは新しい観測時刻という
@@ -5662,9 +5725,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           const forecastHeightChanged = event.headType === 'VTSE41'
             ? forecastHeightChangedAreas(event.areas, spokenForecastHeightRef.current)
             : []
-          const forecastHeightSegments = tsunamiForecastHeightChangeToSegments(forecastHeightChanged, tsunamiCardBasis.observations)
+          const forecastHeightSegments = sp().tsunamiForecastHeightChangeToSegments(forecastHeightChanged, tsunamiCardBasis.observations)
           if (forecastHeightSegments.length > 0) {
-            ttsSegments = ttsSegments ? joinWithAlso(forecastHeightSegments, ttsSegments) : forecastHeightSegments
+            ttsSegments = ttsSegments ? sp().joinWithAlso(forecastHeightSegments, ttsSegments) : forecastHeightSegments
             spokenForecastHeightAreas = forecastHeightChanged
             tsunamiIsForecastHeightChange = true
           }
@@ -5681,7 +5744,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               // **この種別も観測点を運ぶ**（2024 年能登半島地震の 6 通はいずれも 30〜31 件）。
               // 観測の変化がある報はここへ来ず、波高の文が読まれる —— そのとき満潮時刻は
               // 声にならず記憶も進まないので、**次の満潮時刻の報がその分をまとめて伝える**。
-              ttsSegments = tsunamiTideToSegments(tideReportChange(event.areas, spokenTideRef.current), event.headline)
+              ttsSegments = sp().tsunamiTideToSegments(tideReportChange(event.areas, spokenTideRef.current), event.headline)
               spokenTideAreas = event.areas
               tsunamiSpeechIsQuiet = true
             } else if ((event.observations?.length ?? 0) > 0) {
@@ -5698,9 +5761,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 // 記憶は下げないので、以後の報も同じ一文になる。どの観測点のせいかを追えるよう残す。
                 log.info('[tsunami] 読み上げた波高より下がった観測点があるため「変わりはありません」と言わない',
                   loweredObs.map(o => ({ name: o.name, spoken: spokenObsHeightRef.current.get(o.name), now: o.height })))
-                ttsSegments = tsunamiObservationLoweredSegments()
+                ttsSegments = sp().tsunamiObservationLoweredSegments()
               } else {
-                ttsSegments = tsunamiObservationNoChangeSegments()
+                ttsSegments = sp().tsunamiObservationNoChangeSegments()
               }
               tsunamiSpeechIsQuiet = true
               // **観測点を 1 つも運ばない報では黙る**（従来どおり）。区域一覧だけを載せた報
@@ -5712,9 +5775,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           }
           // **失効時刻が動いた報は、等級が動かなくても伝える**（→ `tsunamiExpiryChangeSegments`）。
           // 区域一覧だけを載せた津波予報の続報が期限だけを延ばす形がこれで、上のどの文にも乗らず黙っていた。
-          const expiryChange = tsunamiExpiryChangeSegments(event, tsunamiBeforeReport?.validDateTime, tsunamiAppliedForExpiry, tsunamiSpoken ?? undefined)
+          const expiryChange = sp().tsunamiExpiryChangeSegments(event, tsunamiBeforeReport?.validDateTime, tsunamiAppliedForExpiry, tsunamiSpoken ?? undefined)
           if (expiryChange.length > 0) {
-            ttsSegments = ttsSegments ? joinWithAlso(ttsSegments, expiryChange) : expiryChange
+            ttsSegments = ttsSegments ? sp().joinWithAlso(ttsSegments, expiryChange) : expiryChange
             // **期限が動いたことは「変化を伝えない報」ではない。** 最下位の層は待ちきれなければ黙るので、そこへ落とすと
             // 津波予報が延びた事実が一度も声にならないことがある（声にならなければ次の報では前の期限が新しい値になり、二度と言わない）。
             // **満潮時刻の報だけは最下位のまま** —— あの報は等級の発表の直後に届くので、上げると大津波警報の読み上げを切る（宣言箇所）。
@@ -5724,21 +5787,21 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 区域単位で等級が動いた報。**動いた区域だけを読む**（残っている区域はカードが示す）。
           // 全区域を挙げる発表文（`tsunamiToSegments`）へ流すと、2 区域が解除されただけの報で
           // 発表中の全区域を読み直すことになる。
-          ttsSegments = tsunamiAreaGradeChangeToSegments(tsunamiAreaChanges)
+          ttsSegments = sp().tsunamiAreaGradeChangeToSegments(tsunamiAreaChanges)
           const areaChangeSpoken = ttsSegments.length > 0
           // 等級の変化の文は予想波高を読まないので、同じ報で予想波高だけが動いた区域があれば続けて読む（観測点更新の経路と同じ判定）。
           const forecastHeightChangedOnAreaChange = event.headType === 'VTSE41'
             ? forecastHeightChangedAreas(event.areas, spokenForecastHeightRef.current)
             : []
-          const forecastHeightSegmentsOnAreaChange = tsunamiForecastHeightChangeToSegments(forecastHeightChangedOnAreaChange, tsunamiCardBasis.observations)
+          const forecastHeightSegmentsOnAreaChange = sp().tsunamiForecastHeightChangeToSegments(forecastHeightChangedOnAreaChange, tsunamiCardBasis.observations)
           if (forecastHeightSegmentsOnAreaChange.length > 0) {
-            ttsSegments = joinWithAlso(ttsSegments, forecastHeightSegmentsOnAreaChange)
+            ttsSegments = sp().joinWithAlso(ttsSegments, forecastHeightSegmentsOnAreaChange)
             spokenForecastHeightAreas = forecastHeightChangedOnAreaChange
           }
           // 警報等が残っていれば、動いた区域の文（と予想波高の文）のあとに発表文と同じ避難の呼びかけを添える
           // （→ `tsunamiAreaGradeChangeActionSegments`。予報だけが残る報・何も読まない報には足さない）。
           // 呼びかけを末尾に置くのは、区域と高さを言い終えてから行動を促すため（途中に挟むと高さの話が後付けに聞こえる）。
-          if (areaChangeSpoken) ttsSegments = [...ttsSegments, ...tsunamiAreaGradeChangeActionSegments(event)]
+          if (areaChangeSpoken) ttsSegments = [...ttsSegments, ...sp().tsunamiAreaGradeChangeActionSegments(event)]
           // 等級が動いた報と同じく、観測中（波高未確定）で新規に到達が確認された観測点も併せて読む
           const obsOnAreaChange = observationsInCardOrder(event)
           const newlyArrivedObsOnAreaChange = obsOnAreaChange
@@ -5746,18 +5809,18 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 新たに欠測となった観測点も併せて読む（判定と理由は観測点更新の経路と同じ）。
           const newlyMissingObsOnAreaChange = obsOnAreaChange.filter(o => isMissingWorthSpeaking(o))
           const newlyWarningLevelObsOnAreaChange = obsOnAreaChange.filter(o => isWarningLevelWorthSpeaking(o))
-          ttsSegments = joinWithAlso(
+          ttsSegments = sp().joinWithAlso(
             [
               ...ttsSegments,
-              ...joinWithAlso(
-                tsunamiWarningLevelToSegments(newlyWarningLevelObsOnAreaChange, maxObsPoints),
-                tsunamiArrivalToSegments(newlyArrivedObsOnAreaChange, maxObsPoints, spokenObsFirstWaveRef.current),
+              ...sp().joinWithAlso(
+                sp().tsunamiWarningLevelToSegments(newlyWarningLevelObsOnAreaChange, maxObsPoints),
+                sp().tsunamiArrivalToSegments(newlyArrivedObsOnAreaChange, maxObsPoints, spokenObsFirstWaveRef.current),
               ),
             ],
-            tsunamiMissingToSegments(newlyMissingObsOnAreaChange, maxObsPoints),
+            sp().tsunamiMissingToSegments(newlyMissingObsOnAreaChange, maxObsPoints),
           )
           // 失効時刻が動いていれば最後に添える（観測点更新の経路と同じ。等級の話・観測の話より緊急度が低い）。
-          ttsSegments = joinWithAlso(ttsSegments, tsunamiExpiryChangeSegments(event, tsunamiBeforeReport?.validDateTime, tsunamiAppliedForExpiry, tsunamiSpoken ?? undefined))
+          ttsSegments = sp().joinWithAlso(ttsSegments, sp().tsunamiExpiryChangeSegments(event, tsunamiBeforeReport?.validDateTime, tsunamiAppliedForExpiry, tsunamiSpoken ?? undefined))
           // 等級の発表と同じ扱いで、既読にするのは到達確認と欠測だけ（実測値は読んでいない）
           spokenObs = selectArrivalsToSpeak(newlyArrivedObsOnAreaChange, maxObsPoints)
           spokenMissingObs = selectMissingToSpeak(newlyMissingObsOnAreaChange, maxObsPoints)
@@ -5773,8 +5836,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // ここを渡し忘れると失効時刻が実運用で一度も声にならない
           // （→ `ttsText.ts` の `tsunamiExpirySegments`）。
           ttsSegments = isDowngrade
-            ? tsunamiDowngradeToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined)
-            : tsunamiToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined, ttsRegionOptions(settings))
+            ? sp().tsunamiDowngradeToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined)
+            : sp().tsunamiToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined, ttsRegionOptions(settings))
           // 発表文・降格文は等級の分かる全区域の予想波高を読む（`areaHeightSentence`）ので、それらを既読にしてよい。
           spokenForecastHeightAreas = event.areas.filter(a => a.grade !== 'Unknown')
           // グレード変化と同時に観測中（波高未確定）で新規到達した観測点も読み上げに含める
@@ -5802,17 +5865,17 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           const liftedChanges = canTellGrade ? tsunamiAreaChanges.filter(c => c.to === TSUNAMI_GRADE_LIFTED) : []
           // 読まない解除は既読にしない（宣言箇所の理由）。
           if (!canTellGrade) speakableAreaChanges = tsunamiAreaChanges.filter(c => c.to !== TSUNAMI_GRADE_LIFTED)
-          ttsSegments = joinWithAlso(ttsSegments, tsunamiAreaGradeChangeToSegments(liftedChanges))
+          ttsSegments = sp().joinWithAlso(ttsSegments, sp().tsunamiAreaGradeChangeToSegments(liftedChanges))
           // 等級の発表と到達確認は別の話題（観測情報の続報と同じ理由で「また、」を挟む）。
-          ttsSegments = joinWithAlso(
+          ttsSegments = sp().joinWithAlso(
             ttsSegments,
             canTellGrade
-              ? joinWithAlso(
-                joinWithAlso(
-                  tsunamiWarningLevelToSegments(newlyWarningLevelObsOnGradeChange, maxObsPoints),
-                  tsunamiArrivalToSegments(newlyArrivedObsOnGradeChange, maxObsPoints, spokenObsFirstWaveRef.current),
+              ? sp().joinWithAlso(
+                sp().joinWithAlso(
+                  sp().tsunamiWarningLevelToSegments(newlyWarningLevelObsOnGradeChange, maxObsPoints),
+                  sp().tsunamiArrivalToSegments(newlyArrivedObsOnGradeChange, maxObsPoints, spokenObsFirstWaveRef.current),
                 ),
-                tsunamiMissingToSegments(newlyMissingObsOnGradeChange, maxObsPoints),
+                sp().tsunamiMissingToSegments(newlyMissingObsOnGradeChange, maxObsPoints),
               )
               : [],
           )
@@ -5876,7 +5939,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         const spokenTsunami = tsunamiSpoken
         const memoryGen = tsunamiMemoryGenRef.current
         speakNonEEWDelayed(
-          ttsText,
+          spokenIn(ttsSpeechText, ttsText),
           speechPriority,
           ttsDelayFor(type),
           speechTopic,
@@ -6616,7 +6679,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             if (restoredSpoken) {
               // 既読を渡して組み、返ってきた参照をその既読へ積む。まだ語っていない事実だけが
               // 文になるので、同じ震源を載せた続報が何通あっても二重には積まれない。
-              applyTsunamiSpokenRefs(restoredSpoken.spoken, tsunamiToSegments(tsunami, undefined, restoredSpoken.spoken, opts).flatMap(seg => seg.refs))
+              applyTsunamiSpokenRefs(restoredSpoken.spoken, sp().tsunamiToSegments(tsunami, undefined, restoredSpoken.spoken, opts).flatMap(seg => seg.refs))
             }
             // T 時点までの観測点は「もう伝えた」ものとして扱う。**読み上げ用も埋めること。**
             // 埋め忘れると、注入後の最初の観測情報でそれまでの全観測点が読み直され、途中から
@@ -6893,14 +6956,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * 掛からず、速報を読み終えた後で読まれるので、そこをこの見直しが拾う。
    * 読み始めた検知に速報が割り込んだときは、`speakWithVoicevox` が止めて終わるだけで、続きも読み直しも無い。
    */
-  const speakKyoshinDetection = (text: string, delayMs: number, dropBeforeSpeaking: () => boolean): void => {
+  const speakKyoshinDetection = (phrase: KyoshinDetectionPhrase, delayMs: number, dropBeforeSpeaking: () => boolean): void => {
     if (!settings.ttsEnabled) {
       // 設定「揺れ検知の読み上げ」を入れていても、読み上げ自体が切れていれば鳴らない。黙った理由を残す
-      log.debug(`[kyoshin] 読み上げ（VOICEVOX）が無効のため揺れ検知を読まない: ${text}`)
+      log.debug(`[kyoshin] 読み上げ（VOICEVOX）が無効のため揺れ検知を読まない（種類 ${phrase.kind}・区域 ${phrase.regionName ?? 'なし'}）`)
       return
     }
+    // 文は読み上げの言語の組で、この時点で組む（区域名も画面の言語の名前へ引く）
     speakNonEEWDelayed(
-      text, SPEECH_PRIORITY.kyoshinDetect, delayMs, `kyoshinDetect:${++kyoshinDetectSpeechSeqRef.current}`,
+      spoken(st => st.kyoshinDetectionText(phrase)), SPEECH_PRIORITY.kyoshinDetect, delayMs, `kyoshinDetect:${++kyoshinDetectSpeechSeqRef.current}`,
       undefined, undefined, undefined, undefined, undefined, undefined, dropBeforeSpeaking,
     )
   }

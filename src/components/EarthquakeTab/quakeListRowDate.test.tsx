@@ -78,7 +78,7 @@ const renderTab = async (sort: QuakeListSort) => {
       historyView={null}
       onPickHistory={() => {}}
       onReplayQuake={() => {}}
-      replayError={null}
+      replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
     />,
   )
   await flushDataEffects()

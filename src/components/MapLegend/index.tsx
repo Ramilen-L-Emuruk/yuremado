@@ -4,6 +4,7 @@ import { readableTextColor } from '../../utils/contrast'
 import { representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
 import { HEATMAP_PERIODS, type HeatmapPeriod } from '../../utils/quakeHeatmap'
 import { useMessages } from '../../i18n/I18nProvider'
+import { Term } from '../EarthquakeTab/analysisTerm'
 
 // 地図へ重ねる凡例。中身を決めるのは legendBlocks.ts で、ここは描くだけ。
 //
@@ -394,6 +395,22 @@ export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, 
   )
 })
 
+/**
+ * ブロックの見出し。MMI の見出しは「MMI」の語だけが吹き出し（USGS の説明）を持つ。
+ * 畳んだ凡例の短い名前「MMI」は行全体が開閉なので、吹き出しは付けない（開いたときだけ出る）
+ */
+function BlockTitle({ block, mmiTip }: { block: LegendBlock; mmiTip: { text: string; src: string } }) {
+  const at = block.key === 'mmi' ? block.title.indexOf('MMI') : -1
+  if (at < 0) return <>{block.title}</>
+  return (
+    <>
+      {block.title.slice(0, at)}
+      <Term label="MMI" tip={mmiTip} />
+      {block.title.slice(at + 'MMI'.length)}
+    </>
+  )
+}
+
 function LegendBody({ blocks, collapsed, caretOpen, onToggle, m, compact, onHeatmapPeriodChange }: {
   blocks: LegendBlock[]
   collapsed: boolean
@@ -403,6 +420,7 @@ function LegendBody({ blocks, collapsed, caretOpen, onToggle, m, compact, onHeat
   compact: boolean
   onHeatmapPeriodChange: (period: HeatmapPeriod) => void
 }) {
+  const mmiTip = useMessages().quake.analysis.tips.mmi
   const representative = collapsed ? representativeBlock(blocks) : null
   const rampWidth = compact ? '8.5rem' : '10rem'
   return (
@@ -424,7 +442,23 @@ function LegendBody({ blocks, collapsed, caretOpen, onToggle, m, compact, onHeat
           <div key={block.key} className={i > 0 ? m.gap : undefined}>
             {/* **1 つ目の見出しが開閉を兼ねる。** 専用の行を足すと、開いている間ずっと
                 情報を持たない行が高さを取る。 */}
-            {i === 0 ? (
+            {i === 0 && block.key === 'mmi' ? (
+              // 見出しの「MMI」が吹き出しを持つので、行全体は開閉に使わない（ボタンの中にボタンが入るのを避ける）。
+              // 開閉は右端の ▾ だけ（2026-11-18 ユーザー選択「見出しの文字は開閉に使わず、▾だけを開閉ボタンにする」）
+              <div className={`flex w-full items-center justify-between gap-2 text-left font-bold tracking-wide text-secondary ${m.title}`}>
+                <span><BlockTitle block={block} mmiTip={mmiTip} /></span>
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  aria-expanded
+                  aria-label={block.title}
+                  // 押せる範囲は ▾ の周りに左右 8px・上下 4px 足す（見出しの文字と隙間 8px の間に収まり、「MMI」の的に重ならない）
+                  className={`-mx-2 -my-1 px-2 py-1 ${m.hit.heading}`}
+                >
+                  <Caret open={caretOpen} />
+                </button>
+              </div>
+            ) : i === 0 ? (
               <button
                 type="button"
                 onClick={onToggle}
@@ -435,7 +469,7 @@ function LegendBody({ blocks, collapsed, caretOpen, onToggle, m, compact, onHeat
                 <Caret open={caretOpen} />
               </button>
             ) : (
-              <div className={`font-bold tracking-wide text-secondary ${m.title}`}>{block.title}</div>
+              <div className={`font-bold tracking-wide text-secondary ${m.title}`}><BlockTitle block={block} mmiTip={mmiTip} /></div>
             )}
             <div className="mt-[0.1rem]">
               <Swatch swatch={block.swatch} rampWidth={rampWidth} m={m} />

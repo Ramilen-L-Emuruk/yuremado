@@ -21,6 +21,7 @@ import { getLpgmClassColor } from '../../utils/lpgm'
 import { TSUNAMI_STYLE, TSUNAMI_MISSING_COLOR } from '../../utils/tsunamiStyle'
 import { TSUNAMI_OBS_HEIGHT_STEPS } from '../Map/gl/tsunamiObsBarStyle'
 import { UNRECEIVED_COLOR } from '../Map/gl/intensityIcons'
+import { MMI_COLORS, MMI_LEGEND_STEPS, slipColorStops } from '../../services/analysisOverlay'
 import { ARRIVAL_COLOR } from '../Map/gl/tsunamiArrivalMarker'
 import { S_WAVE_COLOR, P_WAVE_COLOR } from '../Map/gl/psWaveStyle'
 import { HEATMAP_DENSITY_STOPS } from '../Map/gl/heatmapRamp'
@@ -55,6 +56,8 @@ type FormatWords = Messages['formats']
 export type LegendKey =
   | 'intensity'
   | 'unreceived'
+  | 'mmi'
+  | 'slip'
   | 'lpgm'
   | 'psWave'
   | 'tsunamiGrade'
@@ -154,6 +157,10 @@ export interface MapLegendSources {
   eewIntensity: boolean
   /** 震度を入手していない地点の印。 */
   unreceived: boolean
+  /** 海外の機関の解析の重ね: 推定の揺れ（USGS の MMI の等値線）。出していれば最大の MMI、出していなければ null */
+  analysisMmi: number | null
+  /** 海外の機関の解析の重ね: 断層のすべり。出していれば最大のすべり（m）、出していなければ null */
+  analysisSlip: number | null
   /** 長周期地震動階級（観測）。 */
   lpgm: boolean
   /** 緊急地震速報の予想長周期地震動階級（区域塗り）。 */
@@ -215,6 +222,8 @@ export const EMPTY_LEGEND_SOURCES: MapLegendSources = {
   realtimeIntensity: false,
   eewIntensity: false,
   unreceived: false,
+  analysisMmi: null,
+  analysisSlip: null,
   lpgm: false,
   eewLpgm: false,
   psWave: false,
@@ -409,6 +418,29 @@ export function buildLegendBlocks(sources: MapLegendSources, m: Messages): Legen
       title: w.unreceivedTitle,
       shortTitle: w.unreceived,
       swatch: { kind: 'chips', chips: [{ label: w.unreceived, color: UNRECEIVED_COLOR, shape: 'dot' }] },
+    })
+  }
+
+  // 海外の機関の解析の重ね。段は USGS の ShakeMap の凡例（I・II–III … X+）、すべりは 0 から最大までの帯
+  if (sources.analysisMmi !== null) {
+    blocks.push({
+      key: 'mmi',
+      title: w.analysisMmiTitle,
+      shortTitle: 'MMI',
+      swatch: { kind: 'scale', cells: MMI_LEGEND_STEPS.map(s => ({ label: s.label, color: MMI_COLORS[s.mmi] })) },
+    })
+  }
+  if (sources.analysisSlip !== null) {
+    const max = sources.analysisSlip
+    blocks.push({
+      key: 'slip',
+      title: w.analysisSlipTitle,
+      shortTitle: w.analysisSlipShort,
+      swatch: {
+        kind: 'ramp',
+        stops: slipColorStops(max).map(s => ({ at: max > 0 ? s.at / max : 0, color: s.color })),
+        ticks: [{ at: 0, label: '0' }, { at: 1, label: `${max.toFixed(1)} m` }],
+      },
     })
   }
 

@@ -34,6 +34,16 @@ describe('placeNameLookup', () => {
   })
 })
 
+describe('placeNameLookup の自前のキー', () => {
+  // 安全弁: 継いだプロパティの名前（constructor など）を訳として引かない（名前をそのまま返し、has も偽）
+  it('constructor・toString は訳に無い名前として扱う', () => {
+    const empty = { epi: {}, pref: {}, city: {}, tsunamiArea: {}, area: {}, station: {}, tsunamiStation: {} } as PlaceNameTable
+    const lookup = placeNameLookup(empty)
+    expect(lookup('epi', 'constructor')).toBe('constructor')
+    expect(lookup.has('area', 'toString')).toBe(false)
+  })
+})
+
 describe('validatePlaceNameTable', () => {
   it('種類が欠けた表・空の表を弾く', () => {
     expect(() => validatePlaceNameTable({ epi: { a: 'b' } })).toThrow('種類')

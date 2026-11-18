@@ -164,6 +164,28 @@ export function maxZoomForPolicy(map: maplibregl.Map, policy: FitZoomPolicy): nu
 }
 
 /**
+ * 寄せる関数に渡す寄り上限。数値か、**その時点の地図から上限を求める関数**（`fitMaxZoom` など）。
+ *
+ * **ペインの寸法で決まる上限は関数で渡す。** 地図の大きさが変わると、最後の寄せを新しい大きさで
+ * やり直す（`followsPaneResize`）。数値で渡すと、やり直しても前の大きさで決めた深さへ着地し、
+ * 区域集約の閾値（いまの大きさの寄り上限）より深くなって、自前の推定の面へ切り替わってしまう。
+ */
+export type ZoomCap = number | ((map: maplibregl.Map) => number)
+
+function resolveZoomCap(map: maplibregl.Map, cap: ZoomCap): number {
+  return typeof cap === 'function' ? cap(map) : cap
+}
+
+/**
+ * 共有カードの撮影が覚える寄り上限（`lastFitTargets`）。**呼び出し側が明示した上限は、関数でも
+ * 寄せた時点の値で覚える** —— 撮影の寄せ直しは、明示された上限を画面の大きさで決めた値のまま使う。
+ * 省かれた上限だけを撮影の大きさで決め直す（`cameraForTarget`）。
+ */
+function explicitMaxZoom(map: maplibregl.Map, cap: ZoomCap | undefined): number | undefined {
+  return cap === undefined ? undefined : resolveZoomCap(map, cap)
+}
+
+/**
  * 基準ペイン（`REFERENCE_SHORT_SIDE_PX`）での寄り上限。
  *
  * 実際の判定には使わない（それは常に実ペイン寸法で換算する `fitMaxZoom`）。**端末に依らない
@@ -320,6 +342,8 @@ function beginProgrammaticFlight(
     map.on('moveend', (e: unknown) => {
       if ((e as Partial<AutoCameraEventData> | null | undefined)?.flightId !== state.currentFlightId) return
       state.activeUntil = 0
+      // 最新の寄せが着地した（割り込まれた側の `moveend` は古い番号なので、ここへ来ない）
+      notifyFramingSettled(map)
     })
   }
   return { appAutoCamera: true, flightId }
@@ -586,10 +610,169 @@ function beginFit(map: maplibregl.Map, target: FitTarget, replay: () => void): b
   cancelPendingFit(map)
   lastFitTargets.set(map, target)
   lastFitReplays.set(map, replay)
+  markAppFraming(map)
   const session = captureSessions.get(map)
   if (!session) return false
   session.deferred = replay
   return true
+}
+
+/**
+ * 地図の大きさが変わってから寄せ直すまでの待ち（ms）。パネルの境界のつまみを引いている間・ウィンドウを
+ * 広げている間は `resize` が続けて来るので、止まってから 1 回だけ寄せ直す。
+ */
+export const RESIZE_REFIT_DELAY_MS = 250
+
+interface ResizeRefitState {
+  /** いまのカメラが、アプリが最後に寄せた構図のままか（利用者が地図を触ったら false）。 */
+  atAppFraming: boolean
+  /** 最後に寄せたときのペインの寸法。同じ寸法の `resize` では寄せ直さない。 */
+  paneAtFit: { width: number; height: number }
+  timer: ReturnType<typeof setTimeout> | undefined
+}
+
+/**
+ * 地図の大きさが変わったら、最後の自動の寄せを新しい大きさでやり直すための状態（地図ごとに 1 つ）。
+ *
+ * **やり直すのは、寄り上限が地図の短辺で決まるため。** 下部の波形が出る・パネルの境界のつまみを
+ * 動かす・画面を回すと地図の大きさが変わり、区域集約の閾値（`JapanMapGL` の `aggregateMaxZoom`）は
+ * 新しい大きさの寄り上限へ変わる。カメラだけが前の大きさで決めた深さに残ると、着地したズームが閾値より
+ * 深くなり、区域の塗りが自前の推定の面へ切り替わる。地図が縮んだときは、寄せた範囲の端も画から外れる。
+ *
+ * **利用者が地図を触った後はやり直さない**（その画は利用者が選んだもの）。次にアプリが寄せた時点で
+ * また追う。共有カードの撮影の間と、寸法待ちで寄せを保留している間もやり直さない（どちらも自前で
+ * 寄せ直す）。
+ */
+const resizeRefits = new WeakMap<maplibregl.Map, ResizeRefitState>()
+
+function ensureResizeRefit(map: maplibregl.Map): ResizeRefitState {
+  const existing = resizeRefits.get(map)
+  if (existing) return existing
+  const state: ResizeRefitState = { atAppFraming: false, paneAtFit: { width: 0, height: 0 }, timer: undefined }
+  const refit = () => {
+    state.timer = undefined
+    // 飛んだら、その着地（最新の飛行の `moveend`）で落ち着いたと知らせる。**飛ばずに終えたら、どの道でも
+    // ここで知らせる**（見送り・寸法 0・失敗）。知らせないと、`resize` で取り直しを見送った閾値が古いまま残る。
+    // 飛んだかは飛行の通し番号が進んだかで見る。**投げたら飛んでいない側に数える** —— 番号だけ進んで
+    // `flyTo` が投げると着地の `moveend` は来ないので、飛行中の印を落としてからここで知らせる
+    const before = programmaticFlights.get(map)?.currentFlightId ?? 0
+    let threw = false
+    try {
+      if (!followsPaneResize(map)) return
+      const { width, height } = paneSize(map)
+      if (!(Math.min(width, height) > 0)) return
+      if (width === state.paneAtFit.width && height === state.paneAtFit.height) return
+      lastFitReplays.get(map)?.()
+    } catch (e) {
+      threw = true
+      // 印を落とすのは、この寄せ直しで番号が進んだときだけ（進む前に投げたなら、飛んでいるのは別の寄せで、
+      // その印は成長フォローの「飛行が終わるまで待つ」判定が使っている。着地の `moveend` が知らせる）
+      const flights = programmaticFlights.get(map)
+      if (flights && flights.currentFlightId !== before) flights.activeUntil = 0
+      const target = lastFitTargets.get(map)
+      log.warn('[camera] 地図の大きさが変わった後の寄せ直しに失敗した（区域集約の閾値はいまの大きさで取り直す）', {
+        paneAtFit: state.paneAtFit,
+        ...(target ? paneOf(map, target) : {}),
+        cause: e,
+      })
+    } finally {
+      const flew = !threw && (programmaticFlights.get(map)?.currentFlightId ?? 0) !== before
+      if (!flew) notifyFramingSettled(map)
+    }
+  }
+  map.on('resize', () => {
+    if (!state.atAppFraming) return
+    clearTimeout(state.timer)
+    state.timer = setTimeout(refit, RESIZE_REFIT_DELAY_MS)
+  })
+  // 地図を破棄したら待ちを捨てる（破棄した地図へ寄せ直さない）
+  map.on('remove', () => {
+    clearTimeout(state.timer)
+    state.timer = undefined
+  })
+  // 利用者の操作だけを見る（アプリの寄せが起こすイベントは印で除く。→ `isAutoCameraEvent`）
+  const onInteraction = (e: unknown) => {
+    if (isAutoCameraEvent(e)) return
+    const wasAtAppFraming = state.atAppFraming
+    state.atAppFraming = false
+    clearTimeout(state.timer)
+    state.timer = undefined
+    // アプリの構図を手放した最初の 1 回は、`resize` で見送った閾値の取り直しをここで済ませる（待ちを捨てたとき・
+    // 寄せ直しの飛行を割り込んだとき）。飛行中なら知らせは見送られ、割り込まれた飛行の `moveend` が知らせる
+    // （MapLibre は飛行を止めるとき、その飛行の印を付けた `moveend` を出す）
+    if (wasAtAppFraming) notifyFramingSettled(map)
+  }
+  map.on('zoomstart', onInteraction)
+  map.on('dragstart', onInteraction)
+  map.on('rotatestart', onInteraction)
+  map.on('pitchstart', onInteraction)
+  resizeRefits.set(map, state)
+  return state
+}
+
+const framingSettledListeners = new WeakMap<maplibregl.Map, Set<() => void>>()
+
+/**
+ * アプリの構図が落ち着いた（最新の寄せが着地した・寄せ直しを飛ばずに終えた）ときに呼んでもらう。戻り値で購読をやめる。
+ *
+ * 区域集約の閾値を取り直す側（`JapanMapGL`）が使う。`followsPaneResize` が真の `resize` では閾値を取り直さず、
+ * これを待つ。**`moveend` を直に見ないのは、着地でないものが混ざるため** —— MapLibre の `resize()` は `resize` の
+ * 直後に `moveend` を出し、寄せ直しが飛行を割り込むと割り込まれた側の `moveend` も出る。どちらで取り直しても、
+ * 前の大きさで寄せた深さのまま閾値だけが下がり、自前の推定の面が一瞬出る。
+ *
+ * **寄せ直しを待っている間（`RESIZE_REFIT_DELAY_MS`）は知らせない。** その間に前の飛行が着地しても、
+ * カメラはまだ前の大きさの深さにいる。
+ *
+ * 知らせが来ない形が 1 つ残る: 最新の飛行の `moveend` が来ない（タブが隠れてアニメーションが進まない等）。
+ * 飛行中の判定が期限（`FLIGHT_EXPIRY_MARGIN_MS`）で切れても、それを知らせにはしない。そのときは次の
+ * `resize` か次の着地まで閾値が前の値のまま残る（隠れたタブが表示に戻れば、飛行が進んで着地の `moveend` が来る）。
+ */
+export function subscribeFramingSettled(map: maplibregl.Map, listener: () => void): () => void {
+  let set = framingSettledListeners.get(map)
+  if (!set) {
+    set = new Set()
+    framingSettledListeners.set(map, set)
+  }
+  set.add(listener)
+  return () => { set.delete(listener) }
+}
+
+/**
+ * 構図が落ち着いたと知らせる。**落ち着いていないときは、呼ばれても知らせない** —— 寄せ直しを待っている間と、
+ * アプリの飛行の最中。条件を呼ぶ側に分けて書くと、待ちの間に別の寄せ（成長フォロー・新しい地震）が飛び始めた
+ * 並びで、飛行の途中に知らせてしまう。飛行の最中に見送った分は、その飛行の着地の `moveend` が知らせる。
+ */
+function notifyFramingSettled(map: maplibregl.Map): void {
+  if (resizeRefits.get(map)?.timer !== undefined) return
+  if (isProgrammaticFlight(map)) return
+  const set = framingSettledListeners.get(map)
+  if (!set) return
+  for (const listener of set) {
+    try {
+      listener()
+    } catch (e) {
+      log.warn('[camera] 構図が落ち着いた知らせの受け手が失敗した', { cause: e })
+    }
+  }
+}
+
+/** アプリが寄せ始めた印を付ける（`beginFit` から呼ぶ）。 */
+function markAppFraming(map: maplibregl.Map): void {
+  const state = ensureResizeRefit(map)
+  state.atAppFraming = true
+  state.paneAtFit = paneSize(map)
+}
+
+/**
+ * 地図の大きさが変わったとき、カメラがこのファイルで寄せ直されるか。
+ *
+ * 区域集約の閾値を取り直す側（`JapanMapGL`）が使う。寄せ直されるなら、閾値は構図が落ち着いた知らせ
+ * （`subscribeFramingSettled`）で取り直す —— `resize` の時点で取り直すと、寄せ直しの飛行が終わるまでの間だけ、
+ * 閾値が先に下がって前の深さのカメラが閾値を超え、自前の推定の面が一瞬出る。
+ */
+export function followsPaneResize(map: maplibregl.Map): boolean {
+  const state = resizeRefits.get(map)
+  return !!state?.atAppFraming && !captureSessions.has(map) && !pendingFits.has(map)
 }
 
 /** 共有カードの撮影の間の構図。`beginCaptureFraming` が返す。 */
@@ -698,8 +881,9 @@ export function fitJapan(map: maplibregl.Map, durationSec = 1.0): void {
 }
 
 /** 1 点へ flyTo する（[lat,lng] で受ける）。 */
-export function flyToPoint(map: maplibregl.Map, [lat, lng]: LatLng, zoom = fitMaxZoom(map), durationSec = 1.0): void {
-  if (beginFit(map, { kind: 'point', center: [lng, lat], zoom }, () => flyToPoint(map, [lat, lng], zoom, durationSec))) return
+export function flyToPoint(map: maplibregl.Map, [lat, lng]: LatLng, zoomCap: ZoomCap = fitMaxZoom, durationSec = 1.0): void {
+  const zoom = resolveZoomCap(map, zoomCap)
+  if (beginFit(map, { kind: 'point', center: [lng, lat], zoom }, () => flyToPoint(map, [lat, lng], zoomCap, durationSec))) return
   const duration = durationSec * 1000
   map.flyTo({ center: [lng, lat], zoom, duration }, beginProgrammaticFlight(map, duration, { center: [lng, lat], zoom }))
 }
@@ -721,14 +905,14 @@ export function flyToPoint(map: maplibregl.Map, [lat, lng]: LatLng, zoom = fitMa
 export function fitToPositions(
   map: maplibregl.Map,
   positions: LatLng[],
-  opts: { padding?: number; maxZoom?: number; durationSec?: number } = {},
+  opts: { padding?: number; maxZoom?: ZoomCap; durationSec?: number } = {},
 ): void {
   if (positions.length === 0) return
   const { padding = 48, maxZoom, durationSec = 1.0 } = opts
   if (positions.length === 1) {
     // 1 点は退化した矩形（幅・高さ 0）で、着地は maxZoom へのクランプになる。段階へ切り下げる
     // 意味が無く、`cameraForBounds` に退化矩形を渡す必要も無いので flyTo で直接寄せる。
-    flyToPoint(map, positions[0], maxZoom ?? fitMaxZoom(map), durationSec)
+    flyToPoint(map, positions[0], maxZoom ?? fitMaxZoom, durationSec)
     return
   }
   const bounds = new maplibregl.LngLatBounds()
@@ -743,10 +927,11 @@ export function fitToPositions(
 export function flyToBounds(
   map: maplibregl.Map,
   bounds: maplibregl.LngLatBounds,
-  opts: { padding?: number; maxZoom?: number; durationSec?: number } = {},
+  opts: { padding?: number; maxZoom?: ZoomCap; durationSec?: number } = {},
 ): void {
-  const { padding: requestedPadding = 48, maxZoom = fitMaxZoom(map), durationSec = 1.0 } = opts
-  if (beginFit(map, { kind: 'bounds', bounds, padding: requestedPadding, maxZoom: opts.maxZoom }, () => flyToBounds(map, bounds, opts))) return
+  const { padding: requestedPadding = 48, durationSec = 1.0 } = opts
+  const maxZoom = resolveZoomCap(map, opts.maxZoom ?? fitMaxZoom)
+  if (beginFit(map, { kind: 'bounds', bounds, padding: requestedPadding, maxZoom: explicitMaxZoom(map, opts.maxZoom) }, () => flyToBounds(map, bounds, opts))) return
   const padding = panePadding(map, requestedPadding)
   if (padding === null) {
     deferUntilPaneHasSize(map, 'flyToBounds', requestedPadding, () => flyToBounds(map, bounds, opts))
@@ -795,10 +980,10 @@ const throttledSnapFallbackWarn = createLogThrottle(FALLBACK_LOG_INTERVAL_MS)
 export function flyToBoundsSnapped(
   map: maplibregl.Map,
   bounds: maplibregl.LngLatBounds,
-  opts: { padding?: number; maxZoom?: number; durationSec?: number; zoomStep?: number } = {},
+  opts: { padding?: number; maxZoom?: ZoomCap; durationSec?: number; zoomStep?: number } = {},
 ): void {
   const { padding: requestedPadding = 48, durationSec = 1.0, zoomStep = EEW_ZOOM_SNAP } = opts
-  if (beginFit(map, { kind: 'bounds', bounds, padding: requestedPadding, maxZoom: opts.maxZoom }, () => flyToBoundsSnapped(map, bounds, opts))) return
+  if (beginFit(map, { kind: 'bounds', bounds, padding: requestedPadding, maxZoom: explicitMaxZoom(map, opts.maxZoom) }, () => flyToBoundsSnapped(map, bounds, opts))) return
   // **余白はペインの寸法に収めてから渡す**（→ `MAX_PADDING_SHARE`。収めないと MapLibre が例外を投げる）。
   const padding = panePadding(map, requestedPadding)
   if (padding === null) {
@@ -806,7 +991,7 @@ export function flyToBoundsSnapped(
     deferUntilPaneHasSize(map, 'flyToBoundsSnapped', requestedPadding, () => flyToBoundsSnapped(map, bounds, opts))
     return
   }
-  const maxZoom = opts.maxZoom ?? fitMaxZoom(map)
+  const maxZoom = resolveZoomCap(map, opts.maxZoom ?? fitMaxZoom)
   const duration = durationSec * 1000
   const cam = map.cameraForBounds(bounds, { padding, maxZoom, bearing: map.getBearing() })
   if (!cam || cam.zoom == null) {

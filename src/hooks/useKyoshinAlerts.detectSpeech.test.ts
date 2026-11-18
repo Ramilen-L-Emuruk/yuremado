@@ -21,6 +21,11 @@ import type { SubRegion } from '../utils/subregions'
 import type { ConfirmedShock, DetectedPoint } from '../utils/kyoshinDetectionView'
 import { log } from '../utils/logger'
 import { testBundle } from '../test-utils/alertBundle'
+import { JA_SPEECH_TEXT } from '../utils/ttsText'
+import type { KyoshinDetectionPhrase } from '../utils/kyoshinRegionName'
+
+/** フックが渡した「言うこと」を、日本語の組で文にする（文は受信処理が読み上げの言語の組で組む） */
+const jaText = (phrase: unknown) => JA_SPEECH_TEXT.kyoshinDetectionText(phrase as KyoshinDetectionPhrase)
 
 vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
@@ -137,7 +142,8 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げ', () => {
   it('[正] 確定の立ち上がりで、区域名つきで 1 回読む（間は検知音）', () => {
     const speak = drive({}, CONFIRMED)
     expect(speak).toHaveBeenCalledTimes(1)
-    expect(speak).toHaveBeenCalledWith('能登テスト区域で揺れを検知。', ttsDelayFor('kyoshin'), expect.any(Function))
+    expect(speak).toHaveBeenCalledWith({ kind: 'detected', regionName: '能登テスト区域' }, ttsDelayFor('kyoshin'), expect.any(Function))
+    expect(jaText(speak.mock.calls[0][0])).toBe('能登テスト区域で揺れを検知。')
   })
 
   it('[正] 確定と同じ瞬間に震度更新音も鳴ったら、長い方まで待つ', () => {
@@ -168,7 +174,7 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げ', () => {
     const speak = drive({}, CONFIRMED)
     expect(speak).not.toHaveBeenCalled()
     await vi.waitFor(() => expect(speak).toHaveBeenCalledTimes(1))
-    expect(speak.mock.calls[0][0]).toBe('能登テスト区域で揺れを検知。')
+    expect(jaText(speak.mock.calls[0][0])).toBe('能登テスト区域で揺れを検知。')
     // 待った時間は音との間から差し引く（声が音から遅れない）
     expect(speak.mock.calls[0][1]).toBeLessThanOrEqual(ttsDelayFor('kyoshin'))
   })
@@ -178,7 +184,7 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げ', () => {
     loadImpl = () => Promise.reject(new Error('テスト用の読み込み失敗'))
     const speak = drive({}, CONFIRMED)
     await vi.waitFor(() => expect(speak).toHaveBeenCalledTimes(1))
-    expect(speak.mock.calls[0][0]).toBe('揺れを検知。')
+    expect(jaText(speak.mock.calls[0][0])).toBe('揺れを検知。')
   })
 
   describe('境界データの待ちの上限（2026-10-31 ユーザー選択「10秒で地名なしに切替 (Recommended)」）', () => {
@@ -204,7 +210,7 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げ', () => {
       const { speak } = driveStuck()
       await act(async () => { await vi.advanceTimersByTimeAsync(DETECT_SPEECH_REGION_WAIT_MS) })
       expect(speak).toHaveBeenCalledTimes(1)
-      expect(speak.mock.calls[0][0]).toBe('揺れを検知。')
+      expect(jaText(speak.mock.calls[0][0])).toBe('揺れを検知。')
     })
 
     it('[安全弁] 上限の後に読み終わっても、2 回目は読まない', async () => {
@@ -239,7 +245,7 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げ', () => {
     })
     rerender(makeDeps({ speakDetection: speak, ...CONFIRMED }))
     await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1))
-    expect(String(errorSpy.mock.calls[0][0])).toContain('揺れを検知。')
+    expect(String(errorSpy.mock.calls[0][0])).toContain('揺れの検知')
     errorSpy.mockRestore()
   })
 
@@ -355,7 +361,7 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げと緊急地震速報の 
     // 能登は発生 30 秒で届いている。福岡（約 775km）にはまだ届いていない
     const eews = notoFirst(30)
     const speak = drive({ activeEEWsRef: eews }, { ...confirmedAt(NOTO, FUKUOKA), activeEEWsRef: eews })
-    expect(speak.mock.calls.map((c) => c[0])).toEqual(['福岡テスト区域で揺れを検知。'])
+    expect(speak.mock.calls.map((c) => jaText(c[0]))).toEqual(['福岡テスト区域で揺れを検知。'])
   })
 
   it('[安全弁] 緊急地震速報が無ければ、遠い揺れも今どおり読む', () => {
@@ -409,7 +415,7 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げの、読む直前の見�
       { confirmed: true, confirmedShocks: [NOTO, FUKUOKA], dataTime: t(1), activeEEWsRef: eews },
       { confirmed: true, confirmedShocks: [NOTO, FUKUOKA], dataTime: t(3), activeEEWsRef: eews },
     )
-    expect(speak.mock.calls.map((c) => c[0])).toEqual(['能登テスト区域で揺れを検知。', '福岡テスト区域でも揺れを検知。'])
+    expect(speak.mock.calls.map((c) => jaText(c[0]))).toEqual(['能登テスト区域で揺れを検知。', '福岡テスト区域でも揺れを検知。'])
     const dropOther = speak.mock.calls[1][2] as () => boolean
     // 別地点の検知の時刻（t(3)）に、発生 103 秒の能登の速報の P 波は福岡（約 775km）へ届いている
     eews.current = new Map([['e1', eewAt(37.5, 137.2, { originTime: beforeAt(100), magnitude: 5.5 })]])
@@ -460,7 +466,7 @@ describe('useKyoshinAlerts: 別の地点の揺れ検知の読み上げ', () => {
 
   it('[正] 別地点で、その揺れの点の区域名で「〜でも揺れを検知。」と読む', () => {
     const speak = drive(...framesOtherRegion())
-    expect(speak.mock.calls.map((c) => c[0])).toEqual(['能登テスト区域で揺れを検知。', '福岡テスト区域でも揺れを検知。'])
+    expect(speak.mock.calls.map((c) => jaText(c[0]))).toEqual(['能登テスト区域で揺れを検知。', '福岡テスト区域でも揺れを検知。'])
     expect(speak.mock.calls[1][1]).toBe(ttsDelayFor('kyoshin'))
   })
 
@@ -480,7 +486,7 @@ describe('useKyoshinAlerts: 別の地点の揺れ検知の読み上げ', () => {
     // 震源は福岡（能登から約 700km）。能登は範囲の外なので最初の検知は読む
     const eews = { current: new Map([['e1', eewAt(33.6, 130.4)]]) }
     const speak = drive(...framesOtherRegion({ activeEEWsRef: eews }))
-    expect(speak.mock.calls.map((c) => c[0])).toEqual(['能登テスト区域で揺れを検知。'])
+    expect(speak.mock.calls.map((c) => jaText(c[0]))).toEqual(['能登テスト区域で揺れを検知。'])
   })
 
   it('[正] 有感半径の外で別地点として鳴っても、P 波が届いていた地域は読まない（音は鳴る）', () => {
@@ -497,7 +503,7 @@ describe('useKyoshinAlerts: 別の地点の揺れ検知の読み上げ', () => {
     // 震源は能登・発生 30 秒。能登の最初の検知は届いているので読まず、福岡はまだ届いていないので読む
     const eews = { current: new Map([['e1', eewAt(37.5, 137.5)]]) }
     const speak = drive(...framesOtherRegion({ activeEEWsRef: eews }))
-    expect(speak.mock.calls.map((c) => c[0])).toEqual(['福岡テスト区域でも揺れを検知。'])
+    expect(speak.mock.calls.map((c) => jaText(c[0]))).toEqual(['福岡テスト区域でも揺れを検知。'])
   })
 })
 
@@ -527,7 +533,7 @@ describe('useKyoshinAlerts: 別の地点の寄せ先', () => {
 
   it('[正] 揺れ全体の最も強い点（能登の段 15）ではなく、読む区域（福岡）の中で最も強い点へ寄せる', () => {
     const { focus, speak } = runOther()
-    expect(speak.mock.calls.map((c) => c[0])).toContain('福岡テスト区域でも揺れを検知。')
+    expect(speak.mock.calls.map((c) => jaText(c[0]))).toContain('福岡テスト区域でも揺れを検知。')
     expect(focus).toHaveBeenLastCalledWith({ lat: 33.6, lng: 130.6 })
   })
 

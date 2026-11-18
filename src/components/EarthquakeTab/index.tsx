@@ -23,6 +23,7 @@ import type { LatLng } from '../../utils/stationCoords'
 import type { QuakeHistoryInputs, QuakeHistoryView } from '../../utils/quakeReportHistory'
 import { quakeCardScrollTarget, type LpgmSectionFocus, QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { useFollowScroll } from '../../hooks/useFollowScroll'
+import type { AnalysisOverlayLayer } from '../../services/analysisOverlay'
 import { growFrom, ROW_INSERT_MS, CARD_RESIZE_ANIMATION_ID } from './quakeMotion'
 import {
   type TelegramLoss, formatHistoryLossNotice, historyLoadMoreFailedNotice, reconnectGapLossNotice,
@@ -141,12 +142,20 @@ interface Props {
    * 地震カードの「▶ 再生」から始めた人は設定の窓を開いていないので、一覧の上にも同じ文を出す（2026-11-08 ユーザー選択「地震タブにも同じ赤字 (Recommended)」）
    */
   replayError: string | null
+  /** リプレイ中か（カードの解析を再生の時計までの版へ絞る。→ `EarthquakeCard` の `replaying`） */
+  replaying: boolean
   /** 震度分布モードを開いている地震の `eventKey`。 */
   distributionQuakeKey: string | null
   onToggleDistribution: (eventKey: string) => void
   /** 未入電の一覧を開いている地震の `eventKey`。 */
   unreceivedQuakeKey: string | null
   onToggleUnreceived: (eventKey: string) => void
+  /** 開いている解析の重ね（地図の「MMI（USGS）」「すべり」）。無ければ null */
+  analysisOverlay: { eventKey: string; layer: AnalysisOverlayLayer } | null
+  /** カードの「MMI（USGS）」「すべり」を押した（`url` は重ねるファイルの版） */
+  onToggleAnalysisOverlay: (eventKey: string, layer: AnalysisOverlayLayer, url: string) => void
+  /** 開いている重ねの版をカードの解析の答えに合わせる（`url` が null なら閉じる） */
+  onSyncAnalysisOverlay: (eventKey: string, layer: AnalysisOverlayLayer, url: string | null) => void
   /**
    * 一覧の行をクリックしたときに、その場所へ地図を寄せる（1 点でも範囲でも）。観測点の行は観測点名も渡す
    * （座標が同じ観測点の吹き出しを取り違えないため。範囲の行は `null`）。
@@ -212,7 +221,7 @@ interface Notice { text: string; tone: NoticeTone; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyDays, onLoadPeriod, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error: loadError, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, matchedCount, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyDays, onLoadPeriod, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error: loadError, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, onReplayQuake, replayError, replaying, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, analysisOverlay, onToggleAnalysisOverlay, onSyncAnalysisOverlay, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   const words = useMessages().quake
   const formats = useMessages().formats
   const errorWords = useMessages().errorText
@@ -510,6 +519,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
           historyPickedId={selected ? historyPickedId : null}
           onPickHistory={onPickHistory}
           onReplay={onReplayQuake}
+          replaying={replaying}
           // 前の報を見ている間は長周期の印を出さない（その報の時点の長周期の印は組んでいない。最新の印が混ざると時点の画面にならない）
           lpgmMarks={view ? undefined : updateMarks.get(lpgmMarkKey(extractQuakeEventId(quake) ?? ''))}
           activeLpgmEventId={activeLpgmEventId}
@@ -522,6 +532,9 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, m
           onToggleDistribution={onToggleDistribution}
           unreceivedActive={quakeEventKey(quake) === unreceivedQuakeKey}
           onToggleUnreceived={onToggleUnreceived}
+          analysisLayerActive={analysisOverlay && analysisOverlay.eventKey === quakeEventKey(quake) ? analysisOverlay.layer : null}
+          onToggleAnalysisOverlay={onToggleAnalysisOverlay}
+          onSyncAnalysisOverlay={onSyncAnalysisOverlay}
           onFocusMap={onFocusMap}
           speakingTelegramTextSubject={speakingTelegramTextSubject}
           seismoWaves={seismoWaves.get(quakeEventKey(quake))}

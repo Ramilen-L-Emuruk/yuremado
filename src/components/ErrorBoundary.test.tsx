@@ -47,7 +47,7 @@ describe('ErrorBoundary', () => {
   // 対照: 何も起きなければ素通しであること。境界が常時何かを挟んでいたら、この段で気づける。
   it('子が投げなければ中身をそのまま出す', () => {
     render(
-      <ErrorBoundary variant="region" label="地図">
+      <ErrorBoundary variant="region" label="地図" onCatch={() => {}}>
         <Bomb explode={false} />
       </ErrorBoundary>,
     )
@@ -58,7 +58,7 @@ describe('ErrorBoundary', () => {
   // 正: レンダー中の例外を受け止め、その範囲だけ差し替わること。
   it('子のレンダー例外を受け止めて領域の表示へ差し替える', () => {
     render(
-      <ErrorBoundary variant="region" label="地図">
+      <ErrorBoundary variant="region" label="地図" onCatch={() => {}}>
         <Bomb explode />
       </ErrorBoundary>,
     )
@@ -69,7 +69,7 @@ describe('ErrorBoundary', () => {
 
   it('受け止めた例外を記録する', () => {
     render(
-      <ErrorBoundary variant="region" label="地図">
+      <ErrorBoundary variant="region" label="地図" onCatch={() => {}}>
         <Bomb explode />
       </ErrorBoundary>,
     )
@@ -93,7 +93,7 @@ describe('ErrorBoundary', () => {
     }
 
     render(
-      <ErrorBoundary variant="region" label="地図">
+      <ErrorBoundary variant="region" label="地図" onCatch={() => {}}>
         <Flaky />
       </ErrorBoundary>,
     )
@@ -107,7 +107,7 @@ describe('ErrorBoundary', () => {
   // これが無いと「押す→即落ちる」を延々繰り返させる。
   it('窓の中で落ち直し続けたら再表示を引っ込める', () => {
     render(
-      <ErrorBoundary variant="region" label="地図">
+      <ErrorBoundary variant="region" label="地図" onCatch={() => {}}>
         <Bomb explode />
       </ErrorBoundary>,
     )
@@ -134,7 +134,7 @@ describe('ErrorBoundary', () => {
     // **要素は毎回作り直す。** 同じ要素参照を渡すと React が「変わっていない」と見て
     // 子のレンダーを飛ばすため、落とし直せない。
     const makeTree = () => (
-      <ErrorBoundary variant="region" label="地図">
+      <ErrorBoundary variant="region" label="地図" onCatch={() => {}}>
         <Flaky />
       </ErrorBoundary>
     )
@@ -156,7 +156,7 @@ describe('ErrorBoundary', () => {
   // 根は state ごと失われるので、再表示に意味が無い。押せるのは再読み込みだけ。
   it('根では再表示を出さず、受信が止まったことを伝える', () => {
     render(
-      <ErrorBoundary variant="root">
+      <ErrorBoundary variant="root" onCatch={() => {}}>
         <Bomb explode />
       </ErrorBoundary>,
     )
@@ -173,7 +173,7 @@ describe('ErrorBoundary', () => {
     await act(async () => {
       render(
         <I18nProvider locale="en" preloaded={en}>
-          <ErrorBoundary variant="root">
+          <ErrorBoundary variant="root" onCatch={() => {}}>
             <Bomb explode />
           </ErrorBoundary>
         </I18nProvider>,

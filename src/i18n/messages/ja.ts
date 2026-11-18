@@ -104,6 +104,8 @@ export const ja = {
     dataNameList: (names: readonly string[], rest: number) => (rest > 0 ? `${names.join('・')}ほか${rest}件` : names.join('・')),
     /** 欠けたデータの 1 行。`gaveUp` は 1 つでも取り直しを諦めたか */
     dataLoadFailed: (subject: string, gaveUp: boolean) => `${subject}を取り込めず（${gaveUp ? '再読み込みで取得し直します' : '取り直しています'}）`,
+    /** 地震カードの「MMI（USGS）」「すべり」で開いた地図の重ねを取れなかった（2026-11-16 ユーザー選択「その帯に載せる (Recommended)」） */
+    analysisOverlayFailed: (layer: 'mmi' | 'slip') => `${layer === 'mmi' ? 'MMI（USGS）' : 'すべり（USGS）'}を取り込めず（押し直すと取り直します）`,
     /** 地図の隅の更新時刻。`time` は書式を済ませた時刻（まだ受けていなければ null）。 */
     updatedAt: (time: string | null) => (time !== null ? `更新 ${time}` : '更新 受信待機中…'),
     seismoDisconnected: '地震計 未接続',
@@ -582,7 +584,110 @@ export const ja = {
     depth: '深さ',
     intensities: '各地の震度',
     /** 各地の震度の見出しの右の、地図の見せ方の切り替え */
-    segment: { observed: '観測点', official: '推計震度分布', simple: '簡易推定', lpgm: '長周期' },
+    segment: { observed: '観測点', official: '推計震度分布', simple: '簡易推定', lpgm: '長周期', mmi: 'MMI（USGS）', slip: 'すべり' },
+    /**
+     * 海外の機関と気象庁の解析（要約の行と中央の窓。`components/EarthquakeTab/QuakeAnalysis*.tsx`）。
+     * 語の出どころは 2026-11-15 に決めたもの（各言語の出どころの表は計画書 項目 98 の段 c3）
+     */
+    analysis: {
+      close: '閉じる', loading: '読み込み中',
+      // 窓の見出しの答え全体の時点・取得元の行の各機関を確かめた時点（2026-11-16 ユーザー選択「窓と取得元の行に出す (Recommended)」
+      // 「どちらも「○ 時点」 (Recommended)」）
+      asOf: (at: string) => `${at} 時点`,
+      label: '解析', more: '詳しく ›', damage: '被害推定', solutions: (n: number) => `解 ${n} 件`,
+      // 語は取得元の頁の語に合わせる（2026-11-17 ユーザー選択「この表のとおり直す (Recommended)」「この一覧のとおり (Recommended)」。
+      // 対照表の控えはメインの checkout の .cache/overseas-quake-survey/analysis-wording-*-20261117.md）
+      fault: { reverse: '逆断層', normal: '正断層', strikeSlip: '横ずれ断層' },
+      title: (name: string) => `${name}の解析`, quakeInfo: '地震情報', catalog: '長期震源カタログ',
+      // 長期震源カタログと照合できたときだけ、名前の後ろに空白を挟んで出す（2026-11-16 ユーザー発言「照合できたときだけ照合済みとか出せばいいじゃん」
+      // 「と、はいらねえよ。空白でいいだろ」・選択「この形でよい (Recommended)」）
+      catalogMatched: '照合済み',
+      byAgency: '機関ごと', byKind: '種類ごと', tabMech: '発震機構解', tabUsgs: '被害と揺れ（USGS）', tabSources: '取得元', jma: '気象庁',
+      status: { matched: 'あり', none: 'なし', pending: '確認中', error: '取得失敗' },
+      stale: '直近の確認では見つからず', merged: (n: number) => `USGS は近くの地震 ${n} つをまとめて解析した可能性あり`, watchError: (at: string) => `USGS の更新を取得できていない（${at} 以降）`, noSolutions: '発震機構解はありません',
+      depth: '深さ', planes: '断層面解', published: '公表', noPublished: '公表時刻なし', older: (n: number) => `更新前 ${n} 件`,
+      // 気象庁の解の名前。全世界の CMT 解は気象庁の一覧の見出し（ＣＭＴ解／全世界）に沿って「CMT 解（全世界・速報値）」
+      // （2026-11-15 選択「CMT 解（全世界・速報値） (Recommended)」）
+      jmaMethod: { cmt: 'CMT解', firstMotion: '初動解' }, jmaStage: { refined: '精査後', preliminary: '速報値' }, jmaScopeGlobal: '全世界',
+      jmaMethodLabel: (method: string, stage: string, scope: string | null) => `${method}（${scope ? `${scope}・` : ''}${stage}）`,
+      extra: { clvd: 'CLVD成分', iso: '等方成分' },
+      pager: '被害推定（PAGER）', shakemap: '揺れ推定（ShakeMap）', finiteFault: '有限断層モデル', groundFailure: '地盤災害（Ground Failure）', dyfi: 'Did You Feel It?（DYFI）',
+      deaths: '死者', economic: '経済損失（ドル）', max: '最大', accel: '加速度', velocity: '速度',
+      maxSlip: '最大すべり', length: '長さ', width: '幅', sdr: '走向・傾斜・すべり角',
+      landslide: '斜面崩壊', liquefaction: '液状化', exposed: '曝露人口', reports: (n: string) => `${n} 件`,
+      alert: { green: '緑', yellow: '黄', orange: 'オレンジ', red: '赤' },
+      credit: '出典', lat: '北緯', lon: '東経',
+      // 機関ごとのタブの作り（2026-11-17 ユーザー選択「この形で作る (Recommended)」「この文面で入れる (Recommended)」。
+      // 文面と出典の控えはメインの checkout の .cache/overseas-quake-survey/analysis-tips-ja-20261117.md）
+      hypo: '震源', hypoBy: (agency: string) => `${agency} 決定`, mech: '発震機構',
+      collected: '集めた解', collectedCount: (n: number) => `${n} 機関・届いた順`, impact: '被害と揺れ', usgsEstimate: 'USGS 推定',
+      originTime: '発生時刻', epicenter: '震央', magnitude: '規模', state: '状態',
+      evaluation: { automatic: '自動', confirmed: '確認', manual: '手動' },
+      depthAssigned: '（担当者指定）', depthFromLocation: '（位置決定から）', centroidDepth: (km: string) => `セントロイド深さ ${km} km`,
+      col: {
+        evaluation: '状態', tensor: 'モーメントテンソル解', tensorShort: 'テンソル',
+        method: '手法', agency: '機関', mw: 'Mw', fault: '断層タイプ', plane1: '断層面解1', plane2: '断層面解2', axes: 'P軸・T軸・N軸',
+        dc: 'ダブルカップル成分', ndc: '非D.C.成分比', vr: 'V.R.', stations: '観測点数', published: '公表', arrived: '届いた時刻',
+      },
+      axisLetters: { p: 'P', t: 'T', n: 'N' },
+      // 3 機関とも原文は preferred。日本語の表記が見つからないので原語のまま出す（2026-11-17 ユーザー選択「原語の preferred (Recommended)」）
+      badge: { usgs: 'preferred', emsc: 'preferred', geofon: 'preferred' },
+      pickedBy: { usgs: 'USGS preferred', emsc: 'EMSC preferred' },
+      // version は気象庁の「更新」に合わせる（2026-11-17 ユーザー選択「更新 (Recommended)」）
+      moreVersions: (n: number) => `更新 ${n} 件`,
+      sameAs: (tab: string) => `${tab} タブと同一`,
+      afterQuake: (t: string) => `発生から ${t}`,
+      elapsed: (min: number) => (min < 60 ? `${min} 分` : min < 48 * 60 ? `${Math.round(min / 60)} 時間` : `${Math.round(min / 1440)} 日`),
+      notPublished: '公表されていない',
+      // n は版の数（初めの公表を含む）。更新の回数はそれより 1 少ない
+      versionsSpan: (first: string, last: string, n: number) => `${first} 公表、${last} までに ${n - 1} 回更新`,
+      unchanged: '（値は変わっていない）',
+      emscNote: '各機関の解（EMSC 収集）',
+      beachball: '震源球',
+      viewer: { title: '震源球と断層のずれ', pause: '一時停止', play: '再生', north: '北', east: '東', down: '下', lowerProjection: '下半球投影', failed: '描画に失敗しました。' },
+      // 点線の語の説明（2026-11-16〜17 ユーザー選択「この形で入れる」「この文面で入れる」「この文面で出す」。出典は気象庁・USGS・EMSC・GEOFON 自身の説明の頁）
+      tips: {
+        reverse: { text: '断層面を境にして、上盤が下盤に対して、のし上がる。', src: '気象庁「発震機構解と断層面」' },
+        normal: { text: '断層面を境にして、上盤（上側の岩盤）が下盤（下側の岩盤）に対して、ずり下がる。', src: '気象庁「発震機構解と断層面」' },
+        strikeSlip: { text: '断層面を境にして、水平方向にずれる。「右横ずれ断層」＝断層に向かって相手側のブロックが右に動いた場合。「左横ずれ断層」＝断層に向かって相手側のブロックが左に動いた場合。', src: '気象庁「発震機構解と断層面」' },
+        figureNote: '正・逆の 2 つは断面（横から見た図）、横ずれは真上から見た図。',
+        faultType: { text: '地震は、断層の動き方によって、大きく三つ（横ずれを二つに分ければ四つ）の型に分けられます。', src: '気象庁「発震機構解と断層面」' },
+        plane: { text: '発震機構解からは「異なる２つの断層面」を求めることはできますが、どちらが本当の断層面か知ることはできません。どちらが断層面なのかを知るためには、余震の分布や地殻変動等の調査が必要となります。走向：断層が水平方向でどの方向に伸びているかを示します。傾斜角：断層面が水平面からどれだけ傾いているかを示します。すべり角：断層がどの方向に動いたかを示します。', src: '気象庁「発震機構解と断層面」' },
+        ball: { text: '震源球の図は、下半球投影という方法で表示されています。下半球投影では、震源球の下半分を真上から見た形の図になります。', src: '気象庁「ＣＭＴ解のページの見方」' },
+        adopted: { text: '1 つの地震に同じ種類の製品が複数あるとき、ComCat はそのうち 1 つを preferred とする。各製品の重みで決まり、重みが同じなら最も新しく更新されたものが preferred になる。製品の作者がその製品の担当地域にいるとき、重みに 100 が加わる。', src: 'USGS「How Products Work in ComCat」' },
+        wphase: { text: 'W 相（約 50〜2000 秒）のセントロイド・モーメント・テンソルのインバージョンから求める。世界の M5.0 以上のすべての地震について計算する。計算されれば USGS の正式な規模になる。Mwc は長周期の表面波、Mwb は長周期の実体波（P 波と SH 波）、Mwr は近い距離の地震記象全体のモーメントテンソルのインバージョンから求める。', src: 'USGS「Magnitude Types」' },
+        versions: { text: '出し元・種類・番号が同じ製品は、同じ製品の更新である。更新の時刻が新しいものが、同じ出し元の前のものに代わる。', src: 'USGS「How Products Work in ComCat」' },
+        dc: { text: 'モーメントテンソルのうち、ダブルカップルの成分の割合。', src: 'EMSC「Specifications of EMSC moment tensor services」' },
+        pager: { text: '揺れの強さの段階ごとの曝露人口を、その国の過去の地震にもとづく経済損失と死者のモデルと比べて、死者と経済損失を推定する。緑は対応不要、黄は地域、オレンジは国、赤は国際的な対応。死者 1・100・1,000 人、損失 100 万・1 億・10 億ドルが段階の境で、2 つの段階のうち高いほうを出す。斜面崩壊・液状化・津波などの二次的な影響は考えない。', src: 'USGS「PAGER Scientific Background」「onePAGER Information」' },
+        shakemap: { text: '記録を補間し、観測が少ない所・無い所では、その地震の揺れを推定して示す。', src: 'USGS「ShakeMap Scientific Background」' },
+        ffm: { text: '断層のすべりは、長さと幅を持つ個々の断層面に沿って起こる。地震動の観測（地震波形・静的な変位など）から、どこで・いつ・どれだけすべったかを推定する。断層面は複数の小断層に分ける。', src: 'USGS「Finite Faults」' },
+        emscpref: { text: '1 つの地震について preferred のモーメントテンソル解を決める正式な規則が無い間は、次の基準を任意に選んでいる: まず Global CMT、次に USGS、次に GFZ、次に INGV。', src: 'EMSC「Specifications of EMSC moment tensor services」' },
+        agency: {
+          CPPT: '仏領ポリネシア津波警報センター（CEA、タヒチ・パペーテ）。',
+          SC4: 'EMSC（フランス・アルパジョン）。',
+          IPGP: 'IPGP の Geoscope（フランス・パリ）。',
+          NEIC: '米国地質調査所（USGS）の国立地震情報センター（米国・ゴールデン）。',
+          GCMT: 'Global CMT。ラモント・ドハティ地球観測所（米国・ニューヨーク州）が出す解。',
+          GFZ: 'ドイツ地球科学研究センター（GFZ、ドイツ・ポツダム）。',
+          AUST: 'オーストラリア地球科学局（Geoscience Australia、オーストラリア・キャンベラ）。',
+        } as Record<string, string>,
+        agencySrc: 'EMSC「Earthquake information」',
+        tensor: { text: '地震モーメントを、より詳細に表したもの（力が働く面と、力の働く向きにより分解したもの）です。', src: '気象庁「ＣＭＴ解とは何か」' },
+        cmt: { text: 'ＣＭＴとは、セントロイド・モーメント・テンソル(Centroid Moment Tensor)の略で、観測された地震波形を最もよく説明する地震の位置と時刻（セントロイドの位置と時刻）、規模（モーメント・マグニチュード）、及び発震機構（メカニズム）を同時に決定する解析法により求められます。', src: '気象庁「ＣＭＴ解とは何か」' },
+        refined: { text: 'ＣＭＴ解の項には、地震発生の翌日以降に職員による解析を行い、精度が良いと判断された解のみを掲載しています。', src: '気象庁「ＣＭＴ解のページの見方」' },
+        centroid: { text: '地震の断層運動を１点で代表させた場合のその位置と時刻を表しています。これは気象庁が普段発表している「震源」とは意味が異なるものです。震源というのは、断層運動が始まった地点を示したものですので、震源とセントロイドの位置は普通一致しません。', src: '気象庁「ＣＭＴ解とは何か」' },
+        first: { text: '各地で観測されるP波の初動の極性分布から、地下の地震の断層のようす（発震機構）を推定することができます。このP波の初動極性から推定された発震機構を、初動発震機構解と呼びます。', src: '気象庁「発震機構解とは何か」' },
+        reference: { text: '"参考"は発震機構解の精度が低く、節面を引かずに押し引きの領域だけ、または初動の押し引き分布だけ表示しています。', src: '気象庁 初動発震機構解の月の一覧' },
+        axes: { text: 'これらの力の向きをそれぞれ主張力軸（T軸）、主圧力軸（P軸）といいます。また、主張力軸と主圧力軸に直交する方向を中立軸（N軸）と呼びます。数字は、主圧力軸（P)・主張力軸（T)・中立軸（N)の方位・傾斜です。', src: '気象庁「発震機構解と断層面」「ＣＭＴ解のページの見方」' },
+        ndc: { text: 'ＣＭＴ解析による押し引きの境界と、節面（断層面解）のずれを表す数値です。この値が大きいほど、両者のずれが大きくなります。', src: '気象庁「ＣＭＴ解とは何か」' },
+        // 地図の重ねの凡例の見出し「MMI」の吹き出し。USGS の原文 3 文の直訳（2026-11-18 ユーザー選択「原文 3 文」・1 文目の語は発言「MM震度と呼ばれる」）
+        mmi: { text: '地震が地表に及ぼす影響は、MM震度と呼ばれる。この階級は、ほとんど感じない揺れから壊滅的な破壊までの、段階が上がっていく階級でできており、ローマ数字で表される。数学的な裏付けはなく、観測された影響に基づく恣意的な順位づけである。', src: 'USGS「The Modified Mercalli Intensity Scale」' },
+        vr: { text: 'ＣＭＴ解析における解の品質を示す指標で、ＣＭＴ解の理論波形と観測波形の一致度を示します。', src: '気象庁「ＣＭＴ解とは何か」' },
+        gstd: { text: 'GEOFON の標準の解き方。実体波と表面波の両方を使う。', src: 'GEOFON「GEOFON Event」' },
+        gstatus: { text: '自動（A）: 地球物理学者の確認なしに自動で公表したもの。深さと規模がまだ不確かなことがある。確認（C）: 自動の解を確かめ、手で直さずに満足できると分かったもの。手動（M）: 確認の後にだけ公表するもの（観測が 25 未満の小さな地震は常にこれ）。', src: 'GEOFON「GEOFON Earthquake List FAQ」' },
+        depthAssigned: { text: '深さを決められず、震源がおそらく浅いときは、既定の深さ 10 km を置く。震源の深さが本当に 10 km という意味ではなく、浅い震源（ふつう地表から 30〜40 km までのどこか）という意味。深さを初め 10 km に置いた地震は、後で決め直されることがある。', src: 'GEOFON「GEOFON Earthquake List FAQ」' },
+      },
+    },
     segmentHint: {
       official: '気象庁が地盤の揺れやすさまで考慮して推計した震度の分布です',
       simple: '観測点の震度をこのアプリが補間した目安です。気象庁の推計とは精度が違います',
@@ -891,6 +996,10 @@ export const ja = {
       nameSeparator: '・',
       unreceivedTitle: '震度を入手していない地点',
       unreceived: '未入電',
+      /** 海外の機関の解析の重ね（2026-11-15 に決めた見出し。目盛りは USGS の凡例の段と 0〜最大） */
+      analysisMmiTitle: '推定の揺れ（MMI・USGS）',
+      analysisSlipTitle: '断層のすべり（m・USGS）',
+      analysisSlipShort: 'すべり',
       psWave: '緊急地震速報の予報円',
       psWaveShort: '予報円',
       pWave: 'P波',
@@ -1072,6 +1181,18 @@ export const ja = {
         label: '読み上げの声',
         description: 'VOICEVOX に繋がらないときは、システムの読み上げで読み上げます',
         system: 'システムの読み上げ',
+        /**
+         * 画面の言語の読み上げを用意しているのに、端末にその言語の声が無いときに行の下へ出す（日本語の画面には出ない。
+         * 2026-11-16 ユーザー選択「日本語で読む＋設定に出す (Recommended)」）。2026-11-17 ユーザー選択「この文面で入れる (Recommended)」で
+         * 承認したのは英語の文面と「ほかの 5 言語は同じ意味でその言語の語に書く」進め方。5 言語の文面そのものと、この日本語の値は見せていない
+         */
+        noLocaleVoice: 'この端末にはこの言語の声が無いため、日本語で読み上げます。',
+        /**
+         * 画面の言語の読み上げのデータ（読み上げの語表・地名の表）を読めず、日本語で読んでいるときに行の下へ出す（読み込みの途中には出さない。
+         * 回線が戻って読み直せたら消える）。2026-11-18 ユーザー選択「出す (Recommended)」で承認したのは英語の文面と、ほかの 5 言語は同じ意味で
+         * その言語の語に書く進め方。日本語の画面には出ないので、この値は型をそろえるためのもの
+         */
+        speechDataLoadFailed: '読み上げのデータを読み込めないため、いまは日本語で読み上げます。',
       },
       volume: {
         label: '音量',
@@ -1164,10 +1285,10 @@ export const ja = {
         description: '電文に添えられた本文・付加文（南海トラフ地震臨時情報の本文など）を読み上げます。震度や津波の読み上げが終わってから読むため、電文が続いている間は読み上げられないことがあります',
       },
       // 名前に英語を添える（読めない言語になった人が英語で探せるように）。言語の名前は辞書に置かない（→ messages.ts の LOCALES）
-      // （2026-11-12 ユーザー選択「言語 (Language) (Recommended)」「この文面でよい (Recommended)」・説明は同日「この文面に変える (Recommended)」）
+      // （2026-11-12 ユーザー選択「言語 (Language) (Recommended)」「この文面でよい (Recommended)」。説明は 2026-11-18 ユーザー選択「この文で入れる (Recommended)」）
       locale: {
         label: '言語 (Language)',
-        description: '画面と通知の言葉。読み上げは日本語のまま。',
+        description: '画面・通知・読み上げの言葉。日本語以外の読み上げは端末の声で読み、端末にその言語の声が無ければ日本語で読む。',
         auto: '端末に合わせる',
         // 辞書を読めないときに行の下へ出す知らせは辞書の外（messages.ts の LOCALE_LOAD_FAILED_JA・_EN）
       },
@@ -1772,6 +1893,12 @@ export const ja = {
         label: '地震情報（震度を入手していない地点が多い報）',
         description: '日向灘 M6.4 最大震度5強（実電文）– 震度を入手していない地点が 60。市町村・区域・県の行に「未入電あり」の印が付き、値そのものが届いていない 18 市町村は「5弱以上」と出る',
         button: '未入電テスト',
+      },
+      /** 2026-11-15 選択「この案で入れる (Recommended)」 */
+      analysisQuake: {
+        label: '海外機関と気象庁の解析',
+        description: '能登半島地震 M7.6 最大震度7（実電文）に、中継が返した実際の解析の答え（2026-11-15 取得）を添える – カードに解析の行が出て、［詳しく ›］で窓が開き、「MMI（USGS）」「すべり」で地図に重ねられる',
+        button: '解析テスト',
       },
       maxScaleOrAboveQuake: {
         label: '地震情報（最大震度が「5弱以上」になる報）',
@@ -2467,7 +2594,8 @@ export const ja = {
   },
   /**
    * いくつもの画面が使う書式の語（段 9）。震度・長周期の札・深さ・規模・緯度経度・津波の区分・訂正の種類・日付。
-   * 読み上げの文面は日本語のまま組むので、そちらはこの日本語の節を直に渡す（`JA_MESSAGES.formats`）。通知はいまの言語の節を渡す。
+   * 読み上げの文面は読み上げの言語の語表が組み、震度などの語はその言語の辞書のこの節から引く（日本語の語表は日本語の節、ほかの言語は
+   * `i18n/speech/shared.ts` の `intensityIn` でその言語の節）。通知はいまの言語の節を渡す。
    */
   formats: {
     /** 震度の札（一覧・カードの枠・文の中） */

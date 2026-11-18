@@ -2,7 +2,9 @@ import { useEffect, useRef } from 'react'
 import type { ReplayPayload } from '../types/replay'
 import { prefetchSpeechTexts, abortSpeechPrefetch, isValidVoicevoxUrl } from '../utils/voicevox'
 import { speculativeSpeechTextsSafe } from '../utils/speechPrefetch'
-import type { TtsSpeechOptions } from '../utils/ttsText'
+import { speechTextFor, type TtsSpeechOptions } from '../utils/ttsText'
+import { usePlaceNames } from '../i18n/I18nProvider'
+import { useSpeechLocale } from './useSpeechLocale'
 import { log } from '../utils/logger'
 
 /**
@@ -64,14 +66,18 @@ export function useSpeechPrefetch({
 }): void {
   // 毎レンダー変わりうる値は ref 経由で読む。依存に入れると、設定を触るたびに
   // interval を張り直すことになる（投機の周期が乱れる）。
-  const latest = useRef({ peekUpcoming, baseUrl, speakerId, opts })
-  latest.current = { peekUpcoming, baseUrl, speakerId, opts }
+  // 文は本体の読み上げと同じ組（読み上げの言語）で組む。組が違うと先に焼いた音が当たらない
+  const speechText = speechTextFor(useSpeechLocale(), usePlaceNames())
+  const latest = useRef({ peekUpcoming, baseUrl, speakerId, opts, speechText })
+  latest.current = { peekUpcoming, baseUrl, speakerId, opts, speechText }
+  /** 先読みを飛ばしたことを記録した言語（同じ言語の間は記録し直さない）。 */
+  const skippedLocale = useRef<string | null>(null)
 
   useEffect(() => {
     if (!enabled) return
 
     const tick = () => {
-      const { peekUpcoming, baseUrl, speakerId, opts } = latest.current
+      const { peekUpcoming, baseUrl, speakerId, opts, speechText } = latest.current
       // 通信前の検分。**黙って戻らない**（設定の窓は同じ条件を画面に出すが、ここは画面を
       // 持たないので、記録が無いと「投機が一度も効かない」原因を追えない）。値が変わらない
       // 限り毎周期この判定を通るため、記録は `debug` に留める。
@@ -79,11 +85,21 @@ export function useSpeechPrefetch({
         log.debug('[VoiceVox] 投機の先行合成をスキップ (接続先の URL が不正)')
         return
       }
+      // 日本語以外の文は端末の声で読み、VOICEVOX の音を使わない。文を組んでから捨てると、群発の窓では 2 秒ごとに
+      // 数百通ぶんの文を組むことになるので、組む前に戻る。記録は言語が変わったときだけ残す（2 秒ごとに書かない）
+      if (speechText.locale !== 'ja') {
+        if (skippedLocale.current !== speechText.locale) {
+          skippedLocale.current = speechText.locale
+          log.debug(`[VoiceVox] 投機の先行合成をスキップ (読み上げの言語が ${speechText.locale})`)
+        }
+        return
+      }
+      skippedLocale.current = null
       const payloads = peekUpcoming(PREFETCH_HORIZON_MS)
       if (payloads.length === 0) return
-      const texts = payloads.flatMap(p => speculativeSpeechTextsSafe(p, opts))
+      const texts = payloads.flatMap(p => speculativeSpeechTextsSafe(speechText, p, opts))
       if (texts.length === 0) return
-      prefetchSpeechTexts(baseUrl, texts, speakerId)
+      prefetchSpeechTexts(baseUrl, texts, speakerId, speechText.locale)
     }
 
     // **最初の 1 回はすぐ走らせる。** 間隔を待つと、再生開始の直後に届く電文を焼き逃す。

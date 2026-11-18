@@ -247,7 +247,7 @@ Yahoo hypoInfo の両方から同一 EEW の消滅を検出すると、同じ状
 **そこを区間の切れ目に使いたい場合はこのログだけでは足りない。**
 
 `overlay` の対象は `distribution`（推計震度分布図のモード）・`unreceived`（震度を入手していない
-地点の一覧）・`lpgm`（長周期地震動の一覧）・`telegramText`（気象庁が書いた文）・
+地点の一覧）・`lpgm`（長周期地震動の一覧）・`analysis`（海外の機関の解析の地図の重ね。USGS の推定の揺れ・断層のすべり）・`telegramText`（気象庁が書いた文）・
 `specialInfoPanel`（特別情報のためのパネル展開）・`actionChecklist`（行動チェックリストの帯）・
 `settings`（設定の窓）。
 `open` が真偽、`reason` に短い理由（「震度分布のボタン」「推計震度分布図の受信」等）。

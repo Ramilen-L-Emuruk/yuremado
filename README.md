@@ -15,6 +15,7 @@ React + TypeScript + MapLibre GL JS で構築されています。
 ## 主な機能
 
 - **地震情報**: 過去の地震カード・観測点別震度・区域塗り・震源マーカーを地図に表示
+- **海外の解析**: 国内の地震カードに、USGS・EMSC・GEOFON と気象庁の解析（発震機構・Mw・被害の見込み・断層のすべり）を添え、推定の揺れ（MMI）とすべりを地図に重ねられます
 - **緊急地震速報（EEW）**: 発報時に予報円・震源・警報区域を表示、気象庁が発表した地域ごとの主要動到達予測をカウントダウン
 - **津波情報**: 大津波警報・警報・注意報・予報を海岸線に色分け、観測情報も併記
 - **リアルタイム震度**: 各地の震度を毎秒更新、震源非依存の揺れ検知エンジン付き
@@ -27,7 +28,7 @@ React + TypeScript + MapLibre GL JS で構築されています。
 - **震源カタログ**: 1919 年からの地震を点群として立体表示。期間・マグニチュード・深さで絞り込み、深さ・規模・発生年で色分けでき、規模の大きい地震を強調表示できる（点を押すと発生日時・規模・深さを表示）
 - **PWA 対応**: ホーム画面へのインストールとオフラインキャッシュに対応
 - **スマートフォン対応**: 画面の向きに応じた地図と情報の並べ替え、表示中タブの再タップで情報パネルを畳んで地図を全画面表示（縦画面では境界のドラッグで比率も調整可）
-- **読み上げ**: 情報を音声で読み上げ（任意）。声は端末の声（システムの読み上げ）か、自分のパソコンで動かした VOICEVOX（準備の手順は [`docs/voicevox-setup.md`](docs/voicevox-setup.md)）。VOICEVOX に繋がらないときは端末の声で読みます
+- **読み上げ**: 情報を音声で読み上げ（任意）。声は端末の声（システムの読み上げ）か、自分のパソコンで動かした VOICEVOX（準備の手順は [`docs/voicevox-setup.md`](docs/voicevox-setup.md)）。VOICEVOX に繋がらないときは端末の声で読みます。読み上げは画面の言語で行い、日本語以外は端末の声で読みます。端末にその言語の声が無いときは日本語で読みます
 - **電文ログ**: 受信電文の一覧・生電文コピー・ダウンロード（開発・検証用途）
 - **共有カード**: 表示中の地図を、見出しと出典を添えた 1 枚の画像にして共有・保存（表示中の内容の概要を本文として添えます）
 
@@ -111,6 +112,8 @@ MIT License（[LICENSE](LICENSE)）。
 
 **データ・地図・フォントの出典**:
 - 地震情報・緊急地震速報・津波情報: 気象庁 — 配信は [DMDATA.JP](https://dmdata.jp/)（開発者が運営する配信サーバーが中継。緊急地震速報の予報は API キーを入れた端末が直接受信）
+- 海外の機関の解析: U.S. Geological Survey（USGS）・EMSC（[SeismicPortal](https://www.seismicportal.eu/)）・GFZ GEOFON（[GEOFON](https://geofon.gfz.de/eqinfo/)）。EMSC と GEOFON の震源は CC BY 4.0（[EMSC の利用条件](https://www.seismicportal.eu/terms.html)・[GEOFON の FAQ](https://geofon.gfz.de/eqinfo/faq/)）
+- 発震機構解（CMT 解・初動解）: 気象庁
 - 公開観測点の波形: 気象庁（JP 網）— 配信は [EarthScope](https://www.earthscope.org/)（NSF NGF）経由（[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja)）
 - 地図データ: 「気象庁 予報区等 GIS データ（都道府県・地震情報／細分区域・津波予報区）」 — GeoJSON 化: [Ichihai1415/JMA-GIS-GeoJSON](https://github.com/Ichihai1415/JMA-GIS-GeoJSON)（CC BY 4.0）
 - 震央地名: 気象庁「地震情報で用いる震央地名」「多言語辞書データ」 — データ整備: [0Quake/JMA_Region](https://github.com/0Quake/JMA_Region)（CC0 1.0）

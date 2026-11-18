@@ -384,6 +384,9 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(quake.earthquake.hypocenter.depth).toBe(-1)
     expect(quake.forecastText).toBe('震源の近傍で津波発生の可能性があります。この地震による日本への津波の影響はありません。')
     expect(quake.freeText).toContain('ＰＴＷＣ')
+    // 付加文のコード 0226 0230: 国内の区分を決める 0230 と、日本以外の見通しの 0226（日本語以外の読み上げが訳して読む）
+    expect(quake.earthquake.domesticTsunamiCode).toBe('0230')
+    expect(quake.earthquake.foreignTsunamiCodes).toEqual(['0226'])
   })
 
   it('見出しにだけある市町村は、本文の市町村と同じ形で区域の下へ足される（観測点は持たない）', async () => {
@@ -518,6 +521,9 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(Number.isNaN(quake.earthquake.hypocenter.magnitude)).toBe(true)
     expect(quake.earthquake.hypocenter.magnitudeCondition).toBe('Ｍ８を超える巨大地震')
     expect(quake.earthquake.hypocenter.name).toBe('チリ中部沿岸')
+    // 付加文のコード 0221 0228 0229: 022x 系は電文の順に残り、国内の区分は 0229
+    expect(quake.earthquake.foreignTsunamiCodes).toEqual(['0221', '0228'])
+    expect(quake.earthquake.domesticTsunamiCode).toBe('0229')
   })
 })
 

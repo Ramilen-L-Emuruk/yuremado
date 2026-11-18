@@ -2050,6 +2050,31 @@ export function overSuffixedHeight(height: { description: string; over?: boolean
   return w.height(height.description, !!height.over)
 }
 
+/** 津波の波高の表記を、数と限り（超・未満・以上）に分けたもの（→ {@link parseTsunamiHeight}） */
+export interface TsunamiHeightParts {
+  /** 半角の数（「1.2」） */
+  value: string
+  /** 「10m超」は `over`、「0.2m未満」は `under`、「1.2m以上」は `orMore`。限りが無ければ null */
+  limit: 'over' | 'under' | 'orMore' | null
+}
+
+/**
+ * 電文の波高の表記（予想の「１ｍ」「10m超」「0.2m未満」と、上限を定めない観測値に補った「1.2m以上」）を数と限りに分ける。
+ * 全角の数字・ピリオド・「ｍ」も読む。**この形でない表記（「巨大」「高い」、知らない表記）は null**（呼び出し側が別に扱う）。
+ *
+ * 日本語以外の読み上げの語表（`i18n/speech/shared.ts` の `tsunamiHeightIn`）が数の表記を言語の言い方へ組むのに使い、読み上げの
+ * 関数の組（`ttsText.ts`）が訳せない表記を見分けるのに使う
+ */
+export function parseTsunamiHeight(description: string): TsunamiHeightParts | null {
+  const s = description.trim()
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/．/g, '.')
+  const m = /^(\d+(?:\.\d+)?)\s*[mｍ](超|未満|以上)?$/.exec(s)
+  if (!m) return null
+  const limit = m[2] === '超' ? 'over' : m[2] === '未満' ? 'under' : m[2] === '以上' ? 'orMore' : null
+  return { value: m[1], limit }
+}
+
 // 区域に紐づく観測点のうち、最も深刻な実測値（height）を返す。実測値を持つ観測点が無ければ null。
 // 深刻さの規則は compareObservedHeightDesc に集約する（並び順と代表値の選び方を食い違わせない）。
 function maxObservedHeight(area: TsunamiArea, observations: TsunamiObservation[]): ObservedHeightRank | null {

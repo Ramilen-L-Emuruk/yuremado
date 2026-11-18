@@ -199,6 +199,10 @@ function earthquakeTabProps() {
     onPickHistory: () => {},
     onReplayQuake: () => {},
     replayError: null,
+    replaying: false,
+    analysisOverlay: null,
+    onToggleAnalysisOverlay: () => {},
+    onSyncAnalysisOverlay: () => {},
   } as const
 }
 

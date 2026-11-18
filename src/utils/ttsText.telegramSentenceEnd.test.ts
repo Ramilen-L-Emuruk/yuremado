@@ -141,7 +141,9 @@ describe('【安全弁】数値表記を文の切れ目にしない', () => {
 })
 
 describe('【安全弁】述語と前処理の式を書き写していない', () => {
+  // 文面は日本語の語表にもあるので、語表も見る
   const source = readFileSync(new URL('./ttsText.ts', import.meta.url), 'utf8')
+    + readFileSync(new URL('../i18n/speech/ja.ts', import.meta.url), 'utf8')
 
   // 文末の記号を正規表現リテラルへ書き写していない（`SENTENCE_END` から組む）。
   // 書き写すと、上の 3 者の揃いが静かに崩れる。

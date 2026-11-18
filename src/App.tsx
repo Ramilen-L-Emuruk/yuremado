@@ -1,7 +1,7 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
+import { Suspense, useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
-import { useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
+import { useLocale, useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
 import { useApplyLocaleSetting } from './i18n/useApplyLocaleSetting'
 import { historicalArchiveLabel } from './utils/historicalArchiveLabel'
 import { JA_MESSAGES } from './i18n/messages'
@@ -32,6 +32,7 @@ import { useSeismoQuakeWavesWithStatus, type SeismoQuakeWave } from './hooks/use
 import { useSeismoReplay } from './hooks/useSeismoReplay'
 import { usePublicQuakeWaves } from './hooks/usePublicQuakeWaves'
 import { mergeQuakeWaves } from './utils/mergeQuakeWaves'
+import { localizePublicQuakeCards, type PublicCardNameCache } from './utils/publicQuakeCardNames'
 import { useQuakeOriginSeconds } from './hooks/useQuakeOriginSeconds'
 import { SeismoWaveChart } from './components/SeismoWaveChart'
 import { hasWaveChartRows } from './components/SeismoWaveChart/chartRows'
@@ -43,8 +44,9 @@ import { RealtimeTab } from './components/RealtimeTab'
 import { resetEewForecastChangeSeen } from './utils/eewForecastChangeSeen'
 import { useEewSpeakingCard } from './hooks/useEewSpeakingCard'
 import { TsunamiTab } from './components/TsunamiTab'
-import { SettingsTab } from './components/SettingsTab'
 import { SettingsDialog } from './components/SettingsTab/SettingsDialog'
+import { retryableLazy } from './utils/retryableLazy'
+import { useMountWhenIdle } from './hooks/useMountWhenIdle'
 import { prefetchTestData } from './utils/testDataLoader'
 import { TelegramTab } from './components/TelegramTab'
 import { CatalogTab } from './components/CatalogTab'
@@ -109,12 +111,14 @@ import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/e
 import { quakeHistoryEntries, quakeHistoryView, type QuakeHistoryInputs } from './utils/quakeReportHistory'
 import {
   type QuakeOverlay, toggleLpgmOverlay, toggleDistributionOverlay, toggleUnreceivedOverlay,
+  toggleAnalysisOverlay, syncAnalysisOverlay, closeAnalysisOverlay,
   openDistributionOverlay, openLpgmOverlay,
   closeLpgmOverlay, closeEewLpgmOverlay, closeUnreceivedOverlay, closeUnreceivedOverlayFor,
   closeDistributionOverlayOnQuakeReport,
   decideUnreceivedSpeechOpen, shouldCloseOverlayOnSelection, type UnreceivedOpenResult,
   quakeOverlayChangeLog,
 } from './utils/quakeOverlay'
+import { analysisOverlayFailedFor, retryAnalysisOverlay, type AnalysisOverlayLayer } from './services/analysisOverlay'
 import { findEndedTsunami, isTsunamiForecastOnly, tsunamiOverallGrade } from './utils/tsunami'
 import {
   passesQuakeListFilter, quakeListFilterOf, quakeListFilterSettings, quakeListSortOf, keepIfSame, withLatestPinned, wantsAttachedTypes, quakeListMatchedCount,
@@ -127,8 +131,10 @@ import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
 import { loadTtsEpicenterAccents } from './utils/ttsEpicenterAccents'
 import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed, setSpeechVoice, clearVoicevoxDown } from './utils/voicevox'
+import { setSpeechLocaleDecision } from './utils/speechLocale'
+import { useSpeechLocale, useSpeechLocaleDecision } from './hooks/useSpeechLocale'
 import { unlockSystemSpeech } from './utils/systemSpeech'
-import { EEW_LEAD_PHRASES } from './utils/ttsText'
+import { speechTextFor } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataReplayInitialEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
@@ -165,6 +171,18 @@ import { buildEewDockItems, buildTsunamiDockItem, homePrefectureCode } from './u
 import { usePrefectures } from './hooks/usePrefectures'
 import { PREFECTURES } from './data/prefectureCodes'
 import { TSUNAMI_ZONE_PREFECTURES } from './data/tsunamiZonePrefectures'
+
+/**
+ * 設定の窓の中身。**起動時のチャンクとは別のファイルにし、起動の後の手空き（それより先に開かれたらそのとき）に読む**
+ * （起動時のチャンクに載せると事前キャッシュの 1 ファイルの予算を超える。
+ * → `docs/spec/settings-pwa-spec.md` §5「上限の手前で止める」）。読み込みに失敗したら、包んでいる
+ * `ErrorBoundary`（region）が窓の中だけを差し替え、受け止めたときに `reset` するので［再表示］で読み込みからやり直す
+ * （→ `retryableLazy`）
+ */
+/** 設定の窓の中身を手空きで置くまでの待ちと、手が空かないときの上限（→ `useMountWhenIdle` の呼び出し） */
+const SETTINGS_IDLE_DELAY_MS = 5_000
+const SETTINGS_IDLE_TIMEOUT_MS = 10_000
+const SettingsTab = retryableLazy(() => import('./components/SettingsTab').then((m) => ({ default: m.SettingsTab })))
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -225,6 +243,18 @@ export function App() {
   const messagesRef = useMessagesRef()
   // 同じく、通知の本文の地名を呼ばれた時点の言語で訳すための参照
   const placeNamesRef = usePlaceNamesRef()
+  // 読み上げの言語（文と声）。画面の言語と端末の声から決め、下の effect で読み上げへ渡す（→ hooks/useSpeechLocale.ts）
+  // 決めるのはここだけで、設定の窓などは下の effect で置き場へ渡した値を読む（→ utils/speechLocale.ts）
+  const speechLocaleDecision = useSpeechLocaleDecision()
+  // 置き場へ渡した読み上げの言語（下の effect が渡した後の値。文を組む側はこれで組を引く）
+  const speechLocale = useSpeechLocale()
+  // 緊急地震速報の切り出し語（読み上げの作り置き）。本番の読み上げと同じ読み上げの言語の組から採る
+  // 句と一緒に組の言語も渡す（作り置きを飛ばすかは、いまの言語の状態ではなく句を組んだ組の言語で決める）
+  const speechLeadText = speechTextFor(speechLocale, placeNames)
+  const speechLeadPhrases = speechLeadText.EEW_LEAD_PHRASES
+  const speechLeadLocale = speechLeadText.locale
+  // 画面の言語（地震カードの公開観測点の見出しの名前を訳す）
+  const locale = useLocale()
   const tabNames = messages.nav
   // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
   useApplyLocaleSetting(settings.locale)
@@ -295,6 +325,12 @@ export function App() {
   // 写しは `changeSettingsOpen` が先回りで書き、確定した値はここで追いかける。描画のたびに書き戻すと、
   // 窓の開け閉めがまだ載っていない別の更新の描画が、先回りで書いた値を古い値へ戻しうる。
   const settingsOpenRef = useRef(settingsOpen)
+  // 設定の窓の中身（`SettingsTab`）を置いたか。起動の後の手空きで読んで隠したまま置き、それより先に開かれたら
+  // 開いたその描画で置く。以後は閉じても外さずに隠す（→ `SettingsDialog`）。
+  // 待ちは 5 秒。起動直後は地図の初回の描画・履歴の取得・生成データの読み込みが重なるので、そこへ中身の組み立て
+  // （200 ms 級のフレーム）を足さない。手が空かなくても 10 秒で置く —— 置くのを先延ばしにし続けると、初めて開いた
+  // ときに組み立ての重さが戻る（2026-11-18 ユーザー選択「起動の後の手空きで組んでおく (Recommended)」）
+  const settingsMounted = useMountWhenIdle(settingsOpen, SETTINGS_IDLE_DELAY_MS, SETTINGS_IDLE_TIMEOUT_MS)
   useLayoutEffect(() => {
     settingsOpenRef.current = settingsOpen
   }, [settingsOpen])
@@ -418,6 +454,7 @@ export function App() {
   const activeLpgmSource = quakeOverlay?.kind === 'lpgm' ? quakeOverlay.source : null
   const distributionQuakeKey = quakeOverlay?.kind === 'distribution' ? quakeOverlay.eventKey : null
   const unreceivedQuakeKey = quakeOverlay?.kind === 'unreceived' ? quakeOverlay.eventKey : null
+  const analysisOverlay = quakeOverlay?.kind === 'analysis' ? quakeOverlay : null
   // 子タブ（React.memo 化済み）へ props として渡すため useCallback で参照を安定化する
   // （毎レンダー再生成すると memo が破られる）。
   //
@@ -533,6 +570,21 @@ export function App() {
     selectQuake(eventKey)
     applyQuakeOverlay(prev => toggleUnreceivedOverlay(prev, eventKey), '未入電のボタン')
   }, [selectQuake])
+  // 解析の重ね（MMI・すべり）のボタン。重ねるファイルの版はカードが解析の答えから選んで渡す（App は答えを持たない）
+  const toggleAnalysis = useCallback((eventKey: string, layer: AnalysisOverlayLayer, url: string) => {
+    selectQuake(eventKey)
+    // 開いていて取れなかった重ねを押し直したときは、閉じずに取り直す（地図左上の帯の「押し直すと取り直します」。
+    // 2026-11-16 ユーザー選択「その帯に載せる (Recommended)」）
+    if (analysisOverlayFailedFor(url)) {
+      retryAnalysisOverlay(url)
+      return
+    }
+    applyQuakeOverlay(prev => toggleAnalysisOverlay(prev, eventKey, layer, url), layer === 'mmi' ? 'MMI のボタン' : 'すべりのボタン')
+  }, [selectQuake])
+  // 開いている重ねを、カードが今出せる版に合わせる（新しい版が届いた・ファイルが無くなった）
+  const syncAnalysis = useCallback((eventKey: string, layer: AnalysisOverlayLayer, url: string | null) => {
+    applyQuakeOverlay(prev => syncAnalysisOverlay(prev, eventKey, layer, url), '解析の重ねの版が変わった')
+  }, [])
   // EEW カードから長周期の表示を閉じる。**分布は触らない** —— 排他なので開いていないが、
   // この操作の意味は「長周期を閉じる」であって追加表示すべてではない。
   const deactivateLpgm = useCallback(() => {
@@ -1183,7 +1235,7 @@ export function App() {
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateAnalysisQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
@@ -1257,9 +1309,8 @@ export function App() {
   // **押されてから読むと待ちが入る。** その待ちのあいだに初回履歴取得の応答が割り込むと、
   // いま流したテスト電文が上書きされうる（履歴の取り込みは表示中のイベントを置き換える）。
   //
-  // **`SettingsTab` 側の mount では駄目。** 設定の窓は閉じている間も中身を外さずに隠すだけなので、
-  // `SettingsTab` の `useEffect` は起動時に走ってしまい、分割した意味が無くなる
-  // （実際にそうなっていて、初回表示で 864 KB の chunk を取りに行っていた）。
+  // **`SettingsTab` 側の mount では駄目。** 設定の窓は一度開いた後は閉じても中身を外さずに隠すだけなので、
+  // `SettingsTab` の `useEffect` は置いたときに 1 度しか走らず、置くのは起動の後の手空き（開く前）なので、開いた合図にならない。
   useEffect(() => {
     if (settingsOpen) prefetchTestData()
   }, [settingsOpen])
@@ -1318,6 +1369,7 @@ export function App() {
     borrowFromTsunami: simulateHypocenterFromTsunami,
     magnitudeFromTsunami: simulateMagnitudeFromTsunami,
     unreceivedQuake:   simulateUnreceivedQuake,
+    analysisQuake:     simulateAnalysisQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
     areaUnreceivedQuake: simulateAreaUnreceivedQuake,
     tsunamiGradeChange: simulateTsunamiGradeChange,
@@ -1344,7 +1396,7 @@ export function App() {
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateAnalysisQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     settings.notifyEnabled, messages,
@@ -1476,8 +1528,9 @@ export function App() {
       log.debug('[VoiceVox] 切り出し語の作り置きをスキップ (接続先の URL が不正)')
       return
     }
-    warmFixedPhrases(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, EEW_LEAD_PHRASES)
-  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl, settings.voicevoxSpeakerId])
+    // 切り出し語は本番の読み上げと同じ組（画面の言語）から採る（組が違うと作り置きが当たらない）
+    warmFixedPhrases(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases, speechLeadLocale)
+  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases, speechLeadLocale])
 
   // 録画中は合成待ちの予算を緩める（→ `RECORDING_SYNTH_BUDGET_MS`）。負荷で音が途切れた
   // ぶんだけ予算が削られるため、既定のままだと長い文の後半が落ちる。
@@ -1489,6 +1542,11 @@ export function App() {
   useEffect(() => {
     setSpeechVoice(settings.ttsVoice)
   }, [settings.ttsVoice])
+  // 読み上げの言語。文を組む側はこの値で組（`speechTextFor`）を引き、声は組が文に添えた言語で選ぶ（→ `utils/speechLocale.ts`）
+  // 「声が無いので日本語で読んでいる」も一緒に渡す（設定の窓は自分で決め直さずにこれを読む。読んでいる言語と注記がずれない）
+  useEffect(() => {
+    setSpeechLocaleDecision(speechLocaleDecision)
+  }, [speechLocaleDecision])
   // 接続先・話者を直したら「VOICEVOX に繋がらない」の印を解く（直した設定を次の報からすぐ試す）
   useEffect(() => {
     clearVoicevoxDown()
@@ -1507,8 +1565,8 @@ export function App() {
     opts: ttsSpeechOptions,
   })
 
-  // 時報（→ hooks/useTimeSignal.ts）。読み上げの接続先は作り置きと同じく、入力が落ち着いた値を使う
-  useTimeSignal(settings, debouncedVoicevoxUrl)
+  // 時報（→ hooks/useTimeSignal.ts）。読み上げの接続先は作り置きと同じく、入力が落ち着いた値を使う。文は読み上げの言語で組む
+  useTimeSignal(settings, debouncedVoicevoxUrl, speechLocale)
 
   // ブラウザの自動再生制限に対応: 利用者の操作で音声を有効化する
   useEffect(() => {
@@ -1784,6 +1842,13 @@ export function App() {
     if (target?.points.some(p => p.unreceived && p.addr)) return
     applyQuakeOverlay(closeUnreceivedOverlay, '未入電の地点が無くなった')
   }, [filteredEarthquakes, unreceivedQuakeKey])
+  // 解析の重ねは、重ねている地震のカードが一覧から消えたら閉じる（カードが無いと押して閉じられない）
+  const analysisQuakeKey = analysisOverlay?.eventKey ?? null
+  useEffect(() => {
+    if (!analysisQuakeKey) return
+    if (filteredEarthquakes.some(q => quakeEventKey(q) === analysisQuakeKey)) return
+    applyQuakeOverlay(closeAnalysisOverlay, '解析の重ねの地震が一覧から消えた')
+  }, [filteredEarthquakes, analysisQuakeKey])
 
   // cancelledAt（10秒表示中）の EEW は地図・挙動系から除外する
   const activeEEWsNoCancelled = useMemo(
@@ -3008,6 +3073,15 @@ export function App() {
   // 未入電の印を寄り具合に関わらず出すか。**地図が出している地震のものだけ**を見る
   // （分布モードと同じ理由）。
   const mapUnreceivedMode = !!mapQuake && unreceivedQuakeKey === quakeEventKey(mapQuake)
+  // 解析の重ねも、地図が出している地震のものだけを渡す。地震の参照ではなく鍵で見る
+  // （続報で参照が変わるたびに作り直すと、地図が重ねのファイルを取り直す）
+  const mapQuakeKey = mapQuake ? quakeEventKey(mapQuake) : null
+  const mapAnalysisOverlay = useMemo(
+    () => (analysisOverlay && analysisOverlay.eventKey === mapQuakeKey
+      ? { layer: analysisOverlay.layer, url: analysisOverlay.url }
+      : null),
+    [analysisOverlay, mapQuakeKey],
+  )
 
   // 未入電を声に出しているあいだだけ未入電モードを開く（→ `useUnreceivedSpeechFollow`）。
   //
@@ -3239,12 +3313,14 @@ export function App() {
   })
   // 自作地震計を先に、続けて公開観測点を番号順に（§6.3）。**変わっていない地震は前の配列を使い回す**（→ utils/mergeQuakeWaves.ts）。
   const quakeWavesRef = useRef<ReadonlyMap<string, readonly SeismoQuakeWave[]>>(new Map())
+  // 公開観測点の札の見出しは画面の言語の名前にする（訳した札は控えて、同じ参照を返す。→ utils/publicQuakeCardNames.ts）
+  const publicCardNameCacheRef = useRef<PublicCardNameCache>(new WeakMap())
   const quakeWaves = useMemo(() => {
-    const cards = new Map([...publicQuakeWaves].map(([key, list]) => [key, list.map((w) => w.card)]))
+    const cards = localizePublicQuakeCards(publicQuakeWaves, locale, publicCardNameCacheRef.current)
     const merged = mergeQuakeWaves(seismoQuakeWaves, cards, quakeWavesRef.current)
     quakeWavesRef.current = merged
     return merged
-  }, [seismoQuakeWaves, publicQuakeWaves])
+  }, [seismoQuakeWaves, publicQuakeWaves, locale])
   // 地図の公開観測点の印。**下部の波形を出している間はそちらを優先し**、出していなければ開いている地震カードの観測点を出す
   // （2026-10-15 ユーザー決定）。
   const openedPublicWaves = selectedQuakeKey === null ? undefined : publicQuakeWaves.get(selectedQuakeKey)
@@ -3389,7 +3465,7 @@ export function App() {
                 行動チェックリスト・特別情報バナーは境界の外に残す——中へ入れると地図と一緒に消える。
                 **MapLibre のカスタムレイヤーが描画ループ（rAF）で投げた例外はここへ届かない**。
                 そちらは各レイヤーの render() を包んで utils/renderHealth.ts へ報告する側の担当。 */}
-            <ErrorBoundary variant="region" label={messages.errorScreen.mapLabel}>
+            <ErrorBoundary variant="region" label={messages.errorScreen.mapLabel} onCatch={() => {}}>
               <MapView
                 mode={mapMode}
                 publicStationMarkers={publicStationMarkers}
@@ -3403,6 +3479,7 @@ export function App() {
                 lpgm={(mapHistoryView && activeLpgm && activeLpgm.eventId === extractQuakeEventId(mapHistoryView.quake) ? mapHistoryView.lpgm : activeLpgm) ?? undefined}
                 distributionMode={mapDistributionMode}
                 unreceivedMode={mapUnreceivedMode}
+                analysisOverlay={mapAnalysisOverlay}
                 estimatedIntensity={mapEstimatedIntensity}
                 iconScale={settings.mapIconScale}
                 recording={settings.recordingMode}
@@ -3487,7 +3564,7 @@ export function App() {
                 下限を子の下限の合計に合わせ続けなければならず、子が空でも高さを取る。
                 下限は各コンポーネントが自分の外枠に値で書く（`min-height` を書かない子は中身の高さで
                 止まって縮まず、`min-h-0` の子は見出しまで潰れる）。 */}
-            <div className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
+            <div data-tip-bounds className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
               {actionChecklist.state && !checklistOverlay && (
                 <ActionChecklist
                   reason={actionChecklist.state.reason}
@@ -3637,7 +3714,7 @@ export function App() {
             {/* **タブごとに境界を置く。** 6 タブは常時マウントで `invisible` を付け外ししている
                 だけなので、1 つのタブが投げた例外は境界が無ければ App ごと巻き込む。ここで
                 受け止めれば、落ちたタブ以外はそのまま見られる。 */}
-            <ErrorBoundary variant="region" label={tabNames.earthquake}>
+            <ErrorBoundary variant="region" label={tabNames.earthquake} onCatch={() => {}}>
               <EarthquakeTab
                 shown={activeTab === 'earthquake'}
                 earthquakes={filteredEarthquakes}
@@ -3679,10 +3756,14 @@ export function App() {
                 onReplayQuake={replayQuakeFromCard}
                 // 再生中だけ渡す。弾かれた開始（範囲外）はライブのまま知らせだけが残り、消す口が地震タブに無いため
                 replayError={replayTimeOffset !== null ? replay.error : null}
+                replaying={replayTimeOffset !== null}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}
                 onToggleUnreceived={toggleUnreceived}
+                analysisOverlay={analysisOverlay}
+                onToggleAnalysisOverlay={toggleAnalysis}
+                onSyncAnalysisOverlay={syncAnalysis}
                 onFocusMap={focusMapTarget}
                 speakingTelegramTextSubject={speakingTelegramTextSubject}
                 seismoWaves={quakeWaves}
@@ -3692,7 +3773,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'realtime' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.realtime}>
+            <ErrorBoundary variant="region" label={tabNames.realtime} onCatch={() => {}}>
               <RealtimeTab
                 eews={eewsForPanel}
                 kyoshinV2Detections={kyoshinV2.detections}
@@ -3708,7 +3789,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'tsunami' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.tsunami}>
+            <ErrorBoundary variant="region" label={tabNames.tsunami} onCatch={() => {}}>
               <TsunamiTab
                 tsunamis={tsunamis}
                 earthquakes={allQuakeCards /* 原因地震は地震タブの絞りによらず引く */}
@@ -3733,7 +3814,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'catalog' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.catalog}>
+            <ErrorBoundary variant="region" label={tabNames.catalog} onCatch={() => {}}>
               <CatalogTab
                 index={catalogIndex}
                 filter={catalogFilter}
@@ -3755,42 +3836,46 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'telegrams' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.telegrams}>
+            <ErrorBoundary variant="region" label={tabNames.telegrams} onCatch={() => {}}>
               <TelegramTab telegramLog={telegramLog} onClear={clearTelegramLog} active={activeTab === 'telegrams'} />
             </ErrorBoundary>
           </div>
           </div>
         </div>
 
-        {/* 設定は窓（2026-10-27 ユーザー承認）。閉じている間も中身を外さずに隠す（→ `SettingsDialog`） */}
+        {/* 設定は窓（2026-10-27 ユーザー承認）。中身は起動の後の手空き（それより先に開かれたらそのとき）に読んで置き、閉じている間も外さずに隠す（→ `SettingsDialog`） */}
         {usageConsentOpen && <UsageConsentDialog onAnswer={answerUsageConsent} />}
         {quakeReplayConfirmAt !== null && <QuakeReplayConfirmDialog onAnswer={answerQuakeReplayConfirm} />}
         <SettingsDialog open={settingsOpen} onClose={closeSettings} returnFocusRef={settingsButtonRef}>
-            <ErrorBoundary variant="region" label={tabNames.settings}>
-              <SettingsTab
-                settings={settings}
-                onUpdate={updateSetting}
-                arrivalTokenStatus={arrivalTokenStatus}
-                forecastKeyStatus={forecastKeyStatus}
-                forecastKeyRelayRejected={forecastKeyRelayRejected}
-                relayForecastLive={relayForecastLive}
-                onReplaceSettings={replaceSettings}
-                dmdataConnectionStatus={connectionStatus}
-                relayUpstream={relayUpstream}
-                keyForecastStatus={keyForecastStatus}
-                dmdataClassifications={dmdataClassifications}
-                onTest={countedTestHandlers}
-                kyoshinTimeOffset={replayTimeOffset}
-                kyoshinInputDateTime={kyoshinInputDateTime}
-                onSetKyoshinInputDateTime={setKyoshinInputDateTime}
-                replayIsFetching={replay.isFetching}
-                replayError={replay.error}
-                onStartReplay={startReplayCounted}
-                onStopReplay={replay.stop}
-                historicalArchives={historicalArchives}
-                historicalArchivesLoading={historicalArchivesLoading}
-                seismoUnreadableCount={seismo.unreadableCount}
-              />
+            <ErrorBoundary variant="region" label={tabNames.settings} onCatch={SettingsTab.reset}>
+              {settingsMounted && (
+                <Suspense fallback={null}>
+                  <SettingsTab
+                    settings={settings}
+                    onUpdate={updateSetting}
+                    arrivalTokenStatus={arrivalTokenStatus}
+                    forecastKeyStatus={forecastKeyStatus}
+                    forecastKeyRelayRejected={forecastKeyRelayRejected}
+                    relayForecastLive={relayForecastLive}
+                    onReplaceSettings={replaceSettings}
+                    dmdataConnectionStatus={connectionStatus}
+                    relayUpstream={relayUpstream}
+                    keyForecastStatus={keyForecastStatus}
+                    dmdataClassifications={dmdataClassifications}
+                    onTest={countedTestHandlers}
+                    kyoshinTimeOffset={replayTimeOffset}
+                    kyoshinInputDateTime={kyoshinInputDateTime}
+                    onSetKyoshinInputDateTime={setKyoshinInputDateTime}
+                    replayIsFetching={replay.isFetching}
+                    replayError={replay.error}
+                    onStartReplay={startReplayCounted}
+                    onStopReplay={replay.stop}
+                    historicalArchives={historicalArchives}
+                    historicalArchivesLoading={historicalArchivesLoading}
+                    seismoUnreadableCount={seismo.unreadableCount}
+                  />
+                </Suspense>
+              )}
             </ErrorBoundary>
         </SettingsDialog>
 

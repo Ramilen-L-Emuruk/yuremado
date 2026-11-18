@@ -54,9 +54,19 @@
 //   次のテストの失敗として出るか、ファイルの最後のテストの後なら下の `afterAll` が拾う。
 //   `afterAll` より後に出たものは拾えない。
 
-import { afterAll, afterEach } from 'vitest'
+import { afterAll, afterEach, vi } from 'vitest'
 import { isActWarning } from './test-utils/muteConsoleError'
 import { installTestTelegramFetch } from './test-utils/testTelegramFetch'
+
+// 地震カードの解析の問い合わせ（`services/relayAnalysis.ts` の `fetchQuakeAnalysis`）を、どのテストでも
+// 答えが返らないままにする。**塞がないと、カードを開いて描くテストが本物の中継の札の口へ問い合わせる**
+// （地震タブのテストだけで 137 件。CI からも本番へ飛ぶ）。**すぐ答えを返す形にはしない** —— 答えで描き直しが
+// 起き、そのテストの `act()` の外の更新として落ちる（21 件落ちた）。解析そのものを確かめるテストは、自分の
+// ファイルで `vi.unmock` するか、`vi.mock` で別の答えを返す（`relayAnalysis.test.ts`・`useQuakeAnalysis.test.ts`）
+vi.mock('./services/relayAnalysis', async (orig) => ({
+  ...(await orig<typeof import('./services/relayAnalysis')>()),
+  fetchQuakeAnalysis: () => new Promise(() => {}),
+}))
 
 // テストボタンの電文（`public/data/test-telegrams/`）への取得を、ファイル読み込みへ向ける。
 //

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   TIME_SIGNAL_SOUND_SHAPE, TIME_SIGNAL_SPEECH_GAP_SEC,
-  isInQuietHours, minuteToTimeValue, nextSignalAt, speechStartOffsetSec, timeSignalClockText, timeSignalSpeechText, timeValueToMinute,
+  isInQuietHours, minuteToTimeValue, nextSignalAt, speechStartOffsetSec, japaneseClockText, timeSignalSpeechText, timeValueToMinute,
 } from './timeSignal'
+import { jaSpeech } from '../i18n/speechWords'
 
 // 日時は現地時刻で組む（境も現地時刻で決まるので、CI の時間帯によらず同じに通る）
 const at = (h: number, m: number, s = 0, ms = 0) => new Date(2026, 10, 4, h, m, s, ms).getTime()
@@ -48,26 +49,34 @@ describe('isInQuietHours', () => {
   })
 })
 
-describe('timeSignalClockText', () => {
+describe('japaneseClockText', () => {
   it('24 時間制。正時は分を読まない', () => {
-    expect(timeSignalClockText(at(15, 30), '24h')).toBe('15時30分')
-    expect(timeSignalClockText(at(15, 0), '24h')).toBe('15時')
-    expect(timeSignalClockText(at(0, 5), '24h')).toBe('0時5分')
+    expect(japaneseClockText(15, 30, '24h')).toBe('15時30分')
+    expect(japaneseClockText(15, 0, '24h')).toBe('15時')
+    expect(japaneseClockText(0, 5, '24h')).toBe('0時5分')
   })
   it('12 時間制。正午は午後0時、0 時は午前0時', () => {
-    expect(timeSignalClockText(at(15, 30), '12h')).toBe('午後3時30分')
-    expect(timeSignalClockText(at(12, 0), '12h')).toBe('午後0時')
-    expect(timeSignalClockText(at(0, 0), '12h')).toBe('午前0時')
-    expect(timeSignalClockText(at(11, 55), '12h')).toBe('午前11時55分')
+    expect(japaneseClockText(15, 30, '12h')).toBe('午後3時30分')
+    expect(japaneseClockText(12, 0, '12h')).toBe('午後0時')
+    expect(japaneseClockText(0, 0, '12h')).toBe('午前0時')
+    expect(japaneseClockText(11, 55, '12h')).toBe('午前11時55分')
   })
 })
 
 describe('timeSignalSpeechText', () => {
-  it('4 つの文の形', () => {
-    expect(timeSignalSpeechText(at(15, 30), '24h', 'oshirase')).toBe('15時30分をお知らせします')
-    expect(timeSignalSpeechText(at(15, 30), '24h', 'desu')).toBe('15時30分です')
-    expect(timeSignalSpeechText(at(15, 30), '24h', 'narimashita')).toBe('15時30分になりました')
-    expect(timeSignalSpeechText(at(15, 30), '24h', 'bare')).toBe('15時30分')
+  const ja = jaSpeech.timeSignal.say
+  it('4 つの文の形（日本語の語表）', () => {
+    expect(timeSignalSpeechText(at(15, 30), '24h', 'oshirase', ja)).toBe('15時30分をお知らせします')
+    expect(timeSignalSpeechText(at(15, 30), '24h', 'desu', ja)).toBe('15時30分です')
+    expect(timeSignalSpeechText(at(15, 30), '24h', 'narimashita', ja)).toBe('15時30分になりました')
+    expect(timeSignalSpeechText(at(15, 30), '24h', 'bare', ja)).toBe('15時30分')
+  })
+  it('日本語の語表の時刻だけの形は、時刻の読み（japaneseClockText）と同じ', () => {
+    for (const [h, m] of [[0, 0], [0, 5], [11, 55], [12, 0], [15, 30], [23, 59]] as const) {
+      for (const clock of ['24h', '12h'] as const) {
+        expect(timeSignalSpeechText(at(h, m), clock, 'bare', ja)).toBe(japaneseClockText(h, m, clock))
+      }
+    }
   })
 })
 

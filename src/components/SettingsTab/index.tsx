@@ -14,15 +14,16 @@ import type { ConnectionStatus } from '../../types/earthquake'
 import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLabel'
 import type { RelayUpstreamStatus } from '../../services/dmdata'
 import { useMessages } from '../../i18n/I18nProvider'
-import { LOCALE_LOAD_FAILED_EN, LOCALE_LOAD_FAILED_JA, LOCALES, type LocaleSetting, type Messages } from '../../i18n/messages'
-import { useLocaleLoadFailed } from '../../i18n/I18nProvider'
+import { LOCALE_LOAD_FAILED_EN, LOCALE_LOAD_FAILED_JA, LOCALES, type Locale, type LocaleSetting, type Messages } from '../../i18n/messages'
+import { useLocaleLoadFailed, usePlaceNames, useSpeechDataLoadFailed } from '../../i18n/I18nProvider'
+import { useSpeechLocale, useSpeechVoiceMissing } from '../../hooks/useSpeechLocale'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, intensityLabel, intensityShortLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
 import { kyoshinIndexLabelText, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { readableTextColor } from '../../utils/contrast'
 import { playAlertSound, playCountdownBeep, playKyoshinUpdateSound, unlockAudio } from '../../utils/alertSound'
 import { checkVoicevoxAvailable, clearVoicevoxDown, fetchVoicevoxSpeakers, isValidVoicevoxUrl, speakSequentially, VOICEVOX_URL_DEBOUNCE_MS, type VoicevoxSpeaker } from '../../utils/voicevox'
-import { voicevoxPreviewTexts } from '../../utils/ttsText'
+import { speechTextFor, type SpeechText } from '../../utils/ttsText'
 import { log } from '../../utils/logger'
 import { serverDate, getServerClockOffsetMs } from '../../utils/clock'
 import type { HistoricalArchiveIndex } from '../../types/historicalArchive'
@@ -48,9 +49,10 @@ import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
 import {
   TIME_SIGNAL_CLOCKS, TIME_SIGNAL_INTERVALS, TIME_SIGNAL_ORDERS, TIME_SIGNAL_PHRASES, TIME_SIGNAL_SOUNDS, TIME_SIGNAL_WHILE_SPEAKING,
-  minuteToTimeValue, timeSignalSpeechText, timeValueToMinute,
+  minuteToTimeValue, timeValueToMinute,
   type TimeSignalClock, type TimeSignalIntervalMin, type TimeSignalOrder, type TimeSignalPhrase, type TimeSignalSound, type TimeSignalWhileSpeaking,
 } from '../../utils/timeSignal'
+import { timeSignalUtterance } from '../../hooks/useTimeSignal'
 import { ReleaseNotesDialog } from '../ReleaseNotesDialog'
 import { allNotes, type ReleaseNoteEntry } from '../../utils/releaseNotes'
 import { useIsSettingsCategoryActive, type SettingsCategoryId } from './SettingsDialog'
@@ -123,6 +125,8 @@ export interface TestFunctions {
   /** 津波の続報が地震情報より新しい規模を伝える場面。 */
   magnitudeFromTsunami?: () => void
   unreceivedQuake?: () => void
+  /** 解析テスト（能登の地震に実物の解析の答えを添える） */
+  analysisQuake?: () => void
   maxScaleOrAboveQuake?: () => void
   tsunamiGradeChange?: () => void
   tsunamiQuietReports?: () => void
@@ -791,6 +795,8 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
   const { settings: w, formats: fw } = useMessages()
   const selectClass = 'bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white'
   const speech = settings.ttsEnabled
+  // 読み上げの文の選択肢は、時報が実際に読む言語（読み上げの言語）の文で出す
+  const speechLocale = useSpeechLocale()
   return (
     <>
       <Row label={w.timeSignal.enabled.label} description={w.timeSignal.enabled.description}>
@@ -822,7 +828,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
                 <select value={settings.timeSignalPhrase} className={selectClass}
                   onChange={e => onUpdate('timeSignalPhrase', e.target.value as TimeSignalPhrase)}>
                   {TIME_SIGNAL_PHRASES.map(v => (
-                    <option key={v} value={v}>{timeSignalSpeechText(TIME_SIGNAL_EXAMPLE_AT, settings.timeSignalClock, v)}</option>
+                    <option key={v} value={v}>{timeSignalUtterance(TIME_SIGNAL_EXAMPLE_AT, settings.timeSignalClock, v, speechLocale).text}</option>
                   ))}
                 </select>
               </Row>
@@ -1085,10 +1091,16 @@ function TestButton({ color, onClick, children, disabled }: {
  * `speakSequentially` が Promise を返す前に起きるため `catch` に入らず、押しても無音のまま
  * 画面には何も出ない。
  */
-async function speakVoicevoxPreview(baseUrl: string, speakerId: number, volume: number): Promise<void> {
+async function speakVoicevoxPreview(
+  speechText: SpeechText,
+  /** `speechText` を引いた読み上げの言語（文と一緒に読み上げへ渡す。→ `SpeechUtterance`） */
+  locale: Locale,
+  baseUrl: string, speakerId: number, volume: number,
+): Promise<void> {
   // 試聴は VOICEVOX をもう一度試す（「繋がらない」の印が残ったままだと、VOICEVOX が直っていても端末の声で鳴る）
   clearVoicevoxDown()
-  await speakSequentially(baseUrl, voicevoxPreviewTexts(), speakerId, volume)
+  const texts = speechText.voicevoxPreviewTexts().map(text => (locale === 'ja' ? text : { text, locale }))
+  await speakSequentially(baseUrl, texts, speakerId, volume)
 }
 
 // 震度別の色付き小ボタン（通知音テスト用）。表記と色は強震モニタのインデックスから引く
@@ -1369,6 +1381,14 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   const w = m.settings
   const fw = m.formats
   const localeLoadFailed = useLocaleLoadFailed()
+  // 試聴は本番の読み上げと同じ組（読み上げの言語）で組む
+  const speechLocale = useSpeechLocale()
+  const speechText = speechTextFor(speechLocale, usePlaceNames())
+  // 画面の言語の声が端末に無く、日本語で読んでいるか（読み上げの声の行の下に出す）。App が決めた値を読む（自分で決め直さない。
+  // 決め直すと、読んでいる言語と注記が食い違う。→ utils/speechLocale.ts）
+  const missingVoice = useSpeechVoiceMissing()
+  // 画面の言語の読み上げのデータを読めず、日本語で読んでいるか（同じ行の下に出す）
+  const speechDataFailed = useSpeechDataLoadFailed()
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -1653,11 +1673,20 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               {/* 試聴は今の声で読む（VOICEVOX に繋がらなければ端末の声へ落ちるのも本番と同じ）。通信先はデバウンス後の URL（下の VOICEVOX の試聴と同じ理由） */}
               <TestButton color="blue" onClick={() => {
                 unlockAudio()
-                speakVoicevoxPreview(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                speakVoicevoxPreview(speechText, speechLocale, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
                   .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
               }}>{w.common.preview}</TestButton>
             </div>
           </Row>
+        )}
+        {/* 画面の言語の声が端末に無いので日本語で読んでいる（日本語の画面・語表がまだ無い言語では出ない。→ hooks/useSpeechLocale.ts） */}
+        {settings.ttsEnabled && missingVoice && (
+          <div className="px-3 pb-2 text-[11px] text-secondary leading-snug">{w.rows.ttsVoice.noLocaleVoice}</div>
+        )}
+        {/* 画面の言語の読み上げのデータ（語表・地名の表）を読めず、日本語で読んでいる（読み込みの途中・日本語の画面では出ない。
+            回線が戻って読み直せたら消える。2026-11-18 ユーザー選択「出す (Recommended)」。→ i18n/I18nProvider.tsx） */}
+        {settings.ttsEnabled && speechDataFailed !== null && (
+          <div className="px-3 pb-2 text-[11px] text-secondary leading-snug">{w.rows.ttsVoice.speechDataLoadFailed}</div>
         )}
         {/* 時報も鳴らすので数える（時報の「通知音と同じ」はこの音量を指す。切ると行ごと消えて辿れない） */}
         {(settings.soundEnabled || settings.ttsEnabled || settings.timeSignalEnabled) && (
@@ -1781,7 +1810,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                       文字列を書くと、緊急地震速報の文型を変えたとき試聴だけ古い形で残る。 */}
                   <TestButton color="blue" onClick={() => {
                     unlockAudio()
-                    speakVoicevoxPreview(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                    speakVoicevoxPreview(speechText, speechLocale, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
                       .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
                   }}>{w.common.preview}</TestButton>
                 </Row>
@@ -2576,6 +2605,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {onTest.unreceivedQuake && (
           <Row label={w.test.unreceivedQuake.label} description={w.test.unreceivedQuake.description}>
             <TestButton color="orange" onClick={onTest.unreceivedQuake}>{w.test.unreceivedQuake.button}</TestButton>
+          </Row>
+        )}
+        {onTest.analysisQuake && (
+          <Row label={w.test.analysisQuake.label} description={w.test.analysisQuake.description}>
+            <TestButton color="orange" onClick={onTest.analysisQuake}>{w.test.analysisQuake.button}</TestButton>
           </Row>
         )}
         {onTest.maxScaleOrAboveQuake && (

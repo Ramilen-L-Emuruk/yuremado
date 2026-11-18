@@ -119,7 +119,7 @@ void preloadMessages().then(({ locale, preloaded }) => {
   createRoot(rootEl).render(
     <StrictMode>
       <I18nProvider locale={locale} preloaded={preloaded}>
-        <ErrorBoundary variant="root">
+        <ErrorBoundary variant="root" onCatch={() => {}}>
           <App />
         </ErrorBoundary>
       </I18nProvider>

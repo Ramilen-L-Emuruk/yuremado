@@ -1,9 +1,8 @@
-import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
+import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, JMAInternationalTsunami, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter, QuakeRetractedReport, ForeignTsunamiCode } from '../types/earthquake'
+import type { KyoshinDetectionPhrase } from './kyoshinRegionName'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
-import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
-import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
+import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, parseTsunamiHeight, evacuationActionLine, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
-import { ja } from '../i18n/messages/ja'
 import { joinSegments, plain, type SpeechSegment, type SpeechRef, type QuakeFact, type SpokenObservation } from './ttsFollow'
 import { getSubRegionsCache } from './subregions'
 import { getPrefecturesCache } from './prefectures'
@@ -11,12 +10,15 @@ import { getStationCoordsCache, getAreaPrefIndexCache, stationPrefIndexOf, prefA
 import { isAreaPoint, isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel } from './quakePoints'
 import { hasMagnitude, hasDepth, readDateTime } from './formatters'
 import { tsunamiSourceHypocenter } from './borrowFromTsunami'
-import { createLogThrottle, createPerLabelLogGate, log } from './logger'
+import { createLogThrottle, createPerLabelLogGate, log, UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS } from './logger'
 import { hasKnownEpicenter } from './geo'
 import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
 import { DOMESTIC_TSUNAMI_CODE_TEXT, warnIfDomesticTsunamiSentenceMissing, withoutDomesticTsunamiSentences } from './domesticTsunamiComment'
 import { isObservedLpgmClass } from './lpgm'
 import { TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_TEXT_BLOCK_KEYS, type TelegramBoilerplateKey, type TelegramTextBlockKey } from '../i18n/messageKeys'
+import { jaSpeech, speechWordsFor, type SpeechWords, type QuakeOccurrencePart } from '../i18n/speechWords'
+import { JA_PLACE_NAMES, type PlaceNameLookup } from '../i18n/placeNames'
+import type { Locale } from '../i18n/messages'
 
 /**
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
@@ -30,17 +32,11 @@ import { TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_TEXT_BLOCK_KEYS, type TelegramBoile
  */
 const GRADE_ORDER: TsunamiGrade[] = GRADES_IN_CARD_ORDER.filter(g => g !== 'Unknown')
 
-function tsunamiGradeLabel(grade: TsunamiGrade): string {
-  // 呼び名はカードの「等級が移り変わった」行と共有する（`TSUNAMI_GRADE_NAME`）
-  return TSUNAMI_GRADE_NAME[grade]
-}
-
 // 震度スケールの降順リスト
 const SCALE_DESCENDING: IntensityScale[] = [70, 60, 55, 50, 45, 40, 30, 20, 10] as IntensityScale[]
 
-/** 地域名を作れなかった記録を出す間隔。続いている障害を「一度きり」に見せないための間引き。 */
-const NO_REGION_LOG_THROTTLE_MS = 5 * 60_000
-const warnNoRegionNames = createLogThrottle(NO_REGION_LOG_THROTTLE_MS)
+/** 日本時間と UTC の差（国際津波関連情報の時刻を日本時間で読む） */
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 // 県内の一次細分区域が全部同じ階級で揃っている場合、区域名の列挙を「〇〇県」1件にまとめる。
 // 入力の出自は問わない（電文の区域点／観測点から逆引きした区域名／都道府県ロールアップ名のどれでも
@@ -368,2119 +364,6 @@ export interface QuakeSpokenState {
   regionSnapshot?: ReadonlyMap<string, number>
 }
 
-/** 空の {@link QuakeSpokenState} を作る。 */
-export function createQuakeSpokenState(): QuakeSpokenState {
-  return { regions: new Map(), facts: new Map() }
-}
-
-/**
- * 声になった参照を記録へ反映する。
- *
- * 区域は**震度が上がったときだけ**書き換える（同じ区域を下位の震度で挙げ直す電文があっても、
- * 既に伝えた震度を下げない）。事実は最後に伝えた値で上書きする。
- *
- * `useLiveEventHandler` が読み上げの完了時に呼ぶ。**記録を進める規則はここ 1 か所に置くこと**
- * ―― テストが同じ規則を書き写すと、実装だけ変えたときにテストが古い規則のまま緑で残る。
- */
-export function applySpokenRefs(state: QuakeSpokenState, refs: readonly SpeechRef[]): void {
-  for (const ref of refs) {
-    if (ref.kind === 'quakeRegion') {
-      const said = state.regions.get(ref.name)
-      // 同じ階級でも、推定（未入電）→観測は前進なので書き換える。逆向きには戻さない。
-      const forward = said === undefined
-        || said.scale < ref.scale
-        || (said.scale === ref.scale && said.unreceived && !ref.unreceived)
-      if (forward) state.regions.set(ref.name, { scale: ref.scale as IntensityScale, unreceived: !!ref.unreceived })
-    } else if (ref.kind === 'quakeFact') {
-      state.facts.set(ref.fact, ref.value)
-    } else if (ref.kind === 'quakeObserved') {
-      // **置き換える（積まない）。** 次の報と比べる基準は「最後に伝えた報」なので、
-      // 古い報の観測点を残しても使い道がない。
-      state.observed = ref.observed
-    } else if (ref.kind === 'quakeRegionSnapshot') {
-      // 置き換える（積まない）。理由は `observed` と同じ。
-      state.regionSnapshot = ref.regions
-    }
-  }
-}
-
-/**
- * 続報で区域を読むかどうかと、読むならどちらの群に入れるか。
- *
- * | 値 | 意味 | 読み方 |
- * |---|---|---|
- * | `fresh` | まだ一度も挙げていない区域 | 「新たに震度○を〜」 |
- * | `upgraded` | 既に挙げたが、伝えた震度より高くなった | 「震度○を〜」（先に読む） |
- * | `null` | 据え置き（または下がった） | 読まない |
- *
- * **2 つを混ぜて「新たに」で括ってはいけない。** 震度が上がった区域は初めて揺れた場所ではないし、
- * 「上がった」ことの方が重い報せなので先に伝える（docs/spec/audio-tts-spec.md §4）。
- */
-type RegionDiffKind = 'fresh' | 'upgraded'
-
-function regionDiffKind(spoken: QuakeSpokenState, name: string, scale: IntensityScale): RegionDiffKind | null {
-  const said = spoken.regions.get(name)
-  if (said === undefined) return 'fresh'
-  if (said.scale < scale) return 'upgraded'
-  // 推定として読んだ区域に観測値が届いたら読み直す。**「新たに」は付けない** ―― 初めて挙げる
-  // 区域ではないため。「もっと強いかもしれない」が消えたことを伝える更新なので上がり側に入れる。
-  if (said.scale === scale && said.unreceived) return 'upgraded'
-  return null
-}
-
-/**
- * 上限で読む区域を選び、読み上げ順へ整える。**選抜と並びは別物。**
- *
- * 選抜（どれを読むか）は震源に近い順。地理順のまま先頭から切ると、震源から遠い北側の地域が
- * 枠を占め、震源直近が「ほかN地域」に潰されうる。震源を持たない電文（震度速報）は距離で
- * 選べないので地理順で切り、「北から上限まで」という説明できる選抜にする。
- * 並び（どの順に読むか）は選抜が済んでから地理順へ組み直す。
- *
- * `maxRegions` は **0 が「無制限」**（設定の既定は 10）。ここを 1 と取り違えると、無制限に
- * した端末で 1 件しか読まれない。上限をわずかに超えるだけなら、省いた地域名より「ほかN地域」の
- * 方が長くなるので、許容超過（`regionTolerance`）の範囲内は省略せず全地域を読む。
- */
-function selectRegionNames(
-  names: string[],
-  opts: TtsSpeechOptions,
-  hypocenter: { latitude: number; longitude: number } | undefined,
-  regionOrder: RegionOrderIndex | null,
-): { names: string[]; omittedNames: string[] } {
-  // 震源位置が使えるか。0 は座標未設定、-200 は「位置不明」センチネル（震度速報のように震源を
-  // 持たない電文で入る。dmdataParser.ts 参照）。どちらも距離の基準にはできない。
-  // -200 を弾かないと、地球上に存在しない点からの距離で地域を選ぶことになる。
-  const hasEpicenter = hypocenter != null
-    && hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)
-    && (hypocenter.latitude !== 0 || hypocenter.longitude !== 0)
-  let picked = hasEpicenter
-    ? [...names].sort((a, b) => {
-        const ca = coordForName(a)
-        const cb = coordForName(b)
-        if (!ca && !cb) return 0
-        if (!ca) return 1
-        if (!cb) return -1
-        return distSq(hypocenter!.latitude, hypocenter!.longitude, ca[0], ca[1])
-             - distSq(hypocenter!.latitude, hypocenter!.longitude, cb[0], cb[1])
-      })
-    : sortByRegionOrder(names, regionOrder)
-  // **件数だけでなく省略した名前も返す。** 呼び出し側が「ほか○地域」の断片へ参照を付け、
-  // 声になったら既読へ移すため。件数しか返していなかった頃は、省略された区域が次報で
-  // 「新たに」付きで読み直され、**地域が増えたように聞こえていた**（前報で件数としては
-  // 伝えているのに）。
-  let omittedNames: string[] = []
-  if (opts.maxRegions > 0 && picked.length > opts.maxRegions + opts.regionTolerance) {
-    omittedNames = picked.slice(opts.maxRegions)
-    picked = picked.slice(0, opts.maxRegions)
-  }
-  // 安定ソートなので、震源が無い経路（既に地理順）ではここは何も動かさない。
-  return { names: sortByRegionOrder(picked, regionOrder), omittedNames }
-}
-
-/**
- * その区域について「5弱以上と推定されます」をまだ声にしていないか。
- *
- * 観測値として同じ階級を既に読んでいるなら**読み直さない**。確定した観測が推定へ戻ることは
- * 無く、読めば「確かだったものが不確かになった」と聞こえる。
- */
-function isUnreceivedUnspoken(spoken: QuakeSpokenState, name: string): boolean {
-  const said = spoken.regions.get(name)
-  if (said === undefined) return true
-  return said.scale < 45
-}
-
-/**
- * 「5弱以上・未入電」を伝える一文。
- *
- * **通常の文に混ぜない。** 地域名を含む文の述語は「観測しました」で、電文が「観測値が
- * 届いていない」と明言しているものをそこへ入れると嘘になる。階級も下限へ寄せてあるので、
- * 語だけ「以上」に変えても述語との食い違いは残る。**別の文へ出して述語ごと分ける。**
- *
- * **地点名で読む。** 未入電は観測点 1 つ 1 つに付く事実で、気象庁も市町村・地点名で発表する。
- * 区域名へ丸めると、同じ区域に観測値がある電文で「最大震度7を石川県能登で観測しました。
- * 石川県能登では…未入電です。」と矛盾して聞こえる（区域の最大は観測できているのに、
- * 区域全体が未入電であるかのように語ることになる）。地点の話にすれば衝突しない。
- *
- * 地点を持たない電文（震度速報は区域しか持たない）だけ、従来どおり区域名で読む。
- *
- * 既読は通常の区域と同じ仕組み（`quakeRegion`）に乗せるが、**鍵には未入電の別も含める**。
- * 同じ名前が後の報で観測値として確定したら、階級が同じでも読み直す（→ `regionDiffKind`）。
- */
-function unreceivedRegionSegments(
-  points: EarthquakePoint[],
-  opts: TtsSpeechOptions,
-  hypocenter?: { latitude: number; longitude: number },
-  spoken?: QuakeSpokenState,
-): SpeechSegment[] {
-  const stationData = getStationCoordsCache()
-  const idx: RegionNameIndexes = {
-    prefAreaNames: stationData ? prefAreaNamesIndexOf(stationData) : null,
-    areaPrefIndex: getAreaPrefIndexCache(),
-    stationPrefIndex: stationData ? stationPrefIndexOf(stationData) : null,
-    stationData,
-  }
-  const regionOrder = stationData ? regionOrderIndexOf(stationData) : null
-  const unreceived = points.filter(p => p.unreceived)
-  if (unreceived.length === 0) return []
-  const regionOfStation = (p: EarthquakePoint): string | null => {
-    const pref = p.pref || idx.stationPrefIndex?.get(p.addr) || ''
-    return pref && idx.stationData ? lookupStationRegion(idx.stationData, pref, p.addr) : null
-  }
-  // 設定で粒度を選べる（→ `TtsUnreceivedDetail`）。既定は地点名。
-  //
-  // `areas` は地点を 1 つも挙げず、全部を区域名へ丸める。**述語も併せて変える** ――
-  // 区域名のまま「〇〇では、震度5弱以上と推定されますが」と言うと、同じ区域に観測値がある
-  // 電文で区域全体が未入電であるかのように聞こえる（地点名を既定にした理由そのもの）。
-  // 「一部の地点で」を挟めば、区域の中の一部の話だと分かる。
-  const detail = opts.unreceivedDetail ?? 'stations'
-  // 地点名で読み、地点で覆えない区域・県だけを区域名で補う（規則は `partitionUnreceivedPoints`）。
-  const { stations, areas } = detail === 'areas'
-    ? { stations: [] as EarthquakePoint[], areas: unreceived }
-    : partitionUnreceivedPoints(points, p => [
-      regionOfStation(p) ?? '',
-      p.pref || idx.stationPrefIndex?.get(p.addr) || '',
-    ])
-
-  // 地点の並びは所属区域の順（気象庁の標準順）。同じ区域の中は電文の順を保つ。
-  // `selectRegionNames` の並べ替えは地点名を索引で引けないため順序を変えない（安定ソート）ので、
-  // ここで整えた順がそのまま読み上げ順になる。
-  const stationNames = [...stations]
-    .map((p, i) => ({ p, i, r: regionOrderRank(regionOfStation(p) ?? p.pref, regionOrder) }))
-    .sort((a, b) => a.r - b.r || a.i - b.i)
-    .map(({ p }) => p.addr)
-
-  // **未入電を含む県は県名へまとめない**（カードと同じ規則。→ quake-spec.md §4）。まとめると
-  // 画面が区域別に並べている同じ電文を、音声だけ県名 1 つに畳んで伝えることになる。
-  // `prefsWithAreaShown` は「この県は区域名のまま出す」という指定なので、関係する県を全部入れる。
-  const unreceivedPrefs = new Set<string>()
-  for (const p of areas) {
-    const pref = p.pref || idx.areaPrefIndex?.get(p.addr) || ''
-    if (pref) unreceivedPrefs.add(pref)
-  }
-  // 階級は下限の 45 に揃っているので、1 つの階級としてまとめて名前を引く。
-  const areaNames = areas.length > 0 ? regionNamesForScale(areas, 45, idx, unreceivedPrefs) : []
-
-  const unit = unreceivedUnitLabel(stationNames.length > 0, areaNames.length > 0)
-  const unspoken = [...stationNames, ...areaNames]
-    .filter(name => !spoken || isUnreceivedUnspoken(spoken, name))
-
-  // 地名を読まない設定。**ここで空を返さない。** 代替文（`maxScaleOnlySegments`）に任せると、
-  // **観測値のある区域が 1 つでもある電文では告知ごと消える** —— あの分岐は「地域名を 1 件も
-  // 作れなかったとき」にしか通らないため。観測値と未入電が混ざる形は、強い地震ほど起きやすい
-  // （→ quake-spec.md §4「震度5弱以上未入電」）ので、いちばん消えてはいけない場面で消える。
-  //
-  // 落とすのは**地名だけ**。件数・推定であること・理由（未入電）は残す。
-  //
-  // **既読には入れる。** 名前は読んでいないが件数としては伝えているので、上限で「ほか○地域」へ
-  // 落ちた区域と同じ扱いにする（→ audio-tts-spec.md §4「続報は差分だけ読む」）。入れないと
-  // 続報のたびに件数を言い直す。
-  if (detail === 'none') {
-    if (unspoken.length === 0) return []
-    return [{
-      text: `${unspoken.length}${unit}では、震度5弱以上と推定されますが、未入電です。`,
-      refs: [
-        { kind: 'unreceivedNote' },
-        ...unspoken.map(name => ({ kind: 'quakeRegion' as const, name, scale: 45 as IntensityScale, unreceived: true })),
-      ],
-    }]
-  }
-
-  // **選抜と上限は観測値の文と同じ規則に乗せる**（`selectRegionNames`）。独自に切ると、
-  // 「無制限」の設定で 1 件しか読まれない・省いた件数を伝えない、といったずれが片側にだけ出る。
-  const { names, omittedNames } = selectRegionNames(unspoken, opts, hypocenter, regionOrder)
-  if (names.length === 0) return []
-  const segments: SpeechSegment[] = []
-  names.forEach((name, i) => {
-    if (i > 0) segments.push(plain('、'))
-    segments.push({ text: name, refs: [{ kind: 'quakeRegion', name, scale: 45, unreceived: true }] })
-  })
-  // 名前を読まなかった分も、この断片が声になれば既読にする（→ `selectRegionNames`）。
-  if (omittedNames.length > 0) {
-    segments.push({
-      text: `、ほか${omittedNames.length}${unit}`,
-      refs: omittedNames.map(name => ({ kind: 'quakeRegion' as const, name, scale: 45, unreceived: true })),
-    })
-  }
-  // **推定の理由まで言う。** 「5弱以上と推定されます」だけだと、なぜ推定なのかが伝わらない。
-  // 語は気象庁の「未入電」をそのまま使い、画面のバッジ（「未入電あり」）とも揃える ——
-  // 聞いた語で画面を探せるように。
-  //
-  // **この文にも未入電の印を付ける**（`unreceivedNote`）。読み上げに合わせて未入電モードを開く
-  // 追従は参照の有無で範囲を決めるので、地名にだけ付けると**説明している最中に画面が戻る**。
-  segments.push({
-    // 区域名へ丸めたときだけ「一部の地点で」を挟む（→ `TtsUnreceivedDetail`）。
-    // **名前の末尾ではなく述語側へ置く。** 名前は読点で並ぶので、最後の名前に「の一部」を
-    // 付けると直前の 1 件だけに掛かって聞こえる。
-    text: detail === 'areas'
-      ? 'では、一部の地点で震度5弱以上と推定されますが、未入電です。'
-      : 'では、震度5弱以上と推定されますが、未入電です。',
-    refs: [{ kind: 'unreceivedNote' }],
-  })
-  return segments
-}
-
-/**
- * 最大震度以下で実際に観測がある階級だけを、地域名と組にして降順に集める。
- *
- * 震度スケール上の位置ではなくこの配列の添字を「最大から何階級目か」として数えるため、観測 0 地域の
- * 階級が読み上げ枠を空費して下の階級に届かなくなることがない（長周期地震動側の数え方と揃えている）。
- *
- * **読み上げ（`buildRegionSegments`）と、区域が下がったかの判定（`regionScaleMap`）が共有する。**
- * 地域名の作り方（県名へのまとめ）が食い違うと、まとめ方の違いだけで区域が「消えた」ことになる。
- *
- * @param points 観測値の点（未入電の点は呼び出し側で除く）
- * @param maxIdx 最大震度の `SCALE_DESCENDING` での位置
- */
-function observedRegionsByScale(
-  points: EarthquakePoint[],
-  maxIdx: number,
-  idx: RegionNameIndexes,
-): { scale: IntensityScale; names: string[] }[] {
-  const observed: { scale: IntensityScale; names: string[] }[] = []
-  // 上位の階級で区域名を出した県。下位でその県を丸ごとまとめると県の震度を過小に伝えるため、
-  // 持ち回って `aggregateAreaNamesByPref` のまとめ判定から外す（理由は同関数のコメント）。
-  // 打ち切られるのは必ず下位の階級なので、上から順に積むこの持ち回りで整合する。
-  const prefsWithAreaShown = new Set<string>()
-  for (let i = maxIdx; i < SCALE_DESCENDING.length; i++) {
-    const scale = SCALE_DESCENDING[i]
-    const names = regionNamesForScale(points, scale, idx, prefsWithAreaShown)
-    if (names.length > 0) observed.push({ scale, names })
-    // 区域名だけを数える。県名でまとめた結果は areaPrefIndex から引けないので入らない。
-    // これは**多区域の県が県名と同じ表記の区域を持たない**ことに依存する（stationCoords.test.ts が
-    // 検証）。奈良県だけは県名と同名の区域を持つが単一区域なので、どちらに数えても出力は変わらない。
-    for (const name of names) {
-      const pref = idx.areaPrefIndex?.get(name)
-      if (pref) prefsWithAreaShown.add(pref)
-    }
-  }
-  return observed
-}
-
-/**
- * その報の区域ごとの最大震度（地域名 → 震度）。地域名は読み上げと同じ作り方（県名へのまとめを含む）。
- *
- * **未入電の点は数えない**（読み上げの区域の文と同じ。→ `buildRegionSegments`）。最大震度が無い報・
- * 地域名を 1 つも作れない報では空を返す。
- */
-function regionScaleMap(points: EarthquakePoint[], maxScale: IntensityScale): Map<string, number> {
-  const map = new Map<string, number>()
-  const maxIdx = SCALE_DESCENDING.indexOf(maxScale)
-  if (maxIdx < 0) return map
-  // 索引の組み方は `buildRegionSegments` と同じ（座標表が未読み込みなら索引なしで名前を作る）。
-  // **ここだけ条件を変えない** —— 名前の作り方が読み上げとずれると、区域が「消えた」ように見える。
-  const stationData = getStationCoordsCache()
-  const idx: RegionNameIndexes = {
-    prefAreaNames: stationData ? prefAreaNamesIndexOf(stationData) : null,
-    areaPrefIndex: getAreaPrefIndexCache(),
-    stationPrefIndex: stationData ? stationPrefIndexOf(stationData) : null,
-    stationData,
-  }
-  for (const { scale, names } of observedRegionsByScale(points.filter(p => !p.unreceived), maxIdx, idx)) {
-    // 県名へまとめた名前は複数の階級に現れうる。降順なので最初に見たものが最大。
-    for (const name of names) if (!map.has(name)) map.set(name, scale)
-  }
-  return map
-}
-
-/**
- * 最後に声にした報（`spoken.regionSnapshot`）と比べて、**区域の最大震度が下がった・区域が消えた**か。
- *
- * 真のとき、続報は「変わっていません」「変わりはありません」と言い切らない（2026-10-19 ユーザー承認
- * 「言い切りを外す (推奨)」）。**下がった値そのものは読まない**（既読の `regions` は上向きのまま）。
- *
- * @param minSaidScale 前の報のうち、この震度以上の区域だけを比べる。**震度速報は震度3以上の区域しか
- *   運ばない**ので、地震情報のあとに震度速報が届くと震度1・2の区域が「消えた」ように見える。
- *   震度速報の経路では 30（震度3）を渡し、種別の違いを下がったと取り違えないようにする。
- * @returns 比べる相手が無いときは偽。前の報に比べる区域があるのに今の報から地域名を作れないときは真
- *   （下がっていないと言える根拠が無いので、言い切らない側へ倒す）
- */
-function regionsLoweredSince(event: JMAQuake, spoken: QuakeSpokenState, minSaidScale: number): boolean {
-  const before = spoken.regionSnapshot
-  if (!before) return false
-  const now = regionScaleMap(event.points, event.earthquake.maxScale)
-  // 前の報に比べる区域があるのに今の報から地域名を作れないときは、下がっていないと言える根拠が無い。
-  // **言い切らない側へ倒す**（承認された仕様の安全側）。
-  if (now.size === 0) return [...before.values()].some((said) => said >= minSaidScale)
-  for (const [name, said] of before) {
-    if (said < minSaidScale) continue
-    const current = now.get(name)
-    if (current === undefined || current < said) return true
-  }
-  return false
-}
-
-function buildRegionSegments(
-  points: EarthquakePoint[],
-  maxScale: IntensityScale,
-  opts: TtsSpeechOptions,
-  hypocenter?: { latitude: number; longitude: number },
-  /** 渡すと、まだ声になっていない区域だけを読む（続報の差分）。省略すると全区域を読む */
-  spoken?: QuakeSpokenState,
-): SpeechSegment[] {
-  // **未入電の区域はここでは扱わない。** 述語が「観測しました」なので、観測値が届いて
-  // いない区域を入れると嘘になる（→ `unreceivedRegionSegments`）。
-  points = points.filter(p => !p.unreceived)
-  const maxIdx = SCALE_DESCENDING.indexOf(maxScale)
-  if (maxIdx < 0) return []
-
-  const stationData = getStationCoordsCache()
-  const idx: RegionNameIndexes = {
-    prefAreaNames: stationData ? prefAreaNamesIndexOf(stationData) : null,
-    // 区域名 → 県名だけはキャッシュから受け取る。地震の統合経路と同じ索引で、読み取りしかしない
-    // （→ docs/spec/quake-spec.md §4「ロールアップ点の見分け方」）。読み上げ文を作るたびに
-    // 組み直すと、点の役割の判定（isAreaPoint）へ渡す索引が経路ごとに別物になる。
-    areaPrefIndex: getAreaPrefIndexCache(),
-    stationPrefIndex: stationData ? stationPrefIndexOf(stationData) : null,
-    stationData,
-  }
-  const regionOrder = stationData ? regionOrderIndexOf(stationData) : null
-
-  // 最大震度以下で実際に観測がある階級だけを降順に集める（→ `observedRegionsByScale`）。
-  const observed = observedRegionsByScale(points, maxIdx, idx)
-
-  const mentioned = new Set<string>()  // 上位階で読み上げ済みの地域名
-  // 「最大」を冠したか。同じ文で二度冠さないためだけに持つ（→ `collectParts`）。
-  let maxPrefixUsed = false
-
-  /**
-   * 階級ごとの句を組む。`accept` に通った区域だけを対象にする。
-   *
-   * **`mentioned` と `maxPrefixUsed` は群をまたいで共有する。** 県単位に丸めた名前は複数の
-   * 階級に現れうるので（`aggregateAreaNamesByPref`）、群を分けても「上位で挙げた区域は下位で
-   * 繰り返さない」を保つ必要がある。上がった群を先に回すこと。
-   */
-  const collectParts = (
-    accept: (name: string, scale: IntensityScale) => boolean,
-  ): SpeechSegment[][] => {
-    const parts: SpeechSegment[][] = []
-    for (let rank = 0; rank < observed.length; rank++) {
-      const { scale, names: observedNames } = observed[rank]
-      // 設定した階数以内、または「必ず読み上げる震度」以上の階級を読む。どちらの条件も上位の
-      // 階級ほど成立しやすいため、両方を外れた時点で以降の階級も必ず外れる（break で打ち切れる）。
-      //
-      // **打ち切りの判定に差分を混ぜないこと。** 階数（rank）は「観測がある階級」の並びで数えるため、
-      // 差分で残った区域だけを見て数えると、上位の階級が据え置きだった続報で下位の階級が繰り上がり、
-      // 普段は読まない震度まで読み始める。
-      const withinLevels = rank <= opts.intensityLevels
-      const withinAlwaysRead = opts.alwaysReadScale >= 0 && scale >= opts.alwaysReadScale
-      if (!withinLevels && !withinAlwaysRead) break
-      // 同じ文の中で上位階に出した区域を落とし、さらにこの群の条件に通ったものだけを残す。
-      let names = observedNames.filter(n => !mentioned.has(n) && accept(n, scale))
-      if (names.length === 0) continue
-      // 選抜・上限・並べ替えは未入電の文と共有する（→ `selectRegionNames`）。
-      const picked = selectRegionNames(names, opts, hypocenter, regionOrder)
-      names = picked.names
-      const omittedNames = picked.omittedNames
-      names.forEach(n => mentioned.add(n))
-      // 「最大」を冠せるのは、その階級がこの電文の最大震度に一致するときだけ。
-      // **句の並び順で決めてはいけない**——差分では最大震度の区域が据え置きで落ちることがあり、
-      // 先頭の句に無条件で付けると「最大震度4を…」と、電文が伝えていない最大震度を語る。
-      //
-      // **群でも決めてはいけない。** かつては初出の群で冠さなかった（「新たに最大震度7を」の
-      // 据わりを嫌った）が、**初出の区域がいきなり最大震度を持つ続報は実際に起きる** ――
-      // 揺れの強い地域ほど観測点からの通信が遅れ、最初の報に入らず次の報で最大を塗り替えるため、
-      // **いちばん強い揺れを伝える報でだけ最大震度が声から消える**（実例は
-      // docs/spec/audio-tts-spec.md §4「続報は差分だけ読む」）。冠すかどうかは事実（その階級が
-      // 電文の最大震度に一致するか）だけで決め、**同じ文で二度言わないことだけ**を持ち回る。
-      const head = !maxPrefixUsed && scale === maxScale ? '最大' : ''
-      if (head) maxPrefixUsed = true
-      const segments: SpeechSegment[] = [plain(`${head}震度${intensityText(scale)}を`)]
-      names.forEach((name, i) => {
-        if (i > 0) segments.push(plain('、'))
-        // 区域名だけを参照付きの断片にする。読点を含めると、チャンク（読点で切られる）と
-        // 断片の境界がずれて引き当てが鈍る。
-        segments.push({ text: name, refs: [{ kind: 'quakeRegion', name, scale }] })
-      })
-      // 名前を読まなかった分も、この断片が声になれば既読にする（→ `selectRegionNames`）。
-      if (omittedNames.length > 0) {
-        segments.push({
-          text: `、ほか${omittedNames.length}地域`,
-          refs: omittedNames.map(name => ({ kind: 'quakeRegion' as const, name, scale })),
-        })
-      }
-      parts.push(segments)
-    }
-    return parts
-  }
-
-  /**
-   * 階級ごとの句を 1 文にまとめる。
-   *
-   * 助詞「で」は末尾（述語の直前）にだけ置く。階級ごとの句末に付けると
-   * 「〜福島県で、震度3を〜」と一文字が読点で挟まれ、読み上げがぶつ切りに聞こえる。
-   * 複数階級のときは前の句が末尾の「で」を共有する形（並列句の格助詞の共有）になる。
-   */
-  const toSentence = (parts: SpeechSegment[][], lead: string): SpeechSegment[] => {
-    if (parts.length === 0) return []
-    const joined: SpeechSegment[] = lead ? [plain(lead)] : []
-    parts.forEach((part, i) => {
-      if (i > 0) joined.push(plain('、'))
-      joined.push(...part)
-    })
-    joined.push(plain('で観測しました。'))
-    return joined
-  }
-
-  /**
-   * 震度点があるのに地域名を 1 件も作れなかったことを記録する。電文の観測点が座標テーブルに
-   * 載っていない状態（DMDATA は観測点を pref: '' で積むので、テーブルが引けないと手がかりが
-   * 何も残らない）。呼び出し側が最大震度だけの一文へ落とすので読み上げは成立するが、地域が
-   * 丸ごと消えたことは記録に残す。読み上げごとに出すと同じ行でログが埋まるため間引く。
-   *
-   * **数えるのは `observed`。** 文が空になる理由には「続報で読む差分が無い」も含まれ、そちらは
-   * 正常なので、組み上がった文の有無で判定すると続報のたびに警告が鳴る。
-   * 座標テーブルの読み込み前は引けないのが当たり前なので黙る（起動直後の正常な過渡状態）。
-   */
-  const warnIfNoRegionNames = (): void => {
-    if (observed.length === 0 && points.length > 0 && stationData) {
-      warnNoRegionNames(() => log.warn('[tts] 震度点があるのに地域名を作れなかった（電文の観測点が座標テーブルに無い）'))
-    }
-  }
-
-  // 差分を取らない読み（初報・別イベント・確定情報の通し読み）は 1 群のまま。
-  //
-  // **群分けと「新たに」は差分のときだけ。** 初報で「新たに」と言っても、何と比べて新しいのかが無い。
-  // 判定は `spoken` の有無ではなく**区域を一度でも声にしたか**で行う。記録は地震の初報でも
-  // 渡ってくる（空の状態で）ので、有無で見ると初報から「新たに」が付く。
-  if (!spoken || spoken.regions.size === 0) {
-    const all = toSentence(collectParts(() => true), '')
-    if (all.length === 0) warnIfNoRegionNames()
-    return all
-  }
-
-  // 差分は 2 群に分け、**上がった分を先に**読む。境目の「また、」で耳が切り替わり、
-  // 「新たに」が後半だけに掛かることが伝わる。
-  //
-  // **「最大」を冠す権利は先に回るこの群が持つ**（`maxPrefixUsed`）。上がり群に最大震度の
-  // 階級が無ければ、初出群の句がそれを冠する。
-  const upgraded = toSentence(collectParts((n, sc) => regionDiffKind(spoken, n, sc) === 'upgraded'), '')
-  const fresh = toSentence(
-    collectParts((n, sc) => regionDiffKind(spoken, n, sc) === 'fresh'),
-    upgraded.length > 0 ? 'また、新たに' : '新たに',
-  )
-  if (upgraded.length === 0 && fresh.length === 0) {
-    warnIfNoRegionNames()
-    return []
-  }
-  return [...upgraded, ...fresh]
-}
-
-function magnitudeText(mag: number): string {
-  // toFixed(1) で小数点以下1桁を明示し「きゅう」→「きゅうてんぜろ」のような誤読を防ぐ
-  return mag.toFixed(1)
-}
-
-/**
- * 「マグニチュード7.1の」句を返す（「〜の地震が発生しました」に続ける）。規模不明では空文字。
- * 規模不明の電文は遠地地震で実在し、そのまま読ませると「NaN」「マイナス1.0」になる。
- */
-function magnitudePhrase(mag: number): string {
-  return hasMagnitude(mag) ? `マグニチュード${magnitudeText(mag)}の` : ''
-}
-
-/**
- * 規模が数値にならないときの説明（`jmx_eb:Magnitude@description`）の**述部**。
- *
- * **「Ｍ不明」と「Ｍ８を超える巨大地震」は別物**で、後者は M8 を超えて速報できないことを表す
- * （電文解説資料 Ⅱ.32/33/36）。数値が無いことだけを見て黙ると、最大級の地震ほど音声から
- * 規模が消える。
- *
- * **別の文にする。** 「マグニチュード〜の地震が発生しました」の句へ差し込むと
- * 「8を超える巨大地震の地震が発生しました」と重なる。
- *
- * **主題部（「マグニチュードは」）を含めない。** 初報と続報で主題部が変わるため
- * （→ {@link magnitudeConditionSentence} / {@link magnitudeConditionAmendSentence}）。
- * 表へ主題部まで書くと、続報側が文の頭を差し替えられず、値が変わったことを言えなくなる。
- */
-const MAGNITUDE_CONDITION_PREDICATE: Record<string, string> = {
-  'Ｍ不明': '不明です。',
-  'Ｍ８を超える巨大地震': '8を超える巨大地震とみられます。',
-}
-
-/** 未知の説明を記録した値。同じ地震の続報で何度も来るので 1 度だけ出す。 */
-const reportedUnknownMagnitudeConditions = new Set<string>()
-
-/** 上の述部を引く。規模が数値なら（＝説明を読む必要が無ければ）空文字。 */
-function magnitudeConditionPredicate(hypocenter: Hypocenter): string {
-  const desc = hypocenter.magnitudeCondition
-  if (!desc || hasMagnitude(hypocenter.magnitude)) return ''
-  const known = MAGNITUDE_CONDITION_PREDICATE[desc]
-  if (known) return known
-  // 気象庁が語を増やしたときに黙らない。全角の「Ｍ」と全角数字だけを直して読む
-  // （前に置く主題部の「マグニチュード」と重ならないよう先頭の「Ｍ」は落とす）。
-  if (!reportedUnknownMagnitudeConditions.has(desc)) {
-    reportedUnknownMagnitudeConditions.add(desc)
-    log.warn(`[tts] 規模の説明に未知の表記があります（そのまま読みます）: ${desc}`)
-  }
-  const body = desc.replace(/^[ＭM]/, '').replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-  return `${body}です。`
-}
-
-/** 初報で読む形。「マグニチュードは8を超える巨大地震とみられます。」 */
-function magnitudeConditionSentence(hypocenter: Hypocenter): string {
-  const predicate = magnitudeConditionPredicate(hypocenter)
-  return predicate ? `マグニチュードは${predicate}` : ''
-}
-
-/**
- * 続報で**値が変わったとき**に読む形。「マグニチュードが更新されました。8を超える巨大地震とみられます。」
- *
- * **数値の規模（「マグニチュードは7.1に更新されました。」）と同じく、更新されたことを言う。**
- * 初報と同じ文へ落とすと、**最大級の地震でだけ「変わった」が声にならない** ——
- * 「Ｍ不明」から「Ｍ８を超える巨大地震」へ確定する続報がまさにその場面。
- *
- * **「〜に更新されました」の枠へ値を入れない。** マグニチュード（数値）を地震（出来事）へ
- * 更新することになり、「マグニチュードは8を超える巨大地震に更新されました。」と破綻する。
- * そこで**主題部だけを差し替え**、値は初報と同じ述部で言う。
- *
- * **主題部で「マグニチュード」を言うので、述部は主題を持たない**（そのための
- * {@link MAGNITUDE_CONDITION_PREDICATE} の切り分け）。
- */
-function magnitudeConditionAmendSentence(hypocenter: Hypocenter): string {
-  const predicate = magnitudeConditionPredicate(hypocenter)
-  return predicate ? `マグニチュードが更新されました。${predicate}` : ''
-}
-
-/**
- * 既読の記録に載せる規模の値。
- *
- * **数値と説明を同じ鍵で持つ。** 別々にすると、「Ｍ不明」→「Ｍ８を超える巨大地震」→ 実測値、と
- * 段階的に確定していく続報で、変わったことを検出できない箇所が出る。
- */
-function magnitudeFactValue(hypocenter: Hypocenter): string {
-  return hasMagnitude(hypocenter.magnitude)
-    ? magnitudeText(hypocenter.magnitude)
-    : (hypocenter.magnitudeCondition ?? '')
-}
-
-/**
- * 「〇〇を震源とする」の深さ部分を返す（Destination/ScaleAndDestination 系）。
- * 表示側 formatDepth と判定を揃える（負値 = 不明 / 0 = ごく浅い）。負値では空文字を返す。
- * 深さ不明の電文は遠地地震で頻出し（`depth: {value: null, condition: "不明"}`）、
- * パーサはこれを -1 センチネルに落とすため、0 と同一視すると「ごく浅い場所」と誤読する。
- */
-function depthSourcePhrase(h: DepthFact): string {
-  if (!hasDepth(h.depth)) return ''
-  return h.depth === 0 ? 'ごく浅い場所' : `深さ${h.depth}キロメートル${atLeastSuffix(h)}`
-}
-
-/** 深さを語る関数が受け取る形。`depthAtLeast` は「700km以上」の印（→ `Hypocenter.depthAtLeast`）。 */
-type DepthFact = Pick<Hypocenter, 'depth' | 'depthAtLeast'>
-
-/**
- * 「700km以上」の「以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
- * 読み上げは「深さ700キロメートル以上を震源とする…」「震源の深さは700キロメートル以上に更新されました。」。
- */
-function atLeastSuffix(h: DepthFact): string {
-  return h.depthAtLeast ? '以上' : ''
-}
-
-/**
- * 既読の記録に載せる深さの値。**「以上」の印も含める** —— 同じ 700 でも「700km」と「700km以上」は
- * 別の内容で、印が付いた・外れたことも続報の変化として言い直す（値が同じでも印が変われば更新）。
- */
-function depthFactValue(h: DepthFact): string {
-  return `${h.depth}${h.depthAtLeast ? '+' : ''}`
-}
-
-/**
- * 「〜に更新されました。」の並びへ入れる深さの句（顕著な地震の震源要素更新のお知らせ 系）。
- * **「震源の深さ」を含めて返す。** 深さ不明では空文字。
- *
- * **ごく浅い（深さ 0）だけ語形が 2 通りになる。** 数値の深さは「震源の深さ120キロメートル」という
- * 名詞句なので述語「に更新されました」へそのまま繋がるが、ごく浅いは数値を持たず名詞句にできない。
- * 後ろに規模が続くなら連用中止形（「震源の深さはごく浅く、マグニチュード〜」）で繋ぎ、続かないなら
- * {@link depthUpdateValue} と同じ「ごく浅い場所」を使って自分で述語へ繋ぐ。ここを連用中止形のまま
- * 言い切ると「震源の深さはごく浅くに更新されました。」という壊れた文になる。
- */
-function depthAmendPhrase(h: DepthFact, hasFollowing: boolean): string {
-  if (!hasDepth(h.depth)) return ''
-  if (h.depth !== 0) return `震源の深さ${h.depth}キロメートル${atLeastSuffix(h)}`
-  return hasFollowing ? '震源の深さはごく浅く' : `震源の深さは${depthUpdateValue(h)}`
-}
-
-function intensityText(scale: IntensityScale | number): string {
-  if (scale <= 0) return ''
-  return getIntensityLabel(scale as IntensityScale)
-}
-
-/**
- * 地域名を 1 件も作れなかったときに添える一文。震度が判っていればそれだけを伝え、
- * 判らなければ何も返さない。`intensityText` は震度不明で空文字を返すので、確かめずに埋めると
- * 「最大震度を観測しました」という助詞だけの文になる（`maxScale` は無いのが正常な電文もある。
- * 最大震度を持たない電文は `-1` で届く → `dmdataParser.ts` の `readIntensity`）。
- */
-function maxScaleOnlySentence(maxScale: IntensityScale, unreceived = false): string {
-  const label = intensityText(maxScale)
-  if (!label) return ''
-  // **未入電を「観測しました」と言わない。** 電文が「5弱以上・未入電」と明言している値を
-  // 断定形で読むと、実際にはもっと強い可能性があることが音声だけの利用者に伝わらない
-  // （EEW が上限を定めない予想震度を「以上」と読むのと同じ扱い）。
-  // 語は地点を挙げる文と揃える（→ `unreceivedRegionSegments`）。
-  return unreceived
-    ? `最大震度${label}以上と推定されますが、未入電です。`
-    : `最大震度${label}を観測しました。`
-}
-
-/**
- * 上の一文を断片にしたもの。**伝えたことを `maxScaleOnly` として覚える**ので、続報で
- * 地域名が作れないままでも、同じ震度なら言い直さず、震度が変わったときだけ読み直す。
- *
- * `spoken` を渡さない経路（全文を組み立てる `earthquakeToText`）では既読を見ずに必ず返す。
- */
-function maxScaleOnlySegments(maxScale: IntensityScale, spoken?: QuakeSpokenState, unreceived = false): SpeechSegment[] {
-  const sentence = maxScaleOnlySentence(maxScale, unreceived)
-  if (!sentence) return []
-  // 既読の鍵に未入電の別も含める。同じ階級でも「観測しました」と「以上と推定されます」は
-  // 別の内容なので、片方を読んだからと言ってもう片方を省いてはいけない。
-  const value = unreceived ? `${maxScale}!` : String(maxScale)
-  if (spoken?.facts.get('maxScaleOnly') === value) return []
-  return [{ text: sentence, refs: [{ kind: 'quakeFact', fact: 'maxScaleOnly', value }] }]
-}
-
-/**
- * 「21時34分」形式。**日時として読めなければ `null`** —— 呼び出し側は時刻の句ごと落とす。
- * 素通しにすると「ナンじナンぷん」と**音声に出る**（画面と違い、聞き手は読み飛ばせない）。
- */
-function formatTime(isoTime: string): string | null {
-  const d = readDateTime('ttsText.formatTime', isoTime)
-  if (!d) return null
-  // 分をゼロ埋めすると VOICEVOX が「06分」を「ぜろろくふん」と桁読みしてしまうため、
-  // TTS 用テキストではゼロ埋めしない（表示用の formatters.ts の formatTime とは別）
-  return `${d.getHours()}時${d.getMinutes()}分`
-}
-
-/**
- * 日を読み上げ用の表記にする。**1 日だけ「ついたち」と書く。**
- *
- * 合成エンジンは `1日` を「いちにち」と読む（日付としては誤り）。句区切り辞書で直そうとすると、
- * 期間を指す「1日程度」「1日おきに」まで拾ってしまう —— 辞書は文字列しか見ないので、日付か
- * 期間かを区別できない。**アプリが組む文は `d.getDate()` から作っていて日付だと確定している**
- * ので、ここで読みへ直せば曖昧さが残らない。
- *
- * **2 日以降は仮名で書かない。** エンジンがかえって崩す（実測: `じゅうしちにち` は
- * `ジュウ[1] | シチニチ[2]` で頭高が反転し、`にじゅういちにち` は `ニジュウイチニ | チ` と
- * 途中で割れる）。あちらは読みが正しく抑揚だけの問題なので、句区切り辞書で核を直す。
- */
-function speakableDay(day: number): string {
-  return day === 1 ? 'ついたち' : `${day}日`
-}
-
-/**
- * 気象庁が書いた文の中で、**日付として確定している「1日」だけ**を読みへ直す。
- *
- * **直後が「N時」の形に限る**（`1日16時27分現在の、`）。期間を指す「1日程度」「1日おきに」は
- * もちろん、「1日2回」のような頻度表現も巻き込まない。前も見るのは `11日` `21日` `31日` の
- * 2 文字目を拾わないため。
- *
- * 実電文由来のローカルデータを走査すると「N日＋数字」はすべて「N日N時」の形だったが、
- * 自由付加文は書式が決まっていないので、数字が続くだけでは日付と決めつけない。
- */
-function speakableDayInText(text: string): string {
-  return text.replace(/(^|[^0-9０-９])1日(?=[0-9０-９]{1,2}時)/g, '$1ついたち')
-}
-
-/**
- * 「10日21時34分」形式。遠地地震は発表が発生から数十分後になることがあり、
- * 日付をまたいで受信する場合があるため日から読み上げる。
- *
- * `formatTime` を呼ばず自前で組むのは、記録に出る名前を呼び出し元と一致させるため。
- */
-function formatDayTime(isoTime: string): string | null {
-  const d = readDateTime('ttsText.formatDayTime', isoTime)
-  if (!d) return null
-  return `${speakableDay(d.getDate())}${d.getHours()}時${d.getMinutes()}分`
-}
-
-/**
- * VXSE43/45 EEW の誤報取消の読み上げテキストを生成する。
- *
- * **述語は「取り消されました」。** 気象庁が使う語は「取消」で（→ CLAUDE.md「利用者へ出す語を
- * 気象庁の表現と揃える」）、カードのオーバーレイも「この緊急地震速報は取り消されました」と
- * 書いている。津波・南海トラフ臨時情報・地震回数の取消も同じ述語。
- *
- * **時刻は取り消された緊急地震速報の第 1 報の発表時刻を渡すこと**（呼び出し側
- * useLiveEventHandler.ts が受信の記憶から引く）。取消電文自身の `issue.time` は取消を発表した
- * 時刻で、これを「〜に発表された緊急地震速報」と読むと、取り消された速報がその時刻に出たように
- * 聞こえる（2026-10-16 12:40 頃の速報の取消を「12時48分に発表された」と読んでいた）。
- * 分からなければ null を渡し、時刻を言わない文にする。
- */
-export function eewCancelToText(event: EEWAlert, firstIssueTime: string | null): string {
-  const time = firstIssueTime ? formatTime(firstIssueTime) : null
-  const head = time
-    ? `${time}に発表された緊急地震速報は取り消されました。`
-    : '緊急地震速報は取り消されました。'
-  // 地震情報・津波情報と同じ扱い（→ `cancelReasonSentence`）。3 つの電文で揃えないと、
-  // 同じ事象なのに種別によって理由が出たり出なかったりする
-  return head + cancelReasonSentence(event.cancelText)
-}
-
-/**
- * VXSE51/52/53/61 地震情報取消の読み上げテキストを生成する。
- * time は取消電文自体の発表時刻ではなく、同一 eventId で最後に受信した地震情報の発表時刻を渡すこと
- * （呼び出し側 useLiveEventHandler.ts で解決する）。
- */
-export function earthquakeCancelToText(time: string | null, cancelText?: string): string {
-  const formatted = time ? formatTime(time) : null
-  // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。
-  const head = formatted
-    ? `${formatted}に発表された地震情報は取り消されました。`
-    : '地震情報は取り消されました。'
-  return head + cancelReasonSentence(cancelText)
-}
-
-/**
- * 地震カードの**一部の取消**（震源情報まで進んだカードに震度速報だけの取消が届いた等）の読み上げ。
- * 「23時5分に発表された震度速報は取り消されました。」
- *
- * カードは残るので、全体の取消の文（「〜地震情報は取り消されました。」）では誤りになる。取り消された
- * 情報の名前で言い、時刻もその情報の発表時刻にする（2026-10-15 ユーザー承認「情報名で言う（推奨）」）。
- * 理由の文の扱いは全体の取消と同じ（`cancelReasonSentence`）。
- *
- * @param issueType 取り消された情報の種別（取消電文の種別）
- * @param time 取り消された報の発表時刻。読めなければ時刻を言わない
- */
-export function earthquakeReportCancelToText(issueType: string, time: string | null, cancelText?: string): string {
-  const formatted = time ? formatTime(time) : null
-  const head = formatted
-    ? `${formatted}に発表された${issueType}は取り消されました。`
-    : `${issueType}は取り消されました。`
-  return head + cancelReasonSentence(cancelText)
-}
-
-/**
- * 取消しの概要（電文の `Body/Text`）を読み上げへ足す句。無ければ空。
- * → docs/spec/audio-tts-spec.md §4「取消は「取り消された事実」だけを伝える」
- *
- * **気象庁が書いた理由をそのまま読む。** アプリの定型文（「取り消されました」）は何が
- * 起きたかしか言っておらず、なぜ取り消したのかは電文のこの本文にしか無い。
- *
- * **ただし取消の宣言だけの本文は読まない**（→ `CANCEL_DECLARATION_SUBJECTS`）。定型文が同じ事実を
- * 先に述べているので、続けて読むと同じことを 2 度言う。宣言の形でも主語が既知の情報名でなければ
- * 理由が混ざっているものとして読む（そちらへ倒す理由は `CANCEL_DECLARATION`）。
- *
- * **長い本文は続けて読まず、別の発話で最下位の層へ回す**（{@link deferredCancelReasonToSpeak}）。
- * 取消しの概要は 1〜2 文が通例だが、他の自由文と同じく長文が入りうる。取消の文と同じ発話に足すと、
- * 読み上げが伸びて後続の電文が待ちの上限に達し割り込む。どちらで読むかの境目は
- * {@link CANCEL_REASON_INLINE_MAX_CHARS}。
- */
-function cancelReasonSentence(cancelText: string | undefined): string {
-  // **この関数は 9 種別（EEW・地震情報・津波・地震回数・長周期地震動・地震・津波に関するお知らせ・
-  // 南海トラフ地震臨時情報・関連解説情報・後発地震注意情報）の
-  // 取消が共有している。**
-  const reason = classifyCancelReason(cancelText)
-  if (reason.kind === 'declaration') {
-    // **省いたことを残す。** 取消は実電文で年に数通しか出ないため、毎回記録しても
-    // 他の記録を埋めない。
-    log.info(`[tts] 取消の宣言だけの本文なので読み上げを省きました（${reason.text}）`)
-    return ''
-  }
-  if (reason.kind === 'unknownDeclaration') {
-    // **宣言の形だが主語が既知の情報名でないので読む。** ここが「落とし損ね」の検知点 ——
-    // 実電文に無い情報名で宣言が来たら、この記録を見て主語の集合へ足すかを判断する
-    // （逆に理由が混ざっていた場合は、読む側へ倒れているので情報は失われない）。
-    log.info(`[tts] 取消の宣言の形だが「${reason.subject}」が既知の情報名でないため読み上げます（${reason.text}）`)
-  }
-  if (reason.kind === 'none') return ''
-  if (reason.text.length > CANCEL_REASON_INLINE_MAX_CHARS) {
-    // **回したことを残す。** 別の発話は最下位の層で、待ちきれなければ黙る ——
-    // 鳴らなかったときに「長文だったから別に回した」ことを後から辿れるようにする。
-    log.info(`[tts] 取消しの概要が長いため、別の発話で最下位の層に回します（${reason.text.length}文字）`)
-    return ''
-  }
-  // 電文の本文は句点で終わることが多いが、終わっていなければ足す（次の文と繋がって
-  // 聞こえないため）。**述語は 5 箇所で共有する**（→ {@link endTelegramSentence}）。
-  return endTelegramSentence(reason.text)
-}
-
-/** 取消しの概要（`Body/Text`）を読み上げの扱いで分けたもの。→ {@link classifyCancelReason} */
-type CancelReason =
-  | { kind: 'none' }
-  | { kind: 'declaration'; text: string }
-  | { kind: 'unknownDeclaration'; text: string; subject: string }
-  | { kind: 'reason'; text: string }
-
-/**
- * 取消しの概要を、読み上げで同じ扱いを受ける形に分ける。続けて読む側（{@link cancelReasonSentence}）と
- * 別の発話へ回す側（{@link deferredCancelReasonToSpeak}）が同じ判定を通るための 1 箇所。
- */
-function classifyCancelReason(cancelText: string | undefined): CancelReason {
-  // 取消の理由も気象庁が書いた文なので、日時は全角のゼロ埋めで来る（`１６日０１時２５分`）。
-  // 半角・ゼロ埋めなしへ揃えないと先頭の 0 が桁として読まれる（→ {@link normalizeDateTimeForSpeech}）。
-  const text = normalizeDateTimeForSpeech(cancelText ?? '').replace(/\s+/g, ' ').trim()
-  if (!text) return { kind: 'none' }
-  const subject = CANCEL_DECLARATION.exec(text)?.[1]
-  if (subject === undefined) return { kind: 'reason', text }
-  return CANCEL_DECLARATION_SUBJECTS.has(subject)
-    ? { kind: 'declaration', text }
-    : { kind: 'unknownDeclaration', text, subject }
-}
-
-/**
- * 取消の文に続けて読む理由の上限（文字数）。超える理由は別の発話で最下位の層に読む
- * （{@link deferredCancelReasonToSpeak}。2026-10-19 ユーザー選択「外して最下位の層で読む (推奨)」）。
- *
- * 実電文の取消しの概要は 1 文（例「先ほどの、震度速報を取り消します。」）。
- * 超える本文を取消の文と同じ発話へ足すと、読み上げが伸びて後続の電文が待ちの上限
- * （`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）に達して割り込む。
- */
-export const CANCEL_REASON_INLINE_MAX_CHARS = 120
-
-/**
- * 取消の文に続けて読むには長すぎる理由を、別の発話にした文。続けて読める長さ・宣言だけの本文・
- * 理由が無いときは `null`。
- *
- * **前置きで何の理由かを名乗る。** 最下位の層は前の発話が終わるのを待つので、取消の文との間に
- * 別の読み上げが挟まることがある（2026-10-19 ユーザー選択「◯◯が取り消された理由をお伝えします。」）。
- * **「気象庁の発表文」とは名乗らない** —— その語は設定「気象庁の発表文を読む」のラベルで、この発話は
- * その設定に従わない（2026-10-19 ユーザー選択「設定に関係なく読む（推奨）」）。
- *
- * @param infoName 取消の文が名乗った情報名（「地震情報」「震度速報」「津波警報等」など）
- */
-export function deferredCancelReasonToSpeak(infoName: string, cancelText: string | undefined): string | null {
-  const reason = classifyCancelReason(cancelText)
-  if (reason.kind !== 'reason' && reason.kind !== 'unknownDeclaration') return null
-  if (reason.text.length <= CANCEL_REASON_INLINE_MAX_CHARS) return null
-  return `${infoName}が取り消された理由をお伝えします。${endTelegramSentence(reason.text)}`
-}
-
-/**
- * 取消の宣言の形。捕獲するのは「何を取り消すか」の主語で、それが情報名そのものなら
- * 宣言だけの本文（→ `CANCEL_DECLARATION_SUBJECTS`）。
- * → docs/spec/audio-tts-spec.md §4「文の形だけで落とさない。主語を照合する」
- *
- * 「は」も見るのは電文解説資料の記載例（「先ほどの、緊急地震速報（予報）は取り消します。」）が
- * そちらの形だから。主語は最短で採る（情報名に「を」「は」は含まれない）。
- *
- * **形だけで落としてはいけない。** かつて主語の中身を見ずに「読点・句点を挟まない」だけで
- * 落としていたが、それでは理由を織り込んだ本文まで無音で捨てる:
- *
- * - 「先ほどの、装置の誤作動による誤報を取り消します。」
- * - 「先ほどの、通信障害により発表した緊急地震速報を取り消します。」
- * - 「先ほどの、観測データの誤りのため震度速報を取り消します。」
- *
- * **落とし損ねと誤って落とすのは重さが違う。** 前者は同じことを 2 度述べる元の状態に戻るだけ、
- * 後者は気象庁が書いた理由を失う。だから主語を照合する側へ倒す。
- */
-const CANCEL_DECLARATION = /^先ほどの、?(.+?)(?:を|は)取り消します[。．]?$/
-
-/**
- * 取消の宣言で主語に立つ情報名。ここに一致した本文だけを読み上げから落とす
- * （アプリの定型文が同じ事実を先に述べているため）。
- *
- * **実電文で観測できたものだけを入れる**（実配信の標本が無い種別は、気象庁の公式サンプル電文で
- * 観測できたものまで）。DMDATA アーカイブの目録がある全期間と、国立情報学研究所「気象庁防災情報
- * XML データベース」（2012-12〜2026-09）を走査して得られた取消は 53 通で、本文は 4 通りしか
- * なかった。**走査先ごとの通数は docs/spec/quake-spec.md §8 が単一情報源**（ここへ写すと
- * 更新が片方に留まる）。
- *
- * | 本文 | 通数 |
- * |---|---|
- * | 先ほどの、緊急地震速報（予報）を取り消します。 | 28 |
- * | 先ほどの、緊急地震速報（地震動予報）を取り消します。 | 23 |
- * | 先ほどの、震度速報を取り消します。 | 1 |
- * | 先ほどの、震源・震度情報を取り消します。 | 1 |
- *
- * 「地震回数に関する情報」は実配信の標本が無く、気象庁の公式サンプル電文から採った
- * （この種別は 2012-12 以降の全アーカイブで 1 通も配信されていない）。
- *
- * **標本の無い種別（津波など）では二度述べが残る。** そのとき記録が出る（`cancelReasonSentence`
- * の「既知の情報名でないため読み上げます」）ので、それを見て足すかを判断する。**先回りして
- * 情報名の一覧を書き並べないこと** —— 起きていない形に合わせると、理由入りの本文を落とす側へ
- * 逆戻りする。
- *
- * 理由を書く場所であること自体は変わらない。電文解説資料の共通別紙ウ「取消電文の運用」は
- * `Body/Text` を「取消の概要や理由等の文章」と定めている。
- */
-const CANCEL_DECLARATION_SUBJECTS: ReadonlySet<string> = new Set([
-  '緊急地震速報（予報）',
-  '緊急地震速報（地震動予報）',
-  '震度速報',
-  '震源・震度情報',
-  '地震回数に関する情報',
-])
-
-/**
- * EEW 第1フェーズ（新規発報の即時、または続報での震源更新時）の読み上げテキストを生成する。
- *
- * **切り出しの語で区分を伝える。** 実際の電文が別物なので、名前も分ける。
- *
- * | `kind` | 読み上げ | 対応する電文 |
- * |---|---|---|
- * | `forecast` | 「地震動予報、〇〇で地震。」 | VXSE45 緊急地震速報（地震動予報） |
- * | `warning` | 「緊急地震速報、〇〇で地震。」 | VXSE43 緊急地震速報（警報） |
- * | `hypocenterUpdate` | 「震源を更新、〇〇で地震。」 | 続報で震源名が大きく変わったケース |
- *
- * **これは気象庁の用語法からの意図的な逸脱。** 気象庁は「緊急地震速報」を警報と予報の両方を
- * 含む上位の名前として使う。ここでは音声で区別が付くことを優先し、警報級だけを
- * 「緊急地震速報」と読む。予報級まで「緊急地震速報」と読むと、一般に流れるのが警報だけである
- * ことから「警報が出た」と聞こえてしまい、実際より重く伝わる。
- * 2026-08-20 のユーザーの提案「予報は「地震動予報。〇〇で地震」、警報以上は「緊急地震速報。〇〇で地震」というのは
- * どうですか？」で入れ、2026-10-14 ユーザー選択「地震動予報と読む」で維持した。
- *
- * 震源更新では区分に触れない。すでに伝えてあるうえ、変わったのは震源だから。
- *
- * **M・深さは読まない。** 続報のたびに動くので、読むなら震度と同じく確定を待つ仕組みが要る
- * （2026-10-21 ユーザー承認「その理由で記録する (Recommended)」）。
- *
- * **震央地名が空なら名乗りだけを言い切る**（「緊急地震速報。」。2026-10-24 ユーザー選択「備えとして直す
- * (Recommended)」）。空の名前をそのまま埋めると「緊急地震速報、で地震。」と壊れる。名前が空になりうるのは
- * 強震モニタの取得元（Yahoo の `regionName`。実配信では未観測）で、
- * DMDATA は全期間 45,079 通すべて名前を持つ。震源更新（`hypocenterUpdate`）で名前が空のときは、
- * 呼び出し側が言い直しそのものを読まない（言い直す地名が無い）。
- */
-export function eewAlertToText(event: EEWAlert, kind: 'forecast' | 'warning' | 'hypocenterUpdate'): string {
-  const name = event.earthquake.hypocenter.name.trim()
-  if (!name) return EEW_LEAD_PHRASE[kind].replace(/、$/, '。')
-  return `${EEW_LEAD_PHRASE[kind]}${name}で地震。`
-}
-
-/**
- * EEW 第 1 フェーズの切り出し語。区分ごとに 1 つずつ、**全部で 3 通りしかない**。
- *
- * 震源名にも予想震度にも依存しないので、起動時に合成して持っておける
- * （`warmFixedPhrases`）。EEW は間を置かずに読み始める都合で先行合成（`prewarmVoicevox`）が
- * 使えず、合成の往復がそのまま「声が出るまでの空白」になっていた。実測で 238〜697ms
- * （2024/1/1 能登のリプレイ。地震情報を切って割り込んだ場面で 479ms）。
- * 作り置きが当たれば、最初のチャンクはこの往復を丸ごと省ける。
- *
- * **句読点で終わること。** `splitIntoChunks` は句読点の後ろで切るため、ここが単独のチャンクに
- * ならないと作り置きと照合できない（5 文字未満だと次のチャンクに結合される点にも注意）。
- *
- * この一致が崩れても**何も起きない**——作り置きは正常に作られ、ただ一度も引かれなくなるだけで、
- * 症状は「第 1 報の声がわずかに遅い」、ログは無言。文言を変えるときも分割条件を変えるときも
- * 気づけないので、`voicevox.test.ts` の「読み上げ文の 1 チャンク目が、作り置きの対象と一致する」
- * が実物どうしを突き合わせて固定している。
- */
-const EEW_LEAD_PHRASE = {
-  forecast: '地震動予報、',
-  warning: '緊急地震速報、',
-  hypocenterUpdate: '震源を更新、',
-} as const
-
-/** {@link EEW_LEAD_PHRASE} の全パターン。作り置きの対象として渡す。 */
-export const EEW_LEAD_PHRASES: readonly string[] = Object.values(EEW_LEAD_PHRASE)
-
-/**
- * 予報として発報された緊急地震速報が警報へ上がったことを告げる前置き。
- *
- * **第 1.5 フェーズ（対象地方）と第 2 フェーズ（予想値）のどちらが先に鳴っても同じ文言にする**
- * ため 1 箇所に置く。呼び出し側は「この句が声になったか」で区分の既読を戻すかを決めるので
- * （`useLiveEventHandler` の `onSettled`）、**文字列を書き写さずにこれを参照すること。**
- *
- * **短くするなら {@link splitIntoChunks} の `MIN_CHUNK`（5 文字）との関係を見直すこと。**
- * それ未満になると後続の句と 1 チャンクへ結合され、「前置きだけが鳴った／鳴らなかった」を
- * 区別できなくなる。
- */
-export const EEW_UPGRADE_PHRASE = '緊急地震速報に切り替わりました。'
-
-/**
- * EEW 第 1.5 フェーズ（警報の対象地方）の読み上げ文。
- *
- * 第 1 フェーズ（名乗りと震源）と第 2 フェーズ（予想値）のあいだに挟む。**予想値の読み上げを
- * 遅らせる**のが狙いで、待っているあいだに続報が届けば、第 2 フェーズは新しい確定値を読める。
- * 同時に「どこが対象か」という、その時点で既に確定している事実を先に伝えられる。
- *
- * @param regions これから声にする地方。**呼び出し側が「既に声にした分」を除いて渡す**
- *   （電文の `LastKind` では判定しない。理由は `readEewWarningRegions` の JSDoc）
- * @param isAdditional この EEW で既に地方を声にしているか。真なら「新たに」を冠する
- *   （**判定は「声にしたか」であって「電文が新規と言ったか」ではない**。割り込みで消えた発話を
- *   基準にすると、一度も声にしていない地方を「新たに」と言うことになる。地震情報の続報と同じ規律）
- * @param announceUpgrade 「緊急地震速報に切り替わりました。」を前置きするか。**予報として
- *   発報された EEW が警報へ上がり、まだ区分を声にしていないときだけ真にすること**（判定は
- *   呼び出し側。`eewIntensityText` の同名引数と同じ材料＝声にした区分で決める）。
- *
- *   **この前置きがここに要るのは、地方のブロックが警報級の報にしか入らないため。** 予報から
- *   警報へ上がった報では、地方の読み上げが必ずその EEW で最初の「警報になった」告知になる。
- *   区分を第 2 フェーズの前置きだけに任せると、そちらは予想値の安定待ちを経てから鳴るので、
- *   「〇〇では強い揺れに警戒してください。」が「緊急地震速報に切り替わりました。」より先に出る。
- *
- *   文言を第 2 フェーズと同じにしてあるのは、どちらが先に鳴っても聞こえ方を揃えるため。
- *   前置きを声にしたら呼び出し側が区分を既読にするので、両方から言われることはない。
- *
- * 区切りに読点を使うのは、中黒が音にならず合成の区切りにもならないため（→ §4「読み上げ文で
- * 名前を並べるときの書き方」）。
- */
-export function eewWarningRegionsText(
-  regions: readonly string[], isAdditional: boolean, announceUpgrade = false,
-): string {
-  if (regions.length === 0) return ''
-  const names = regions.join('、')
-  const prefix = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
-  return prefix + (isAdditional
-    ? `新たに、${names}でも${EEW_WARNING_REGIONS_CLOSING}。`
-    : `${names}では${EEW_WARNING_REGIONS_CLOSING}。`)
-}
-
-/**
- * {@link eewWarningRegionsText} の締めの句。**地方名の既読はこの句が声になったかで決める**
- * （`useLiveEventHandler` の第 1.5 フェーズ）。地方名だけ鳴って締めが切られた回は、
- * 「どこで何に警戒するか」が伝わっていないので、既読にせず次の報で読み直す。
- * 文を作る側と判定する側が同じ文字列を見るよう、ここに 1 つだけ置く。
- */
-export const EEW_WARNING_REGIONS_CLOSING = '強い揺れに警戒してください'
-
-/**
- * 予想震度が付いていないときの句。理由の判定は `eewNoForecastReason` に委ねる
- * （待たずに読むかどうかの判断と同じ判定を使うため。二重に持つと食い違う）。
- *
- * `singleStation`（待ち終えても値が付かなかった精度ランク 1）も「単独点処理のため」と読む
- * （2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
- */
-function noForecastText(event: EEWAlert, noForecastWaited: boolean): string {
-  switch (eewNoForecastReason(event, noForecastWaited)) {
-    case 'assumed':
-    case 'singleStation': return '単独点処理のため、予想震度なし。'
-    case 'deep':    return '深発地震のため、予想震度なし。'
-    // 最大予想震度 0 の報。電文が言い切った値なので「予想最大震度0。」と読む
-    // （2026-10-30 ユーザー選択「予想最大震度 0 (Recommended)」。読み上げは「予想最大震度0。」）
-    case 'belowScale1': return '予想最大震度0。'
-    case 'unknown': return '予想震度なし。'
-  }
-}
-
-/**
- * 震度部分だけの読み上げ文（「予想最大震度〇〇。」・最大予想震度 0 の報の「予想最大震度0。」、または理由付きの「予想震度なし。」）。
- * `eewIntensityText` が内部で使う（`lpgmClass` が未確定・0 のときは階級部分が空文字になる
- * ことで、結果的にこちらだけが声になる）。
- *
- * `scaleInfo` は呼び出し側で確定させた値を渡す（`event` から直接取り直さない）。安定待ちで
- * 「この値に確定した」と判定したタイミングと、実際に声になるタイミングにはズレがありうるため、
- * どの値を読んだかを呼び出し側が制御できるようにしている。
- *
- * 震度を伝えられないときに階級句を落とすのは、結合する `eewIntensityText` の役目
- * （この関数は震度部分だけを組み立てる）。
- *
- * `noForecastWaited` … 値の付かない待ちが切れたか（`eewNoForecastReason` の `waited`）。
- * 震度があるときは使わない。
- */
-export function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert, noForecastWaited: boolean): string {
-  if (scaleInfo.scale > 0) {
-    return `予想最大震度${getIntensityLabelWithApproxAbove(scaleInfo.scale, scaleInfo.orAbove)}。`
-  }
-  return noForecastText(event, noForecastWaited)
-}
-
-/** 電文が最大予想長周期地震動階級を 0 と言い切った報で読む句（→ `eewIntensityText`）。 */
-export const EEW_LPGM_CLASS_ZERO_TEXT = '予想最大階級0。'
-
-/**
- * 長周期地震動階級部分だけの読み上げ文（「予想最大階級〇。」）。0 なら空文字列
- * （句ごと省く。音声には地図の色フォールバックのような逃げ場が無く、不正値がそのまま
- * 声に出るのを避けるため）。
- */
-export function eewLpgmOnlyText(lpgmClass: number, over = false): string {
-  // 「程度以上」は気象庁の表現（→ `getLpgmClassLabelWithApproxAbove` のコメント）。
-  return lpgmClass > 0 ? `予想最大階級${lpgmClass}${over ? '程度以上' : ''}。` : ''
-}
-
-
-/**
- * EEW 第2フェーズ（予想値）の読み上げテキストを、震度・階級それぞれの部分から組み立てる。
- * `eewScaleOnlyText` / `eewLpgmOnlyText` の結合ロジックを呼び出し側（`useLiveEventHandler`）と
- * 共有するためのヘルパー。初報・続報の区別なく同じ形で読む。
- *
- * `scaleInfo`・`lpgmClass` は呼び出し側で確定させた値を渡す（`event` から直接取り直さない）。
- * 安定待ちで「この値に確定した」と判定したタイミングと、実際に声になるタイミングにはズレが
- * ありうるため、どの値を読んだかを呼び出し側が制御できるようにしている。
- *
- * `announceUpgrade` が真のとき「緊急地震速報に切り替わりました。」を前置きする。
- * **予報として発報された EEW が警報へ格上げされたときだけ真にすること**（判定は呼び出し側）。
- *
- * 遷移の言い方にしているのは、第 1 フェーズで「地震動予報、〇〇で地震。」と伝えてあるため。
- * 聞き手は前の区分を知っているので「何から何に変わったか」が通じる。ここを「警報。」のような
- * 区分名だけにすると、値の読み上げの前に単語が挟まるだけで変化が伝わらない。
- *
- * 逆に、初報から警報だった場合はここでは何も前置きしない。第 1 フェーズが既に
- * 「緊急地震速報、〇〇で地震。」と伝えており、重ねて言う意味がないため。
- *
- * **「特別警報」は読み上げない。** 特別警報の条件を満たしていても、格上げとして読み上げるのは
- * 予報→警報のときだけ。気象庁が発表時にこの名称を用いないため（根拠と条件は
- * docs/spec/eew-spec.md §4）。画面表示・ブラウザ通知・通知音は内部の重大度区分として 2 段階を保つ。
- * 声・地図の吹き出し・ウィンドウタイトル・電文ログでは特別警報と警報を言い分けない
- * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
- *
- * 引き上げ専用の短句（「震度6弱に引き上げ。」）は持たない。同じ形で言い直せば足りるうえ、
- * 差分の言い方は「基準にした値を実際に発話したか」に依存し、割り込みで消えた発話を基準に
- * すると一度も声に出していない値からの引き上げを語ることになるため。
- *
- * 呼び出し側（`useLiveEventHandler`）は震度・階級のどちらが先に確定していても常にこの関数を
- * 呼ぶ——未確定の階級は `lpgmClass=0` として渡せば `eewLpgmOnlyText` が空文字を返し、
- * 結果的に震度部分だけが声になる（「個別に呼び分ける」のではなく、0 扱いで自然に省略させる）。
- */
-export function eewIntensityText(
-  scaleInfo: EewMaxScaleInfo, lpgmClass: number, event: EEWAlert,
-  /** 値の付かない待ちが切れたか（`eewScaleOnlyText` の同名引数）。 */
-  noForecastWaited: boolean,
-  announceUpgrade = false,
-  /**
-   * 階級が「程度以上」だったか。**`event` から引き直さない** —— 渡される `lpgmClass` は
-   * 安定待ちを経た確定値で、現在の報の値と食い違いうる。引き直すと別の値に語を貼り付ける。
-   */
-  lpgmOver = false,
-  /**
-   * 読み上げ設定。`readEewLpgmClass` が偽なら階級の句を落とす（既定＝未指定は読む）。
-   * 震度側は落とさない ―― 緊急地震速報の主題そのもので、切る選択肢を設けていない。
-   */
-  opts?: TtsSpeechOptions,
-): string {
-  const prefix = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
-  // 上限が定まらない報（仮定震源要素の初報など）は「震度4以上」と読む。値だけ読むと
-  // 下限を断定した放送になる（判定は eewMaxScaleInfo・語の付け方は表示と共通）。
-  //
-  // **震度を伝えられないときは階級も読まない**（判定は `canPresentLpgmClass`。カード表示・
-  // 第 2 フェーズの言い直しと同じ述語を共有する。理由はそちらのコメント）。
-  const scaleText = eewScaleOnlyText(scaleInfo, event, noForecastWaited)
-  //
-  // **電文が階級 0 と言い切った報は「予想最大階級0。」と読む**（→ `isEewLpgmClassZeroForecast`）。
-  // 確定した階級（`lpgmClass`）が 0 のときだけ `event` から見る —— 0 は「階級を載せていない」とも
-  // 同じ値なので、言い切ったかどうかは電文の印にしか無い。後の報で階級 1 以上へ上がれば、
-  // 既読（階級 0 として記録される）より高いので言い直しの経路に乗る。
-  const readLpgm = opts?.readEewLpgmClass ?? true
-  const lpgmText = !readLpgm ? ''
-    : canPresentLpgmClass(scaleInfo.scale, lpgmClass) ? eewLpgmOnlyText(lpgmClass, lpgmOver)
-    : statesEewLpgmClassZero(event, scaleInfo.scale, lpgmClass, readLpgm) ? EEW_LPGM_CLASS_ZERO_TEXT
-    : ''
-  return prefix + scaleText + lpgmText
-}
-
-/**
- * 試聴文を組むための緊急地震速報。**画面にも音にも流れない**——`voicevoxPreviewTexts` が
- * 読み上げ文を作るためだけに使う。
- *
- * 読み上げ文が見るのは震源名と、予想震度が付いていないときの理由（`eewNoForecastReason`）だけ。
- * それ以外は型を満たすために置いた値で、**座標・深さ・規模は声にならない**（`test` も同じで、
- * 流す経路に載っていないため抑制の意味を持たない）。**読み上げ文の側が新しいフィールドを
- * 読むようになったら、ここの値が声にしてよいものかを見直すこと。**
- */
-const PREVIEW_EEW: EEWAlert = {
-  kind: 'eew',
-  origin: 'test',
-  id: 'voicevox-preview',
-  time: '',
-  test: true,
-  earthquake: {
-    originTime: '',
-    arrivalTime: '',
-    condition: '',
-    hypocenter: { name: '三陸沖', latitude: 38.5, longitude: 143.0, depth: 10, magnitude: 7.2 },
-  },
-  severity: 'Warning',
-  cancelled: false,
-}
-
-/** 試聴で読ませる予想震度（6強）。語の組み立てを実運用と共有するため階級値で持つ。 */
-const PREVIEW_EEW_SCALE: EewMaxScaleInfo = { scale: 60, orAbove: false }
-
-/**
- * 設定の窓の「試聴」で読ませる文。緊急地震速報（警報）を想定して
- * 「緊急地震速報、三陸沖で地震。」「予想最大震度6強。」を返す。
- *
- * **文字列を直接書かず、実運用と同じ関数から組む。** 直接書くと緊急地震速報の文型を変えたときに
- * 試聴だけ古い形で残り、試聴で聞いた鳴り方と実際の鳴り方が食い違う。実際にそうなっていた——
- * 地震情報の文型を借りた「三陸沖を震源とするマグニチュード7.2の地震が発生しました。」を
- * 読ませており、緊急地震速報はその形を一度も作らない。
- *
- * **発話ごとに分けて返す。繋げて 1 つにしない。** 実運用は第 1 フェーズ（切り出しと震源）と
- * 第 2 フェーズ（予想値）を別々に鳴らすため、「〇〇で地震。」はそこでは最後のチャンクになり、
- * 末尾の句点に間が付かない。繋げて 1 回で渡すと途中のチャンクへ変わり、**実運用には無い
- * 110ms の無音が挟まる**（`utils/voicevox.ts` の `CHUNK_BREAK_PAUSE`）。
- *
- * **ただし発話の間隔までは再現しない。** 実運用の第 2 フェーズは続報を待つ安定待ちを経てから
- * 声になるもので（§6）、待ち時間は電文の到着間隔で決まる。試聴は前の発話が終わり次第続ける。
- */
-export function voicevoxPreviewTexts(): readonly string[] {
-  return [
-    eewAlertToText(PREVIEW_EEW, 'warning'),
-    eewIntensityText(PREVIEW_EEW_SCALE, 0, PREVIEW_EEW, false),
-  ]
-}
-
-function domesticTsunamiText(t: DomesticTsunami): string {
-  switch (t) {
-    case 'なし':           return 'この地震による津波の心配はありません。'
-    case '若干の海面変動':  return 'この地震により、日本の沿岸では若干の海面変動があるかもしれませんが、被害の心配はありません。'
-    case '調査中':         return 'この地震による津波の有無を調査中です。'
-    case '海面変動の可能性': return '震源が海底のため、津波が発生するおそれがあります。'
-    case '注意報':         return '現在津波注意報を発表中です。'
-    case '警報等':         return '現在津波警報等を発表中です。'
-    case '不明':           return '津波情報は不明です。'
-  }
-}
-
-/**
- * 震源要素を伝える句を、要素ごとに参照付きの断片へ分ける。
- * 連結すると「〇〇、深さ120キロメートルを震源とするマグニチュード7.1の地震が発生しました。」になる。
- * 震源名・深さ・規模のいずれが欠けても文が破綻しないよう、欠けた要素は句ごと省く（震源名が取れない
- * 電文では震源に触れず規模だけを伝える文になる）。
- *
- * 要素ごとに分けるのは、**チャンクが読点で切られる**ため。震源名と深さの間には読点が入るので、
- * ひとつの断片にまとめると「震源名しか鳴っていないのに深さも規模も声になった」と記録される。
- */
-function quakeOccurrenceSegments(hypocenter: Hypocenter, opts?: TtsSpeechOptions): SpeechSegment[] {
-  const tellable = tellableHypocenterFacts(hypocenter, opts)
-  const segments: SpeechSegment[] = []
-  if (tellable.has('hypocenterName')) {
-    segments.push({ text: hypocenter.name, refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] })
-    if (tellable.has('depth')) {
-      segments.push(plain('、'))
-      segments.push({ text: depthSourcePhrase(hypocenter), refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
-    }
-    segments.push(plain('を震源とする'))
-  }
-  const magRef: SpeechRef[] = [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter) }]
-  const numeric = magnitudePhrase(hypocenter.magnitude)
-  if (tellable.has('magnitude') && numeric) {
-    segments.push({ text: numeric, refs: magRef })
-  }
-  segments.push(plain('地震が発生しました。'))
-  // 数値にならない規模は、句へ差し込まず別の文で伝える（→ magnitudeConditionSentence）。
-  if (tellable.has('magnitude') && !numeric) {
-    segments.push({ text: magnitudeConditionSentence(hypocenter), refs: magRef })
-  }
-  return segments
-}
-
-/** 津波区分の文を参照付きの断片にする（続報で区分が変わったときだけ読み直すため）。 */
-function domesticTsunamiSegment(t: DomesticTsunami): SpeechSegment {
-  return { text: domesticTsunamiText(t), refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: t }] }
-}
-
-// 区分を決める固定付加文の文の表は、地震カードと共有するため `domesticTsunamiComment.ts` に置く。
-export { DOMESTIC_TSUNAMI_CODE_TEXT }
-
-/**
- * 読み上げで読む、区分を決める固定付加文の文。**0211 だけ括弧書きを除き、ほかは画面と同じ気象庁の文。**
- *
- * 0211 は読み上げでは「津波警報等を発表中です。」と読む（2026-11-05 ユーザー選択「読み上げだけ「津波警報等を発表中です。」 (Recommended)」。
- * 2026-10-23 の「気象庁の原文を読む」を 0211 の読み上げについてだけ覆した）。括弧書き「（大津波警報・津波警報あるいは
- * 津波注意報）」は「等」の中身の説明で、声では本題の前に警報の名前が続いてしまう。画面の地震カードは電文の全文のまま
- * （`domesticTsunamiCardForecastText`）。
- */
-export const DOMESTIC_TSUNAMI_CODE_SPEECH: Readonly<Record<DomesticTsunamiCode, string>> = {
-  ...DOMESTIC_TSUNAMI_CODE_TEXT,
-  '0211': '津波警報等を発表中です。',
-}
-
-/**
- * 遠地地震に関する情報の付加文の原文を、読み上げる形にする。**原文の 0211 の文だけを読み上げ用の文へ置き換え**、
- * ほかの文はそのまま読む（2026-11-05 ユーザー選択「遠地地震も「津波警報等を発表中です。」 (Recommended)」。画面は全文のまま）。
- * 照合は表の文との完全一致で、文面が一字でも違えば原文のまま読む。
- */
-function speakableForecast(text: string): string {
-  return text.split(DOMESTIC_TSUNAMI_CODE_TEXT['0211']).join(DOMESTIC_TSUNAMI_CODE_SPEECH['0211'])
-}
-
-/**
- * 津波区分の既読・差分の鍵。**区分とコードの組で作る** —— 区分が同じでもコードが違えば読み上げる文が
- * 違う（0212 と 0213 はどちらも「若干の海面変動」）ので、区分だけで比べると続報で文が変わっても黙る。
- */
-export function domesticTsunamiFactValue(t: DomesticTsunami, code: DomesticTsunamiCode | undefined): string {
-  return code ? `${t}:${code}` : t
-}
-
-/**
- * 国内の地震情報の津波の一文。**区分を決めたコードを持てば、そのコードの気象庁の文を読む**
- * （2026-10-23 ユーザー選択「気象庁の原文を読む (Recommended)」、範囲は同日の選択「A: 発表文の内訳に足す (Recommended)」で
- * 津波の文だけにした）。0211 だけは括弧書きを除いた文を読む（→ {@link DOMESTIC_TSUNAMI_CODE_SPEECH}）。
- *
- * 区分から文を起こすと、区分へ丸めたぶん気象庁が書いていないことを言う —— 0230「この地震による日本への
- * 津波の影響はありません。」を 0215 の文で読み、0213・0214 の「注意してください」を「被害の心配はありません」に、
- * 0216 の「震源が海底の場合」を「ため」に変える（コード表との突き合わせは docs/jma-wording-audit.md E1〜E3）。
- *
- * **コードを持たないときは区分の文を読む。** 原文を持たない電文と、区分を津波電文から借りたとき
- * （借りるときにコードを捨てる）。
- */
-function domesticTsunamiSegmentOf(event: JMAQuake): SpeechSegment {
-  const { domesticTsunami: t, domesticTsunamiCode: code } = event.earthquake
-  return {
-    text: code ? DOMESTIC_TSUNAMI_CODE_SPEECH[code] : domesticTsunamiText(t),
-    refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: domesticTsunamiFactValue(t, code) }],
-  }
-}
-
-/**
- * 「震源の深さは〇〇に更新されました。」の〇〇部分。
- *
- * {@link depthSourcePhrase} は「深さ10キロメートル」を返すため、この文には使えない
- * （「震源の深さは深さ10キロメートルに」と重なる）。深さ不明では空文字。
- */
-function depthUpdateValue(h: DepthFact): string {
-  if (!hasDepth(h.depth)) return ''
-  return h.depth === 0 ? 'ごく浅い場所' : `${h.depth}キロメートル${atLeastSuffix(h)}`
-}
-
-/**
- * この震源要素のうち、**声にしうるもの**（＝記録されうるもの）。
- *
- * **読む側（{@link quakeOccurrenceSegments} / {@link changedFactSegments}）と、記録を待つ側
- * （{@link hasUnspokenFact}）は必ずこれを使うこと。** 条件を各所に書くと必ずずれる ―― 実際、
- * 深さの条件が生成側とだけ食い違い、記録される機会の無い事実を待って**その地震だけ永久に
- * 全文読みへ戻る**不具合を作った（docs/spec/audio-tts-spec.md §4）。
- *
- * **深さは震源名の句の中でしか読まれない**（2026-10-21 ユーザー承認）**。**
- *
- * **先に件数を数えてから決めた。** ユーザー選択「先に件数を数える (Recommended)」に応えて、
- * DMDATA のアーカイブの控え（`.cache/dmdata-archive-cache/telegram-earthquake`。2,135 日・
- * 2020-11-18〜2026-10-18）の地震情報を数えた。震源名が空なのは震源要素を持たない震度速報
- * 1,771 通だけで、**「深さは判っているのに名前が無い」電文は 0 件**（震度速報は深さも持たない）。
- * 起きない形として残す。震源名が空の電文では「〇〇、深さ10キロメートルを
- * 震源とする」の句ごと落ちるため、深さが判っていても声にならない。
- */
-function tellableHypocenterFacts(hypocenter: Hypocenter, opts?: TtsSpeechOptions): Set<QuakeFact> {
-  // 既定（未指定）は従来どおり深さ・規模とも語る。設定で切ったときだけ震源名へ絞る。
-  const detail = opts?.readHypocenterDetail ?? true
-  const facts = new Set<QuakeFact>()
-  if (hypocenter.name) {
-    facts.add('hypocenterName')
-    if (detail && depthSourcePhrase(hypocenter)) facts.add('depth')
-  }
-  if (!detail) return facts
-  // 数値が読めなくても、気象庁が説明を添えていれば規模は語れる（「Ｍ８を超える巨大地震」）。
-  if (magnitudePhrase(hypocenter.magnitude) || magnitudeConditionSentence(hypocenter)) facts.add('magnitude')
-  return facts
-}
-
-/**
- * 上に津波区分を足した、この電文が声にしうる事実の全体。
- *
- * **`maxScaleOnly` はここに載せない。** これは「地域名を作れなかったときの代替」であって
- * 電文が普通に伝える事実ではない。載せると `hasUnspokenFact` が常に真を返し、地域名を作れる
- * 正常な地震でも差分の経路に入らなくなる（毎報が全文になる）。
- */
-function tellableFacts(event: JMAQuake, opts?: TtsSpeechOptions): Set<QuakeFact> {
-  const facts = tellableHypocenterFacts(event.earthquake.hypocenter, opts)
-  if (domesticTsunamiText(event.earthquake.domesticTsunami)) facts.add('domesticTsunami')
-  return facts
-}
-
-/**
- * この電文が伝える震源要素・津波区分のうち、**まだ一度も声にしていないもの**があるか。
- *
- * あるなら続報でも差分にせず、初報と同じ形（時刻・震源・規模・津波を通しで言う文）へ回す。
- * 未記録には理由が 2 つあり、**どちらも「更新されました」と言うのは正しくない**。
- *
- * - 初報の時点では値が不明だった（深さ・規模は後の報で確定することがある）
- * - 初報の該当箇所が割り込みで鳴らなかった（→ docs/spec/audio-tts-spec.md §4
- *   「既読になるのは「声になった分」だけ」）
- *
- * **未記録を「変化なし」として省いてはいけない。** 省くと、その要素はその地震の続報が続く限り
- * 二度と声にならない（同じ種別の報が来る限り初報の経路にも戻らない）。区域側の
- * {@link isUnspokenRegion} が「未記録＝読む」としているのと、意味を揃えるための判定。
- */
-function hasUnspokenFact(event: JMAQuake, spoken: QuakeSpokenState, opts?: TtsSpeechOptions): boolean {
-  return [...tellableFacts(event, opts)].some(fact => !spoken.facts.has(fact))
-}
-
-/**
- * 続報で「値が変わった震源要素」だけを言い直す断片列を作る。変化が無ければ空。
- *
- * **震度速報では呼ばないこと。** 震度速報は震源要素も津波区分も伝えない電文で、
- * `hypocenter` はセンチネル（`-200` / `-1`）、`domesticTsunami` は「調査中」が入る。
- * 素直に比べると、震源情報で伝えた「津波の心配はありません」から変化したと誤検出し、
- * 続報のたびに「津波の有無を調査中です」と言い出す。
- */
-function changedFactSegments(event: JMAQuake, spoken: QuakeSpokenState, opts?: TtsSpeechOptions): SpeechSegment[] {
-  const { hypocenter, domesticTsunami } = event.earthquake
-  const tellable = tellableFacts(event, opts)
-  const segments: SpeechSegment[] = []
-  // 声にしうる事実のうち、記録と値が違うものだけ。未記録がここへ来ることは無い
-  // （呼び出し前に {@link hasUnspokenFact} で弾き、初報と同じ形で言い直す側へ回している）。
-  // `has` の判定はその保証が崩れたときの安全弁として残す。
-  const changed = (fact: QuakeFact, value: string): boolean =>
-    tellable.has(fact) && spoken.facts.has(fact) && spoken.facts.get(fact) !== value
-
-  if (changed('hypocenterName', hypocenter.name)) {
-    segments.push({ text: `震源は${hypocenter.name}に更新されました。`, refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] })
-  }
-  if (changed('magnitude', magnitudeFactValue(hypocenter))) {
-    const value = magnitudeFactValue(hypocenter)
-    // 数値にならない規模は「〜に更新されました」の枠へ入れられない（「8を超える巨大地震に
-    // 更新されました」と破綻する）。**それでも更新されたことは言う** —— 主題部だけを
-    // 差し替えた形を使う（→ `magnitudeConditionAmendSentence`）。
-    const text = hasMagnitude(hypocenter.magnitude)
-      ? `マグニチュードは${magnitudeText(hypocenter.magnitude)}に更新されました。`
-      : magnitudeConditionAmendSentence(hypocenter)
-    segments.push({ text, refs: [{ kind: 'quakeFact', fact: 'magnitude', value }] })
-  }
-  if (changed('depth', depthFactValue(hypocenter))) {
-    segments.push({ text: `震源の深さは${depthUpdateValue(hypocenter)}に更新されました。`, refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
-  }
-  if (changed('domesticTsunami', domesticTsunamiFactValue(domesticTsunami, event.earthquake.domesticTsunamiCode))) {
-    segments.push(domesticTsunamiSegmentOf(event))
-  }
-  return segments
-}
-
-/**
- * 区域より下の階層（観測点・市町村）に、前に声にした報から何が起きたか。
- *
- * | 値 | 意味 |
- * |---|---|
- * | `lowered` | 観測点か市町村が減った、または震度が下がった（他の変化より優先する） |
- * | `added` | 観測点か市町村が増えた |
- * | `updated` | 顔ぶれは同じだが震度が上がった |
- * | `none` | どれも起きていない（＝本当に変化が無い） |
- * | `unknown` | 比べる相手がいない（この地震でまだ 1 通も声にしていない） |
- *
- * **`none` と `unknown` を混ぜないこと。** 前者は「変わりはありません」と言い切ってよい根拠だが、
- * 後者は何も判らないだけで、言い切ると嘘になりうる。
- *
- * **`lowered` を他より先に見る。** 下がったものがあるのに「変わっていません」と言うと嘘になる
- * （2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
- */
-type ObservationChange = 'lowered' | 'added' | 'updated' | 'none' | 'unknown'
-
-/**
- * 観測点を指す鍵。**コードがあれば優先する** —— 観測点名は全国で一意とは限らない。
- * DMDATA の観測点は `pref` が空なので、名前へ落ちたときは実質 `addr` だけで引く。
- */
-function stationKey(p: { code?: string; pref: string; addr: string }): string {
-  return p.code ? `c:${p.code}` : `n:${p.pref}|${p.addr}`
-}
-
-/** 市町村を指す鍵（観測点と同じ規則）。 */
-function cityKey(c: { code?: string; pref: string; name: string }): string {
-  return c.code ? `c:${c.code}` : `n:${c.pref}|${c.name}`
-}
-
-/**
- * 前に声にした報と、いまの電文を突き合わせる。
- *
- * **なぜ電文の `Revise` を使わないか。** 気象庁は続報の観測点・市町村へ `追加` `上方修正`
- * `下方修正` を書いており（→ `EarthquakePoint.revise`）、実電文で突き合わせの結果と一致することも
- * 確かめた（実例は `docs/spec/audio-tts-spec.md` 改訂履歴 2026-09-17）。それでも採らない。
- *
- * - **問いが違う。** `Revise` が答えるのは「**直前の報**から何が変わったか」。こちらが要るのは
- *   「**最後に声にした報**から何が変わったか」で、割り込みで鳴らなかった報があると食い違う
- *   （記録を声になった分だけ進める規律の帰結 → `docs/spec/audio-tts-spec.md` §4）。
- *
- * 突き合わせならこれを満たせる。`Revise` は逆に**検証の材料**として使える（テストで実電文の
- * 値と突き合わせの結果が一致することを固定してある）。
- *
- * **区域・都道府県の集約点（`isArea`）は数えない。** あれは区域の差分がもう見ており、
- * 増えていればこの関数を呼ぶ経路（差分が空）へそもそも入らない。
- */
-function observationChange(event: JMAQuake, spoken: QuakeSpokenState): ObservationChange {
-  const prev = spoken.observed
-  if (!prev) {
-    // **正常な見送りと、機能が死んでいるのを見分けられるようにする。** その地震でまだ 1 通も
-    // 声にしていないなら比べる相手がいないのは当たり前だが、区域や震源要素は何度も声にして
-    // いるのに観測点の記録だけ無いなら、**発話が毎回割り込まれて最後の断片まで届いていない**
-    // （記録はチャンク単位で進み、この参照は最後の断片に載っているため）。後者は黙るだけで
-    // 嘘は言わないが、この一文が永久に出なくなる。
-    if (spoken.regions.size > 0 || spoken.facts.size > 0) {
-      log.debug('[tts] 観測点の記録が無いため、区域より下の階層の変化を判定できない（発話が最後まで鳴っていない可能性）')
-    }
-    return 'unknown'
-  }
-
-  // 鍵が衝突したら記録を残す。**黙って上書きすると、別の観測点の震度と突き合わせて
-  // 「変わりなし」とも「更新された」とも誤りうる**（どちらも嘘）。`code` は実電文でほぼ必ず
-  // 入るので、ここへ来るのは配信の形が変わったとき。
-  const indexOf = <T,>(items: readonly T[], keyOf: (x: T) => string, scaleOf: (x: T) => number, what: string): Map<string, number> => {
-    const map = new Map<string, number>()
-    let collisions = 0
-    for (const item of items) {
-      const key = keyOf(item)
-      if (map.has(key)) collisions++
-      map.set(key, scaleOf(item))
-    }
-    if (collisions > 0) log.warn(`[tts] ${what}の鍵が重複した（${collisions} 件）。区域より下の階層の変化を誤って判定しうる`)
-    return map
-  }
-
-  const nowStations = event.points.filter(p => !p.isArea)
-  const prevStations = indexOf(prev.points.filter(p => !p.isArea), stationKey, p => p.scale, '観測点')
-  const nowCities = event.cities ?? []
-  const prevCities = indexOf(prev.cities, cityKey, c => c.scale, '市町村')
-
-  // **減った・下がったことも見る**（2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
-  // 気象庁は続報で観測点・市町村の震度を下方修正する（`Revise` の値域に「下方修正」がある。
-  // 電文解説資料 Ⅱ.33-5）。見ないと、下がった続報で「変わっていません」と言い切ってしまう。
-  //
-  // **消えたかどうかは、今の報がその階層を運んでいるときだけ見る。** 減って見える形は**種別の違い**
-  // でも起きる ―― 観測点を運ばない報が地震情報のあとに届けば、観測点は全部「消えた」ように見える。
-  // その階層を 1 件も持たない報では消えたと数えない。
-  let added = false
-  let updated = false
-  let lowered = false
-  for (const p of nowStations) {
-    const before = prevStations.get(stationKey(p))
-    if (before === undefined) added = true
-    else if (p.scale < before) lowered = true
-    else if (before !== p.scale) updated = true
-  }
-  for (const c of nowCities) {
-    const before = prevCities.get(cityKey(c))
-    if (before === undefined) added = true
-    else if (c.scale < before) lowered = true
-    else if (before !== c.scale) updated = true
-  }
-  if (nowStations.length > 0) {
-    const nowKeys = new Set(nowStations.map(stationKey))
-    for (const key of prevStations.keys()) if (!nowKeys.has(key)) lowered = true
-  }
-  if (nowCities.length > 0) {
-    const nowKeys = new Set(nowCities.map(cityKey))
-    for (const key of prevCities.keys()) if (!nowKeys.has(key)) lowered = true
-  }
-  if (lowered) return 'lowered'
-  if (added) return 'added'
-  return updated ? 'updated' : 'none'
-}
-
-/**
- * 前の報から震度が下がった・観測が減った続報で、「変わっていません」の代わりに言う一文。
- *
- * **下がった値は読まない。** 言うのは「更新された」ことだけ（2026-10-19 ユーザー承認
- * 「言い切りを外す (推奨)」）。前置きの情報名（「地震情報が更新されました。」）は呼び出し側が付ける。
- */
-const OBSERVED_INTENSITY_UPDATED = '観測された震度が更新されました。'
-
-/**
- * 「更新されました」のあとに続ける一文。**名乗りだけで終わらせないための断片。**
- *
- * 読み上げの地域名は一次細分区域までしか下りないので、区域の最大震度が据え置きのまま
- * 観測点だけが増えた続報は差分が空になる。そのとき「更新されました。」で切ると、聞き手には
- * 「何が？」しか残らない。
- *
- * **「地域ごとの最大震度」と言い切る。** 「各地の震度」では市町村の段を含んで読めてしまい、
- * そちらは実際に上がっていることがある。読み上げが伝えてきた単位＝区域の最大震度に限れば、
- * 据え置きであることは正しい（実例は `docs/spec/audio-tts-spec.md` 改訂履歴 2026-09-17）。
- *
- * **区域より下の階層を運ぶ種別（地震情報）専用。** 震度速報（区域まで）と震源情報（震源要素のみ）は
- * **そもそも探す先が無い**ので、区域・震源要素の差分が空ならそれだけで「変わりはありません」と
- * 言い切れる。観測点の記録を待たせない ―― あちらは `points` を運ばないので記録が作られず、
- * 待たせると永久に名乗りだけで終わる。
- *
- * **区域の最大震度が下がった・区域が消えた報はここへ来ない**（呼び出し側が先に
- * {@link regionsLoweredSince} で見て {@link OBSERVED_INTENSITY_UPDATED} を出す）。
- *
- * @param change 区域より下の階層で起きたこと
- */
-function noRegionChangeSegments(change: ObservationChange): SpeechSegment[] {
-  if (change === 'unknown') return []
-  // 下がった・減ったものがあるなら言い切らない。下がった値そのものは読まない
-  // （2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
-  if (change === 'lowered') return [plain(OBSERVED_INTENSITY_UPDATED)]
-  if (change === 'added') return [plain('観測地点が追加されましたが、地域ごとの最大震度は変わっていません。')]
-  if (change === 'updated') return [plain('観測された震度が更新されましたが、地域ごとの最大震度は変わっていません。')]
-  return [plain('内容に変わりはありません。')]
-}
-
-/**
- * その報が運んでいた観測点・市町村を、**読み終えたときに記録する**ための参照を最後の断片へ足す。
- *
- * **最後の断片に載せる。** 途中で切られた発話は記録を進めない（次の報でもう一度伝える）。
- * 断片を増やさず既存の最後のものへ足すのは、空文字の断片がチャンクの割り当てを乱すため。
- * 割り当てはチャンク単位なので、その断片が読点で複数チャンクに割れればどれが鳴っても記録は進む。
- *
- * **観測点も市町村も運んでいない報では記録を発行しない。** 同じ地震の記録は種別を跨いで共有されるので
- * （`quakeSpeechTopic`）、**空で上書きすると前に伝えた観測点が記録から消える**。次の報は
- * 「比べる相手がいない」ではなく「全部が初出」と読み、何も増えていないのに
- * 「観測地点が追加されました」と**嘘を言う**。気象庁は種別の違う電文を前後して発表するので、
- * これは実運用で起きる順序（→ 設定の窓「種別遷移テスト」がその順序そのもの）。
- *
- * **数えるのは観測点（`isArea` が偽）と市町村だけ。`points` の件数で見ない。** 震度速報は
- * `points` に**区域と都道府県の集約点だけ**を積むので、件数で見ると「運んでいる」と誤判定し、
- * 観測点ゼロの記録で上書きしてしまう（震源情報・VXSE61 と同じ結果になる）。
- */
-function withObservedRef(segments: SpeechSegment[], event: JMAQuake): SpeechSegment[] {
-  if (segments.length === 0) return segments
-  const carriesStations = event.points.some(p => !p.isArea)
-  if (!carriesStations && (event.cities?.length ?? 0) === 0) return segments
-  const observed: SpokenObservation = { points: event.points, cities: event.cities ?? [] }
-  const last = segments[segments.length - 1]
-  return [
-    ...segments.slice(0, -1),
-    { ...last, refs: [...last.refs, { kind: 'quakeObserved', observed }] },
-  ]
-}
-
-/**
- * VXSE51/52/53/61 地震情報の読み上げを断片列で生成する。
- * isNew=false のとき更新報として冒頭に通知する。
- *
- * `spoken` を渡すと**続報は差分だけを読む**（既に声になった区域・震源要素を省く）。
- * 省略すると全文を組み立てる（{@link earthquakeToText} 経由の呼び出し）。
- *
- * 差分が空になっても**名乗りは読む**（黙らない。理由は下の `return` のコメント）。名乗りだけで
- * 終わらせないための一文は {@link noRegionChangeSegments} が足す。
- *
- * **これは内側の組み立て。** 呼び出し側が使うのは {@link earthquakeToSegments} で、あちらが
- * 観測点の記録（{@link withObservedRef}）を最後の断片へ載せる。ここへ直接足さないのは、
- * `return` が 6 つあり 1 つ書き忘れても型検査もテストも通ってしまうため。
- */
-function buildEarthquakeSegments(
-  event: JMAQuake,
-  opts: TtsSpeechOptions,
-  isNew: boolean,
-  spoken?: QuakeSpokenState,
-  /**
-   * 区域を差分にせず**通しで読む**。その地震で最初に届いた確定情報（震源・震度情報／各地の
-   * 震度情報）にだけ真を渡す（判定は `useLiveEventHandler`）。
-   *
-   * 速報を細切れに聞いた耳へ、確定した観測を 1 度だけまとめて示すため。震源要素が「その種別の
-   * 初報では通しで言う」のと規則を揃える意味もある（従来は同じ報の中で震源要素は通し・地域は
-   * 差分と割れていた）。**2 回目以降は差分に戻す** ―― 種別ごとに通しで読むと、確定情報が
-   * 2 種類届く経路で全文を 2 度聞くことになる。
-   */
-  readAllRegions = false,
-): SpeechSegment[] {
-  const { hypocenter, maxScale, domesticTsunami } = event.earthquake
-  const type = event.issue.type
-  // その地震について何かを声にしたことがあるか。差分が空でも、まだ何も伝えていないなら黙らない。
-  const saidSomething = spoken != null && (spoken.regions.size > 0 || spoken.facts.size > 0)
-
-  if (type === '震度速報') {
-    const prefix = isNew ? '震度速報。' : '震度速報が更新されました。'
-    // **震度速報では震源を語らない。** 借りた震源（→ `utils/borrowFromTsunami.ts`）を
-    // ここで読むと、気象庁が震度速報で震源を発表していないのに**震源情報（VXSE52）を
-    // 受け取ったように聞こえる**。借りた震源を声にするのは、その値を運んできた津波電文の
-    // 読み上げの側（`tsunamiToSegments`）。画面のカードには出どころ付きで出している。
-    const regionSegs = buildRegionSegments(event.points, maxScale, opts, hypocenter, spoken)
-    // 未入電の区域は述語が違うので別の文にする（→ `unreceivedRegionSegments`）。
-    const unreceivedSegs = unreceivedRegionSegments(event.points, opts, hypocenter, spoken)
-    if (regionSegs.length > 0 || unreceivedSegs.length > 0) {
-      return [plain(prefix), ...regionSegs, ...unreceivedSegs]
-    }
-    // 区域を挙げられないとき（差分なし・区域を持たない異常な電文）は最大震度だけでも伝える。
-    // **区域を一度も読めていない地震に限る**（判定は下の地震情報の経路と揃える。揃えないと
-    // 区域を読めている地震の据え置きの続報でも最大震度を言い直す）。
-    // 同じ震度を既に伝えていれば `maxScaleOnlySegments` が空を返す。震度も判らないときも空になるが、
-    // 初報なら名乗りだけは返す（「震度速報。」で終わる。震度の値が欠けた文は作らない）。
-    const fallback = spoken == null || spoken.regions.size === 0
-      ? maxScaleOnlySegments(maxScale, spoken, isMaxScaleUnreceived(maxScale, event.points))
-      : []
-    // **伝えることが無くても名乗りは読む。** 黙ると「電文が来たのに何も起きなかった」ようにしか
-    // 聞こえない（docs/spec/audio-tts-spec.md §4）。
-    //
-    // **ただし名乗りだけでは終わらせない。** 「更新されました」で切ると、聞き手には「何が？」しか
-    // 残らない。**震度速報は区域までしか運ばない種別**なので（実測: 電文に `IntensityStation` も
-    // `City` も 1 件も入らない）、区域の差分が空ならそれだけで「変わりがない」と言い切れる
-    // ―― 観測点の記録は見ない（この種別では作られないので、待たせると永久に名乗りだけで終わる）。
-    //
-    // **震度について何かを伝えたことがあるのを条件にする。** 区域を挙げた地震はもちろん、
-    // 地域名を作れず最大震度だけを伝えた地震（`maxScaleOnly`）でも「変わりはない」と言い切れる。
-    // どちらも無い（震度そのものを一度も声にしていない）なら根拠が無いので黙る。
-    const toldIntensity = !!spoken && (spoken.regions.size > 0 || spoken.facts.has('maxScaleOnly'))
-    //
-    // **区域が下がった・消えた報では言い切らない**（名乗りの「震度速報が更新されました。」だけで
-    // 終える。2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。比べるのは前の報の震度3以上の
-    // 区域だけ（震度速報が運ぶ範囲。→ `regionsLoweredSince`）。
-    const noChange = !isNew && spoken && fallback.length === 0 && toldIntensity
-      && !regionsLoweredSince(event, spoken, 30)
-      ? [plain('観測した震度に変わりはありません。')]
-      : []
-    return [plain(prefix), ...fallback, ...noChange]
-  }
-
-  const time = formatTime(event.earthquake.time)
-
-  if (type === '顕著な地震の震源要素更新のお知らせ') {
-    // この電文（VXSE61）は震源要素の更新のみを伝え、津波の有無は含まない。
-    // 津波情報は別電文（VTSE41/51/52）で発表されるため、ここでは読み上げない。
-    //
-    // **差分を取らない。** 「更新されたこと」自体が電文の主旨なので、値が既に声になっていても
-    // 省かない。ただし読んだ値は記録する（記録しないと、後続の続報が同じ値を「更新」と言い直す）。
-    const amended: SpeechSegment[] = []
-    // **深さの語形は後ろに規模が続くかどうかで変わる**（理由は depthAmendPhrase）。順に組み立てる前に
-    // 規模が並ぶかを決めておく。
-    const magnitudeFollows = hasMagnitude(hypocenter.magnitude)
-    const depth = depthAmendPhrase(hypocenter, magnitudeFollows)
-    if (depth) amended.push({ text: depth, refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
-    if (magnitudeFollows) {
-      const value = magnitudeText(hypocenter.magnitude)
-      if (amended.length > 0) amended.push(plain('、'))
-      amended.push({ text: `マグニチュード${value}`, refs: [{ kind: 'quakeFact', fact: 'magnitude', value }] })
-    }
-    // 時刻が日時として読めなければ句ごと落とす（「ナンじナンぷん頃発生した」と読ませない）。
-    // 震源名だけでも文は成立する。
-    const head = plain(`顕著な地震の震源要素更新のお知らせ。${time ? `${time}頃発生した` : ''}${hypocenter.name}の地震について、`)
-    // 数値にならない規模は「〜に更新されました」の並びへ入れられないので、別の文で後に足す。
-    // **ここは初報の形（「マグニチュードは〜」）のまま。** この電文は名乗りと直前の文が既に
-    // 「更新」を言っているので、`magnitudeConditionAmendSentence` を使うと 1 回の発話で
-    // 「更新」が 3 度重なる（続報の差分では前に「更新」を言う文が無いので、あちらは要る）。
-    const magCondition = magnitudeConditionSentence(hypocenter)
-    const conditionSegments: SpeechSegment[] = magCondition
-      ? [{ text: magCondition, refs: [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter) }] }]
-      : []
-    // 深さ・規模とも不明なら要素を並べられないため、更新があった事実だけを伝える。
-    return amended.length > 0
-      ? [head, ...amended, plain('に更新されました。'), ...conditionSegments]
-      : [head, plain('震源要素が更新されました。'), ...conditionSegments]
-  }
-
-  if (type === '遠地地震') {
-    // 気象庁「遠地地震に関する情報」（VXSE53・Head/Title で識別）。国外の規模の大きな地震を
-    // 日本への津波影響とあわせて伝える電文で、国内震度は伴わない（maxScale は常に -1）。
-    //
-    // **差分を取らない。** 付加文（`forecastText`）が本文の主体で、区分の値だけを比べても
-    // 何が変わったか分からない。発表自体が稀で、続報も数報にとどまる。
-    const prefix = isNew ? '遠地地震に関する情報。' : '遠地地震に関する情報が更新されました。'
-    // 付加文の原文を優先する。遠地地震は 022x/023x 系の付加文を併用するため、
-    // domesticTsunami（021x 系の区分）へ丸めると意味が落ちる。
-    // 原文を持たない電文は区分から文を起こし、海外への津波の見通し
-    // （`foreignTsunamiText`）があれば続ける。
-    // **空白だけの付加文もここで区分側へ倒れる**（{@link endTelegramSentence} が空を返す）。
-    // 原文に 0211 の文があれば、国内の地震情報と同じく括弧書きを除いて読む（{@link speakableForecast}）。
-    const forecast = speakableForecast(endTelegramSentence(event.forecastText))
-    const foreign = endTelegramSentence(event.foreignTsunamiText)
-    const tail: SpeechSegment[] = forecast
-      ? [plain(forecast)]
-      : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(foreign)] : [])]
-    // 時刻が日時として読めなければ句ごと落とす（上の地震情報と同じ扱い）。
-    const dayTime = formatDayTime(event.earthquake.time)
-    return [
-      plain(`${prefix}${dayTime ? `${dayTime}頃、` : ''}`),
-      ...quakeOccurrenceSegments(hypocenter, opts),
-      ...tail,
-    ]
-  }
-
-  const isEpicenterOnly = type === '震源情報' || type === 'その他'
-  const label = isEpicenterOnly ? '震源情報' : '地震情報'
-
-  // 続報は変化したところだけを読む。震源要素・津波区分・震度の地域のいずれにも変化が
-  // 無ければ**名乗りだけで終える**（黙らない。理由は下の `return` のコメント）。
-  // まだ声にしていない震源要素があるなら差分にしない（理由は `hasUnspokenFact`）。
-  if (!isNew && spoken && saidSomething && !hasUnspokenFact(event, spoken, opts)) {
-    const facts = changedFactSegments(event, spoken, opts)
-    const regionSegs = isEpicenterOnly
-      ? []
-      : buildRegionSegments(event.points, maxScale, opts, hypocenter, readAllRegions ? undefined : spoken)
-    // **ここも未入電の文を出す。** 落とすと、震源要素・津波区分がいずれも既出のまま新しく
-    // 未入電の区域が加わった続報で、その区域が一度も声にならない（震度速報以外の続報は
-    // 必ずこの経路を通る）。
-    const unreceivedSegs = isEpicenterOnly
-      ? []
-      : unreceivedRegionSegments(event.points, opts, hypocenter, readAllRegions ? undefined : spoken)
-    // 地域名を作れないまま続報が来ても震度は伝える。ここに保険が無いと、観測点が座標テーブルで
-    // 解決できない状態が続く地震で、初報の 1 回しか震度を伝えられない（以降はこの経路に入り、
-    // 区域も差分も空のまま黙る）。
-    // **区域を一度も読めていない地震に限る**（`spoken.regions` が空）。`regionSegs` が空かどうかで
-    // 判定すると、区域を読めている地震の据え置きの続報でも最大震度を言い直す。
-    // 同じ震度を既に伝えていれば `maxScaleOnlySegments` が空を返す。
-    const fallback = !isEpicenterOnly && regionSegs.length === 0 && unreceivedSegs.length === 0 && spoken.regions.size === 0
-      ? maxScaleOnlySegments(maxScale, spoken, isMaxScaleUnreceived(maxScale, event.points))
-      : []
-    // 伝えることが無くても名乗りは読む（理由は震度速報の同じ箇所）。
-    //
-    // **名乗りだけで終わるなら、区域より下の階層を見て中身を足す。** 読み上げの地域名は
-    // 一次細分区域までしか下りないので、区域の最大震度が据え置きのまま観測点だけが増えた
-    // 続報はここへ落ちる（実例は `docs/spec/audio-tts-spec.md` 改訂履歴 2026-09-17）。
-    //
-    // **震源情報・その他（`isEpicenterOnly`）は震源要素しか運ばない**ので、その差分が空なら
-    // それだけで言い切れる（観測点の記録は見ない。この種別では作られない）。下の階層を持つのは
-    // 震源・震度情報（VXSE53）だけ。
-    const nothingSaid = facts.length === 0 && regionSegs.length === 0 && unreceivedSegs.length === 0 && fallback.length === 0
-    //
-    // **区域の最大震度が下がった・区域が消えた報では言い切らない**（2026-10-19 ユーザー承認
-    // 「言い切りを外す (推奨)」）。観測点・市町村の側で下がったものは `observationChange` が
-    // `lowered` として返す。どちらも下がった値そのものは読まない。
-    const noChange = !nothingSaid
-      ? []
-      : isEpicenterOnly
-        ? [plain('震源の内容に変わりはありません。')]
-        : regionsLoweredSince(event, spoken, 0)
-          ? [plain(OBSERVED_INTENSITY_UPDATED)]
-          : noRegionChangeSegments(observationChange(event, spoken))
-    return [plain(`${label}が更新されました。`), ...facts, ...regionSegs, ...unreceivedSegs, ...fallback, ...noChange]
-  }
-
-  const prefix = isNew ? `${label}。` : `${label}が更新されました。`
-  // **津波電文が先に震源を伝えていても、ここでは通しで読む。** 津波は「震源を伝える電文」の
-  // 1 つとして震源情報（VXSE52）と同じ扱いにしてあり、特別扱いしない —— 震源情報が先に震源を
-  // 伝えた地震でも、種別ごとの初報では通しで言う（速報を細切れに聞いた耳へ、確定した観測を
-  // 1 度まとめて示すため）。同じ種別の続報で言い直さないのは差分の経路が見る。
-  const segments: SpeechSegment[] = [
-    // 時刻が読めなければ句ごと落とす。この後に続く `quakeOccurrenceSegments` が震源名から
-    // 読み始めるので、文としては「地震情報。石川県能登地方で地震が発生しました。」になる。
-    plain(`${prefix}${time ? `${time}頃、` : ''}`),
-    ...quakeOccurrenceSegments(hypocenter, opts),
-    domesticTsunamiSegmentOf(event),
-  ]
-  if (!isEpicenterOnly) {
-    const regionSegs = buildRegionSegments(event.points, maxScale, opts, hypocenter, readAllRegions ? undefined : spoken)
-    // 地域名を作れなかった場合も、震度が判っていれば最大震度だけは伝える（震度速報と同じ扱い）。
-    // 揃えないと、この電文だけ震度に一切触れずに終わる。
-    // ここも区域を一度も読めていない地震に限る。上の差分の経路と判定を揃えないと、震源要素だけが
-    // 変わった続報（区域は据え置き）で最大震度を言い直す。
-    const unreceivedSegs = unreceivedRegionSegments(event.points, opts, hypocenter, readAllRegions ? undefined : spoken)
-    if (regionSegs.length > 0 || unreceivedSegs.length > 0) segments.push(...regionSegs, ...unreceivedSegs)
-    else if (!spoken || spoken.regions.size === 0) segments.push(...maxScaleOnlySegments(maxScale, spoken, isMaxScaleUnreceived(maxScale, event.points)))
-  }
-  return segments
-}
-
-/**
- * VXSE51/52/53/61 地震情報の読み上げを断片列で生成する（引数の意味は
- * {@link buildEarthquakeSegments}）。
- *
- * 組み立てた断片列の**最後に、その報が運んでいた観測点・市町村への参照を足す**。これが
- * 次の報で「区域の震度は据え置きだが観測点は増えた」を見分ける材料になる
- * （→ {@link observationChange}）。**入口を 1 つにしてあるのは、内側の `return` が 6 つあり、
- * 分岐ごとに足す形にすると書き忘れても何も起きないから**（読み上げは普段どおり鳴り、
- * 続報で「変わりはありません」と嘘を言うようになるだけで、例外もログも出ない）。
- */
-export function earthquakeToSegments(
-  event: JMAQuake,
-  opts: TtsSpeechOptions,
-  isNew: boolean,
-  spoken?: QuakeSpokenState,
-  readAllRegions = false,
-): SpeechSegment[] {
-  return withRegionSnapshotRef(withObservedRef(buildEarthquakeSegments(event, opts, isNew, spoken, readAllRegions), event), event)
-}
-
-/**
- * その報の区域ごとの最大震度を、**読み終えたときに記録する**ための参照を最後の断片へ足す
- * （→ `QuakeSpokenState.regionSnapshot`）。載せ方の規律は {@link withObservedRef} と同じ。
- *
- * **地域名を 1 つも作れない報では記録を発行しない。** 震源情報のように区域を運ばない報で空に
- * 置き換えると、次の報で比べる相手が消える。
- */
-function withRegionSnapshotRef(segments: SpeechSegment[], event: JMAQuake): SpeechSegment[] {
-  if (segments.length === 0) return segments
-  const regions = regionScaleMap(event.points, event.earthquake.maxScale)
-  if (regions.size === 0) return segments
-  const last = segments[segments.length - 1]
-  return [
-    ...segments.slice(0, -1),
-    { ...last, refs: [...last.refs, { kind: 'quakeRegionSnapshot', regions }] },
-  ]
-}
-
-/** VXSE51/52/53/61 地震情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
-export function earthquakeToText(event: JMAQuake, opts: TtsSpeechOptions, isNew: boolean): string {
-  return joinSegments(earthquakeToSegments(event, opts, isNew))
-}
-
-/**
- * 波高の表記を読める形にする。"３ｍ" → "3メートル"、"10m以上" → "10メートル以上"、
- * "０．５ｍ" → "0.5メートル" など。
- *
- * **全角と半角の両方が来る。** 波高そのものは両経路とも半角で渡ってくる（`dmdataParser` の
- * `toHalfWidthHeightDesc`）が、この関数は `headline`（電文の文章）にも通しており、そちらは
- * 全角のまま。片方だけを変換すると素通りした側が「えむ」と読まれる。
- *
- * 単位を置き換えるのは**数字の直後だけ**。この関数は `headline`（電文の文章）にも通すので、
- * 無条件に m を置き換えると文中の語を壊す。大文字の M を対象にしないのも同じ理由で、
- * 数字の直後の M はマグニチュード（「M7.6」）を指す。
- */
-function tsunamiHeightToSpeech(description: string): string {
-  return description
-    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/．/g, '.')
-    .replace(/(\d)\s*[mｍ]/g, '$1メートル')
-}
-
-/**
- * 数値で表せない予想波高（気象庁の「巨大」「高い」）を、文に馴染む言い方に直す。
- *
- * この 2 つは規模が大きく数値化できないときの定型表記で、そのまま並べると
- * 「岩手県で巨大が予想されています」と崩れる。活用が違う（「巨大」は形容動詞、「高い」は
- * 形容詞）ので機械的に語尾を足せず、表記ごとに持つ。
- *
- * 表になければそのまま通す。知らない表記を無理に加工して壊すより、少しぎこちない方がまし。
- */
-const NON_NUMERIC_HEIGHT_PHRASE: Record<string, string> = {
-  巨大: '巨大な津波',
-  高い: '高い津波',
-}
-
-function heightPhrase(description: string): string {
-  const spoken = tsunamiHeightToSpeech(description)
-  if (/\d/.test(spoken)) return spoken
-  const phrase = NON_NUMERIC_HEIGHT_PHRASE[spoken.trim()]
-  // 素通しした表記は記録に残す。読み上げは崩れた文のまま流れるので、聞くまで気づけない
-  if (!phrase) log.debug('[tts] 予想波高の表記が表に無い（そのまま読む）', spoken)
-  return phrase ?? spoken
-}
-
-/**
- * 予想波高が付いていない区域を「〇〇にも津波警報が発表されています。」で補う。
- *
- * 区域名を波高の文でだけ挙げる作りなので、**波高を持たない区域はそのままだと読み上げから
- * 落ちる**。予想波高が数値で来ない電文は実際にある（「巨大」「高い」の表記は DMDATA 経路で
- * `maxHeight` ごと落ちる。→ `dmdataParser`）ほか、警報が先に出て波高が後続報で付くこともある。
- * 発表されている区域を黙って省くわけにはいかない。
- *
- * **判定は `hasForecastHeight` に任せる**（カードの波高見出しと同じ述語）。`maxHeight` の有無で
- * 見ると、値が 0 で条件も無い区域が波高の文にもここにも入らず、どこにも現れなくなる。
- */
-function areasWithoutHeightSentence(
-  areas: readonly TsunamiArea[],
-  observations: readonly TsunamiObservation[],
-  gradeLabel: string,
-): SpeechSegment[] {
-  const without = areas.filter(a => !hasForecastHeight(a))
-  if (without.length === 0) return []
-  return [
-    ...areaNameSegments(orderAreasForSpeech(without, observations)),
-    plain(`にも${gradeLabel}が発表されています。`),
-  ]
-}
-
-/**
- * 等級を告げる断片。**その等級のカードを指す参照を持たせる。**
- *
- * 追従スクロールが「また、次の地域に津波警報が発表されています」を読んだ時点でカードの頭へ
- * 移れるようにするため。区域名を読み始めてから動くと、等級の見出しが視野の上に切れたまま
- * 区域だけが見える形になる。
- */
-function gradeSegment(text: string, grade: TsunamiGrade): SpeechSegment {
-  return { text, refs: [{ kind: 'grade', grade }] }
-}
-
-/** 区域名を読点で連結した断片列を作る（各区域名が自分を指す参照を持つ）。 */
-function areaNameSegments(areas: readonly TsunamiArea[]): SpeechSegment[] {
-  const segments: SpeechSegment[] = []
-  areas.forEach((a, i) => {
-    if (i > 0) segments.push(plain('、'))
-    segments.push({ text: a.name, refs: [{ kind: 'area', code: a.code, name: a.name }] })
-  })
-  return segments
-}
-
-/**
- * 「岩手県、宮城県で10メートル以上、福島県で6メートルが予想されています。」の形の文を作る。
- *
- * **区域名と波高を 1 文で言い切る。** 区域を挙げる文と波高を伝える文を分けると、同じ区域名を
- * 2 回読むことになる（予報区が数十に及ぶ大規模警報では、それだけで読み上げが倍近く伸びる）。
- * 読み上げが長引くと、優先度の低い電文が待ちの上限に達して割り込み、津波の読み上げが途中で
- * 切られる（`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）。冗長さは聞き心地だけの問題ではない。
- *
- * **渡すのは 1 つの等級の区域だけ。** 等級をまたいで 1 文にまとめない ―― カードは等級ごとに
- * 分かれているので、まとめると読み上げの句がカードを跨ぎ、追従スクロールがその間の行を
- * 含んだ範囲を対象にする。
- *
- * **句の区切りはカードの波高見出しに合わせる**（`groupAreasForCardDisplay`）。波高の文字列だけを
- * キーにまとめると、間に別の波高の区域が挟まっていても飛び越えて 1 つの句にしてしまう。
- * たとえば電文順が A(3m)・B(6m)・C(3m) のとき「A、Cで3メートル、Bで6メートル」と読むと
- * A と C が同じ句に入り、追従がその間の B の行を跨いだ範囲を対象にする。
- *
- * 波高を持つ区域が 1 つも無ければ空を返す（呼び出し側が区域名だけを挙げる文に切り替える）。
- * `areas` は**並べ替える前**のものを渡すこと（グループの境界は電文順で決まる）。
- */
-function areaHeightSentence(
-  areas: readonly TsunamiArea[],
-  observations: readonly TsunamiObservation[],
-): SpeechSegment[] {
-  const groups = groupAreasForCardDisplay([...areas], [...observations])
-    // 判定は `hasForecastHeight` に揃える（`maxHeight` の有無で見ると、グループ分けの側と
-    // 基準が食い違って区域が落ちる。理由は `areasWithoutHeightSentence` の JSDoc）
-    .map(g => ({ heightLabel: g.heightLabel, areas: g.areas.filter(hasForecastHeight) }))
-    .filter(g => g.heightLabel !== null && g.areas.length > 0)
-  if (groups.length === 0) return []
-
-  const segments: SpeechSegment[] = []
-  groups.forEach((g, i) => {
-    if (i > 0) segments.push(plain('、'))
-    segments.push(...areaNameSegments(g.areas))
-    segments.push(plain(`で${heightPhrase(g.heightLabel!)}`))
-  })
-  segments.push(plain('が予想されています。'))
-  return segments
-}
-
-/**
- * 上位の等級より下の区域を、等級ごとに読む。
- * 例:「また、次の地域に津波警報が発表されています。青森県太平洋沿岸、茨城県で3メートルが
- * 予想されています。また、次の地域に津波注意報が発表されています。北海道太平洋沿岸東部で
- * 1メートルが予想されています。」
- *
- * 高さを等級ごとに添えるのは、**その区域にいる人へ高さを伝えるため**（上位の警報の高さだけを
- * 読むと、注意報の区域には何も伝わらない）。
- *
- * **「次の地域に」で等級を先に言い切り、区域名は次の文で波高と一緒に挙げる。** 区域を挙げる
- * 文と波高の文を分けると同じ区域名を 2 回読むことになる（→ `areaHeightSentence`）。
- * 波高がまだ付いていない区域だけの等級では挙げる先が無くなるので、その場合に限り
- * 「〇〇に津波警報が発表されています」と区域名を直接続ける形に落とす。
- */
-function lowerGradeSentence(
-  areas: readonly TsunamiArea[],
-  topGrade: string,
-  observations: readonly TsunamiObservation[],
-): SpeechSegment[] {
-  const segments: SpeechSegment[] = []
-  for (const g of GRADE_ORDER) {
-    if (g === topGrade) continue
-    const inGrade = areas.filter(a => a.grade === g)
-    if (inGrade.length === 0) continue
-    const heights = areaHeightSentence(inGrade, observations)
-    // 等級ごとに「また、」で始める。文が切れる位置が耳で分かるようにするため
-    segments.push(plain('また、'))
-    if (heights.length > 0) {
-      segments.push(gradeSegment(`次の地域に${tsunamiGradeLabel(g)}が発表されています。`, g))
-      segments.push(...heights)
-      segments.push(...areasWithoutHeightSentence(inGrade, observations, tsunamiGradeLabel(g)))
-    } else {
-      segments.push(...areaNameSegments(orderAreasForSpeech(inGrade, observations)))
-      segments.push(plain(`に${tsunamiGradeLabel(g)}が発表されています。`))
-    }
-  }
-  return segments
-}
-
-/**
- * 読み上げで区域を並べる順を決める。
- *
- * **カードの表示順に合わせる**（`sortAreasForCardDisplay`）。電文順（気象庁の地理順）の
- * ままにすると、観測が入り始めた続報で読み上げ順とカードの並びが乖離し、読み上げに
- * 追従するスクロールが 1 チャンクごとに上下へ往復する（docs/spec/audio-tts-spec.md §4）。
- */
-function orderAreasForSpeech(
-  areas: readonly TsunamiArea[],
-  observations: readonly TsunamiObservation[],
-): TsunamiArea[] {
-  return sortAreasForCardDisplay([...areas], [...observations])
-}
-
-/**
- * 区域の並べ替えに使う観測点を決める。
- *
- * **カードが持っている観測点の全体（マージ済み）を渡すこと。** 区域の並びは「その区域で最も
- * 深刻な実測波高」で決まるため（`sortAreasByObservation`）、その電文が運んできた分だけで
- * 並べるとカードと食い違う。等級を切り替える報（警報 → 注意報など）は観測点をほとんど
- * 載せないので、渡さないと読み上げだけが電文順（気象庁の地理順）に戻り、追従スクロールが
- * カード上を往復する。
- *
- * 省略時は電文が載せた分で並べる。呼び出し側が画面の津波を持たないテストのための既定値で、
- * 実際の受信経路（`useLiveEventHandler`）では必ず渡す。
- */
-function observationsForAreaOrder(
-  event: JMATsunami,
-  observationsForOrder?: readonly TsunamiObservation[],
-): readonly TsunamiObservation[] {
-  return observationsForOrder ?? event.observations ?? []
-}
-
-/**
- * VTSE41/51/52 津波情報（新規発表・引き上げ）の読み上げを断片列で返す。
- *
- * `observationsForOrder` は区域の並べ替えにだけ使う（→ `observationsForAreaOrder`）。
- * 読み上げる内容は `event` だけで決まる ―― 等級の発表では観測点の実測値を読まない。
- */
-/**
- * 津波電文が載せている原因地震の震源を伝える断片列。まだ声にしていない事実が無ければ空。
- *
- * **津波警報を伴う地震では、この震源が地震情報より数分早く届く**（能登 2024/1/1 は津波警報が
- * 16:12・地震情報が 16:16）。震源を持たない震度速報が何通も流れるあいだ、震源を知らせられるのは
- * この電文だけ（→ `utils/borrowFromTsunami.ts`）。
- *
- * **語順は津波の文脈に合わせる。** 地震情報は「〇〇、深さ…を震源とするマグニチュード…の地震が
- * 発生しました。」と震源から入るが、ここは等級と区域を言い終えた後に続く文なので、何の震源かを
- * 先に示す。**「震源情報」の語は使わない** —— 気象庁は津波電文で震源を伝えているのであって、
- * 地震情報の「震源情報」（VXSE52）を出したわけではない。
- *
- * **通しで語るのは、まだ声にしていない事実があるときだけ。** 記録は地震ごとに種別を跨いで共有するので、
- * 地震情報が先に震源を伝えていれば黙る。津波の続報は 40 通を超えるため、これが無いと毎報で繰り返す。
- * 全部を語り終えていて値が変わった事実があれば、その事実だけを短く言い直す（→ `sourceHypocenterChangedSegments`）。
- *
- * **追従用の印（`borrowedHypocenter`）を全断片へ付ける。** 読んでいるあいだ、その地震のカードを
- * 見せるため（→ `ttsFollow.ts`）。震源そのものは `quakeFact` で別に記録される。
- */
 /**
  * 津波の読み上げが見る既読。**原因地震ごとに、その地震の主題の既読を持つ。**
  *
@@ -2505,2025 +388,11 @@ export interface TsunamiSourceSpoken {
   /**
    * その地震の地震情報が、この津波の報より**後に**発表されているか（結んだ地震カードの発表時刻で見る）。
    *
-   * 真なら、震源の値が既読と違っても言い直さない（→ {@link sourceHypocenterChangedSegments}）。既読は地震情報と
+   * 真なら、震源の値が既読と違っても言い直さない（→ `sourceHypocenterChangedSegments`）。既読は地震情報と
    * 共有しているので、地震情報が先に新しい値を伝えたあとで古い値を載せた津波の報が届くと、「〜に更新されました」と
    * 古い値へ戻して告げてしまう。カードが無い・結べないときは偽。
    */
   quakeReportedLater: boolean
-}
-
-/** 既読を渡されなかったとき（試聴・先読みの合成）は、原因地震を既読なしで並べる。 */
-function tsunamiSourceSpokens(event: JMATsunami, spoken: TsunamiQuakeSpoken | undefined): readonly TsunamiSourceSpoken[] {
-  if (spoken) return spoken.sources
-  return (event.sourceEarthquakes ?? []).map(source => ({ source, spoken: undefined, subject: undefined, quakeReportedLater: false }))
-}
-
-/**
- * 津波の読み上げで声になった参照を、それぞれの地震の既読へ積む。
- *
- * 原因地震の事実（`sourceIndex` 付き）はその原因地震の既読へ、それ以外（失効時刻）は `expiry` へ。
- * **地震情報の読み上げは {@link applySpokenRefs} を使う**（こちらは津波専用）。
- */
-export function applyTsunamiSpokenRefs(spoken: TsunamiQuakeSpoken, refs: readonly SpeechRef[]): void {
-  for (const ref of refs) {
-    if (ref.kind === 'quakeFact' && ref.sourceIndex !== undefined) {
-      const state = spoken.sources[ref.sourceIndex]?.spoken
-      if (state) applySpokenRefs(state, [ref])
-      continue
-    }
-    if (spoken.expiry) applySpokenRefs(spoken.expiry, [ref])
-  }
-}
-
-function sourceHypocenterSegments(
-  event: JMATsunami,
-  spoken: TsunamiQuakeSpoken | undefined,
-  opts?: TtsSpeechOptions,
-): SpeechSegment[] {
-  return tsunamiSourceSpokens(event, spoken).flatMap((entry, index) =>
-    oneSourceHypocenterSegments(entry, index, opts))
-}
-
-/**
- * 原因地震 1 件の震源を語る文。
- *
- * **2 つ目以降は「また、もう一つの地震の震源は」で始める**（2026-10-15 ユーザー承認「読む（推奨）」）。
- * 気象庁は別の地震が寄与すると同じ警報を切り替えて原因地震を足す（電文解説資料 Ⅰ.別02-7 出現例６）。
- * 1 つ目と同じ「この地震の震源は」で読むと、どちらの地震の話かが耳で分からない。
- *
- * 既読は**その地震の主題**に積む（`sourceIndex` で原因地震を指す → {@link applyTsunamiSpokenRefs}）。
- */
-function oneSourceHypocenterSegments(
-  entry: TsunamiSourceSpoken,
-  index: number,
-  opts?: TtsSpeechOptions,
-): SpeechSegment[] {
-  const src = entry.source
-  const spoken = entry.spoken
-  if (!src.hypocenterName) return []
-  const hypocenter = tsunamiSourceHypocenter(src)
-  const tellable = tellableHypocenterFacts(hypocenter, opts)
-  // **震源名が無ければ文ごと出さない。** 規模だけを「この地震の震源は、マグニチュードは…」と
-  // 繋ぐと主語を欠いた文になる。
-  if (!tellable.has('hypocenterName')) return []
-  // **まだ声にしていない事実があれば、震源を通しで語る。** 全部を語り終えていれば、
-  // 値が変わった事実だけを短く言い直す（→ {@link sourceHypocenterChangedSegments}）。
-  if (![...tellable].every(fact => spoken?.facts.has(fact))) {
-    const follow: SpeechRef = entry.subject ? { kind: 'borrowedHypocenter', subject: entry.subject } : { kind: 'borrowedHypocenter' }
-    const lead = index === 0 ? 'この地震の震源は' : 'また、もう一つの地震の震源は'
-    const segments: SpeechSegment[] = [{ text: lead, refs: [follow] }]
-    segments.push({
-      text: hypocenter.name,
-      refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name, sourceIndex: index }, follow],
-    })
-    if (tellable.has('depth')) {
-      segments.push({ text: '、', refs: [follow] })
-      segments.push({
-        text: depthSourcePhrase(hypocenter),
-        refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter), sourceIndex: index }, follow],
-      })
-    }
-    const magRef: SpeechRef[] = [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter), sourceIndex: index }, follow]
-    const numeric = hasMagnitude(hypocenter.magnitude) ? magnitudeText(hypocenter.magnitude) : ''
-    if (tellable.has('magnitude') && numeric) {
-      segments.push({ text: '、マグニチュードは', refs: [follow] })
-      segments.push({ text: numeric, refs: magRef })
-    }
-    segments.push({ text: 'です。', refs: [follow] })
-    // 数値にならない規模（「Ｍ８を超える巨大地震」）は別の文で伝える。句へ差し込むと
-    // 「マグニチュードはＭ８を超える巨大地震です」と重なる（地震情報側と同じ扱い）。
-    if (tellable.has('magnitude') && !numeric) {
-      segments.push({ text: magnitudeConditionSentence(hypocenter), refs: magRef })
-    }
-    return segments
-  }
-  return sourceHypocenterChangedSegments(entry, index, hypocenter, tellable)
-}
-
-/**
- * 原因地震 1 件の震源のうち、**声にした値から変わった事実だけ**を言い直す文。変化が無ければ空。
- *
- * 2026-10-14 ユーザー選択「変わった値だけ言い直す（推奨）」（選択肢の説明は「全部を語り終えていて値が
- * 違う事実があるときだけ、変わった値を短く言う」）。入れるのは等級を名乗る発表文だけ（2026-10-19
- * ユーザー選択「発表文だけ (Recommended)」）。文面は「この地震の」を冠した形（2026-10-19 ユーザー
- * 選択「「この地震の」を付ける (Recommended)」）—— 津波の文の後ろで「マグニチュードは…」とだけ言うと、
- * 何の規模か分からない。
- *
- * 能登 2024/1/1 では、M7.4 → 7.6 は大津波警報へ上がった 16:22 の津波警報（VTSE41）に載り、
- * 地震情報が伝えたのは 2 分後の 16:24 だった。**記録は地震情報と共有する**ので、ここで伝えた値を
- * 地震情報の続報（{@link changedFactSegments}）は言い直さない。
- *
- * 並び（震源名 → 規模 → 深さ）と判定は地震情報の続報に揃える。
- */
-function sourceHypocenterChangedSegments(
-  entry: TsunamiSourceSpoken,
-  index: number,
-  hypocenter: Hypocenter,
-  tellable: Set<QuakeFact>,
-): SpeechSegment[] {
-  const spoken = entry.spoken
-  // 地震情報がこの報より後に出ているなら、この報の値のほうが古いかもしれない（→ `quakeReportedLater`）。
-  if (!spoken || entry.quakeReportedLater) return []
-  const changed = (fact: QuakeFact, value: string): boolean =>
-    tellable.has(fact) && spoken.facts.has(fact) && spoken.facts.get(fact) !== value
-  const follow: SpeechRef = entry.subject ? { kind: 'borrowedHypocenter', subject: entry.subject } : { kind: 'borrowedHypocenter' }
-  const subjectWord = index === 0 ? 'この地震の' : 'もう一つの地震の'
-  const sentences: SpeechSegment[] = []
-  const push = (text: string, fact: QuakeFact, value: string) => {
-    if (!text) return
-    sentences.push({ text, refs: [{ kind: 'quakeFact', fact, value, sourceIndex: index }, follow] })
-  }
-
-  if (changed('hypocenterName', hypocenter.name)) {
-    push(`${subjectWord}震源は${hypocenter.name}に更新されました。`, 'hypocenterName', hypocenter.name)
-  }
-  const magValue = magnitudeFactValue(hypocenter)
-  if (changed('magnitude', magValue)) {
-    // 数値にならない規模は「〜に更新されました」の枠に入らない（地震情報側と同じ扱い。
-    // → `magnitudeConditionAmendSentence`）。
-    const predicate = magnitudeConditionPredicate(hypocenter)
-    const text = hasMagnitude(hypocenter.magnitude)
-      ? `${subjectWord}マグニチュードは${magnitudeText(hypocenter.magnitude)}に更新されました。`
-      : predicate ? `${subjectWord}マグニチュードが更新されました。${predicate}` : ''
-    push(text, 'magnitude', magValue)
-  }
-  // 値の作り方は記録（初めて語るときの `depthFactValue`）と揃える。「以上」の印が付いた・外れただけでも更新。
-  const depthValue = depthFactValue(hypocenter)
-  if (changed('depth', depthValue)) {
-    push(`${subjectWord}震源の深さは${depthUpdateValue(hypocenter)}に更新されました。`, 'depth', depthValue)
-  }
-  // 2 つ目以降の地震は、通しで語るときと同じく「また、」で話題の切れ目を示す。
-  if (index > 0 && sentences.length > 0) sentences[0] = { ...sentences[0], text: `また、${sentences[0].text}` }
-  return sentences
-}
-
-/**
- * 津波の失効時刻（電文の `ValidDateTime`）を伝える句。
- *
- * **読み上げの末尾に置く** —— 震源よりさらに後。等級・行動・区域・波高・震源を言い終えた後で
- * いちばん緊急度の低い事実を足す形にしてある（`tsunamiToSegments` の並び）。
- *
- * **一度言ったら黙る。値が変わったら言い直す。** 判定は `QuakeSpokenState.facts` の
- * `tsunamiExpiry` で、記録は読み上げの完了時に `applySpokenRefs` が進める。気象庁は期限を
- * 伝えた報にだけ `ValidDateTime` を載せ以後の続報には載せないが、**引き継ぎ
- * （`latestValidDateTime`）が同じ値を毎報に載せ続ける**ので、既読を見ないと続報のたびに
- * 失効時刻を繰り返すことになる。
- *
- * **等級の語は電文から採る**（`gradeLabel`）。実電文では期限が付くのは「警報・注意報が解除されて
- * 予報だけが残った段階」だけ（→ `docs/spec/tsunami-spec.md` §3「有効期限は報ではなく津波に付く」）
- * なので、ふだんは「この津波予報の失効時刻は」になる。**それでも等級で固定しない** ——
- * 警報に期限が付いた報が来たときに「津波予報」と名乗ると、見出しと食い違う。
- *
- * **日をまたぐときだけ日付から読む。** 発表と同じ日なら時刻だけで足りる（実電文では能登が
- * 同日・日向灘が翌日で、どちらの形も出る）。
- *
- * **呼ぶのは等級を名乗る 2 つの文 —— 発表文（{@link tsunamiToSegments}）と降格文
- * （{@link tsunamiDowngradeToSegments}）。どちらにも必ず足すこと。** 気象庁が期限を載せるのは
- * 「予報のみの発表」と「警報・注意報が解除されて予報のみが残る」の 2 通りで、前者は発表文・
- * 後者は降格文へ流れる（条件と実電文の並びは `docs/spec/tsunami-spec.md` §3「有効期限は報では
- * なく津波に付く」）。**片方へ足し忘れると、その経路の電文では一度も声にならない** ——
- * 実際に降格文で落とし、どの検証にも掛からなかった。穴の形と守り方は
- * `useLiveEventHandler.tsunamiExpiry.test.ts` の冒頭が持つ。
- *
- * **観測点更新・区域単位の等級変化・変化を伝えない続報の 3 経路は、この句ではなく
- * {@link tsunamiExpiryChangeSegments} が受け持つ。** あちらへ渡るのは「等級は動いていない」報で、
- * 期限を載せることは稀だが無くはない（全期間 436 通のうち 4 通。うち 3 通は期限だけが延びた報）。
- * 発表文の形（「この〜の失効時刻は、…です。」）は等級の名乗りの後ろに置く前提なので、名乗りの無い
- * 報では「延長されました」の形で言う。
- *
- * **`spoken` が無いときは毎回読む。** 呼び出し側の既読は地震ごと（`quake:<eventId>`）に持つので、
- * `eventId` を持たない電文では `undefined` が渡る（→ `useLiveEventHandler.ts` の
- * `quakeSpokenState`）。そのまま毎報で失効時刻を言うことになるが、**そうなる電文があるかは
- * 数えていない** —— 国内の津波電文は原因地震の `EventID` を持つのがふつうで、識別子を欠く報と
- * 期限を載せる報が重なる形は確かめていない。同じ弱点は震源の言い直し
- * （{@link sourceHypocenterSegments}）が先に持っていて、こちらはそれを継いでいるだけ。
- */
-function tsunamiExpirySegments(
-  event: JMATsunami,
-  gradeLabel: string,
-  spoken?: TsunamiQuakeSpoken,
-): SpeechSegment[] {
-  if (event.cancelled || !event.validDateTime) return []
-  // 日付を添えるかの判定は画面と共有する（`expiryNeedsDate`）。書式だけがここと画面で違う。
-  const value = expiryNeedsDate(event.time, event.validDateTime)
-    ? formatDayTime(event.validDateTime)
-    : formatTime(event.validDateTime)
-  // 日時として読めない失効時刻はここで落ちる（整形の 2 関数が `null` を返す）。
-  if (!value) return []
-  if (spoken?.expiry?.facts.get('tsunamiExpiry') === value) return []
-  return [
-    plain(`この${gradeLabel}の失効時刻は、`),
-    { text: value, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value }] },
-    plain('です。'),
-  ]
-}
-
-/**
- * 等級を名乗らない報で、**失効時刻が前の報から動いたこと**を伝える文。
- *
- * 「津波予報の失効時刻が、19日14時に延長されました。」（早まったときは「〜に変更されました。」。
- * 2026-10-24 ユーザー選択「延長と言う (Recommended)」）。
- *
- * **等級が動かない続報でも期限は延びる。** 津波予報が長引くと、気象庁は等級を変えずに期限だけを
- * 延ばした報を出す（全期間の津波警報等 436 通のうち、何も声にならなかった続報 4 通のうち 3 通。例 2022-01-17 13:59、1/17 14:00 → 1/18 14:00）。
- * その報は観測点も等級の変化も持たないので、従来は一言も声にならなかった（2026-10-21 ユーザー選択
- * 「延びたら読む (Recommended)」）。等級を名乗る 2 つの文（{@link tsunamiToSegments}・
- * {@link tsunamiDowngradeToSegments}）は期限を {@link tsunamiExpirySegments} で語るので、
- * この文を呼ぶのはそれ以外の経路（観測点の更新・区域単位の等級変化・変化を伝えない続報）だけ。
- *
- * **既読は発表文と同じ鍵**（`tsunamiExpiry`）に積む。どちらの文で語っても、同じ値を二度言わない。
- * 前の報が期限を持たない（初めて付いた）・同じ値・読めない値のときは何も言わない ——
- * 「延長」か「変更」かを言い分けられないため（初めて付いたときに黙るのは 2026-10-24 ユーザー選択「今のまま黙る (Recommended)」。
- * 等級を名乗る発表文・降格文は期限を自分で語るので、そちらで伝わる）。
- *
- * **比べるのは「当てる前」と「当てた後」の津波の期限**で、届いた報自身の期限ではない。順番が前後して届いた古い報は
- * 状態に採られない（作成時刻の順に重ね直す。`mergeTsunamiReports`）ので、報の値を読むと、表示していない古い期限を
- * 「変更されました」と言うことになる。当てた後で比べれば、古い報では期限が動かず黙る。等級も当てた後の津波から採る
- * （観測点だけの報は区域を持たない）。
- *
- * @param previousValidDateTime 前の報までに知っていた失効時刻（受信処理が当てる前の津波の値）
- * @param applied その報を当てた後の津波（受信処理の `stepTsunamiState` の結果。津波が終わったなら undefined）
- */
-export function tsunamiExpiryChangeSegments(
-  event: JMATsunami,
-  previousValidDateTime: string | undefined,
-  applied: JMATsunami | undefined,
-  spoken: TsunamiQuakeSpoken | undefined,
-): SpeechSegment[] {
-  const current = applied?.validDateTime
-  if (event.cancelled || !applied || !current || !previousValidDateTime) return []
-  const now = Date.parse(current)
-  const prev = Date.parse(previousValidDateTime)
-  if (!Number.isFinite(now) || !Number.isFinite(prev) || now === prev) return []
-  const topGrade = GRADE_ORDER.find(g => applied.areas.some(a => a.grade === g))
-  if (!topGrade) return []
-  const format = (iso: string) => (expiryNeedsDate(event.time, iso) ? formatDayTime(iso) : formatTime(iso))
-  const value = format(current)
-  if (!value) return []
-  if (spoken?.expiry?.facts.get('tsunamiExpiry') === value) return []
-  // **読み上げで同じ時刻に聞こえる変化は言わない**（分より細かい違いだけの延長。「16時22分に延長されました」と
-  // 前と同じ時刻を言うことになる）。
-  if (format(previousValidDateTime) === value) return []
-  return [
-    plain(`${tsunamiGradeLabel(topGrade)}の失効時刻が、`),
-    { text: value, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value }] },
-    plain(now > prev ? 'に延長されました。' : 'に変更されました。'),
-  ]
-}
-
-export function tsunamiToSegments(
-  event: JMATsunami,
-  observationsForOrder?: readonly TsunamiObservation[],
-  quakeSpoken?: TsunamiQuakeSpoken,
-  opts?: TtsSpeechOptions,
-): SpeechSegment[] {
-  const topGrade = GRADE_ORDER.find(g => event.areas.some(a => a.grade === g))
-  if (!topGrade) return []
-
-  const observations = observationsForAreaOrder(event, observationsForOrder)
-  // 波高の文はグループの境界が電文順で決まるため、並べ替える前のものを渡す
-  const rawTopAreas = event.areas.filter(a => a.grade === topGrade)
-  const gradeLabel = tsunamiGradeLabel(topGrade)
-  const action = evacuationActionLine(event.warningComments) ?? fallbackEvacuationAction(topGrade)
-  const heights = areaHeightSentence(rawTopAreas, observations)
-  // **震源は後ろに置く。** 等級・行動・区域を言い終えてから足す（→ `sourceHypocenterSegments`）。
-  const source = sourceHypocenterSegments(event, quakeSpoken, opts)
-  // **失効時刻はその震源よりさらに後 —— 文の最後。** 緊急度のいちばん低い事実なので、
-  // 等級・行動・区域・波高・震源のすべてを言い終えてから足す（→ `tsunamiExpirySegments`）。
-  const expiry = tsunamiExpirySegments(event, gradeLabel, quakeSpoken)
-
-  // **等級と行動を先に言い切る。** 区域を全部読んでから避難を促すと、予報区が多いほど行動指示が
-  // 遅れる。区域名は次の文で波高と一緒に挙げるので、聞き手が待たされるのは高さの情報だけ。
-  if (heights.length > 0) {
-    return [
-      gradeSegment(`${gradeLabel}が発表されました。${action}`, topGrade),
-      ...heights,
-      ...areasWithoutHeightSentence(rawTopAreas, observations, gradeLabel),
-      ...lowerGradeSentence(event.areas, topGrade, observations),
-      ...source,
-      ...expiry,
-    ]
-  }
-  // 波高がまだ付いていない（続報で後から付く）場合は、区域名を直接挙げる。
-  //
-  // **等級名が 2 回出るが、これは頭の名乗りを残すための代償**（→ docs/spec/tts-sentence-inventory.md
-  // §4-10・§5）。「〈区域〉に発表されました」は区域が述語の前に来るので、頭の `${gradeLabel}。` を
-  // 外すと**等級が判るまで区域名を全部聞くことになる**（予報区が多いほど遅れる）。上の波高あり経路が
-  // 等級と行動を先に言い切っているのと同じ理由で、重複のほうを受け入れる。
-  return [
-    plain(`${gradeLabel}。`),
-    ...areaNameSegments(orderAreasForSpeech(rawTopAreas, observations)),
-    plain(`に${gradeLabel}が発表されました。${action}`),
-    ...lowerGradeSentence(event.areas, topGrade, observations),
-    ...source,
-    ...expiry,
-  ]
-}
-
-export function tsunamiToText(
-  event: JMATsunami,
-  observationsForOrder?: readonly TsunamiObservation[],
-): string {
-  return joinSegments(tsunamiToSegments(event, observationsForOrder))
-}
-
-/**
- * VTSE41/51/52 津波情報 引き下げ時の読み上げを断片列で返す。
- *
- * `observationsForOrder` の役割は `tsunamiToSegments` と同じ。**引き下げこそ渡すこと** ――
- * 警報から注意報へ切り替える報が届くころには観測が出揃っており、カードは実測波高の順に
- * 並び替わっている。
- *
- * **`quakeSpoken` は任意にしない。** 渡し忘れても型チェックは通り、失効時刻（下記）が黙るだけで
- * 例外もログも出ない。**実電文で期限を載せるのはこの降格報**なので、それは「実運用では一度も
- * 声にならない」と同じこと（→ {@link tsunamiExpirySegments}）。読まないと決めた呼び出し元は
- * `undefined` を明示する。
- */
-export function tsunamiDowngradeToSegments(
-  event: JMATsunami,
-  observationsForOrder: readonly TsunamiObservation[] | undefined,
-  quakeSpoken: TsunamiQuakeSpoken | undefined,
-): SpeechSegment[] {
-  const topGrade = GRADE_ORDER.find(g => event.areas.some(a => a.grade === g))
-  if (!topGrade) return [plain(tsunamiCancelToText(event.cancelReason))]
-
-  const observations = observationsForAreaOrder(event, observationsForOrder)
-  const rawTopAreas = event.areas.filter(a => a.grade === topGrade)
-  const gradeLabel = tsunamiGradeLabel(topGrade)
-  const heights = areaHeightSentence(rawTopAreas, observations)
-  // **失効時刻は文の最後。** 発表文と同じ置き場所（→ `tsunamiExpirySegments`）。
-  // **降格文は震源を語らない**ので、発表文の並びにある震源の句はここには無い（まだ声にしていなくても語らない。
-  // 最初の報が降格報になるのは起動・リプレイで状況を再現しきれないときだけ —— 2026-10-21 ユーザー「だからその時の状況を
-  // 再現するって言ってますよね。」で、推した「まだなら語る」を採らずこのまま残した）。
-  const expiry = tsunamiExpirySegments(event, gradeLabel, quakeSpoken)
-
-  if (heights.length > 0) {
-    return [
-      gradeSegment(`${gradeLabel}に切り替えられました。現在、次の地域に${gradeLabel}が発表されています。`, topGrade),
-      ...heights,
-      ...areasWithoutHeightSentence(rawTopAreas, observations, gradeLabel),
-      ...lowerGradeSentence(event.areas, topGrade, observations),
-      ...expiry,
-    ]
-  }
-  return [
-    plain(`${gradeLabel}に切り替えられました。現在、`),
-    ...areaNameSegments(orderAreasForSpeech(rawTopAreas, observations)),
-    plain(`に${gradeLabel}が発表されています。`),
-    ...lowerGradeSentence(event.areas, topGrade, observations),
-    ...expiry,
-  ]
-}
-
-/**
- * VTSE41/51/52 津波情報 引き下げ時の読み上げテキストを生成する。
- *
- * **既読を持たない**（`quakeSpoken` に `undefined` を渡す）。既読の照合が効かないので、
- * 期限を持つ電文を渡せば失効時刻は毎回載る —— 文の形を見るテストと抑揚の計測台
- * （`ttsSentenceSweep.probe.test.ts`）からしか呼ばれず、そちらは「一度言ったら黙る」を
- * 見る場ではないため、これでよい。本番の読み上げは断片列のほう
- * （{@link tsunamiDowngradeToSegments}）を既読付きで直接使う。
- */
-export function tsunamiDowngradeToText(
-  event: JMATsunami,
-  observationsForOrder?: readonly TsunamiObservation[],
-): string {
-  return joinSegments(tsunamiDowngradeToSegments(event, observationsForOrder, undefined))
-}
-
-/**
- * 区域単位で等級が動いた報（一部解除・一部切替・一部引き上げ）の読み上げを断片列で返す。
- *
- * 例:「福岡県日本海沿岸、佐賀県北部の津波注意報が津波予報に切り替えられました。」
- * 「京都府の津波注意報が津波警報に引き上げられました。また、石川県能登の大津波警報が
- * 津波警報に切り替えられました。」
- *
- * **動いた区域だけを挙げ、残っている区域は語らない。** この報で聞き手が知りたいのは自分の
- * 地域が変わったかどうかで、発表中の区域の全体像はカードが示す。全区域を読む発表文
- * （`tsunamiToSegments`）と役割を分けている。**ここでいう「発表文」は津波の等級を全区域ぶん読む
- * 文のことで、利用者が耳にする「気象庁の発表文」（→ `telegramTextToSpeak`）とは別物。**
- *
- * **行動指示（「海岸から離れてください」等）も付けない。** 等級の発表と違い、この報は
- * 「どこがどう変わったか」を伝えるためのもの（残りの区域と行動指示を読まないのは 2026-10-21 ユーザー選択
- * 「今のまま記録する (Recommended)」）。
- *
- * 遷移の組ごとに 1 文を置き、2 文目以降を「また、」で継ぐ（等級ごとに文を分ける
- * `lowerGradeSentence` と同じ作法）。区域名は自分の組の中で読点連結し、助詞は述語の直前に
- * 1 つだけ置く（→ docs/spec/audio-tts-spec.md §4）。
- *
- * 変化が無ければ空を返す（呼び出し側が観測点更新の読み上げへ落とす）。
- *
- * **受け取るのは既読を除いた組。** `LastKind` は変化した後の続報にも載り続けるため、電文から
- * 毎回組を作り直すと同じ文を繰り返す（→ `selectUnspokenAreaGradeChanges`）。既読の判断は
- * 呼び出し側（発話の直前に記録を進める側）が持つ。
- *
- * @param changes 読み上げる等級変化の組。並びがそのまま文の順になる
- */
-export function tsunamiAreaGradeChangeToSegments(changes: readonly TsunamiAreaGradeChange[]): SpeechSegment[] {
-  const segments: SpeechSegment[] = []
-  changes.forEach((change, i) => {
-    // 遷移元を読めないのは解除の組だけ（`TsunamiAreaGradeChange.from`）。それ以外の組で来たら文にしない
-    // （何から何へ動いたかを言えない。`tsunamiAreaGradeChanges` がこの形を作らない）。
-    if (change.from === undefined && change.to !== TSUNAMI_GRADE_LIFTED) return
-    if (i > 0) segments.push(plain('また、'))
-    segments.push(...areaNameSegments(change.areas))
-    if (change.to === TSUNAMI_GRADE_LIFTED) {
-      // 解除された区域。遷移先に等級の名前が無いので「〜に切り替えられました」とは言えない。
-      // **残っている区域の話も、行動の指示も足さない**（他の遷移と同じ方針）。
-      // 前回の等級を読めない区域は「津波警報等」と言う（2026-10-24 ユーザー選択「「津波警報等が解除」 (Recommended)」。
-      // 全区域の解除の文「津波警報等は全て解除されました。」と同じ語）。
-      segments.push(plain(`の${change.from === undefined ? '津波警報等' : tsunamiGradeLabel(change.from)}が解除されました。`))
-      return
-    }
-    if (change.from === undefined) return
-    if (change.from === 'Unknown') {
-      // 前回は津波なし（`LastKind` が 00 等）。「〜の津波なしが」とは言えないので、
-      // 波高が付いていない発表文と同じ言い方に落とす。
-      segments.push(plain(`に${tsunamiGradeLabel(change.to)}が発表されました。`))
-      return
-    }
-    const verb = change.raised ? '引き上げられました' : '切り替えられました'
-    segments.push(plain(`の${tsunamiGradeLabel(change.from)}が${tsunamiGradeLabel(change.to)}に${verb}。`))
-  })
-  return segments
-}
-
-/**
- * 区域単位で等級が動いた報（`tsunamiAreaGradeChangeToSegments`）のあとに添える避難の呼びかけ。
- *
- * **警報等（大津波警報・津波警報・津波注意報）がその報に残っていれば、発表文と同じ呼びかけを 1 文足す**
- * （2026-10-30 ユーザー選択「残っていれば呼びかけを足す (Recommended)」）。文は発表文（`tsunamiToSegments`）と同じく
- * 気象庁の付加文（`evacuationActionLine`）を先に採り、採れなければ残っている最上位の等級の文
- * （`fallbackEvacuationAction`）へ落ちる。**警報等が残らない報（予報だけ・全解除）には足さない** —— 予報の文は
- * 「被害の心配はありません」で、避難の呼びかけではない。
- *
- * 呼びかけの付加文が付いた区域単位の等級変化の報は全期間で 2 通（2022-01-15 17:54・2026-04-20 08:08）。
- */
-export function tsunamiAreaGradeChangeActionSegments(event: JMATsunami): SpeechSegment[] {
-  const topWarningGrade = GRADE_ORDER.find(g => g !== 'Forecast' && event.areas.some(a => a.grade === g))
-  if (!topWarningGrade) return []
-  const action = evacuationActionLine(event.warningComments) ?? fallbackEvacuationAction(topWarningGrade)
-  return action ? [plain(action)] : []
-}
-
-/**
- * 等級は据え置きのまま予想波高だけが動いた続報で、動いた区域だけを読む
- * （2026-10-30 ユーザー選択。例「予想される津波の高さが変わりました。岩手県で10メートル超が予想されています。」）。
- *
- * 区域と波高の文は発表文と同じ `areaHeightSentence` で組み、等級ごとに 1 文にして 2 文目以降を「また、」で継ぐ
- * （等級をまたいで 1 文にしない理由は `areaHeightSentence`）。動いた区域が無ければ空を返す。
- *
- * @param changed 動いた区域（`forecastHeightChangedAreas` の結果）。並べ替える前のものを渡す
- */
-export function tsunamiForecastHeightChangeToSegments(
-  changed: readonly TsunamiArea[],
-  observations: readonly TsunamiObservation[],
-): SpeechSegment[] {
-  const sentences: SpeechSegment[] = []
-  for (const g of GRADE_ORDER) {
-    const inGrade = changed.filter(a => a.grade === g)
-    if (inGrade.length === 0) continue
-    const sentence = areaHeightSentence(inGrade, observations)
-    if (sentence.length === 0) continue
-    if (sentences.length > 0) sentences.push(plain('また、'))
-    sentences.push(...sentence)
-  }
-  if (sentences.length === 0) return []
-  return [plain('予想される津波の高さが変わりました。'), ...sentences]
-}
-
-/** 区域単位で等級が動いた報の読み上げテキストを生成する。 */
-export function tsunamiAreaGradeChangeToText(changes: readonly TsunamiAreaGradeChange[]): string {
-  return joinSegments(tsunamiAreaGradeChangeToSegments(changes))
-}
-
-/** 全区域が解除されたことを告げる文（定義は `utils/tsunami.ts`。通知の文面も同じものを読む）。 */
-export { TSUNAMI_ALL_LIFTED_SENTENCE }
-
-/** VTSE41/51/52 津波警報等 全解除の読み上げテキストを cancelReason ごとに生成する。 */
-export function tsunamiCancelToText(cancelReason: JMATsunami['cancelReason'], cancelText?: string): string {
-  const head = cancelReason === 'retracted'
-    ? '津波警報等は誤って発表されたため取り消されました。'
-    : cancelReason === 'expired'
-      // **述語は画面と同じ**（`CANCEL_REASON_LABEL` の `expired`）。語は電文の要素名
-      // （`ValidDateTime`＝失効時刻）へ揃えてある。
-      ? '津波予報は失効しました。'
-      : TSUNAMI_ALL_LIFTED_SENTENCE
-  // 取消しの概要は取消電文にしか入らない。解除・失効では電文に無いので空のまま
-  return head + cancelReasonSentence(cancelText)
-}
-
-/**
- * 津波情報（VTSE51）・沖合の津波観測に関する情報（VTSE52）だけの取消を伝える文。
- *
- * **取り消された事実だけを伝え、理由は読まない**（後発地震注意情報の取消と揃える。
- * 2026-10-15 ユーザー承認「読み上げて組み直す（推奨）」）。警報等は生きているので「津波警報等」とは言わない。
- * 情報名は電文の正式名（→ `docs/spec/quake-spec.md` §3「「警報等」を「津波警報」と書かない」と同じ考え方）。
- */
-export function tsunamiPartialRetractionToText(headType: 'VTSE51' | 'VTSE52'): string {
-  return headType === 'VTSE51'
-    ? '津波情報は取り消されました。'
-    : '沖合の津波観測に関する情報は取り消されました。'
-}
-
-/** 観測点を districtName（津波予報区）ごとにまとめる。区域名を持たない観測は単独の項目にする。 */
-function groupObservationsByDistrict(
-  items: readonly TsunamiObservation[],
-): { districtName: string | null; districtCode?: string; items: TsunamiObservation[] }[] {
-  const groups: { districtName: string | null; districtCode?: string; items: TsunamiObservation[] }[] = []
-  for (const o of items) {
-    const key = o.districtName ?? null
-    const existing = key !== null ? groups.find(g => g.districtName === key) : undefined
-    if (existing) existing.items.push(o)
-    else groups.push({ districtName: key, districtCode: o.districtCode, items: [o] })
-  }
-  return groups
-}
-
-/**
- * グループごとに「区域名、地点1で〜、地点2で〜」の形の断片列を作る。
- * `renderStation` が 1 地点ぶんの文言を返す（波高あり／地点名のみで使い分ける）。
- */
-function observationDetailSegments(
-  items: readonly TsunamiObservation[],
-  renderStation: (obs: TsunamiObservation) => string,
-): SpeechSegment[] {
-  const segments: SpeechSegment[] = []
-  groupObservationsByDistrict(items).forEach((g, gi) => {
-    if (gi > 0) segments.push(plain('、'))
-    if (g.districtName) {
-      segments.push({
-        text: g.districtName,
-        refs: [{ kind: 'area', code: g.districtCode, name: g.districtName }],
-      })
-      segments.push(plain('、'))
-    }
-    g.items.forEach((o, i) => {
-      if (i > 0) segments.push(plain('、'))
-      segments.push({ text: o.name, refs: [{ kind: 'station', name: o.name }] })
-      const rest = renderStation(o)
-      if (rest) segments.push(plain(rest))
-    })
-  })
-  return segments
-}
-
-/**
- * 予告型の列挙を組む。「次の地点で〜」の見出しに続けて地点ごとの句を読点で連ね、
- * **最後の句にだけ述語の語尾を足す**。
- *
- * 例:「石川県能登、輪島港で、16時10分に押し波が到達し、16時21分に1.2メートルを観測、
- * 富山県、富山で16時23分に0.5メートルを観測しました。」
- *
- * **地点ごとの句は述語の語幹（「を観測」「に更新」）で閉じること。** 第1波を織り込むと句の
- * 中に読点が入るので、読点だけでは地点の切れ目を示せなくなる —— 読点が「区域と地点」「句の
- * 中」「地点どうし」の 3 つを兼ねてしまい、どこで地点が変わったのか耳で追えない。語幹が
- * 鳴るたびに 1 地点ぶんが終わったと分かる。
- *
- * `renderStation` は語幹まで含めた句を返し、`tail` は**最後の地点にだけ**付く語尾
- * （「しました。」「されました。」）。語幹と語尾が繋がって 1 つの述語になる形にすること。
- *
- * **最後かどうかは区域でまとめ直したあとの並びで数える。** {@link groupObservationsByDistrict}
- * は離れた同名区域を 1 つの組へ寄せるため、入力の並びの末尾が読み上げの末尾とは限らない。
- */
-function observationListSegments(
-  items: readonly TsunamiObservation[],
-  renderStation: (obs: TsunamiObservation) => string,
-  tail: string,
-): SpeechSegment[] {
-  const segments: SpeechSegment[] = []
-  const total = items.length
-  let spokenCount = 0
-  groupObservationsByDistrict(items).forEach((g, gi) => {
-    if (gi > 0) segments.push(plain('、'))
-    if (g.districtName) {
-      segments.push({
-        text: g.districtName,
-        refs: [{ kind: 'area', code: g.districtCode, name: g.districtName }],
-      })
-      segments.push(plain('、'))
-    }
-    g.items.forEach((o, i) => {
-      if (i > 0) segments.push(plain('、'))
-      segments.push({ text: o.name, refs: [{ kind: 'station', name: o.name }] })
-      spokenCount += 1
-      segments.push(plain(renderStation(o) + (spokenCount === total ? tail : '')))
-    })
-  })
-  return segments
-}
-
-/**
- * 第1波の材料（到達時刻と押し引き）。日時として読めなければ `null` —— 句ごと落とす。
- *
- * **押し引き（`Initial`）は第1波の属性で、最大波には付かない。** 最大波の句へ混ぜると
- * 「最大波が押し波だった」という別の事実を言うことになるので、必ず到達時刻と対で読む。
- * 電文では `Initial` は必須ではなく到達時刻だけが入ることもある（その場合は「第一波」と呼ぶ）。
- *
- * **「第1波」ではなく漢数字で書くこと。** 読みはどちらも「だいいっぱ」で誤読ではないが、
- * 算用数字だと合成エンジンが `ダ'イ ｜ イッ'パ` と 2 アクセント句に割り、「だい・いっぱ」と
- * ぶつ切りに聞こえる（実測。漢数字なら `ダイイ'ッパ` の 1 句）。**アプリが組む文なので表記が
- * 確定しており、辞書に置くより生成側で直すほうが素直**（日付の「1日」→「ついたち」と同じ判断。
- * あちらは日付か期間かが曖昧で辞書に置けないという事情もある）。画面に出す語は気象庁の表記
- * （「第１波識別不能」）に揃えてあるので、ここを変えても表示側には影響しない。
- */
-function firstWaveParts(o: TsunamiObservation): { time: string; initial: string } | null {
-  const time = o.arrivalTime ? formatTime(o.arrivalTime) : null
-  if (!time) return null
-  return { time, initial: o.initial ? `${o.initial}波` : '第一波' }
-}
-
-/** 「まだ第1波を声にしていない観測点名」を引ける最小の形（`Set` でも `Map` でもそのまま渡せる）。 */
-/**
- * 「前に声にした第1波の内容」を引ける最小の形（`Map<観測点名, 鍵>` をそのまま渡せる）。
- *
- * **名前ではなく内容（`firstWaveSpokenKey` の鍵）で引く。** 名前だけで既読を判定していた頃は、
- * 同じ観測点で「波高が上がった」と「第1波が訂正された」が同じ報に来ると、訂正された第1波が
- * 一度も声にならないまま既読として記録されていた（波高の文は名前が既読なら織り込まず、
- * 第1波の文は「波高の文で読まれるはず」として除外するため、どちらからも落ちる）。
- */
-type SpokenFirstWaveLookup = { get(name: string): string | undefined }
-
-/**
- * 「前に声にした最大波の観測時刻」を引ける最小の形（`Map<観測点名, ISO 時刻>` をそのまま渡せる）。
- *
- * 渡すのは**読み上げ用の記憶**（`useLiveEventHandler` の `spokenObsMaxHeightTimeRef`）。画面用の
- * 記憶を渡すと、割り込みで鳴らなかった報の時刻が「既に伝えた」ことになり、その時刻を一度も
- * 声にしないまま次へ進む。
- */
-type SpokenMaxHeightTimeLookup = { get(name: string): string | undefined }
-
-/**
- * `maxPoints` で読み上げから外した地点数を伝える一文を返す（外していなければ空の断片列）。
- *
- * **黙って捨てないこと。** 観測点の選抜は深刻な順（`compareObservedHeightDesc`）に上位だけを
- * 読むため、「○m以上」が複数あって上限を超えたときは、そのうちの一部が読み上げから落ちる。
- * 落ちたことを言わないと、聞いた人は読まれた地点が最大だと受け取る。
- *
- * **述語に貼り付けず独立した一文にする。** 観測波高の読み上げは新規と更新で述語が変わるため
- * （「〜を観測しました」／「〜に更新されました」）、末尾の句に混ぜると外した地点が更新扱いに
- * なる。外した地点は新規・更新のどちらでもありうるので、どちらにも寄せない言い方にする。
- *
- * 観測波高の読み上げと到達確認の読み上げ（`tsunamiArrivalToSegments`）で共有する。地点数の
- * 言い方を手で複製すると、片方だけ変えたときに黙って乖離する（続く述語だけを引数で受ける）。
- *
- * **助詞は述語に合わせて選ぶ。** 既定の「でも」は場所を示す「で」で、そこで何かを観測した・
- * 到達を確認したという述語に続く形。**欠測は観測点そのものの状態**（その場所で何かが起きた
- * わけではない）なので、「で」を落として「ほか○地点も」にする。
- */
-function omittedPointsSentence(total: number, shown: number, tail: string, particle = 'でも'): SpeechSegment[] {
-  const omitted = total - shown
-  return omitted > 0 ? [plain(`ほか${omitted}地点${particle}${tail}。`)] : []
-}
-
-// 波高つきの 1 地点ぶん（地点名は呼び出し側が断片にするので、それに続く部分だけを返す）。
-// 単位の読み替えは予想波高と同じ関数に通す（全角・半角の扱いを 2 か所に分けない）。
-// 「以上」の補完はカード・地図と同じ `overSuffixedHeight` に通す（補ってから単位を読み替える順）。
-// この 2 つは可換で、どちらを先に通しても同じ文字列になる。順序に意味を持たせていない。
-function observedHeightSuffix(o: TsunamiObservation): string {
-  return `で${tsunamiHeightToSpeech(overSuffixedHeight(o.height!, ja.tsunami))}`
-}
-
-/** 観測点更新で読み上げる件数の上限（多いときは波高の大きい順に絞る）。 */
-export const OBS_UPDATE_SPEAK_MAX_POINTS = 5
-
-/**
- * 観測点更新のうち**実際に読み上げる分**を選ぶ（波高を持つものだけ・降順・上限まで）。
- *
- * **読み上げた観測点を既読として記録する側も、必ずこの関数で絞ること**
- * （`useLiveEventHandler` の `spokenObsHeightRef`）。絞り方を別々に書くと、上限で読まなかった
- * 観測点まで既読になり、その値は二度と読まれない（波高がさらに上がるまで差分に出てこない）。
- */
-export function selectObservationUpdatesToSpeak(
-  updatedObs: readonly TsunamiObservation[],
-  maxPoints = OBS_UPDATE_SPEAK_MAX_POINTS,
-): TsunamiObservation[] {
-  const obs = updatedObs.filter(o => o.height !== undefined)
-  // 深刻な順に選抜する（規則はカードの並びと同じ compareObservedHeightDesc）。**値の大小だけで
-  // 切らないこと。** maxPoints で打ち切るため、値の大小で並べると「○m以上」の観測点が上位から
-  // 押し出されて読み上げから丸ごと落ちる。カードなら下の方でも残るが、音は落ちたら気づけない。
-  return [...obs].sort((a, b) => compareObservedHeightDesc(a.height!, b.height!)).slice(0, maxPoints || Infinity)
-}
-
-/**
- * 「前に声にした波高がある観測点名」を引ける最小の形（`Set` でも `Map` でもそのまま渡せる）。
- *
- * 渡すのは**読み上げ用の記憶**（`useLiveEventHandler` の `spokenObsHeightRef`）。画面用の記憶
- * （受信時に進む）を渡してはいけない。割り込みで鳴らなかった観測点が「既に伝えた」ことになり、
- * 一度も声にしていない地点を「更新されました」と言う。
- */
-type SpokenHeightLookup = { has(name: string): boolean }
-
-/**
- * VTSE41/51/52 津波観測情報 更新点のみ読み上げテキストを生成する。
- * updatedObs は最大波高が更新された観測点のみを渡す（波高降順で最大 maxPoints 件）。
- *
- * **「新たに」と「更新」を言い分ける。** 津波が新しい場所に届いたのと、既に届いていた場所で波が
- * 高くなったのは、聞き手にとって意味が違う（画面のカードも新規＝緑・更新＝黄で区別している）。
- * 境界は `spokenHeights` に前値があるかどうかだけで、名前を聞いたことがあるかでは判定しない。
- * 到達確認だけ読んだ観測点（「最大波高は観測中です」まで言った地点）に初めて値が付いた場合は、
- * 波高としては初出なので「新たに」側に入る ―― 前値が無いのに「更新」と言えば嘘になる。
- *
- * 2 群に分かれたら、**深刻な波高を含む群を先に読み、後ろを「また、」で継ぐ**。最悪の値を先に
- * 伝えるという選抜の方針を、群に割ったあとも崩さないため。
- *
- * **群の中を読む順は `updatedObs` の並びをそのまま使う。** 呼び出し側がカードの並び
- * （`sortObservationsForCardDisplay`）で渡すこと。深刻な順に読み直すとカード上を上下に往復する
- * （→ [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md) §9）。深刻な順は**どれを読むかの選抜
- * だけ**に使う ―― 選抜と並び順は別物。
- */
-export function tsunamiObservationUpdateToSegments(
-  updatedObs: TsunamiObservation[],
-  headline?: string,
-  maxPoints = OBS_UPDATE_SPEAK_MAX_POINTS,
-  spokenHeights?: SpokenHeightLookup,
-  spokenFirstWaves?: SpokenFirstWaveLookup,
-  spokenMaxHeightTimes?: SpokenMaxHeightTimeLookup,
-): SpeechSegment[] {
-  // 選抜は selectObservationUpdatesToSpeak に集約する（既読を記録する側と同じ絞り方にするため）。
-  // obs は「波高を持つ総数」で、読み上げなかった件数（omittedPointsSentence）を数えるのに要る。
-  const obs = updatedObs.filter(o => o.height !== undefined)
-  const selected = selectObservationUpdatesToSpeak(updatedObs, maxPoints)
-  if (selected.length === 0) return []
-  // 最も深刻な観測点（選抜が深刻な順に返すので先頭）。どちらの群を先に読むかだけに使う。
-  const worst = selected[0]
-  // 選抜した分を**入力の並びに戻して**読む（並びの根拠は上の説明）。
-  const chosen = new Set(selected)
-  const inReadingOrder = obs.filter(o => chosen.has(o))
-  // 見出し文の前処理は満潮時刻の報と共有する（→ {@link speakableHeadline}）。
-  // **末尾の句点もそこで足る** —— 直後に観測点の文が続くので、無いと 1 文に聞こえる。
-  const headlinePart = speakableHeadline(headline)
-  // **選抜した結果を分けるだけ。** 群ごとに選抜し直すと上限が実質 2 倍になり、既読を記録する側
-  // （`selectObservationUpdatesToSpeak` を使う）と読み上げた集合が食い違う。
-  const raised = inReadingOrder.filter(o => spokenHeights?.has(o.name) ?? false)
-  const firstTime = inReadingOrder.filter(o => !(spokenHeights?.has(o.name) ?? false))
-  /**
-   * 1 地点ぶんの句。**第1波がまだ声になっていなければ同じ句へ織り込む。**
-   *
-   * 織り込まずに第1波を別の文にすると、観測点が初めて現れる報で**同じ地点名を 2 回読む**
-   * （2024 年能登半島地震の 1 日で、読み上げの出る 34 報のうち 13 報がその形だった。
-   * 観測点は最大波と第1波が同時に初出になることが多いため）。
-   *
-   * 第1波を織り込む地点は句の中に読点が入るので、地点の切れ目は語幹（`stem`）が示す
-   * （→ {@link observationListSegments}）。
-   */
-  const clauseOf = (o: TsunamiObservation, stem: string): string => {
-    // **折り込むのは初出の第1波だけ。** 訂正（前に別の内容を声にした地点）はここへ入れない ——
-    // この句の言い回しは「〜に◯◯波が到達し」で、**初出の形**（動詞が続くので助詞は「に」）。訂正は
-    // 「〜の◯◯波へ更新されました」という別の文型で読む決まりなので（→ {@link tsunamiFirstWaveToSegments}）、
-    // 折り込むと訂正であることが聞き分けられない。訂正を拾うのは `firstWaveChanged` の側。
-    const fw = spokenFirstWaves?.get(o.name) === undefined ? firstWaveParts(o) : null
-    // **最大波の観測時刻は、前に声にしたものと変わったときだけ添える。** 波高だけが上がった
-    // 報でも時刻を読んでいた頃は、同じ時刻を報のたびに言い直していた（電文の波高は 0.1m 刻みで、
-    // 実測が動いても表示が変わらない間は時刻だけが進む —— その逆に、時刻が据え置きのまま
-    // 波高だけ上がる形も起きる）。前が無い（初出）なら読む —— 聞き手はその時刻を知らない。
-    const spokenAt = spokenMaxHeightTimes?.get(o.name)
-    const at = o.maxHeightDateTime && o.maxHeightDateTime !== spokenAt ? formatTime(o.maxHeightDateTime) : null
-    const value = tsunamiHeightToSpeech(overSuffixedHeight(o.height!, ja.tsunami))
-    return `で${fw ? `、${fw.time}に${fw.initial}が到達し、` : ''}${at ? `${at}に` : ''}${value}${stem}`
-  }
-  /**
-   * 群ごとの一文。**見出しで出来事を言い切り、地点は次に並べる**（等級の発表文
-   * `lowerGradeSentence` と同じ作法）。地点を全部読んでから述語が来る形は、地点が増える
-   * ほど何の話か分からないまま待たされる。
-   */
-  const sentenceOf = (items: TsunamiObservation[], isRaised: boolean): SpeechSegment[] => {
-    if (items.length === 0) return []
-    return [
-      plain(isRaised ? '次の地点で最大波が更新されました。' : '新たに、次の地点で津波を観測しました。'),
-      ...observationListSegments(
-        items,
-        // **更新の着点は「へ」。** この句には最大波の観測時刻（「16時41分に」）も入るので、
-        // 「に」で受けると「16時41分に3.0メートルに更新されました」と同じ助詞が 2 度続く。
-        // しかも `MaxHeight/DateTime` は**波を観測した時刻**であって更新（発表）の時刻ではないため、
-        // 着点が「に」のままだと「16時41分に更新した」とも読める。着点を「へ」にすれば
-        // 「に」＝いつ観測したか・「へ」＝何に変わったか、と役割で分かれる
-        // （→ {@link tsunamiMaxHeightTimeToSegments} / {@link tsunamiFirstWaveToSegments} と同じ規律）。
-        o => clauseOf(o, isRaised ? 'へ更新' : 'を観測'),
-        isRaised ? 'されました。' : 'しました。',
-      ),
-    ]
-  }
-  // 深刻な観測点を含む群を先に置く（最も深刻な観測点がどちらの群に入ったかで決まる）。
-  const raisedLeads = raised.includes(worst)
-  const lead = sentenceOf(raisedLeads ? raised : firstTime, raisedLeads)
-  const follow = sentenceOf(raisedLeads ? firstTime : raised, !raisedLeads)
-  return [
-    plain(`津波観測に関する情報。${headlinePart}`),
-    ...joinWithAlso(lead, follow),
-    ...omittedPointsSentence(obs.length, selected.length, '観測しています'),
-  ]
-}
-
-export function tsunamiObservationUpdateToText(
-  updatedObs: TsunamiObservation[],
-  headline?: string,
-  maxPoints = OBS_UPDATE_SPEAK_MAX_POINTS,
-  spokenHeights?: SpokenHeightLookup,
-  spokenFirstWaves?: SpokenFirstWaveLookup,
-  spokenMaxHeightTimes?: SpokenMaxHeightTimeLookup,
-): string {
-  return joinSegments(tsunamiObservationUpdateToSegments(
-    updatedObs, headline, maxPoints, spokenHeights, spokenFirstWaves, spokenMaxHeightTimes,
-  ))
-}
-
-/**
- * 話題の変わる断片列を「また、」で継ぐ。
- *
- * 別々の関数が組んだ文をそのまま並べると、境目に手がかりの無い文が 2 つ続く。津波の観測情報で
- * 「新たに隠岐、隠岐西郷で0.1メートルを観測しました。」の直後に「兵庫県北部、豊岡市津居山で
- * 到達を確認しました。」が来る形がそれで、**どちらも「地名で〜しました」の同じ形**なので、
- * 後ろの文が前の文の続き（同じ観測点の話）に聞こえる。区切り方は等級ごと
- * （{@link lowerGradeSentence}）・新規と更新の群（{@link tsunamiObservationUpdateToSegments}）で
- * 既に使っているものに揃える。
- *
- * **どちらかが空なら接続語を付けない。** 前段が無いのに「また、」で始まる文にしないため。
- */
-export function joinWithAlso(
-  lead: readonly SpeechSegment[],
-  follow: readonly SpeechSegment[],
-): SpeechSegment[] {
-  if (lead.length === 0 || follow.length === 0) return [...lead, ...follow]
-  return [...lead, plain('また、'), ...follow]
-}
-
-/** 到達確認で読み上げる件数の上限（多いときは渡された並びの先頭から採る）。 */
-export const ARRIVAL_SPEAK_MAX_POINTS = 5
-
-/**
- * 到達確認のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
- *
- * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
- * `spokenObsNamesRef`）。上限で読まなかった観測点まで既読にすると、その到達確認は二度と
- * 読まれない（波高更新側の `selectObservationUpdatesToSpeak` と同じ約束）。
- */
-export function selectArrivalsToSpeak(
-  obs: readonly TsunamiObservation[],
-  maxPoints = ARRIVAL_SPEAK_MAX_POINTS,
-): TsunamiObservation[] {
-  return obs.slice(0, maxPoints || Infinity)
-}
-
-/**
- * 最大波高が未確定（「観測中」）のまま新規に到達が確認された観測点の読み上げテキストを生成する。
- * まだ maxHeight の数値が出ていない観測点（JMA電文で maxHeight.condition = "観測中"）が対象。
- * 波高が未確定であること自体も明示的に読み上げる。件数は maxPoints で絞り、他 tsunami 系読み上げと同様に上限を設ける。
- * 波高読み上げ（observationDetailSegments）と同様に districtName（津波予報区）ごとにグループ化する。
- *
- * **読む順は渡された並びのまま。** 波高更新の読み上げと同じく、呼び出し側がカードの並び
- * （`sortObservationsForCardDisplay`）で渡すこと。上限で落とすのも先頭からなので、並びが
- * カードと違うとカード上で飛び飛びの地点が読まれる。
- */
-export function tsunamiArrivalToSegments(
-  obs: TsunamiObservation[],
-  maxPoints = ARRIVAL_SPEAK_MAX_POINTS,
-  spokenFirstWaves?: SpokenFirstWaveLookup,
-): SpeechSegment[] {
-  if (obs.length === 0) return []
-  const shown = selectArrivalsToSpeak(obs, maxPoints)
-  // **「微弱」の観測点に「観測中」と言わない。** 微弱は「観測した波がごく小さい」ことを
-  // 気象庁が伝えている状態で、値がこれから出るわけではない（電文解説資料 Ⅱ.12）。
-  const weak = shown.filter(o => o.condition?.weak)
-  const observing = shown.filter(o => !o.condition?.weak)
-  /**
-   * 織り込める第1波（**初出だけ**）。訂正は専用の文へ回す —— この句の言い回し
-   * 「〜に◯◯波を観測」は初出の形で、訂正は「〜の◯◯波へ更新されました」と読む決まり。
-   *
-   * **波高の文（`tsunamiObservationUpdateToSegments`）と切り分けを揃えること。** 揃えないと、
-   * 欠測から復帰した観測点（到達確認の既読は落ちるが第1波の既読は残る）で、同じ第1波が
-   * この文と訂正の文の両方に出る。
-   */
-  const foldable = (o: TsunamiObservation) =>
-    spokenFirstWaves?.get(o.name) === undefined ? firstWaveParts(o) : null
-  // 第1波の時刻が読めた地点は「〇時〇分に押し波を観測」、読めない地点（`FirstHeight` が
-  // `Condition`「第１波識別不能」だけを持つ形）は従来どおり「到達を確認」。**地点ごとに
-  // 述語の語幹を持たせる**ので、両方が混じっても 1 文に並べられる。
-  const clauseOf = (o: TsunamiObservation): string => {
-    const fw = foldable(o)
-    return fw ? `で${fw.time}に${fw.initial}を観測` : 'で到達を確認'
-  }
-  // **第1波の時刻を読める地点が 1 つも無ければ、従来の一文へ落とす。** 句が「〇〇で到達を
-  // 確認」だけになるので、見出しを付けると同じことを 2 回言うことになり、地点ごとに語幹を
-  // 繰り返す意味も無い（切れ目は読点だけで足りる）。
-  //
-  // **見出しは「観測中」「微弱」の 2 群に 1 回だけ。** 群ごとに付けると、両方が揃った報で
-  // 同じ見出しが「また、」を挟んで 2 回鳴る。
-  const anyTimed = shown.some(o => foldable(o) !== null)
-  const listOf = (items: TsunamiObservation[], tail: string): SpeechSegment[] => {
-    if (items.length === 0) return []
-    return anyTimed
-      ? observationListSegments(items, clauseOf, `しました。${tail}`)
-      : [...observationDetailSegments(items, () => ''), plain(`で到達を確認しました。${tail}`)]
-  }
-  return [
-    ...(anyTimed ? [plain('次の地点で津波の到達を確認しました。')] : []),
-    ...joinWithAlso(
-      listOf(observing, '最大波高は観測中です。'),
-      listOf(weak, '最大波高は微弱です。'),
-    ),
-    ...omittedPointsSentence(obs.length, shown.length, '到達を確認しています'),
-  ]
-}
-
-export function tsunamiArrivalToText(
-  obs: TsunamiObservation[],
-  maxPoints = 5,
-  spokenFirstWaves?: SpokenFirstWaveLookup,
-): string {
-  return joinSegments(tsunamiArrivalToSegments(obs, maxPoints, spokenFirstWaves))
-}
-
-/** 最大波の観測時刻だけが更新された観測点を読み上げる件数の上限。 */
-export const MAX_HEIGHT_TIME_SPEAK_MAX_POINTS = 5
-
-/**
- * 最大波の観測時刻の更新のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
- *
- * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
- * `spokenObsMaxHeightTimeRef`）。上限で読まなかった観測点まで既読にすると、その更新は
- * 二度と読まれない（到達確認・欠測・波高更新と同じ約束）。
- */
-export function selectMaxHeightTimeUpdatesToSpeak(
-  obs: readonly TsunamiObservation[],
-  maxPoints = MAX_HEIGHT_TIME_SPEAK_MAX_POINTS,
-): TsunamiObservation[] {
-  return obs.slice(0, maxPoints || Infinity)
-}
-
-/**
- * 波高は据え置きのまま、最大波の観測時刻だけが更新された観測点を読み上げる。
- *
- * **気象庁が「更新した」と言っているのに、アプリだけが黙っていた電文**がこれ。
- * 波高の既読判定（`hasObservedHeightRisen`）は値が上がったときだけ通すので、
- * 2024 年能登半島地震の 01/02 00:51 のように「舞鶴 0.4m・玄海町仮屋 0.1m のまま、
- * 最大波の時刻だけが動いた」報は読み上げ文が空になり、通知音だけが鳴っていた。
- *
- * **同じ高さの波がまた来たという事実を伝える。** 危険度が上がったわけではないので、
- * **波高は読まない**（前の報で既に声にしている値を繰り返すだけになる。2026-10-21 ユーザー選択
- * 「今のまま記録する (Recommended)」）。読むのは地点名と新しい観測時刻だけ。波高を言い直すと、値が上がったのか時刻だけが動いたのかを聞き分け
- * られなくなる —— 群を分けている意味がそこにある。
- *
- * **更新の着点は「へ」。** 「23時26分**に**更新」だと「23時26分に更新した」とも読め、更新の時刻
- * なのか更新後の観測時刻なのか紛れる。「へ」なら変化の行き先だとはっきりする。
- * **これは観測情報の 3 つの群に共通する規律**で、波高の更新（{@link tsunamiObservationUpdateToSegments}）も
- * 第1波の訂正（{@link tsunamiFirstWaveToSegments}）も「〜へ更新されました」で閉じる。
- * 着点でない観測時刻だけが「に」（波高の群）か「の」（第1波の群。時刻が着点の中身なので名詞句へ畳む）を取る。
- *
- * **読む順は渡された並びのまま**（波高更新・到達確認と同じ。呼び出し側がカードの並びで渡す）。
- */
-export function tsunamiMaxHeightTimeToSegments(
-  obs: TsunamiObservation[],
-  maxPoints = MAX_HEIGHT_TIME_SPEAK_MAX_POINTS,
-): SpeechSegment[] {
-  if (obs.length === 0) return []
-  const shown = selectMaxHeightTimeUpdatesToSpeak(obs, maxPoints)
-  // **時刻を 1 つも読めなければ従来の一文へ落とす。** この経路へ来る観測点は電文が時刻を
-  // 持っている前提だが（`hasMaxHeightTimeAdvanced` が `MaxHeight/DateTime` の存在を要求する）、
-  // 日時として読めない値なら `formatTime` が `null` を返す。そのとき「〇〇で更新、△△で更新
-  // されました」と語幹だけを繰り返しても何も伝わらないので、地点名を連ねる形へ戻す。
-  const anyTimed = shown.some(o => (o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null) !== null)
-  return [
-    ...(anyTimed
-      ? [
-        plain('次の地点で最大波の観測時刻が更新されました。'),
-        ...observationListSegments(
-          shown,
-          o => {
-            const at = o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null
-            return at ? `で${at}へ更新` : 'で更新'
-          },
-          'されました。',
-        ),
-      ]
-      : [
-        ...observationDetailSegments(shown, () => ''),
-        // **読点は述語の形で決まる。** ここは「で」のあとに別の主語（「最大波の観測時刻が」）が
-        // 続くので、読点を挟まないと最後の地点名と主語が繋がって聞こえる。到達確認の受け皿
-        // （{@link tsunamiArrivalToSegments}）が「で到達を確認しました」と読点なしなのは、
-        // あちらは「で」の直後が動詞句だから。**形を揃えるために片方を機械的に合わせない。**
-        plain('で、最大波の観測時刻が更新されました。'),
-      ]),
-    ...omittedPointsSentence(obs.length, shown.length, '更新されています'),
-  ]
-}
-
-/**
- * **欠測となっている観測点**で、最大波の観測時刻だけが更新された報の読み上げ。
- *
- * 「欠測となっている観測点で、最大波の観測時刻が更新されました。〇〇で23時26分へ更新されました。」
- * （2026-10-24 ユーザー選択「欠測を前に置く (Recommended)」。2026-10-21 選択「読む (Recommended)」）。
- *
- * 欠測の観測点も、電文は「これまでの最大波」とその観測時刻を `Revise`「更新」で送り直すことがある
- * （断続的な欠測）。{@link tsunamiMaxHeightTimeToSegments} は欠測を外している —— 観測できていない地点に
- * 「更新されました」とだけ言うと、いま観測できているように聞こえるため。そこで**欠測であることを先に
- * 言ってから**時刻を伝える。件数の上限と選び方は時刻の群と共有する（{@link selectMaxHeightTimeUpdatesToSpeak}）。
- */
-export function tsunamiMissingMaxHeightTimeToSegments(
-  obs: TsunamiObservation[],
-  maxPoints = MAX_HEIGHT_TIME_SPEAK_MAX_POINTS,
-): SpeechSegment[] {
-  if (obs.length === 0) return []
-  const shown = selectMaxHeightTimeUpdatesToSpeak(obs, maxPoints)
-  const anyTimed = shown.some(o => (o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null) !== null)
-  return [
-    ...(anyTimed
-      ? [
-        plain('欠測となっている観測点で、最大波の観測時刻が更新されました。'),
-        ...observationListSegments(
-          shown,
-          o => {
-            const at = o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null
-            return at ? `で${at}へ更新` : 'で更新'
-          },
-          'されました。',
-        ),
-      ]
-      // 時刻を 1 つも読めなければ地点名を連ねる形へ落とす（時刻の群と同じ扱い）。
-      : [
-        plain('欠測となっている'),
-        ...observationDetailSegments(shown, () => ''),
-        plain('で、最大波の観測時刻が更新されました。'),
-      ]),
-    ...omittedPointsSentence(obs.length, shown.length, '更新されています'),
-  ]
-}
-
-/** 第1波の内容が更新された観測点を読み上げる件数の上限。 */
-export const FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS = 5
-
-/**
- * 第1波の更新のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
- *
- * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
- * `spokenObsFirstWaveRef`）。上限で読まなかった観測点まで既読にすると、その更新は
- * 二度と読まれない（到達確認・欠測・波高更新と同じ約束）。
- */
-export function selectFirstWaveUpdatesToSpeak(
-  obs: readonly TsunamiObservation[],
-  maxPoints = FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS,
-): TsunamiObservation[] {
-  return obs.slice(0, maxPoints || Infinity)
-}
-
-/**
- * 第1波（到達時刻・押し引き）を、**どの句にも織り込めなかった観測点**について読み上げる。
- *
- * **第1波は訂正される。** 2024 年能登半島地震では佐渡市鷲崎の到達時刻が 16時10分 →
- * 16時32分 へ 22 分ぶん更新された（`FirstHeight/Revise` = 更新）。一度読んだら二度と
- * 読まない作りにすると、**誤った時刻を言ったまま訂正が届かない**。
- *
- * **`'new'` の側も要る。** 初出の第1波はふつう波高の文か到達確認の文へ織り込まれるが、
- * **どちらにも入らない観測点がある** —— `FirstHeight` が `Condition`「第１波識別不能」だけ
- * だった地点が、続報で到達時刻を得る形（テストボタンの久慈港がこれ）。波高が上がらなければ
- * 波高の文に入らず、`height` を持つので到達確認の文にも入らない。**受け皿が無いと、その地点の
- * 第1波は一度も声にならず、記録も空のままなので以後の本物の訂正まで永久に拾えなくなる。**
- *
- * **助詞は述語で決まる。** 訂正は時刻と押し引きを 1 つの名詞句（「16時32分の押し波」）にして
- * 「へ更新」で受けるので「の」。初出は動詞が続くので「16時13分**に**押し波を観測」
- * （{@link tsunamiArrivalToSegments} と同じ形）。
- *
- * **時刻を「に」で切り離さないこと。** 「16時32分に押し波へ更新」にすると、訂正されたのが
- * 到達時刻そのもの（16時10分 → 16時32分）だという事実が文から消えるうえ、「16時32分に更新した」
- * とも読める。着点を「へ」で受ける規律は 3 群に共通（→ {@link tsunamiMaxHeightTimeToSegments}）。
- *
- * **初出でも「最大波高は観測中です」は付けない。** ここへ来る地点は波高を持っているので、
- * 到達確認の文の末尾をそのまま借りると嘘になる。
- */
-export function tsunamiFirstWaveToSegments(
-  obs: TsunamiObservation[],
-  mode: 'new' | 'updated',
-  maxPoints = FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS,
-): SpeechSegment[] {
-  if (obs.length === 0) return []
-  const shown = selectFirstWaveUpdatesToSpeak(obs, maxPoints)
-  const isUpdate = mode === 'updated'
-  return [
-    plain(isUpdate ? '次の地点で第一波が更新されました。' : '次の地点で第一波の到達を確認しました。'),
-    ...observationListSegments(
-      shown,
-      o => {
-        const fw = firstWaveParts(o)
-        // **この分岐へは現状到達しない。** 呼び出し元（`useLiveEventHandler` の `firstWaveChanged`）が
-        // `firstWaveSpokenKey` の成立を要求し、あれは到達時刻が日時として読めることを条件にしている。
-        // 姉妹の 2 群（到達確認・最大波の観測時刻）が持つ「1 件も読めなければ見出しを外す」ガードを
-        // ここに置いていないのはそのため —— 発火しないガードを足しても確かめる手段が無い。
-        // **呼び出し元の絞り込みを緩めるなら、このガードも併せて用意すること。**
-        if (!fw) return isUpdate ? 'で更新' : 'で到達を確認'
-        return isUpdate ? `で${fw.time}の${fw.initial}へ更新` : `で${fw.time}に${fw.initial}を観測`
-      },
-      isUpdate ? 'されました。' : 'しました。',
-    ),
-    ...omittedPointsSentence(obs.length, shown.length, isUpdate ? '更新されています' : '到達を確認しています'),
-  ]
-}
-
-/**
- * 観測情報の続報で、読み上げるべき変化が 1 つも無かったときの一文。
- *
- * **名乗りだけで終わらせないための断片**（地震情報の `noRegionChangeSegments` と同じ考え方）。
- * 「津波観測に関する情報。」で切ると聞き手には「何が？」しか残らない。
- *
- * **言い切ってよい範囲を波高に限る。** 読み上げが伝えてきた単位は観測点の波高なので、
- * そこが据え置きであることは正しい。最大波の時刻・到達状況まで含めて「変わりはありません」
- * と言うと、この文が出る報でも実際には動いていることがある。
- *
- * **実配信の標本を持たない。** 2024 年能登半島地震の 26 時間（観測点を載せた報 47 通）を
- * 走査しても、波高・最大波の時刻・到達確認・欠測のいずれも動かない報は 1 通も無かった。
- * 構造としては起こりうるので用意してあるが、実際に声になるところは確かめていない。
- */
-export function tsunamiObservationNoChangeSegments(): SpeechSegment[] {
-  return [plain('津波観測に関する情報。観測された波高に変わりはありません。')]
-}
-
-/**
- * 観測情報の続報で、読み上げるべき変化は無いが、読んだ波高より下がった観測点があるときの一文。
- *
- * **「変わりはありません」とは言えない**（下がったのは変化）ので、波高については何も
- * 言い切らずに名乗るだけにする。下がった値は声にしない（画面のカードには新しい値が出る）
- * —— 「津波観測に関する情報が発表されました。」（2026-10-19 ユーザー承認。選んだ選択肢は
- * 「案 2『嘘の文だけ直す』」、返事の原文「案2で進めて」）。判定は `hasObservedHeightLowered`。
- */
-export function tsunamiObservationLoweredSegments(): SpeechSegment[] {
-  return [plain('津波観測に関する情報が発表されました。')]
-}
-
-/** 満潮時刻の報の名乗り（電文が見出し文を持たないときに使う）。 */
-const TIDE_REPORT_FALLBACK_HEADLINE = '各地の満潮時刻と津波到達予想時刻をお知らせします。'
-
-/**
- * 各地の満潮時刻・津波到達予想時刻に関する情報の読み上げ。
- *
- * **名乗りは気象庁の見出し文をそのまま使う。** この電文の `headline` は
- * 「各地の満潮時刻と津波到達予想時刻をお知らせします。」で、公式の言い方がそのまま手に入る
- * （利用者へ出す語は気象庁の表現に揃える決まり → quake-spec.md §8）。読めなければ
- * 同じ文を定数から補う。
- *
- * **続く一文は変化の中身で選ぶ**（判定は `tideReportChange`）。初報は名乗りだけで意味が
- * 通るので何も足さない ―― まだ一度も伝えていないものを「更新されました」とは言えない。
- *
- * **地点名も件数も読まない。** 満潮時刻は 46〜52 地点ぶん載るので読み切れず、件数を言っても
- * 聞き手にできることが増えない（どこが動いたかはカードで見る。2026-10-21 ユーザー選択「今のまま記録する (Recommended)」）。
- */
-export function tsunamiTideToSegments(
-  change: TideReportChange,
-  headline?: string,
-): SpeechSegment[] {
-  // 見出し文は気象庁が書いた文なので、日時のゼロ埋めと全角の単位を読み上げ向きへ直してから使う
-  // （観測情報の見出しと同じ前処理。2 か所に分けない → {@link speakableHeadline}）。
-  // **末尾の句点を落とさない** —— 下の `tail` が直に続くので、無いと 1 つの文に聞こえる
-  // （{@link endTelegramSentence}。断片へ分けても同じで、逃げ道は無い）。
-  const headlinePart = speakableHeadline(headline) || TIDE_REPORT_FALLBACK_HEADLINE
-  const tail = change === 'tide' ? '満潮時刻が更新されました。'
-    : change === 'arrival' ? '津波の到達状況が更新されました。'
-    : change === 'arrivalTime' ? '津波の到達予想時刻が更新されました。'
-    : change === 'none' ? '内容に変わりはありません。'
-    : ''
-  return [plain(`${headlinePart}${tail}`)]
-}
-
-/** 欠測で読み上げる件数の上限（多いときは渡された並びの先頭から採る）。 */
-export const MISSING_SPEAK_MAX_POINTS = 5
-
-/**
- * 欠測のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
- *
- * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
- * `spokenObsMissingRef`）。上限で読まなかった観測点まで既読にすると、その欠測は二度と
- * 読まれない（到達確認・波高更新と同じ約束）。
- */
-export function selectMissingToSpeak(
-  obs: readonly TsunamiObservation[],
-  maxPoints = MISSING_SPEAK_MAX_POINTS,
-): TsunamiObservation[] {
-  return obs.slice(0, maxPoints || Infinity)
-}
-
-/**
- * 観測データが欠測となった観測点の読み上げ。
- *
- * **到達確認（{@link tsunamiArrivalToSegments}）へ混ぜないこと。** あちらは「到達した事実は
- * 確定していて波高だけがこれから」という文で、欠測の観測点に当てると到達を断定してしまう。
- *
- * 文は 2 通りに分かれる。電文は欠測と同時に「これまでの最大波の高さ」を載せることがある
- * （気象庁 電文解説資料 Ⅱ.12 事例 6）ため、**値を観測できていた観測点はその値も伝える**。
- * 値を持つ群を先に置き、持たない群を「また、」で継ぐ（区切り方は `joinWithAlso`）。
- *
- * **読む順は渡された並びのまま。** 波高更新・到達確認と同じく、呼び出し側がカードの並び
- * （`sortObservationsForCardDisplay`）で渡すこと。
- */
-export function tsunamiMissingToSegments(
-  obs: TsunamiObservation[],
-  maxPoints = MISSING_SPEAK_MAX_POINTS,
-): SpeechSegment[] {
-  if (obs.length === 0) return []
-  const shown = selectMissingToSpeak(obs, maxPoints)
-  // 「これまでに何を観測できていたか」を言える観測点。**波高の数値だけでなく「微弱」も含める**
-  // （「微弱 欠測」は同 事例 7 の形。カードは波高の欄に「微弱」を出すので、読み上げだけ黙ると
-  // 声を頼りにしている人にその分だけ届かない）。
-  const observed = shown.filter(o => o.height || o.condition?.weak)
-  const unknown = shown.filter(o => !(o.height || o.condition?.weak))
-  const observedClause: SpeechSegment[] = observed.length > 0
-    ? [
-      plain('これまでに'),
-      ...observationDetailSegments(observed, o => (o.height ? observedHeightSuffix(o) : 'で微弱な津波')),
-      plain('を観測したのち、欠測となっています。'),
-    ]
-    : []
-  const missingClause: SpeechSegment[] = unknown.length > 0
-    ? [
-      ...observationDetailSegments(unknown, () => ''),
-      // **場所を示す「で」を付けない。** 欠測は観測点そのものの状態で、その場所で何かが
-      // 起きたわけではない（「◯◯は欠測」が正しい形）。値を観測できていた側の文
-      // （上の `observedClause`）では観測がその場所で起きているので「で」を使う。
-      plain('は欠測となっています。'),
-    ]
-    : []
-  return [
-    ...joinWithAlso(observedClause, missingClause),
-    ...omittedPointsSentence(obs.length, shown.length, '欠測となっています', 'も'),
-  ]
-}
-
-export function tsunamiMissingToText(obs: TsunamiObservation[], maxPoints = MISSING_SPEAK_MAX_POINTS): string {
-  return joinSegments(tsunamiMissingToSegments(obs, maxPoints))
-}
-
-/**
- * 「観測中」のまま津波警報に相当する津波を観測している観測点を読む上限。
- *
- * 沖合の観測点は数が限られるうえ、この状態になるのは大津波警報の発表中だけ。欠測と同じ
- * 件数に揃えてある（読み上げが長くなりすぎない範囲で、落ちた分は件数で伝える）。
- */
-export const WARNING_LEVEL_SPEAK_MAX_POINTS = 5
-
-/**
- * 読み上げる観測点の絞り込み。
- *
- * **既読の記録と文の生成で同じものを通すこと。** 別々に切ると、上限で読まなかった観測点まで
- * 既読になり、次の報でも読まれない（到達確認・欠測でも同じ規則）。
- */
-export function selectWarningLevelToSpeak(
-  obs: readonly TsunamiObservation[],
-  maxPoints = WARNING_LEVEL_SPEAK_MAX_POINTS,
-): TsunamiObservation[] {
-  return obs.slice(0, maxPoints || Infinity)
-}
-
-/**
- * 「観測中」のまま津波警報に相当する津波を観測している観測点の読み上げ。
- *
- * 気象庁が `Revise` に置いた信号（→ `tsunami.ts` の `isWarningLevelWhileObserving`）を伝える。
- * **波高の数値が無いため、他のどの文にも乗らない** —— 波高更新の文は数値を読み、到達確認の文は
- * 「到達を確認しました」で到達だけを述べる。この状態を黙って落とすと、資料が「注意する必要が
- * ある」と名指しした事実が音声から消える。
- *
- * **高さは言わない。** 電文が数値を出していないので、アプリが「1m 超」などと補ってはいけない。
- * 伝えるのは気象庁が言ったことだけ ―― 警報に相当する津波を観測している、という事実。
- *
- * **読む順は渡された並びのまま**（呼び出し側がカードの並びで渡す。欠測・到達確認と同じ）。
- *
- * **省略件数の助詞は既定（「ほか○地点でも」）。** 主文が「〇〇**では**、〜を観測しています」と
- * 場所を示しているので、続く一文も場所の「で」を保つ。**欠測の群が「も」へ落とすのは
- * 観測点そのものの状態を述べるから**で（→ {@link omittedPointsSentence}）、その場所で観測が
- * 起きているこちらには当てはまらない。
- */
-export function tsunamiWarningLevelToSegments(
-  obs: TsunamiObservation[],
-  maxPoints = WARNING_LEVEL_SPEAK_MAX_POINTS,
-): SpeechSegment[] {
-  if (obs.length === 0) return []
-  const shown = selectWarningLevelToSpeak(obs, maxPoints)
-  return [
-    ...observationDetailSegments(shown, () => ''),
-    plain('では、津波警報に相当する津波を観測しています。'),
-    ...omittedPointsSentence(obs.length, shown.length, '津波警報に相当する津波を観測しています'),
-  ]
-}
-
-export function tsunamiWarningLevelToText(
-  obs: TsunamiObservation[],
-  maxPoints = WARNING_LEVEL_SPEAK_MAX_POINTS,
-): string {
-  return joinSegments(tsunamiWarningLevelToSegments(obs, maxPoints))
-}
-
-/**
- * 臨時情報（調査中）のきっかけ。キーは地震関連情報番号コード（`JMANankai.kindCode`。意味は型の注記）。
- *
- * 111・112 は気象庁の発表条件の語（「監視領域内でマグニチュード6.8以上の地震が発生」「ひずみ計での有意な変化」）。
- * 113 は発表条件の「通常とは異なる現象が観測された場合」から取った。
- */
-const NANKAI_INVESTIGATION_TRIGGER: Readonly<Record<string, string>> = {
-  '111': '監視領域内でマグニチュード6.8以上の地震が発生した',
-  '112': 'ひずみ計で有意な変化を観測した',
-  '113': '通常とは異なる現象を観測した',
-}
-
-/** 南海トラフ地震臨時情報（VYSE50/51/52）の読み上げテキストを生成する。 */
-export function nankaiToText(event: JMANankai): string {
-  // **取消と調査終了を混ぜない。** 取消は「その電文を撤回する」だけで、地震の発生可能性に
-  // ついての判断を含まない（電文解説資料 Ⅰ.別紙ウ。→ `JMANankai.retracted`）。ここで
-  // 「通常の範囲内でした」と言うと、**気象庁が発表していない安心情報をアプリが作る**ことになる。
-  // 取り消された事実だけを伝え、状況の断定も行動指示も足さない。
-  //
-  // **取消の理由（電文の `Body/Text`。パーサーは `body` に入れる）も読む**（2026-10-22 ユーザー選択「理由を声にする
-  // (Recommended)」。地震・津波・地震回数の取消と同じ書き方 → `cancelReasonSentence`）。理由は帯の取消の表示と
-  // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
-  if (event.retracted) {
-    return '南海トラフ地震臨時情報は取り消されました。' + cancelReasonSentence(event.body)
-  }
-  if (event.cancelled || event.kindName === '調査終了') {
-    return '南海トラフ地震臨時情報、調査終了。南海トラフ地震の発生可能性は通常の範囲内でした。'
-  }
-  if (event.kindName === '調査中') {
-    // **きっかけも読む**（2026-10-22 ユーザー選択「きっかけも読む (Recommended)」、文面は 2026-10-24 ユーザー選択
-    // 「この案でよい (Recommended)」）。きっかけはコード（`kindCode`）にしか出ない。読めない報は従来の文のまま。
-    const trigger = NANKAI_INVESTIGATION_TRIGGER[event.kindCode]
-    return `南海トラフ地震臨時情報、調査中。${trigger ? `${trigger}ため、` : ''}南海トラフ地震の発生可能性について調査しています。今後の情報に注意してください。`
-  }
-  if (event.kindName === '巨大地震警戒') {
-    return '南海トラフ地震臨時情報、巨大地震警戒。南海トラフ地震の想定震源域内で大規模な地震が発生しました。直ちに防災対応をとってください。'
-  }
-  if (event.kindName === '巨大地震注意') {
-    return '南海トラフ地震臨時情報、巨大地震注意。南海トラフ地震の想定震源域内で地震が発生しました。防災対応の確認をしてください。'
-  }
-  return '南海トラフ地震臨時情報。南海トラフ地震に関する臨時情報が発表されました。今後の情報に注意してください。'
-}
-
-/**
- * 南海トラフ地震関連解説情報（VYSE51=臨時解説 / VYSE52=定例解説）の読み上げテキストを生成する。
- *
- * 本文（body）は 1000 字を超えることがあるため読み上げない。何が発表されたかだけを伝え、
- * 詳細は画面のバナーに委ねる。段階（調査中・巨大地震注意等）を持つ電文ではないので、
- * 臨時情報（nankaiToText）のような防災対応の呼びかけも付けない。
- */
-export function nankaiCommentaryToText(event: JMANankaiCommentary): string {
-  // **取消は取り消された事実と理由を読む**（2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む (Recommended)」、
-  // 文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。理由はパーサーが `body` に入れる。
-  if (event.cancelled) return '南海トラフ地震関連解説情報は取り消されました。' + cancelReasonSentence(event.body)
-  if (event.serialName === '定例解説') {
-    return '南海トラフ地震関連解説情報。南海トラフ沿いの地震に関する評価検討会の定例会合による調査結果が発表されました。'
-  }
-  // 臨時解説の情報名には「（第１号）」のように号数が入る。読み手が経過を追えるので拾う
-  const serial = event.headline.match(/（第(.+?)号）/)?.[1]
-  return `南海トラフ地震関連解説情報${serial ? `、第${serial}号` : ''}。南海トラフ地震の想定震源域の状況について解説情報が発表されました。`
-}
-
-/**
- * 地震回数に関する情報（VXSE60）の読み上げテキストを生成する。
- *
- * **読むのは総数と有感の数だけ。** 区間は 1 時間ごとに何本も並ぶので、全部読むと数字の羅列に
- * なって総数が耳に残らない。経過の細かさは画面のカードに委ねる。1 時間ごとの並びと場所を
- * 読まないことは 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」。
- *
- * **場所は言わない。** 電文が場所を構造化して持つのは震源要素のある種別だけで、この電文では
- * 自由文（`freeText`）の中にしか出てこない。文から地名を抜くと、書き方が変わったときに
- * 別の語を場所として読み上げる。
- *
- * **伝える区間は見出しと同じ関数で選ぶ**（`pickEarthquakeCountSummaryItem`。累積 → 地震回数 →
- * 最新の１時間地震回数）。電文は「区間ごとの回数」と「初めからの累計」を同じ `Item` の並びで送って
- * くるので、末尾を無条件に採ると 1 時間ぶんの数字を総数として読みかねない。
- *
- * **気象庁が発表しない値（電文の `-1`。型では `null`）の句は言わない**
- * （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）:
- *
- * | 回数 | 有感 | 文 |
- * |---|---|---|
- * | あり | あり | 「…までに、地震が5回発生しています。このうち、震度1以上を観測したのは1回です。」 |
- * | あり | 発表なし | 「…までに、地震が5回発生しています。」 |
- * | 発表なし | あり | 「…までに、震度1以上を観測した地震は1回です。」 |
- * | 発表なし | 発表なし | 数の文を言わない（「地震回数に関する情報。」だけ） |
- *
- * 区間を選べない報（回数を伴わない発表報・未知の `type` だけの報）も種別名だけを読む。回数を
- * 伴わない発表報の本文は、気象庁が書いた文として別の発話で読む（部品「本文」`earthquakeCountBody`。
- * → `telegramTextToSpeak`）。
- *
- * @returns 読み上げ文。取消以外では必ず種別名を含む
- */
-export function earthquakeCountToText(event: JMAEarthquakeCount): string {
-  if (event.cancelled) {
-    // 理由（電文の `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
-    // **地震・津波・EEW の取消と揃える** —— 片方だけ拾うと、
-    // 同じ「取り消した」でも種別によって理由が出たり出なかったりする。理由は帯の取消の表示と
-    // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。
-    // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
-    return '地震回数に関する情報は取り消されました。' + cancelReasonSentence(event.cancelText)
-  }
-  const head = '地震回数に関する情報。'
-  const total = pickEarthquakeCountSummaryItem(event)
-  if (!total) {
-    // **区間が 1 つも無いのは回数を伴わない発表報なら正常**（本文だけを運ぶ）。区間はあるのに
-    // どれも選べないときだけ記録する —— 区間の種類が増えたのに気づけるように。
-    if (event.items.length > 0) {
-      log.warn(`[tts] 地震回数に関する情報に読める区間がありません（種別名だけ読みます）: ${event.items.map(i => i.type).join('・')}`)
-    }
-    return head
-  }
-  const { number, feltNumber } = total
-  if (number === null && feltNumber === null) return head
-  const span = formatCountSpanForSpeech(total.startTime, total.endTime)
-  if (number === null) return `${head}${span}に、震度1以上を観測した地震は${feltNumber}回です。`
-  const occurred = `${head}${span}に、地震が${number}回発生しています。`
-  if (feltNumber === null) return occurred
-  const felt = feltNumber > 0
-    ? `このうち、震度1以上を観測したのは${feltNumber}回です。`
-    : 'このうち、震度1以上を観測したものはありません。'
-  return `${occurred}${felt}`
-}
-
-/**
- * 累積区間の期間を読み上げ用の句にする（「9日15時から10日12時まで」）。
- *
- * **日付から読む。** 群発の累積は前日以前にさかのぼることが多く（実サンプルは 21 時間）、
- * 時刻だけだと今日のことなのかが判らない。分は読まない —— 区間の端は毎正時に揃っており、
- * 「15時00分」と読ませても情報が増えない。
- *
- * 日時として読めない値では期間そのものを言わない（「Invalid Date」を音にしないため）。
- */
-function formatCountSpanForSpeech(startTime: string, endTime: string): string {
-  const start = new Date(startTime)
-  const end = new Date(endTime)
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return 'これまで'
-  const md = (d: Date) => `${speakableDay(d.getDate())}${d.getHours()}時`
-  return `${md(start)}から${md(end)}まで`
-}
-
-/**
- * 地震・津波に関するお知らせ（VZSE40）の読み上げテキストを生成する。
- *
- * **見出し（`Head/Headline/Text`）だけを読む。** 本文は自由文で長く（2026-10-16 13:15 の
- * 「緊急地震速報（警報）について」は約 300 字）、他の種別と同じく「気象庁が書いた文」として
- * 別の発話で読む（→ `telegramTextToSpeak`）。ここで本文まで読むと、本文を切る設定が効かない。
- * 自由付加文（`freeText`）もそちらで本文に続けて読む。
- *
- * 取消は他の種別と同じく「取り消された事実」と理由を読む（→ `cancelReasonSentence`）。
- * 理由は帯の取消の表示と通知の本文にも出る（地震回数と同じ。→ `utils/specialInfoCancelBand.ts`）。
- */
-export function quakeNoticeToText(event: JMAQuakeNotice): string {
-  if (event.cancelled) {
-    return '地震・津波に関するお知らせは取り消されました。' + cancelReasonSentence(event.body)
-  }
-  // 見出しは句点を持たないのが通例だが、付いていても二重にしない
-  const headline = event.headline.trim().replace(/。$/, '')
-  return headline ? `地震・津波に関するお知らせ。${headline}。` : '地震・津波に関するお知らせ。'
-}
-
-/** 北海道・三陸沖後発地震注意情報（VYSE60）の読み上げテキストを生成する。 */
-export function kohatsuToText(event: JMAKohatsu): string {
-  // **取消は取り消された事実と理由を伝える**（取消を読むのは 2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」。
-  // 理由を読むのは臨時情報の取消と揃える —— 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。
-  // 後発地震注意情報に「終了」の電文は無いので、`cancelled` が立つのは取消だけ。理由はパーサーが `body` に入れる。
-  if (event.cancelled) return '北海道・三陸沖後発地震注意情報は取り消されました。' + cancelReasonSentence(event.body)
-  // **句点は無条件に足さない** —— 気象庁の見出し文は句点で終わることが多く、
-  // 重ねると「。。」になる（→ {@link endTelegramSentence}）。
-  const headline = endTelegramSentence(event.headline.replace(/北海道・三陸沖後発地震注意情報/g, ''))
-  return `北海道・三陸沖後発地震注意情報。${headline}今後、大規模地震の発生可能性が平常時より高まっています。防災対応の確認をしてください。`
-}
-
-// 一次細分区域名のリストのうち、県内全区域が同じ階級で揃っているものを「〇〇県」1件にまとめる。
-// areaPrefIndex / prefAreaNames が引けない（未読み込み）場合はまとめず区域名をそのまま返す。
-//
-// **上位の階級で区域名を出した県はまとめない**（`prefsWithAreaShown`）。震度側の
-// `aggregateAreaNamesByPref` と同じ理由（上下の階級で粒度が食い違うと県の階級を過小に伝える）。
-function aggregateLpgmNamesByPref(
-  names: string[],
-  areaPrefIndex: ReadonlyMap<string, string> | null,
-  prefAreaNames: ReadonlyMap<string, ReadonlySet<string>> | null,
-  prefsWithAreaShown: ReadonlySet<string>,
-): string[] {
-  if (!areaPrefIndex) return names
-  const byPref = new Map<string, Set<string>>()
-  const noPref: string[] = []
-  for (const name of names) {
-    const pref = areaPrefIndex.get(name)
-    if (!pref) { noPref.push(name); continue }
-    const set = byPref.get(pref) ?? new Set<string>()
-    set.add(name)
-    byPref.set(pref, set)
-  }
-  const result: string[] = [...noPref]
-  for (const [pref, regionNames] of byPref) {
-    const fullSet = prefAreaNames?.get(pref)
-    const isWholePref = fullSet != null && fullSet.size > 0
-      && regionNames.size === fullSet.size && [...regionNames].every(n => fullSet.has(n))
-      && !prefsWithAreaShown.has(pref)
-    if (isWholePref) result.push(pref)
-    else result.push(...regionNames)
-  }
-  return result
-}
-
-// 長周期地震動の観測地域テキストを生成する（buildRegionSegments の LPGM 版）
-function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
-  if (!lpgm.regions || lpgm.regions.length === 0) return ''
-
-  // 階級ごとに地域名をまとめる（降順）。**階級 0 の地域も他の階級と同じ設定で数える**
-  // （2026-10-29 ユーザー承認「他の階級と同じく読む」、語は同日「「階級0を〜で」 (Recommended)」で画面の「階級0」に揃える）。
-  // 最大階級が 0 の報もここへ来る（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・#1201）。
-  // 「必ず読み上げる長周期地震動階級」は 0〜4 を選べる。階級 0 は、階数の範囲に入るか、必ず読む階級に 0 を選んだときに読む。
-  const byClass = new Map<number, string[]>()
-  for (const r of lpgm.regions) {
-    if (!isObservedLpgmClass(r.maxLgInt)) continue
-    const names = byClass.get(r.maxLgInt) ?? []
-    names.push(r.name)
-    byClass.set(r.maxLgInt, names)
-  }
-  const classes = [...byClass.keys()].sort((a, b) => b - a)
-  if (classes.length === 0) return ''
-
-  const stationData = getStationCoordsCache()
-  const areaPrefIndex = getAreaPrefIndexCache()
-  const prefAreaNames = stationData ? prefAreaNamesIndexOf(stationData) : null
-  const regionOrder = stationData ? regionOrderIndexOf(stationData) : null
-
-  const parts: string[] = []
-  const mentioned = new Set<string>()
-  // 上位の階級で区域名を出した県（震度側と同じ持ち回り。理由は aggregateLpgmNamesByPref のコメント）。
-  const prefsWithAreaShown = new Set<string>()
-  // 長周期地震動階級（1〜4）は震度スケールと別軸のため、opts.alwaysReadScale（震度の下限）は
-  // ここでは適用しない。階級側の下限（`alwaysReadLpgmClass`）を別に持つ。
-  // 打ち切りの考え方は震度側（`buildRegionSegments`）と同じ —— 階数以内か、下限以上の階級を読む。
-  // どちらも上位の階級ほど成立しやすいので、両方を外れた時点で以降も外れる。
-  for (let i = 0; i < classes.length; i++) {
-    const cls = classes[i]
-    const withinLevels = i <= opts.intensityLevels
-    const withinAlwaysRead = opts.alwaysReadLpgmClass >= 0 && cls >= opts.alwaysReadLpgmClass
-    if (!withinLevels && !withinAlwaysRead) break
-    const aggregated = aggregateLpgmNamesByPref((byClass.get(cls) ?? []), areaPrefIndex, prefAreaNames, prefsWithAreaShown)
-    // 区域名を出した県を次の階級へ持ち回る。`mentioned` で落とす前に数えるのは、あちらが
-    // 「同じ名前を二度読まない」ための仕組みで、粒度の判断とは別の関心事だから。
-    // 区域名と県名の見分けが areaPrefIndex 頼みである点は震度側と同じ（前提も同じ）。
-    for (const name of aggregated) {
-      const pref = areaPrefIndex?.get(name)
-      if (pref) prefsWithAreaShown.add(pref)
-    }
-    let names = aggregated.filter(n => !mentioned.has(n))
-    if (names.length === 0) continue
-    // 地域数の打ち切りは buildRegionSegments と同じ（許容超過の範囲内は省略せず全地域を読む）
-    let omittedCount = 0
-    if (opts.maxRegions > 0 && names.length > opts.maxRegions + opts.regionTolerance) {
-      omittedCount = names.length - opts.maxRegions
-      names = names.slice(0, opts.maxRegions)
-    }
-    // 読み上げ順は震度側と同じ地理順（北から・県ごと）。長周期地震動の電文には震源座標が無いため、
-    // 上限で切るときの選抜は電文の並び順のまま（震度側のような震源距離での選抜は行わない）。
-    names = sortByRegionOrder(names, regionOrder)
-    names.forEach(n => mentioned.add(n))
-    const omittedRegionSuffix = omittedCount > 0 ? `、ほか${omittedCount}地域` : ''
-    parts.push(`階級${cls}を${names.join('、')}${omittedRegionSuffix}`)
-  }
-
-  if (parts.length === 0) return ''
-  // 助詞「で」の置き方は buildRegionSegments と同じ（末尾のみ）
-  return parts.join('、') + 'で観測しました。'
-}
-
-/** VXSE62 長周期地震動情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
-export function lpgmToText(lpgm: JMALpgm, opts: TtsSpeechOptions, isNew: boolean): string {
-  if (lpgm.cancelled) {
-    // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。理由（電文の
-    // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
-    // 取消で長周期の表示（一覧・バッジ）は消えるが、理由は地震カードの報の一覧にも残る（→ `lpgmRetraction`）。
-    // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
-    return '長周期地震動に関する観測情報は取り消されました。' + cancelReasonSentence(lpgm.cancelText)
-  }
-  // 地震の時刻は**発現時刻を先に採る**（地震情報・津波カードと同じ規則）。揃えないと、
-  // 同じ地震について地震情報が「◯時◯分ころ」と読んだ直後に、長周期が 1 分違う時刻を読む。
-  // 気象庁自身も見出し文へ発現時刻を書いており、VXSE62 も例外ではない（実電文の全期間走査で
-  // 確認。→ `docs/spec/tsunami-spec.md` §4）。**`originTime` は空になりえないが**
-  // （パーサーが無ければ電文ごと捨てる）、`arrivalTime` は任意なので `||` で落とす。
-  const time = formatTime(lpgm.arrivalTime || lpgm.originTime)
-  const prefix = isNew ? '長周期地震動に関する観測情報。' : '長周期地震動に関する観測情報が更新されました。'
-  // 時刻が日時として読めなければ句ごと落とす。「頃発生した地震で、」だけが残ると文が壊れ、
-  // かといって時刻を読ませると「ナンじナンぷん頃」になる。落としても、この情報の主題
-  // （どこで階級いくつを観測したか）は後半がすべて伝える。
-  const occurrence = time ? `${time}頃発生した地震で、` : ''
-  const regionText = buildLpgmRegionText(lpgm, opts)
-  if (regionText) {
-    return `${prefix}${occurrence}長周期地震動${regionText}`
-  }
-  return `${prefix}${occurrence}長周期地震動階級${lpgm.maxClass}を観測しました。`
-}
-
-export { tsunamiMaxGrade }
-
-/**
- * 推計震度分布図（IXAC41）の読み上げ文。
- *
- * **一文だけ。名乗りは文の中に入れる。** 地震情報（「地震情報。◯時◯分ごろ、…」）や
- * 南海トラフ（「南海トラフ地震関連解説情報。…が発表されました。」）は「〈名乗り〉。〈本文〉。」の
- * 二文だが、あちらは名乗りのあとに続く中身が長い。こちらは伝えることが 1 つしかないので、
- * 名乗りを分けると同じ語を二度言うことになる。
- *
- * **「推計震度分布図」は気象庁の呼称そのもの**なので、これ自体が名乗りとして働く。
- * 「推計震度分布情報」という名前は使わない —— 気象庁がその名前を使っていない
- * （資料名は「推計震度分布図作図用データ」、図の名は「推計震度分布図」）。電文の名称に
- * 合わせる決まりに従う（→ docs/spec/eew-spec.md §3「電文の名称と表示・読み上げ」）。
- *
- * 地震そのものの事実（震源・規模・各地の震度）は既に地震情報で読み上げていて、この電文が
- * 足すのは「その震度の広がりが、気象庁の推計として出そろった」ことだけ。地震発生から
- * 数分後に届くので、長い文は続報の読み上げを塞ぐ。
- *
- * **どの地震の分布かは時刻で言う。** 震度5弱以上が短時間に続くと、別々の地震の分布が
- * 立て続けに届く。時刻が無いと、いま聞いている分布がどの地震のものか声だけでは分からない。
- * 読む値は地震発現時刻（`arrivalTime`）で、**地震情報が読む時刻と同じ**（引き当ての鍵でもある
- * → `matchEstimatedIntensity`）ので、耳の中で先ほどの地震情報と繋がる。
- *
- * 名詞句「〇時〇分頃発生した地震」は長周期地震動（{@link lpgmToText}）と同じ。助詞だけ
- * 「で」ではなく「について」にする —— あちらの述語は「観測しました」で地震が観測の場だが、
- * こちらは「受信しました」で地震は話題にすぎない（震源要素更新と同じ側）。
- *
- * **続報は「更新されました」と言う。** 同じ地震について続報が出る（実電文で 6 分後）。
- * 言い分けないと、聞き手には同じ報が二度読まれたようにしか聞こえない。長周期地震動が
- * 「長周期地震動情報。」／「長周期地震動情報が更新されました。」と分けているのと同じ扱い。
- * 判定は呼び出し側が渡す（→ `isNewEstimatedIntensity`）。
- *
- * **推計の最大震度は言わない。** 気象庁が「推計された震度の値は、場合によっては1階級程度
- * 異なることがあります」と断っており、観測して発表した最大震度と食い違いうる。声で並べると
- * どちらが発表値か区別できないまま、2 つの「最大震度」が耳に入ることになる。
- *
- * **場所も言わない。** 電文が持つのは震央地名の**番号**だけで、名前はアプリの側に無い。
- *
- * 声を「受信しました」だけにし、推計の最大震度・場所を言わず画面にも最大を数字で出さないことは
- * 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（全期間の 110 通で、推計の最大は
- * 発表の最大と一致 84・1 階級高い 9・低い 0／93 地震、続報で変わった例 0）。
- *
- * @param arrivalTime 地震発現時刻。**本体（最大 3MB）ではなくこの値だけを受け取る** ――
- *   文に要るのはこれ 1 つで、引数を見れば何に依存しているかが分かる
- * @param isNew 初めて受信した分布なら真。同じ地震の続報なら偽
- */
-export function estimatedIntensityToText(arrivalTime: string, isNew: boolean): string {
-  const tail = isNew ? 'を受信しました' : 'が更新されました'
-  // 時刻が日時として読めなければ句ごと落とす。**素で埋めると `null頃` と声に出る** ——
-  // `formatTime` の戻り値は `string | null` だが、テンプレートリテラルは型検査を通る。
-  //
-  // **この句が担うのは「どの地震の分布か」の区別**（分布は別の地震のものへ入れ替わりうるので、
-  // 時刻が無いと声だけでは前の分布と見分けが付かない。→ `docs/spec/quake-spec.md` §8）。
-  // 落とすとその区別を失うが、読めない値を声にするよりはよい。読めなかった事実は
-  // `readDateTime` が記録に残す。
-  const time = formatTime(arrivalTime)
-  return `${time ? `${time}頃発生した地震について、` : ''}気象庁の推計震度分布図${tail}。`
-}
-
-/**
- * 気象庁が書いた文（本文・付加文）を読み上げ用に整える。
- *
- * **改行と全角スペースは落とす。** 自由付加文には全角スペースで桁を揃えた表が入ることがあり、
- * そのまま渡すと合成エンジンが空白の数だけ間を作る。句読点は残す（文の切れ目そのものなので）。
- */
-/**
- * 落とす定型文の定義。**画面には従来どおり全文を出す**ので、ここで落とすのは声だけ。
- *
- * 落とす単位・文字列で判定する理由・コードの役割・既定値の向きは
- * {@link TELEGRAM_BOILERPLATE_KEYS} に書いた。
- */
-interface TelegramBoilerplateSpec {
-  readonly key: TelegramBoilerplateKey
-  /**
-   * 落とす句。**行の中に現れても落とす**（部分一致）。
-   *
-   * 1 行に収まる定型文はこちら。電文は本来 1 文ごとに改行する（解説資料が「複数の固定付加文を
-   * 記載する場合、Text においては改行し」と定めており、実電文の `Code="0256 0262"` も改行区切り）
-   * が、**行で照合する形にすると連結された形を落とせない**。落とした跡は前後の文が繋がる。
-   */
-  readonly phrases?: readonly string[]
-  /**
-   * 落とす行。原文を改行で割り、{@link boilerplateLineKey} を通した形と突き合わせる。
-   *
-   * **複数行にわたる表はこちら。** 句として部分一致で落とすには改行と全角スペースの並びまで
-   * 鍵に含めることになり、気象庁が桁揃えを変えただけで効かなくなる。行ごとに照合すれば空白の
-   * 畳み方に依存しない。
-   */
-  readonly lines?: readonly (string | RegExp)[]
-  /** その文を載せる固定付加文のコード。**落とし漏れの検出にだけ使う。** */
-  readonly codes?: readonly string[]
-}
-
-/**
- * どちらの形でも「**文面はすべて実配信の電文から採る**」。推測で書いた文面を置くと、一致しない
- * まま「落としているつもり」になる（その形で 1 度踏んでいる。→ {@link TELEGRAM_BOILERPLATE_KEYS}）。
- */
-
-/**
- * 落とし漏れの記録の間引き。**電文種別 × 項目**を札にし、同じ組は 1 度だけ出す。
- * 上限を超えても黙らせず、そこから先は時間で間引いて出し続ける（→ `logger.ts`）。
- */
-const boilerplateMismatchGate = createPerLabelLogGate(4, 60_000)
-
-const TELEGRAM_BOILERPLATE_SPECS: readonly TelegramBoilerplateSpec[] = [
-  {
-    // 観測点名の `＊` を画面に出している以上その説明も要る（→ quake-spec.md §8「気象庁以外が
-    // 運用する観測点」）が、読み上げでは事情が違う ——
-    //
-    // - **震度を伝える電文のほぼ全てに入る**ので、読むと毎報聞かされる
-    // - **`＊` が音にならない**（合成エンジンは記号を読まず「シルシワ」と読む）ので、
-    //   何と対比しているのかが声だけでは伝わらない
-    //
-    // **文面は種別で違う。** 地震情報のコード 0262 は「震度観測点」・長周期地震動観測情報の
-    // 0263 は「長周期地震動観測点」で、**どちらも要る** —— 以前は 0262 の側だけを落としていて、
-    // 長周期の報が観測点を載せたときだけこの説明が声になっていた。
-    key: 'starMark',
-    phrases: [
-      '＊印は気象庁以外の震度観測点についての情報です。',
-      '＊印は気象庁以外の長周期地震動観測点についての情報です。',
-    ],
-    codes: ['0262', '0263'],
-  },
-  {
-    // アプリは緊急地震速報そのものを画面と音で扱っているので、声にすると二度述べになる。
-    // **同じ文面・同じコードが地震情報にも入る**（実電文の VXSE53 で `0211 0241` の形）。
-    // 地震情報のこの文が乗るのは固定付加文（その他）（`VarComment`）で、そちらは読み上げの
-    // ブロック（`quakeVarComment`）が既定で読む側なので、**この項目を落とす設定のままなら
-    // 地震情報側でも現に落ちる**。文面で落とす形にしてあるので、種別をまたいで揃う。
-    key: 'eewIssued',
-    phrases: ['この地震について、緊急地震速報を発表しています。'],
-    codes: ['0241'],
-  },
-  {
-    // 長周期地震動階級の目安表と、詳細ページの案内。**事象に依らない**（実電文で異なるのは
-    // 案内の URL に入る地震ごとの識別子だけ）。表を声にすると 4 行が一続きに聞こえるため、
-    // 読む側に倒したときは LPGM_CLASS_TABLE_RE が階級と現象表現のあいだへ空白を挟む。
-    key: 'lpgmClassTable',
-    lines: [
-      '各長周期地震動階級に対する簡易な現象表現',
-      // 階級の行。実電文の数字は全角だが半角も受ける（現象表現の語との組でしか当たらないので
-      // 一致が増えても誤爆しない）。語彙は LPGM_CLASS_TABLE_RE と揃える。
-      /^階級[０-９0-9](やや大きな揺れ|非常に大きな揺れ|極めて大きな揺れ|大きな揺れ)$/,
-      // 案内の行。URL は地震ごとに変わるので括弧の中は見ない。
-      /^波形、スペクトル等、本地震の長周期地震動に関する詳細な情報は気象庁の長周期地震動に関する観測情報のウェブサイト\s*[（(][^）)]*[）)]\s*もあわせてご活用ください。$/,
-    ],
-  },
-  {
-    // 予想される津波の高さと被害の対応表。実電文で 307 字あり、読み上げの実測レート
-    // （5.8 字/秒）なら約 53 秒 —— 津波警報等が出るたび、区域と波高を伝えたあとに流れる。
-    // 波高の区分は気象庁の津波警報の段階そのもので、事象によって変わらない。
-    key: 'tsunamiHeightLegend',
-    lines: [
-      '［予想される津波の高さの解説］',
-      '予想される津波が高いほど、より甚大な被害が生じます。',
-      '１０ｍ超 巨大な津波が襲い壊滅的な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。',
-      '１０ｍ 巨大な津波が襲い甚大な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。',
-      '５ｍ 津波が襲い甚大な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。',
-      '３ｍ 標高の低いところでは津波が襲い被害が生じる。木造家屋で浸水被害が発生し、人は津波による流れに巻き込まれる。',
-      '１ｍ 海の中では人は速い流れに巻き込まれる。養殖いかだが流失し小型船舶が転覆する。',
-    ],
-  },
-]
-
-/**
- * 行の照合キー。前後を削り、内部の空白を 1 つへ畳む。
- *
- * **気象庁は桁を揃えるために全角スペースを並べる**（津波の高さの目安は波高と被害説明のあいだに
- * 3 つ）ので、空白の数へ依存させない。`\s` は全角スペース（U+3000）も含む。
- */
-function boilerplateLineKey(line: string): string {
-  return line.replace(/\s+/g, ' ').trim()
-}
-
-function matchesBoilerplateLine(spec: TelegramBoilerplateSpec, key: string): boolean {
-  return (spec.lines ?? []).some(line => (typeof line === 'string' ? line === key : line.test(key)))
-}
-
-/** その文面が原文に含まれているか（句・行のどちらの形でも見る）。落とし漏れの検出に使う。 */
-function containsBoilerplate(spec: TelegramBoilerplateSpec, text: string): boolean {
-  if ((spec.phrases ?? []).some(phrase => text.includes(phrase))) return true
-  return text.split('\n').some(line => matchesBoilerplateLine(spec, boilerplateLineKey(line)))
-}
-
-/**
- * 読み上げから定型文を落とす。**設定で「読む」にしている項目は落とさない。**
- *
- * **整える処理より前に通す。** 照合の相手は電文の原文（改行と全角スペースが残り、URL も
- * 付いたまま）で、整えたあとの形を鍵にすると空白の畳み方や URL の落とし方に依存してしまう。
- */
-function stripBoilerplate(text: string, reads: TelegramBoilerplateReads): string {
-  const dropped = TELEGRAM_BOILERPLATE_SPECS.filter(spec => !reads[spec.key])
-  if (dropped.length === 0) return text
-  // 行として落とすもの（複数行の表）を先に外し、残った行から句を消す。
-  const kept = text
-    .split('\n')
-    .filter(line => {
-      const key = boilerplateLineKey(line)
-      // 空行は文の区切りとして意味を持つので残す（落とすのは中身のある行だけ）。
-      if (!key) return true
-      return !dropped.some(spec => matchesBoilerplateLine(spec, key))
-    })
-    .join('\n')
-  let out = kept
-  for (const spec of dropped) {
-    for (const phrase of spec.phrases ?? []) out = out.split(phrase).join('')
-  }
-  return out
-}
-
-/**
- * 落とすはずの定型文が、文面が変わって一致しなくなったことに気づくための記録。
- *
- * **固定付加文のコードが付いているのに、その文が原文の中に見つからない**ときだけ鳴らす。
- * 落ちなくなっても症状は「読まれるようになる」だけなので、記録が無いと気づく手掛かりが
- * どこにもない（`＊` 印の説明で実際にそうなっていた）。
- *
- * **落とす設定の項目だけを見る。** 読む側にしてある項目は一致しなくても構わない。
- * 自由付加文はコードを持たないので、この検出は掛からない（掛けられない）。
- */
-export function warnUnmatchedBoilerplate(
-  codes: readonly string[] | undefined,
-  text: string | undefined,
-  reads: TelegramBoilerplateReads,
-  label: string,
-): void {
-  if (!codes?.length || !text) return
-  for (const spec of TELEGRAM_BOILERPLATE_SPECS) {
-    if (reads[spec.key] || !spec.codes) continue
-    const code = spec.codes.find(c => codes.includes(c))
-    if (!code) continue
-    if (containsBoilerplate(spec, text)) continue
-    boilerplateMismatchGate(`${label}:${spec.key}`, code, (overflowed) => {
-      log.warn(
-        `[tts] ${label} に固定付加文コード ${code} がありますが、読み上げから落とす文面（${spec.key}）と一致しません`
-          + `（文面が変わった可能性があります。この報ではその文も読み上げます）${overflowed ? '（以後は間引きます）' : ''}`,
-      )
-    })
-  }
-}
-
-/**
- * 長周期地震動の自由付加文が載せる「階級と現象表現の対応表」で、階級と現象表現のあいだに
- * 空白を挟む。原文は画面で表として読める形で、この 2 つのあいだに区切りを持たない。
- *
- * ```
- *  階級１やや大きな揺れ
- *  階級４極めて大きな揺れ
- * ```
- *
- * **声にすると一続きに聞こえる。** 合成エンジンはここをアクセント句の切れ目としか扱わず、
- * 間を置かない（実測）。
- *
- * **挟むのは空白であって読点ではない。** 合成エンジンが置く間はどちらも同じだが（実測:
- * 半角スペース・全角スペース・読点・句点のいずれも 0.389〜0.412 秒）、読点は
- * {@link splitIntoChunks} がチャンクを割る文字でもある。割れた末尾の間はチャンクを詰めて
- * 鳴らすための足し分（`CHUNK_BREAK_PAUSE` = 0.11 秒）に変わり、**文中の読点より短くなる**
- * （実機で確認）。空白なら割れないので、文中の間がそのまま入る。
- *
- * **鍵を「階級＋数字」だけにしないこと。** 同じ形は文中にも現れ（「長周期地震動階級４を
- * 観測した地域があります」）、そこへ読点を入れると助詞の前で文が切れる。対応表でしか
- * 使われない現象表現の語まで含めて照合する。
- *
- * 実電文の階級は全角数字（`階級４`）で、半角は観測できていない。それでも鍵に入れているのは、
- * 一致が増えても誤爆しない（現象表現の語との組でしか当たらない）ため。
- */
-const LPGM_CLASS_TABLE_RE = /(階級[０-９0-9])(やや大きな揺れ|非常に大きな揺れ|極めて大きな揺れ|大きな揺れ)/g
-
-/**
- * 気象庁が書いた文の日時表記を、読み上げの前に半角・ゼロ埋めなしへ揃える。
- *
- * 実電文は**全角でゼロ埋め**する（`１６日０１時２５分`）。合成エンジンは先頭の 0 を桁として
- * 読むため、そのままでは「ぜろ いちじ」になる（`００分` なら「ぜろ ぜろふん」）。
- * アプリが自分で組む読み上げ文はゼロ埋めしない（{@link formatDayTime}）ので、この崩れは
- * **気象庁の文を読む設定を入れたときだけ**起きる。
- *
- * **句区切り辞書では手当てできない。** あの辞書は文字列の一致で引くので、全角とゼロ埋めの
- * 組み合わせまで鍵に持つと日・時・分だけで数百件になる。ここで半角へ揃えておけば、辞書は
- * 半角の形（`17日`・`0時`）だけで足りる。
- *
- * **対象は「1〜2 桁の数字＋日／時／分」に限る。** マグニチュード・震度・波高の数値には触らない。
- * 単位が続く形（`2時間`・`10分の1`・`2日間`）も一致するが、半角へ直すだけで読みは変わらない。
- *
- * **直前が数字なら一致させない**（`(?<![0-9０-９])`）。これが無いと `{1,2}` が 3 桁以上の数字列の
- * **末尾 2 桁だけ**を拾い、桁を静かに落とす —— `１５０分後` が `１50分後`、`1000分の1` が
- * `100分の1` に化ける（半角でも起きる）。例外も NaN も出ないので、読み上げを聞くまで気づけない。
- */
-const DATETIME_DIGITS_RE = /(?<![0-9０-９])([0-9０-９]{1,2})([日時分])/g
-
-function normalizeDateTimeForSpeech(text: string): string {
-  const halfWidth = text.replace(DATETIME_DIGITS_RE, (_match, digits: string, unit: string) => {
-    const half = digits.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    return `${Number(half)}${unit}`
-  })
-  // **「1日」の読み直しもここに置く。** この関数を通る 3 経路（本文と付加文・津波観測情報の
-  // 見出し文・取消の理由）すべてで同じ手当てが要る。片方だけに掛けると、同じ「気象庁が書いた文」
-  // なのに読まれる場所によって「ついたち」と「いちにち」に分かれる。
-  return speakableDayInText(halfWidth)
-}
-
-/**
- * 気象庁が書いた文を読み上げへ差し込むときに、末尾へ句点を足す。
- *
- * **電文の文が句点で終わるとは限らない。** 控えにある 5 日分の電文では、見出し文 505 件のうち
- * 29 件が句点以外で終わっていた（緊急地震速報 27・地震・津波に関するお知らせ 1・長周期地震動
- * 観測情報 1。いずれも「…石川西方沖で地震　北陸で強い揺れ」のように体言で切る）。**そのどれも
- * 読み上げで見出し文を使わない種別**なので、いま声になる経路では観測できていない ―― 手当ては
- * 「壊れているから」ではなく「気象庁が句点を保証していないから」置く。
- *
- * 足さずに繋ぐと**後ろに続く文との間が丸ごと消える**。各地の満潮時刻の見出し文で実測すると、
- * 句点があれば「…お知らせします」の後ろに **0.355 秒**の間が入り、無ければ 0 になる
- * （句数 11・核の位置はどちらも同じ）。**読みも句割りも正常なので、誤読の突き合わせにも
- * 句割りの判定にも掛からない** —— 崩れるのは間だけ。読点でも同じ 0.355 秒が入るので、
- * 読点と句点のどちらで継ぐかは音に影響しない（→ docs/spec/tts-sentence-inventory.md §5）。
- *
- * 直後に文が来るのは津波観測情報（観測点の文）と各地の満潮時刻（「満潮時刻が更新されました。」）。
- * **断片列（{@link SpeechSegment}）に分けても逃げられない** —— 合成へ渡る前に
- * {@link joinSegments} が区切り文字なしで 1 本の文字列へ潰すので、チャンクを割る側が見るのは
- * 繋がった文字列だけ。**2 つとも同じように間が消える。**
- *
- * **気象庁が書いた文を読み上げへ差し込む箇所は、すべてこの述語を通すこと。** 5 箇所あり
- * （取消の理由・遠地地震の付加文・津波観測情報の見出し文・各地の満潮時刻の見出し文・
- * 後発地震注意情報の見出し文）、かつては「条件付きで足す」「何もしない」「無条件に足す」の
- * 3 通りに分かれていた（→ docs/spec/tts-sentence-inventory.md §4-8）。無条件に足す形は
- * 句点で終わる文を「。。」にする。
- *
- * **文末とみなす記号を独自に決めないこと。** {@link SENTENCE_END} から組む。この述語が
- * 「もう終わっている」と判断した文字は、**下流の 2 つも同じ判断をしていなければならない**
- * （集合の関係そのものは `ttsPunctuation.ts` が持つ）。
- *
- * | 下流 | 揃っていないと |
- * |---|---|
- * | `ttsPunctuation.ts` の `CHUNK_BREAK_PUNCTUATION`（チャンクを割る文字） | **チャンクが割れず、この関数が入れようとした 0.355 秒の間がそのまま消える** ―― 直そうとした症状に戻る |
- * | {@link SENTENCE_END}（既読の単位へ割る文字） | 2 つのブロックが 1 つの既読単位へ融合する。片方だけ変わった続報で鍵ごと未読へ戻り、**既に読んだ分まで読み直す** |
- *
- * **`．`（全角ピリオド）を入れてはいけない。** 下流のどちらも見ていないため、上の 2 つが
- * 同時に起きる。割る側へ足して揃える手も無い ―― `Ｍ７．１` が文の切れ目になる。
- * **この関数の前身（`cancelReasonSentence` の `／[。．]$／`）が `．` を受け入れており、
- * そこから引き写したのが誤りの発端だった。** 揃いは
- * `ttsText.telegramSentenceEnd.test.ts` の安全弁が公開 API 越しに固定している。
- */
-function endTelegramSentence(text: string | undefined): string {
-  const trimmed = text?.trim() ?? ''
-  if (!trimmed) return ''
-  return SENTENCE_END_RE.test(trimmed) ? trimmed : `${trimmed}。`
-}
-
-
-/**
- * 津波電文の見出し文を読み上げ向きへ整える。
- *
- * 全角数字・全角ｍ・全角ピリオドを半角へ直し（{@link tsunamiHeightToSpeech}）、日時のゼロ埋めと
- * 「1日」の読みを直し（{@link normalizeDateTimeForSpeech}）、末尾へ句点を足す
- * （{@link endTelegramSentence}）。半角にしただけでは `01日` が残り、合成エンジンが先頭の 0 を
- * 桁として読む（「ぜろ いちにち」）。句区切り辞書の `1日`（→ ついたち）も、直前が数字だと当たらない。
- *
- * **式を書き写さないこと。** かつて津波観測情報と各地の満潮時刻に同じ式が並んでおり、
- * **どちらにも句点の手当てが入っていなかった**。1 つにまとめてあれば、新しい箇所もここを
- * 呼ぶだけで揃う（書き写しの再発は `ttsText.telegramSentenceEnd.test.ts` が落とす）。
- *
- * **空白だけの見出し文は空を返す**（呼び出し側のフォールバックへ倒れる）。実電文の経路では
- * 起きないが、手で組んだテストデータでは起こせる。
- */
-function speakableHeadline(headline: string | undefined): string {
-  const trimmed = headline?.trim()
-  if (!trimmed) return ''
-  return endTelegramSentence(normalizeDateTimeForSpeech(tsunamiHeightToSpeech(trimmed)))
-}
-
-function normalizeTelegramTextForSpeech(text: string, reads: TelegramBoilerplateReads): string {
-  return normalizeDateTimeForSpeech(stripUrlsForSpeech(stripBoilerplate(text, reads)))
-    .replace(LPGM_CLASS_TABLE_RE, '$1 $2')
-    .replace(/[\r\n\u3000\t]+/g, ' ')
-    .replace(/ {2,}/g, ' ')
-    // 括弧ごと落とした跡に残る「〜 、」「〜 。」を詰める。句読点の顔ぶれは
-    // `ttsPunctuation.ts` の `CHUNK_BREAK_PUNCTUATION`（チャンクを割る文字）と揃えておく
-    .replace(/\s+([\u3001\u3002\uff01\uff1f\u300d\uff09)])/g, '$1')
-    .trim()
-}
-
-/**
- * 読み上げから URL を落とす。
- *
- * **音声で URL を伝えても書き取れない。** 長周期地震動観測情報の自由付加文は末尾に詳細ページの
- * URL を持っており（`https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=…`）、そのまま
- * 渡すと合成エンジンが 1 文字ずつ読み上げる（実機で確認）。**原文は画面にそのまま出している**
- * ので、読み上げから落としても情報は失われない。
- *
- * **括弧で囲まれていれば括弧ごと落とす** —— URL だけ抜くと「ウェブサイト（）をご活用ください」と
- * 空の括弧が残り、それも音になる。
- *
- * **URL の終わりとみなす文字には、空白・丸括弧に加えて全角の句読点と和文の閉じ括弧も入れる。**
- * どれも URL の一部になりえないので、入れても URL を切り詰めることはない。入れないと、空白を
- * 挟まずに句点が続く本文（`…https://example.com/foo。続報があります。`）で句点まで巻き込んで
- * 消し、**2 つの文が 1 つに繋がる**。実電文の URL は前後に空白がある半角括弧の形なので現状
- * この形は来ないが、正規表現の側でその前提に頼らない。
- */
-function stripUrlsForSpeech(text: string): string {
-  return text
-    .replace(/[\uff08(]\s*https?:\/\/[^\s\uff08\uff09()\u3001\u3002\uff01\uff1f\u300d\u300f\u3015]+\s*[\uff09)]/g, '')
-    .replace(/https?:\/\/[^\s\uff08\uff09()\u3001\u3002\uff01\uff1f\u300d\u300f\u3015]+/g, '')
-}
-
-/**
- * 空でないものだけを句点区切りで繋ぐ。既に句点で終わっているものは重ねない。
- *
- * 句点を足す述語は上の 5 箇所と共有する（→ {@link endTelegramSentence}）。
- */
-function joinTelegramTexts(
-  parts: readonly (string | undefined)[],
-  reads: TelegramBoilerplateReads,
-): string {
-  const kept = parts
-    .map(t => (t ? normalizeTelegramTextForSpeech(t, reads) : ''))
-    .filter(t => t.length > 0)
-  if (kept.length === 0) return ''
-  return kept.map(t => endTelegramSentence(t)).join('')
 }
 
 /**
@@ -4537,12 +406,15 @@ export interface TelegramTextUnit {
   /**
    * 既読の照合に使う形（主題 ＋ 前後の空白を落とした 1 文）。
    *
-   * **主題は {@link telegramTextSpokenSubject} が組み、この値へ織り込んである。**
+   * **主題は `telegramTextSpokenSubject` が組み、この値へ織り込んである。**
    * 使う側が自分で繋ぐ形にすると、読み上げる側（`speakTelegramText`）と録画モードの復元
    * （`rememberTelegramTextAsSpoken`）で書き写しになり、片方を直し忘れれば既読が噛み合わない。
    */
   readonly key: string
-  /** 読み上げに使う形（後ろに続く空白まで含む。すべて繋ぐと元の本文に戻る）。 */
+  /**
+   * 読み上げに使う形（後ろに続く空白まで含む。すべて繋ぐと元の本文に戻る）。気象庁の文を読まない言語の組では空
+   * （→ `TelegramTextSpeech`）
+   */
   readonly text: string
 }
 
@@ -4576,11 +448,14 @@ export function splitTelegramTextUnits(body: string): TelegramTextUnit[] {
 }
 
 /**
- * {@link telegramTextToSpeak} が返す読み上げ。
+ * `telegramTextToSpeak` が返す読み上げ。
  *
  * **`topic` を本体の読み上げと同じにしないこと。** 同じ主題だと、到来順の裁き
  * （`overtakenByLaterArrival`）が本体の予約を取り下げてしまう ―― 本文を読むために
  * 肝心の震度を落とすことになる。
+ *
+ * **気象庁の文を読まない言語の組（語表の `telegramTextElsewhere` が null でない）では、`text` と `prefix` が在処の文、
+ * `body` と各 `units` の `text` が空になる**（原文は読まない。鍵は原文の文のまま。→ `createSpeechText` の `telegramSpeech`）
  */
 export interface TelegramTextSpeech {
   /** 読み上げ文（前置き＋本文）。 */
@@ -4598,7 +473,7 @@ export interface TelegramTextSpeech {
    */
   readonly units: readonly TelegramTextUnit[]
   /**
-   * 既読の鍵へ織り込んだ主題（→ {@link telegramTextSpokenSubject}）。
+   * 既読の鍵へ織り込んだ主題（→ `telegramTextSpokenSubject`）。
    *
    * **持たせるのは記録のため。** 鍵は {@link units} が完成形を持っているので、読み書きする側が
    * これを使って組み直すことはない（組み直す形にすると書き写しになる）。全文が既読で黙ったとき、
@@ -4608,260 +483,4950 @@ export interface TelegramTextSpeech {
   readonly subject: string
 }
 
+// 関数の組の外から書き出す名前（定義は他のファイル）。
+// 区分を決める固定付加文の文の表は、地震カードと共有するため `domesticTsunamiComment.ts` に置く。
+export { DOMESTIC_TSUNAMI_CODE_TEXT }
+/** 全区域が解除されたことを告げる文（定義は `utils/tsunami.ts`。通知の文面も同じものを読む）。 */
+export { TSUNAMI_ALL_LIFTED_SENTENCE }
+export { tsunamiMaxGrade }
+
+/** 地域名を作れなかった記録を出す間隔。続いている障害を「一度きり」に見せないための間引き。 */
+const NO_REGION_LOG_THROTTLE_MS = 5 * 60_000
+const warnNoRegionNames = createLogThrottle(NO_REGION_LOG_THROTTLE_MS)
+/** 国際津波関連情報の評価を語表で引けなかった記録の間引き（5 分に 1 回） */
+const warnUnknownInternationalTsunamiEvaluation = createLogThrottle(NO_REGION_LOG_THROTTLE_MS)
+
+/** 規模の説明のうち、未知の値を記録した値。同じ地震の続報で何度も来るので 1 度だけ出す（言語ごとの組で共有する）。 */
+const reportedUnknownMagnitudeConditions = new Set<string>()
+
+/** 取消で名指す情報の名前を語表で引けなかった「言語:種別」（1 度だけ出す） */
+const reportedUnknownReportNames = new Set<string>()
+
 /**
- * 既読の鍵へ織り込む主題（「どの事象について書かれた文か」）を組む。
+ * 訳せない値の記録の間引き（{@link boilerplateMismatchGate} と同じ仕組み）。**札は「言語:種類」、値ごとに 1 度だけ出す**
+ * （同じ地名・表記は続報のたびに来るので、値で数える）。種類ごとに上限を超えても黙らせず、時間で間引いて出し続ける（→ `logger.ts`）。
+ * 日本語の組は表を引かず、電文の語をそのまま読むので出さない
  *
- * **`ttsFollow.ts` の `telegramTextSubject` とは別物。** 名前も引数の形も似ているが、
- * あちらは読み上げているあいだ画面のどこを開くかを指す。取り違えても型検査は通るので、混ぜないこと。
- *
- * **数えた範囲と件数は、この注記が挙げる事実も含めて
- * docs/spec/audio-tts-spec.md §6「気象庁が書いた文は最下位の層で読む」が単一情報源。**
- *
- * **文字列だけを鍵にすると、別の地震・別の津波でも同じ文なら二度と読まない。**
- * 気象庁の付加文は同じ文面が続くことが多く、実電文では自由付加文「この地震の付近で地震が
- * 連続して発生したため…」が別々の地震に同じ文面で入っていた。その但し書きは電文ごとの注記
- * なので、地震が変われば改めて意味を持つ。
- *
- * **同じ事象の続報では同じ値になること。** 電文の識別子（`id`）を混ぜると報ごとに別の鍵になり、
- * 「＊印は…」のような定型文を報のたびに読む（それを避けるために既読を入れた経緯がある）。
- *
- * **地震情報の `eventId` は、同じ地震でも震源決定の前と後で採り直されることがある**
- * （実例は `utils/quakeMerge.ts` の `isHypocenterPending`。`JMAQuake.eventId` の型定義も
- * 「同一性判定には使わない」と断っている）。**それでもここで使えるのは、採り直しの境目にいる
- * 震源決定前の電文（震度速報）が付加文を 1 つも運ばないから** —— 運ばなければ本文が空になり、
- * この既読へは何も記録されない。**この前提が崩れたら**（震度速報が付加文を運ぶようになったら）、
- * 同じ地震の注記が境目で二度読まれる。
- *
- * **種別も含める。** 同じ `eventId` を持つ地震情報と長周期地震動観測情報が同じ文を載せたとき、
- * 種別ごとに前置き（「地震情報について、〜」「長周期地震動観測情報について、〜」）が違うため、
- * 片方だけ読んだ状態で他方を黙らせると前置きだけ聞いた文が残る。
- *
- * **事象の識別子を持たない電文では種別だけになる**（＝従来どおり文字列だけで既読）。
- * 電文は全種別が `EventID` を持つ。地震情報で `EventID` が空のときは、
- * 呼び出し側が地震の時刻を代わりに渡す。
- * **それでも欠けたときは黙って旧来の挙動へ戻る**ので、`speakTelegramText` の
- * 記録に主題を出して気づけるようにしてある。
+ * - `unknownPlaceNameGate`: 地名の表に無く、日本語の名前のまま読んだ地名
+ * - `untranslatedTsunamiValueGate`: 津波の文で語表が訳せない値（知らない波高の表記・押し引き・型の外の等級）
  */
-function telegramTextSpokenSubject(kind: LiveEvent['kind'], eventId: string | undefined): string {
-  return `${kind}:${eventId ?? ''}`
+let unknownPlaceNameGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+let untranslatedTsunamiValueGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+
+/**
+ * 訳せない値の記録の控え（{@link unknownPlaceNameGate}・{@link untranslatedTsunamiValueGate}）を空に戻す。**テストのためのもの**
+ * （控えはモジュールに 1 つで、テストの実行順で「最初の 1 回」が変わらないように、記録を見るテストの前に呼ぶ）
+ */
+export function resetUntranslatedValueLogGates(): void {
+  unknownPlaceNameGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+  untranslatedTsunamiValueGate = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
 }
 
 /**
- * 前置きと本文から {@link TelegramTextSpeech} を組む。本文が空なら読み上げない。
- *
- * `subject` は既読の鍵へ織り込む（→ {@link telegramTextSpokenSubject}）。読み上げる文そのものは
- * 変わらない。
+ * 定型文の落とし漏れの記録の間引き。**電文種別 × 項目**を札にし、同じ組は 1 度だけ出す。
+ * 上限を超えても黙らせず、そこから先は時間で間引いて出し続ける（→ `logger.ts`）。
  */
-function telegramSpeech(prefix: string, body: string, subject: string): TelegramTextSpeech | null {
-  if (!body) return null
-  // 区切りに改行を使えるのは、本文が `normalizeTelegramTextForSpeech` を通って
-  // 改行を空白へ置き換えた後だから（1 文の中に改行は残らない）。**この関数へ正規化前の文字列を
-  // 渡さないこと** —— 渡すと主題と本文の境目が曖昧になり、既読の鍵が衝突するか分裂する
-  // （どちらも例外もログも出ない）。
-  const units = splitTelegramTextUnits(body).map(u => ({ ...u, key: `${subject}\n${u.key}` }))
-  return { text: `${prefix}${body}`, body, prefix, units, subject }
-}
+const boilerplateMismatchGate = createPerLabelLogGate(4, 60_000)
 
 /**
- * 地震情報の固定付加文のうち、「気象庁の発表文」の内訳「固定付加文」で読む分（`quakeForecast`）。
+ * 読み上げの文を組む関数の組を、言語ごとに作る（2026-11-17 ユーザー選択「言語ごとに関数の組を作る (Recommended)」）。
  *
- * **津波の一文は除く。** 本体の読み上げが津波の一文を読んでいる（区分を決めたコードの文か、コードが無ければ
- * 区分の文。→ `domesticTsunamiSegmentOf`）ので、ここで残すと同じ事実を 2 度言う。残るのは 0226「震源の近傍で
- * 津波発生の可能性があります。」や 0241・0245 の緊急地震速報の文で、定型文の設定（`stripBoilerplate`）は
- * このあと `joinTelegramTexts` が通す。
+ * **何を読むかの判断（差分・既読・件数・順序）はこの中の 1 か所だけにあり、言語で分けない。** 言語で変わるのは
+ * 文面（語表 `w`）と地名（`place`）だけ。既読と追従の鍵（`SpeechRef`）は言語によらず日本語の名前で持つ。
  *
- * **区分を決めるコードの文は、コードの有無によらず全部除く。** 原文が本体の読む津波の一文と別の報のものに
- * なる形が 3 つある —— 区分を津波電文から借りた（コードを捨てる）・震源要素更新が区分だけを運んだ
- * （原文は前の報のまま）・コードを持たない経路。どれも原文に残った津波の文を読むと、本体と食い違う事実を
- * 続けて言う（「津波警報等を発表中です」のあとに「津波の心配はありません」）。
+ * **画面の言語で読み上げる経路は、ここで作った組を通すこと。** このファイルが今の名前で書き出す関数
+ * （`earthquakeToText` など。末尾の {@link JA_SPEECH_TEXT}）は日本語の組のもので、テストと日本語に固定する経路のためにある。
+ * 本体のファイルがそれを直に呼ぶと、画面の言語によらず日本語で読む（`ttsTextLocaleImports.test.ts` が落とす）。
  *
- * コードを持つのに、区分を決めるコードの文が原文に 1 つも無いとき（気象庁が文面を変えた疑い）は、残りをそのまま読み、
- * 記録をコードごとに間引いて残す。**原文に別のコードの文があるだけなら記録しない** —— 震源要素更新が区分だけを運んだ
- * 形（原文は前の報のまま）がこれで、文面の変更ではない。
+ * 言語に依らない関数と定数（既読の記録・件数の上限・電文の文の割り方）も、中から呼ぶので組に入れてある。
  *
- * **呼ぶのは内訳「固定付加文」を読む設定のときだけ**（記録も読む枠についてだけ出す。隣の `warnUnmatchedBoilerplate` と同じ規約）。
- *
- * **遠地地震は読まない**（本体の読み上げが固定付加文を全文読む）。
+ * **組は自分の言語（`locale`）を持つ。** 読む側は、この組で組んだ文にこの `locale` を添えて声を選ぶ。言語を組の外
+ * （いまの読み上げの言語）から取り直すと、組が日本語へ落ちた回や、組んでから読むまでに言語が変わった回に、文と声の言語が食い違う。
  */
-function quakeForecastRemainder(event: JMAQuake): string | undefined {
-  const text = event.forecastText
-  if (!text || event.issue.type === '遠地地震') return undefined
-  warnIfDomesticTsunamiSentenceMissing(event.earthquake.domesticTsunamiCode, text)
-  return withoutDomesticTsunamiSentences(text) || undefined
-}
-
-/**
- * 電文が運ぶ「気象庁が書いた文」を読み上げ文にする。設定で有効にしたときだけ中身を返す。
- *
- * **電文本体の読み上げへ足さず、別の発話として最下位の層で読むこと。**
- * 南海トラフ臨時情報の本文は実電文で 1055 字あり、読み上げは約 3 分に達する
- * （2024-08-08 の「巨大地震注意」。VOICEVOX の実測で 5.8 字/秒）。臨時情報は津波の等級発表と
- * 同じ最上位の層にいるので、本体へ足すと**地震情報が最大 90 秒待たされる**
- * （`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`。あの上限は「合成エンジンが無応答のときだけ効く保険」
- * として置かれた値で、正常系で発火する前提になっていない）。最下位の層は「何も切らない」ことを
- * 保証しているので、そこへ置けば本来の情報を塞がない。
- *
- * **含めないもの**:
- * - 参考情報（`appendix`）—— **既定では含めない。** 情報の種類を説明する固定文で、画面でも折りたたみに
- *   入れている。定型文の設定（`earthquakeInfoAppendix`）で読む側に倒せる（2026-10-23 ユーザー選択
- *   「設定で読めるようにする (Recommended)」）。並びは本文・次回発表予定の後
- * - 見出し文（`headline`）—— 型定義が「本文や既読の要素に無い事実は含まない」と断っており、
- *   読むと本体の読み上げと二度述べになる
- * - 取消電文の理由 —— 既に本体の読み上げが読んでいる（`cancelReasonSentence`）
- *
- * **どのブロックを読むかは設定で選べる**（`opts.telegramTextBlocks`。一覧は
- * {@link TELEGRAM_TEXT_BLOCK_KEYS}）。全部切れば本文が空になり、この関数は `null` を返す ——
- * 前置きだけが鳴る形にはならない。
- *
- * **前置きで名乗る語は「気象庁の発表文」。設定の窓のトグルのラベルと同じ語にする** ——
- * 音声だけを聞いている利用者が、いま流れているものがどの設定で切れるのかを辿れるようにするため。
- * 片方だけ変えないこと。
- *
- * **「付加文」とは言わない。** 読む中身は種別で違い、南海トラフ地震臨時情報・同関連解説情報・
- * 北海道・三陸沖後発地震注意情報の 3 種別は見出し文（要約）・本文・次回発表予定だけで、付加文を
- * 1 件も読まない（津波も `Body/Text` の本文を含む）。しかも南海トラフの 2 種別は本文が 1000 字を
- * 超えていちばん長く鳴る（臨時情報 1055 字・関連解説情報 1600 字超。後発地震注意情報の字数は
- * 確かめていない）。「本文」も同じ理由で使えない（地震情報・長周期・地震回数は付加文しか読まない）。
- *
- * **コード内の「発表文」とは別物** —— あちらは津波の等級を全区域ぶん読む文（`tsunamiToSegments`）を
- * 指す内部用語で、この前置きの語は利用者向け。`grep` で両方が引っかかる。
- */
-export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): TelegramTextSpeech | null {
-  // **緊急地震速報の固定付加文は読まない。** 秒を争うため、定型文を挟むと肝心の震度・地域が
-  // 遅れる（画面には出している。→ eew-spec.md §3「固定付加文」）。気象庁の文を読む設定でも読まないのは、
-  // 同じ内容を対象地方と一緒に既に言っているため（2026-10-21 ユーザー承認「読まないまま記録する (Recommended)」）。
-  // 読ませる形にするなら、この設定とは別に「震度・地域を伝えたあとへ確実に回す」仕組みが要る。
-  if (event.kind === 'eew') return null
-  if (!opts.readTelegramText) return null
-
-  // **指定が無いブロックは読む側へ倒す。** 設定を足しただけで、これまで声になっていた文が
-  // 黙って消えないようにするため（テストも 1 件ずつ指定しなくて済む）。
-  const on = (key: TelegramTextBlockKey): boolean => opts.telegramTextBlocks?.[key] ?? true
-  // **定型文の落とし方は既定が「落とす」側。** 向きが上の `on` と逆なのは、`＊` 印の説明が
-  // この設定より前から無条件で落ちていたため（→ `TELEGRAM_BOILERPLATE_DEFAULT_READS`）。
-  const reads = opts.telegramBoilerplate ?? TELEGRAM_BOILERPLATE_DEFAULT_READS
-  /** 読むと決めたブロックだけを残す。 */
-  const pick = (key: TelegramTextBlockKey, text: string | undefined) => (on(key) ? text : undefined)
-
-  switch (event.kind) {
-    case 'quake': {
-      // 取消の報は理由を本体の読み上げが読む。付加文は添えない。
-      // 見るのは `cancelled`（理由は上の EEW 分岐のコメント）。
-      if (event.cancelled) return null
-      // **落とし漏れの検出は、その枠を読む設定のときだけ。** 枠ごと切っているなら定型文も
-      // 声にならないので、一致しなくても困らない。
-      if (on('quakeVarComment')) {
-        warnUnmatchedBoilerplate(event.varCommentCodes, event.varCommentText, reads, '地震情報の固定付加文（その他）')
-      }
-      const body = joinTelegramTexts([
-        on('quakeForecast') ? quakeForecastRemainder(event) : undefined,
-        pick('quakeVarComment', event.varCommentText),
-        pick('quakeFreeText', event.freeText),
-      ], reads)
-      // **`eventId` を持たない地震情報**は、地震の時刻で主題を作る（同じ地震の続報は
-      // 同じ時刻を運ぶ）。`eventId` だけだと全件が `quake:` に潰れ、別の地震の同じ文を二度と読まない。
-      const quakeSubjectId = event.eventId ?? (event.earthquake?.time ? `time:${event.earthquake.time}` : undefined)
-      return telegramSpeech(`地震情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, quakeSubjectId))
+export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale: Locale) {
+  /**
+   * 地震情報の地域名（区域・都道府県・市町村・観測点のどれか）を、声にする名前へ引く。表に無ければ日本語の名前のまま。
+   * **鍵（`SpeechRef`）には日本語の名前を入れること**（既読と追従は言語によらない）。
+   */
+  function regionNameToSay(name: string): string {
+    for (const kind of ['area', 'pref', 'city', 'station'] as const) {
+      if (place.has(kind, name)) return place(kind, name)
     }
-    case 'tsunami': {
-      // 解除・失効・取消とも `cancelled` が立つ（理由は上の EEW 分岐のコメント）。
-      // **全区域の解除（`lifted`）だけは読む**（2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。
-      // 解除の報は付加文 0107「現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。」
-      // などを載せる。取消（理由は `tsunamiCancelToText` が読む）と失効（電文が無い）は読まない。
-      if (event.cancelled && event.cancelReason !== 'lifted') return null
-      const body = joinTelegramTexts([
-        pick('tsunamiBody', event.bodyText),
-        // 固定付加文は主題ごとに複数ある（避難行動／満潮／沿岸の観測／沖合の観測）。
-        // **1 つの設定でまとめて切る。** 主題を束ねる鍵（`TsunamiWarningComment.key`）は
-        // 電文種別と情報名から実行時に導く値で、固定の一覧を持たない（→ tsunami-spec.md §5
-        // 「固定付加文は主題ごとに束ねる」。あちらも「表示はしない」と断っている）。
-        // 設定の項目にすると、気象庁が情報名の文字列を変えた版で対応が外れる。
+    warnUnknownPlaceName('region', name)
+    return name
+  }
+
+  /** 震央地名を声にする名前へ引く。表に無ければ日本語の名前のまま（日本語以外の組では記録を残す） */
+  function epicenterToSay(name: string): string {
+    if (!place.has('epi', name)) warnUnknownPlaceName('epi', name)
+    return place('epi', name)
+  }
+
+  /**
+   * 地名の表で引けず日本語の名前のまま読むことを、名前ごとに 1 度だけ残す（札は言語と種類。→ {@link unknownPlaceNameGate}）。
+   * 日本語の組は表を引かないので出さない。黙ると、表の欠けで日本語の地名が別の言語の声で読まれていることに気づけない
+   */
+  function warnUnknownPlaceName(kind: string, name: string): void {
+    if (locale === 'ja') return
+    // 表がまだ届いていない過渡状態（日本語の引き方で組を作った回）と空の名前は、表の欠けではないので記録しない。
+    // ここで枠を使うと、表が届いた後の本当の欠けの記録が間引かれる。中身が空の表は読み込みの検査
+    // （`validatePlaceNameTable`）が止め、引き方は日本語の引き方のままになる
+    if (place === JA_PLACE_NAMES || name.trim() === '') return
+    unknownPlaceNameGate(`${locale}:${kind}`, name, (overflowed) => {
+      log.warn(`[tts] 地名の表に無い名前を日本語のまま読みます（言語 ${locale}・種類 ${kind}・名前 ${name}）${overflowed ? '（以後は間引きます）' : ''}`)
+    })
+  }
+
+  /**
+   * 津波の等級の呼び名。日本語はカードの「等級が移り変わった」行と同じ語（`TSUNAMI_GRADE_NAME`）、ほかの言語は画面の
+   * `tsunami.grade` の訳。**自前のキーだけを引く**（型の外の値で継いだ関数に当たらないように）。型の外の等級は名前を言わず
+   * （不明と同じ）、日本語以外の組では記録を残す
+   */
+  function tsunamiGradeLabel(grade: TsunamiGrade): string {
+    const table: Readonly<Record<string, string>> = w.tsunami.gradeName
+    if (Object.prototype.hasOwnProperty.call(table, grade)) return table[grade]
+    warnUntranslatedTsunamiValue('grade', String(grade), '名前を言いません')
+    return ''
+  }
+
+  /**
+   * 津波の文の区域名・観測点名を声にする名前へ引く。表に無ければ日本語の名前のまま（日本語以外の組では記録を残す）。
+   * **鍵（`SpeechRef`）には日本語の名前を入れること**（既読と追従は言語によらない）
+   */
+  function tsunamiPlaceToSay(kind: 'tsunamiArea' | 'tsunamiStation', name: string): string {
+    if (!place.has(kind, name)) warnUnknownPlaceName(kind, name)
+    return place(kind, name)
+  }
+
+  /**
+   * 津波の文で語表が訳せない値を、どう読んだかと一緒に値ごとに 1 度だけ残す（札は言語と種類。→ {@link untranslatedTsunamiValueGate}）。
+   * 日本語の組は電文の語をそのまま読むので出さない。黙ると、日本語の語が別の言語の声で読まれていることに気づけない
+   */
+  function warnUntranslatedTsunamiValue(kind: string, value: string, howRead: string): void {
+    if (locale === 'ja') return
+    untranslatedTsunamiValueGate(`${locale}:${kind}`, value, (overflowed) => {
+      log.warn(`[tts] 津波の文で語表が訳せない値がありました。${howRead}（言語 ${locale}・種類 ${kind}・値 ${value}）${overflowed ? '（以後は間引きます）' : ''}`)
+    })
+  }
+
+  /** 情報の名乗り（「地震情報。」／続報は「地震情報が更新されました。」） */
+  function reportLead(label: string, isNew: boolean): string {
+    return isNew ? w.common.issued(label) : w.common.updated(label)
+  }
+
+  /** 空の {@link QuakeSpokenState} を作る。 */
+  function createQuakeSpokenState(): QuakeSpokenState {
+    return { regions: new Map(), facts: new Map() }
+  }
+
+  /**
+   * 声になった参照を記録へ反映する。
+   *
+   * 区域は**震度が上がったときだけ**書き換える（同じ区域を下位の震度で挙げ直す電文があっても、
+   * 既に伝えた震度を下げない）。事実は最後に伝えた値で上書きする。
+   *
+   * `useLiveEventHandler` が読み上げの完了時に呼ぶ。**記録を進める規則はここ 1 か所に置くこと**
+   * ―― テストが同じ規則を書き写すと、実装だけ変えたときにテストが古い規則のまま緑で残る。
+   */
+  function applySpokenRefs(state: QuakeSpokenState, refs: readonly SpeechRef[]): void {
+    for (const ref of refs) {
+      if (ref.kind === 'quakeRegion') {
+        const said = state.regions.get(ref.name)
+        // 同じ階級でも、推定（未入電）→観測は前進なので書き換える。逆向きには戻さない。
+        const forward = said === undefined
+          || said.scale < ref.scale
+          || (said.scale === ref.scale && said.unreceived && !ref.unreceived)
+        if (forward) state.regions.set(ref.name, { scale: ref.scale as IntensityScale, unreceived: !!ref.unreceived })
+      } else if (ref.kind === 'quakeFact') {
+        state.facts.set(ref.fact, ref.value)
+      } else if (ref.kind === 'quakeObserved') {
+        // **置き換える（積まない）。** 次の報と比べる基準は「最後に伝えた報」なので、
+        // 古い報の観測点を残しても使い道がない。
+        state.observed = ref.observed
+      } else if (ref.kind === 'quakeRegionSnapshot') {
+        // 置き換える（積まない）。理由は `observed` と同じ。
+        state.regionSnapshot = ref.regions
+      }
+    }
+  }
+
+  /**
+   * 続報で区域を読むかどうかと、読むならどちらの群に入れるか。
+   *
+   * | 値 | 意味 | 読み方 |
+   * |---|---|---|
+   * | `fresh` | まだ一度も挙げていない区域 | 「新たに震度○を〜」 |
+   * | `upgraded` | 既に挙げたが、伝えた震度より高くなった | 「震度○を〜」（先に読む） |
+   * | `null` | 据え置き（または下がった） | 読まない |
+   *
+   * **2 つを混ぜて「新たに」で括ってはいけない。** 震度が上がった区域は初めて揺れた場所ではないし、
+   * 「上がった」ことの方が重い報せなので先に伝える（docs/spec/audio-tts-spec.md §4）。
+   */
+  type RegionDiffKind = 'fresh' | 'upgraded'
+
+  function regionDiffKind(spoken: QuakeSpokenState, name: string, scale: IntensityScale): RegionDiffKind | null {
+    const said = spoken.regions.get(name)
+    if (said === undefined) return 'fresh'
+    if (said.scale < scale) return 'upgraded'
+    // 推定として読んだ区域に観測値が届いたら読み直す。**「新たに」は付けない** ―― 初めて挙げる
+    // 区域ではないため。「もっと強いかもしれない」が消えたことを伝える更新なので上がり側に入れる。
+    if (said.scale === scale && said.unreceived) return 'upgraded'
+    return null
+  }
+
+  /**
+   * 上限で読む区域を選び、読み上げ順へ整える。**選抜と並びは別物。**
+   *
+   * 選抜（どれを読むか）は震源に近い順。地理順のまま先頭から切ると、震源から遠い北側の地域が
+   * 枠を占め、震源直近が「ほかN地域」に潰されうる。震源を持たない電文（震度速報）は距離で
+   * 選べないので地理順で切り、「北から上限まで」という説明できる選抜にする。
+   * 並び（どの順に読むか）は選抜が済んでから地理順へ組み直す。
+   *
+   * `maxRegions` は **0 が「無制限」**（設定の既定は 10）。ここを 1 と取り違えると、無制限に
+   * した端末で 1 件しか読まれない。上限をわずかに超えるだけなら、省いた地域名より「ほかN地域」の
+   * 方が長くなるので、許容超過（`regionTolerance`）の範囲内は省略せず全地域を読む。
+   */
+  function selectRegionNames(
+    names: string[],
+    opts: TtsSpeechOptions,
+    hypocenter: { latitude: number; longitude: number } | undefined,
+    regionOrder: RegionOrderIndex | null,
+  ): { names: string[]; omittedNames: string[] } {
+    // 震源位置が使えるか。0 は座標未設定、-200 は「位置不明」センチネル（震度速報のように震源を
+    // 持たない電文で入る。dmdataParser.ts 参照）。どちらも距離の基準にはできない。
+    // -200 を弾かないと、地球上に存在しない点からの距離で地域を選ぶことになる。
+    const hasEpicenter = hypocenter != null
+      && hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)
+      && (hypocenter.latitude !== 0 || hypocenter.longitude !== 0)
+    let picked = hasEpicenter
+      ? [...names].sort((a, b) => {
+          const ca = coordForName(a)
+          const cb = coordForName(b)
+          if (!ca && !cb) return 0
+          if (!ca) return 1
+          if (!cb) return -1
+          return distSq(hypocenter!.latitude, hypocenter!.longitude, ca[0], ca[1])
+               - distSq(hypocenter!.latitude, hypocenter!.longitude, cb[0], cb[1])
+        })
+      : sortByRegionOrder(names, regionOrder)
+    // **件数だけでなく省略した名前も返す。** 呼び出し側が「ほか○地域」の断片へ参照を付け、
+    // 声になったら既読へ移すため。件数しか返していなかった頃は、省略された区域が次報で
+    // 「新たに」付きで読み直され、**地域が増えたように聞こえていた**（前報で件数としては
+    // 伝えているのに）。
+    let omittedNames: string[] = []
+    if (opts.maxRegions > 0 && picked.length > opts.maxRegions + opts.regionTolerance) {
+      omittedNames = picked.slice(opts.maxRegions)
+      picked = picked.slice(0, opts.maxRegions)
+    }
+    // 安定ソートなので、震源が無い経路（既に地理順）ではここは何も動かさない。
+    return { names: sortByRegionOrder(picked, regionOrder), omittedNames }
+  }
+
+  /**
+   * その区域について「5弱以上と推定されます」をまだ声にしていないか。
+   *
+   * 観測値として同じ階級を既に読んでいるなら**読み直さない**。確定した観測が推定へ戻ることは
+   * 無く、読めば「確かだったものが不確かになった」と聞こえる。
+   */
+  function isUnreceivedUnspoken(spoken: QuakeSpokenState, name: string): boolean {
+    const said = spoken.regions.get(name)
+    if (said === undefined) return true
+    return said.scale < 45
+  }
+
+  /**
+   * 「5弱以上・未入電」を伝える一文。
+   *
+   * **通常の文に混ぜない。** 地域名を含む文の述語は「観測しました」で、電文が「観測値が
+   * 届いていない」と明言しているものをそこへ入れると嘘になる。階級も下限へ寄せてあるので、
+   * 語だけ「以上」に変えても述語との食い違いは残る。**別の文へ出して述語ごと分ける。**
+   *
+   * **地点名で読む。** 未入電は観測点 1 つ 1 つに付く事実で、気象庁も市町村・地点名で発表する。
+   * 区域名へ丸めると、同じ区域に観測値がある電文で「最大震度7を石川県能登で観測しました。
+   * 石川県能登では…未入電です。」と矛盾して聞こえる（区域の最大は観測できているのに、
+   * 区域全体が未入電であるかのように語ることになる）。地点の話にすれば衝突しない。
+   *
+   * 地点を持たない電文（震度速報は区域しか持たない）だけ、従来どおり区域名で読む。
+   *
+   * 既読は通常の区域と同じ仕組み（`quakeRegion`）に乗せるが、**鍵には未入電の別も含める**。
+   * 同じ名前が後の報で観測値として確定したら、階級が同じでも読み直す（→ `regionDiffKind`）。
+   */
+  function unreceivedRegionSegments(
+    points: EarthquakePoint[],
+    opts: TtsSpeechOptions,
+    hypocenter?: { latitude: number; longitude: number },
+    spoken?: QuakeSpokenState,
+  ): SpeechSegment[] {
+    const stationData = getStationCoordsCache()
+    const idx: RegionNameIndexes = {
+      prefAreaNames: stationData ? prefAreaNamesIndexOf(stationData) : null,
+      areaPrefIndex: getAreaPrefIndexCache(),
+      stationPrefIndex: stationData ? stationPrefIndexOf(stationData) : null,
+      stationData,
+    }
+    const regionOrder = stationData ? regionOrderIndexOf(stationData) : null
+    const unreceived = points.filter(p => p.unreceived)
+    if (unreceived.length === 0) return []
+    const regionOfStation = (p: EarthquakePoint): string | null => {
+      const pref = p.pref || idx.stationPrefIndex?.get(p.addr) || ''
+      return pref && idx.stationData ? lookupStationRegion(idx.stationData, pref, p.addr) : null
+    }
+    // 設定で粒度を選べる（→ `TtsUnreceivedDetail`）。既定は地点名。
+    //
+    // `areas` は地点を 1 つも挙げず、全部を区域名へ丸める。**述語も併せて変える** ――
+    // 区域名のまま「〇〇では、震度5弱以上と推定されますが」と言うと、同じ区域に観測値がある
+    // 電文で区域全体が未入電であるかのように聞こえる（地点名を既定にした理由そのもの）。
+    // 「一部の地点で」を挟めば、区域の中の一部の話だと分かる。
+    const detail = opts.unreceivedDetail ?? 'stations'
+    // 地点名で読み、地点で覆えない区域・県だけを区域名で補う（規則は `partitionUnreceivedPoints`）。
+    const { stations, areas } = detail === 'areas'
+      ? { stations: [] as EarthquakePoint[], areas: unreceived }
+      : partitionUnreceivedPoints(points, p => [
+        regionOfStation(p) ?? '',
+        p.pref || idx.stationPrefIndex?.get(p.addr) || '',
+      ])
+
+    // 地点の並びは所属区域の順（気象庁の標準順）。同じ区域の中は電文の順を保つ。
+    // `selectRegionNames` の並べ替えは地点名を索引で引けないため順序を変えない（安定ソート）ので、
+    // ここで整えた順がそのまま読み上げ順になる。
+    const stationNames = [...stations]
+      .map((p, i) => ({ p, i, r: regionOrderRank(regionOfStation(p) ?? p.pref, regionOrder) }))
+      .sort((a, b) => a.r - b.r || a.i - b.i)
+      .map(({ p }) => p.addr)
+
+    // **未入電を含む県は県名へまとめない**（カードと同じ規則。→ quake-spec.md §4）。まとめると
+    // 画面が区域別に並べている同じ電文を、音声だけ県名 1 つに畳んで伝えることになる。
+    // `prefsWithAreaShown` は「この県は区域名のまま出す」という指定なので、関係する県を全部入れる。
+    const unreceivedPrefs = new Set<string>()
+    for (const p of areas) {
+      const pref = p.pref || idx.areaPrefIndex?.get(p.addr) || ''
+      if (pref) unreceivedPrefs.add(pref)
+    }
+    // 階級は下限の 45 に揃っているので、1 つの階級としてまとめて名前を引く。
+    const areaNames = areas.length > 0 ? regionNamesForScale(areas, 45, idx, unreceivedPrefs) : []
+
+    const unit = unreceivedUnitLabel(stationNames.length > 0, areaNames.length > 0)
+    const unspoken = [...stationNames, ...areaNames]
+      .filter(name => !spoken || isUnreceivedUnspoken(spoken, name))
+
+    // 地名を読まない設定。**ここで空を返さない。** 代替文（`maxScaleOnlySegments`）に任せると、
+    // **観測値のある区域が 1 つでもある電文では告知ごと消える** —— あの分岐は「地域名を 1 件も
+    // 作れなかったとき」にしか通らないため。観測値と未入電が混ざる形は、強い地震ほど起きやすい
+    // （→ quake-spec.md §4「震度5弱以上未入電」）ので、いちばん消えてはいけない場面で消える。
+    //
+    // 落とすのは**地名だけ**。件数・推定であること・理由（未入電）は残す。
+    //
+    // **既読には入れる。** 名前は読んでいないが件数としては伝えているので、上限で「ほか○地域」へ
+    // 落ちた区域と同じ扱いにする（→ audio-tts-spec.md §4「続報は差分だけ読む」）。入れないと
+    // 続報のたびに件数を言い直す。
+    if (detail === 'none') {
+      if (unspoken.length === 0) return []
+      return [{
+        text: w.quake.unreceivedCountOnly(unspoken.length, unit),
+        refs: [
+          { kind: 'unreceivedNote' },
+          ...unspoken.map(name => ({ kind: 'quakeRegion' as const, name, scale: 45 as IntensityScale, unreceived: true })),
+        ],
+      }]
+    }
+
+    // **選抜と上限は観測値の文と同じ規則に乗せる**（`selectRegionNames`）。独自に切ると、
+    // 「無制限」の設定で 1 件しか読まれない・省いた件数を伝えない、といったずれが片側にだけ出る。
+    const { names, omittedNames } = selectRegionNames(unspoken, opts, hypocenter, regionOrder)
+    if (names.length === 0) return []
+    const segments: SpeechSegment[] = []
+    names.forEach((name, i) => {
+      // 地名の区切りは `regionSep`（地名の訳がコンマを含む言語で、名前の中のコンマと聞き分けるため）
+      if (i > 0) segments.push(plain(w.quake.regionSep))
+      segments.push({ text: regionNameToSay(name), refs: [{ kind: 'quakeRegion', name, scale: 45, unreceived: true }] })
+    })
+    // 名前を読まなかった分も、この断片が声になれば既読にする（→ `selectRegionNames`）。
+    if (omittedNames.length > 0) {
+      segments.push({
+        text: w.quake.unreceivedOmitted(omittedNames.length, unit),
+        refs: omittedNames.map(name => ({ kind: 'quakeRegion' as const, name, scale: 45, unreceived: true })),
+      })
+    }
+    // **推定の理由まで言う。** 「5弱以上と推定されます」だけだと、なぜ推定なのかが伝わらない。
+    // 語は気象庁の「未入電」をそのまま使い、画面のバッジ（「未入電あり」）とも揃える ——
+    // 聞いた語で画面を探せるように。
+    //
+    // **この文にも未入電の印を付ける**（`unreceivedNote`）。読み上げに合わせて未入電モードを開く
+    // 追従は参照の有無で範囲を決めるので、地名にだけ付けると**説明している最中に画面が戻る**。
+    segments.push({
+      // 区域名へ丸めたときだけ「一部の地点で」を挟む（→ `TtsUnreceivedDetail`）。
+      // **名前の末尾ではなく述語側へ置く。** 名前は読点で並ぶので、最後の名前に「の一部」を
+      // 付けると直前の 1 件だけに掛かって聞こえる。
+      text: detail === 'areas' ? w.quake.unreceivedTailPartial : w.quake.unreceivedTail,
+      refs: [{ kind: 'unreceivedNote' }],
+    })
+    return segments
+  }
+
+  /**
+   * 最大震度以下で実際に観測がある階級だけを、地域名と組にして降順に集める。
+   *
+   * 震度スケール上の位置ではなくこの配列の添字を「最大から何階級目か」として数えるため、観測 0 地域の
+   * 階級が読み上げ枠を空費して下の階級に届かなくなることがない（長周期地震動側の数え方と揃えている）。
+   *
+   * **読み上げ（`buildRegionSegments`）と、区域が下がったかの判定（`regionScaleMap`）が共有する。**
+   * 地域名の作り方（県名へのまとめ）が食い違うと、まとめ方の違いだけで区域が「消えた」ことになる。
+   *
+   * @param points 観測値の点（未入電の点は呼び出し側で除く）
+   * @param maxIdx 最大震度の `SCALE_DESCENDING` での位置
+   */
+  function observedRegionsByScale(
+    points: EarthquakePoint[],
+    maxIdx: number,
+    idx: RegionNameIndexes,
+  ): { scale: IntensityScale; names: string[] }[] {
+    const observed: { scale: IntensityScale; names: string[] }[] = []
+    // 上位の階級で区域名を出した県。下位でその県を丸ごとまとめると県の震度を過小に伝えるため、
+    // 持ち回って `aggregateAreaNamesByPref` のまとめ判定から外す（理由は同関数のコメント）。
+    // 打ち切られるのは必ず下位の階級なので、上から順に積むこの持ち回りで整合する。
+    const prefsWithAreaShown = new Set<string>()
+    for (let i = maxIdx; i < SCALE_DESCENDING.length; i++) {
+      const scale = SCALE_DESCENDING[i]
+      const names = regionNamesForScale(points, scale, idx, prefsWithAreaShown)
+      if (names.length > 0) observed.push({ scale, names })
+      // 区域名だけを数える。県名でまとめた結果は areaPrefIndex から引けないので入らない。
+      // これは**多区域の県が県名と同じ表記の区域を持たない**ことに依存する（stationCoords.test.ts が
+      // 検証）。奈良県だけは県名と同名の区域を持つが単一区域なので、どちらに数えても出力は変わらない。
+      for (const name of names) {
+        const pref = idx.areaPrefIndex?.get(name)
+        if (pref) prefsWithAreaShown.add(pref)
+      }
+    }
+    return observed
+  }
+
+  /**
+   * その報の区域ごとの最大震度（地域名 → 震度）。地域名は読み上げと同じ作り方（県名へのまとめを含む）。
+   *
+   * **未入電の点は数えない**（読み上げの区域の文と同じ。→ `buildRegionSegments`）。最大震度が無い報・
+   * 地域名を 1 つも作れない報では空を返す。
+   */
+  function regionScaleMap(points: EarthquakePoint[], maxScale: IntensityScale): Map<string, number> {
+    const map = new Map<string, number>()
+    const maxIdx = SCALE_DESCENDING.indexOf(maxScale)
+    if (maxIdx < 0) return map
+    // 索引の組み方は `buildRegionSegments` と同じ（座標表が未読み込みなら索引なしで名前を作る）。
+    // **ここだけ条件を変えない** —— 名前の作り方が読み上げとずれると、区域が「消えた」ように見える。
+    const stationData = getStationCoordsCache()
+    const idx: RegionNameIndexes = {
+      prefAreaNames: stationData ? prefAreaNamesIndexOf(stationData) : null,
+      areaPrefIndex: getAreaPrefIndexCache(),
+      stationPrefIndex: stationData ? stationPrefIndexOf(stationData) : null,
+      stationData,
+    }
+    for (const { scale, names } of observedRegionsByScale(points.filter(p => !p.unreceived), maxIdx, idx)) {
+      // 県名へまとめた名前は複数の階級に現れうる。降順なので最初に見たものが最大。
+      for (const name of names) if (!map.has(name)) map.set(name, scale)
+    }
+    return map
+  }
+
+  /**
+   * 最後に声にした報（`spoken.regionSnapshot`）と比べて、**区域の最大震度が下がった・区域が消えた**か。
+   *
+   * 真のとき、続報は「変わっていません」「変わりはありません」と言い切らない（2026-10-19 ユーザー承認
+   * 「言い切りを外す (推奨)」）。**下がった値そのものは読まない**（既読の `regions` は上向きのまま）。
+   *
+   * @param minSaidScale 前の報のうち、この震度以上の区域だけを比べる。**震度速報は震度3以上の区域しか
+   *   運ばない**ので、地震情報のあとに震度速報が届くと震度1・2の区域が「消えた」ように見える。
+   *   震度速報の経路では 30（震度3）を渡し、種別の違いを下がったと取り違えないようにする。
+   * @returns 比べる相手が無いときは偽。前の報に比べる区域があるのに今の報から地域名を作れないときは真
+   *   （下がっていないと言える根拠が無いので、言い切らない側へ倒す）
+   */
+  function regionsLoweredSince(event: JMAQuake, spoken: QuakeSpokenState, minSaidScale: number): boolean {
+    const before = spoken.regionSnapshot
+    if (!before) return false
+    const now = regionScaleMap(event.points, event.earthquake.maxScale)
+    // 前の報に比べる区域があるのに今の報から地域名を作れないときは、下がっていないと言える根拠が無い。
+    // **言い切らない側へ倒す**（承認された仕様の安全側）。
+    if (now.size === 0) return [...before.values()].some((said) => said >= minSaidScale)
+    for (const [name, said] of before) {
+      if (said < minSaidScale) continue
+      const current = now.get(name)
+      if (current === undefined || current < said) return true
+    }
+    return false
+  }
+
+  function buildRegionSegments(
+    points: EarthquakePoint[],
+    maxScale: IntensityScale,
+    opts: TtsSpeechOptions,
+    hypocenter?: { latitude: number; longitude: number },
+    /** 渡すと、まだ声になっていない区域だけを読む（続報の差分）。省略すると全区域を読む */
+    spoken?: QuakeSpokenState,
+  ): SpeechSegment[] {
+    // **未入電の区域はここでは扱わない。** 述語が「観測しました」なので、観測値が届いて
+    // いない区域を入れると嘘になる（→ `unreceivedRegionSegments`）。
+    points = points.filter(p => !p.unreceived)
+    const maxIdx = SCALE_DESCENDING.indexOf(maxScale)
+    if (maxIdx < 0) return []
+
+    const stationData = getStationCoordsCache()
+    const idx: RegionNameIndexes = {
+      prefAreaNames: stationData ? prefAreaNamesIndexOf(stationData) : null,
+      // 区域名 → 県名だけはキャッシュから受け取る。地震の統合経路と同じ索引で、読み取りしかしない
+      // （→ docs/spec/quake-spec.md §4「ロールアップ点の見分け方」）。読み上げ文を作るたびに
+      // 組み直すと、点の役割の判定（isAreaPoint）へ渡す索引が経路ごとに別物になる。
+      areaPrefIndex: getAreaPrefIndexCache(),
+      stationPrefIndex: stationData ? stationPrefIndexOf(stationData) : null,
+      stationData,
+    }
+    const regionOrder = stationData ? regionOrderIndexOf(stationData) : null
+
+    // 最大震度以下で実際に観測がある階級だけを降順に集める（→ `observedRegionsByScale`）。
+    const observed = observedRegionsByScale(points, maxIdx, idx)
+
+    const mentioned = new Set<string>()  // 上位階で読み上げ済みの地域名
+    // 「最大」を冠したか。同じ文で二度冠さないためだけに持つ（→ `collectParts`）。
+    let maxPrefixUsed = false
+
+    /**
+     * 階級ごとの句を組む。`accept` に通った区域だけを対象にする。
+     *
+     * **`mentioned` と `maxPrefixUsed` は群をまたいで共有する。** 県単位に丸めた名前は複数の
+     * 階級に現れうるので（`aggregateAreaNamesByPref`）、群を分けても「上位で挙げた区域は下位で
+     * 繰り返さない」を保つ必要がある。上がった群を先に回すこと。
+     */
+    const collectParts = (
+      accept: (name: string, scale: IntensityScale) => boolean,
+    ): SpeechSegment[][] => {
+      const parts: SpeechSegment[][] = []
+      for (let rank = 0; rank < observed.length; rank++) {
+        const { scale, names: observedNames } = observed[rank]
+        // 設定した階数以内、または「必ず読み上げる震度」以上の階級を読む。どちらの条件も上位の
+        // 階級ほど成立しやすいため、両方を外れた時点で以降の階級も必ず外れる（break で打ち切れる）。
         //
-        // **避難行動の呼びかけは別経路が必ず読む**（`tsunamiToSegments`）ので、ここを切っても
-        // 行動指示が声から消えることはない。
-        ...(on('tsunamiVarComment') ? (event.warningComments ?? []).map(c => c.text) : []),
-        pick('tsunamiFreeText', event.freeText),
-      ], reads)
-      return telegramSpeech(`津波情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.eventId))
-    }
-    case 'lpgm': {
-      // **他の種別と同じく明示して弾く。** いまは取消のパースが付加文を 1 つも持たないので
-      // 結果的に空になるが、それは呼び出し元（パーサー）の実装詳細であって、ここの意図
-      // （取消では読まない）はコードから読み取れない。将来あちらが付加文を持つようになった
-      // とき、この経路だけ黙って取消の本文を読む。
-      if (event.data.cancelled) return null
-      if (on('lpgmForecast')) {
-        warnUnmatchedBoilerplate(event.data.forecastCodes, event.data.forecastText, reads, '長周期地震動観測情報の固定付加文')
+        // **打ち切りの判定に差分を混ぜないこと。** 階数（rank）は「観測がある階級」の並びで数えるため、
+        // 差分で残った区域だけを見て数えると、上位の階級が据え置きだった続報で下位の階級が繰り上がり、
+        // 普段は読まない震度まで読み始める。
+        const withinLevels = rank <= opts.intensityLevels
+        const withinAlwaysRead = opts.alwaysReadScale >= 0 && scale >= opts.alwaysReadScale
+        if (!withinLevels && !withinAlwaysRead) break
+        // 同じ文の中で上位階に出した区域を落とし、さらにこの群の条件に通ったものだけを残す。
+        let names = observedNames.filter(n => !mentioned.has(n) && accept(n, scale))
+        if (names.length === 0) continue
+        // 選抜・上限・並べ替えは未入電の文と共有する（→ `selectRegionNames`）。
+        const picked = selectRegionNames(names, opts, hypocenter, regionOrder)
+        names = picked.names
+        const omittedNames = picked.omittedNames
+        names.forEach(n => mentioned.add(n))
+        // 「最大」を冠せるのは、その階級がこの電文の最大震度に一致するときだけ。
+        // **句の並び順で決めてはいけない**——差分では最大震度の区域が据え置きで落ちることがあり、
+        // 先頭の句に無条件で付けると「最大震度4を…」と、電文が伝えていない最大震度を語る。
+        //
+        // **群でも決めてはいけない。** かつては初出の群で冠さなかった（「新たに最大震度7を」の
+        // 据わりを嫌った）が、**初出の区域がいきなり最大震度を持つ続報は実際に起きる** ――
+        // 揺れの強い地域ほど観測点からの通信が遅れ、最初の報に入らず次の報で最大を塗り替えるため、
+        // **いちばん強い揺れを伝える報でだけ最大震度が声から消える**（実例は
+        // docs/spec/audio-tts-spec.md §4「続報は差分だけ読む」）。冠すかどうかは事実（その階級が
+        // 電文の最大震度に一致するか）だけで決め、**同じ文で二度言わないことだけ**を持ち回る。
+        const isMax = !maxPrefixUsed && scale === maxScale
+        if (isMax) maxPrefixUsed = true
+        const segments: SpeechSegment[] = [plain(w.quake.intensityLead(isMax, intensityText(scale)))]
+        names.forEach((name, i) => {
+          // 地名の区切りは `regionSep`（階級ごとの句の間は `listSep`。→ `toSentence`）
+          if (i > 0) segments.push(plain(w.quake.regionSep))
+          // 区域名だけを参照付きの断片にする。読点を含めると、チャンク（読点で切られる）と
+          // 断片の境界がずれて引き当てが鈍る。
+          segments.push({ text: regionNameToSay(name), refs: [{ kind: 'quakeRegion', name, scale }] })
+        })
+        // 名前を読まなかった分も、この断片が声になれば既読にする（→ `selectRegionNames`）。
+        if (omittedNames.length > 0) {
+          segments.push({
+            text: w.quake.regionsOmitted(omittedNames.length),
+            refs: omittedNames.map(name => ({ kind: 'quakeRegion' as const, name, scale })),
+          })
+        }
+        parts.push(segments)
       }
-      if (on('lpgmVarComment')) {
-        warnUnmatchedBoilerplate(event.data.varCommentCodes, event.data.varCommentText, reads, '長周期地震動観測情報の固定付加文（その他）')
+      return parts
+    }
+
+    /**
+     * 階級ごとの句を 1 文にまとめる。
+     *
+     * 助詞「で」は末尾（述語の直前）にだけ置く。階級ごとの句末に付けると
+     * 「〜福島県で、震度3を〜」と一文字が読点で挟まれ、読み上げがぶつ切りに聞こえる。
+     * 複数階級のときは前の句が末尾の「で」を共有する形（並列句の格助詞の共有）になる。
+     */
+    const toSentence = (parts: SpeechSegment[][], lead: string): SpeechSegment[] => {
+      if (parts.length === 0) return []
+      const joined: SpeechSegment[] = lead ? [plain(lead)] : []
+      // 階級と階級の間は語表の `intensityGroupSep`（日本語・中国語・韓国語は句の区切り、英語などは文で切る。
+      // 文で切る言語は、初めて観測した地域の文なら次の文の頭にも「新たに」を置く）
+      const groupSep = w.quake.intensityGroupSep(lead !== '')
+      parts.forEach((part, i) => {
+        if (i > 0) joined.push(plain(groupSep))
+        joined.push(...part)
+      })
+      joined.push(plain(w.quake.observedTail))
+      return joined
+    }
+
+    /**
+     * 震度点があるのに地域名を 1 件も作れなかったことを記録する。電文の観測点が座標テーブルに
+     * 載っていない状態（DMDATA は観測点を pref: '' で積むので、テーブルが引けないと手がかりが
+     * 何も残らない）。呼び出し側が最大震度だけの一文へ落とすので読み上げは成立するが、地域が
+     * 丸ごと消えたことは記録に残す。読み上げごとに出すと同じ行でログが埋まるため間引く。
+     *
+     * **数えるのは `observed`。** 文が空になる理由には「続報で読む差分が無い」も含まれ、そちらは
+     * 正常なので、組み上がった文の有無で判定すると続報のたびに警告が鳴る。
+     * 座標テーブルの読み込み前は引けないのが当たり前なので黙る（起動直後の正常な過渡状態）。
+     */
+    const warnIfNoRegionNames = (): void => {
+      if (observed.length === 0 && points.length > 0 && stationData) {
+        warnNoRegionNames(() => log.warn('[tts] 震度点があるのに地域名を作れなかった（電文の観測点が座標テーブルに無い）'))
       }
-      const body = joinTelegramTexts([
-        pick('lpgmForecast', event.data.forecastText),
-        pick('lpgmVarComment', event.data.varCommentText),
-        pick('lpgmFreeText', event.data.freeFormText),
-      ], reads)
-      return telegramSpeech(`長周期地震動に関する観測情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
     }
-    case 'nankai':
-    case 'nankaiCommentary': {
-      if (event.data.cancelled) return null
-      // 臨時情報と関連解説情報は構造が同じだが、**設定は別に持つ** —— 段階の発表（臨時情報）と
-      // 状況の続報（解説情報）では、聞きたい度合いが違う。
-      const isAdvisory = event.kind === 'nankai'
-      const body = joinTelegramTexts([
-        pick(isAdvisory ? 'nankaiSummary' : 'nankaiCommentarySummary', event.data.summary),
-        pick(isAdvisory ? 'nankaiBody' : 'nankaiCommentaryBody', event.data.body),
-        pick(isAdvisory ? 'nankaiNextAdvisory' : 'nankaiCommentaryNextAdvisory', event.data.nextAdvisory),
-        reads.earthquakeInfoAppendix ? event.data.appendix : undefined,
-      ], reads)
-      const label = isAdvisory ? '南海トラフ地震臨時情報' : '南海トラフ地震関連解説情報'
-      return telegramSpeech(`${label}について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+
+    // 差分を取らない読み（初報・別イベント・確定情報の通し読み）は 1 群のまま。
+    //
+    // **群分けと「新たに」は差分のときだけ。** 初報で「新たに」と言っても、何と比べて新しいのかが無い。
+    // 判定は `spoken` の有無ではなく**区域を一度でも声にしたか**で行う。記録は地震の初報でも
+    // 渡ってくる（空の状態で）ので、有無で見ると初報から「新たに」が付く。
+    if (!spoken || spoken.regions.size === 0) {
+      const all = toSentence(collectParts(() => true), '')
+      if (all.length === 0) warnIfNoRegionNames()
+      return all
     }
-    case 'kohatsu': {
-      if (event.data.cancelled) return null
-      // **`nextAdvisory` は読まない。** この種別の電文に `NextAdvisory` は無く（理由は
-      // `TELEGRAM_TEXT_BLOCK_KEYS` の「北海道・三陸沖後発地震注意情報」）、共有の読み取りを
-      // 通っているぶん型には残るが値は常に空。気象庁が出すようになったら設定キーと併せて戻す。
-      const body = joinTelegramTexts([
-        pick('kohatsuSummary', event.data.summary),
-        pick('kohatsuBody', event.data.body),
-        reads.earthquakeInfoAppendix ? event.data.appendix : undefined,
-      ], reads)
-      return telegramSpeech(`北海道・三陸沖後発地震注意情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+
+    // 差分は 2 群に分け、**上がった分を先に**読む。境目の「また、」で耳が切り替わり、
+    // 「新たに」が後半だけに掛かることが伝わる。
+    //
+    // **「最大」を冠す権利は先に回るこの群が持つ**（`maxPrefixUsed`）。上がり群に最大震度の
+    // 階級が無ければ、初出群の句がそれを冠する。
+    const upgraded = toSentence(collectParts((n, sc) => regionDiffKind(spoken, n, sc) === 'upgraded'), '')
+    const fresh = toSentence(
+      collectParts((n, sc) => regionDiffKind(spoken, n, sc) === 'fresh'),
+      upgraded.length > 0 ? w.quake.freshAfterUpgraded : w.quake.fresh,
+    )
+    if (upgraded.length === 0 && fresh.length === 0) {
+      warnIfNoRegionNames()
+      return []
     }
-    case 'earthquakeCount': {
-      if (event.data.cancelled) return null
-      // 本文（`body`）は回数を伴わない発表報だけが運ぶ（2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）。
-      // 並びは他の種別と同じく本文 → 自由付加文。
-      const body = joinTelegramTexts([
-        pick('earthquakeCountBody', event.data.body),
-        pick('earthquakeCountFreeText', event.data.freeText),
-      ], reads)
-      return telegramSpeech(`地震回数に関する情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+    return [...upgraded, ...fresh]
+  }
+
+  function magnitudeText(mag: number): string {
+    // toFixed(1) で小数点以下1桁を明示し「きゅう」→「きゅうてんぜろ」のような誤読を防ぐ
+    return mag.toFixed(1)
+  }
+
+  /**
+   * 「マグニチュード7.1の」句を返す（「〜の地震が発生しました」に続ける）。規模不明では空文字。
+   * 規模不明の電文は遠地地震で実在し、そのまま読ませると「NaN」「マイナス1.0」になる。
+   */
+  function magnitudePhrase(mag: number): string {
+    return hasMagnitude(mag) ? w.quake.magnitudeOf(magnitudeText(mag)) : ''
+  }
+
+  /**
+   * 規模が数値にならないときの説明（`jmx_eb:Magnitude@description`）の**述部**。
+   *
+   * **「Ｍ不明」と「Ｍ８を超える巨大地震」は別物**で、後者は M8 を超えて速報できないことを表す
+   * （電文解説資料 Ⅱ.32/33/36）。数値が無いことだけを見て黙ると、最大級の地震ほど音声から
+   * 規模が消える。
+   *
+   * **別の文にする。** 「マグニチュード〜の地震が発生しました」の句へ差し込むと
+   * 「8を超える巨大地震の地震が発生しました」と重なる。
+   *
+   * **主題部（「マグニチュードは」）を含めない。** 初報と続報で主題部が変わるため
+   * （→ {@link magnitudeConditionSentence} / {@link magnitudeConditionAmendSentence}）。
+   * 表へ主題部まで書くと、続報側が文の頭を差し替えられず、値が変わったことを言えなくなる。
+   */
+  const MAGNITUDE_CONDITION_PREDICATE: Readonly<Record<string, string>> = w.quake.magnitudeConditionPredicate
+
+  /** 上の述部を引く。規模が数値なら（＝説明を読む必要が無ければ）空文字。 */
+  function magnitudeConditionPredicate(hypocenter: Hypocenter): string {
+    const desc = hypocenter.magnitudeCondition
+    if (!desc || hasMagnitude(hypocenter.magnitude)) return ''
+    const known = MAGNITUDE_CONDITION_PREDICATE[desc]
+    if (known) return known
+    // 気象庁が語を増やしたときに黙らない。全角の「Ｍ」と全角数字だけを直して読む
+    // （前に置く主題部の「マグニチュード」と重ならないよう先頭の「Ｍ」は落とす）。
+    // 日本語以外の組は表記を読まない（→ 語表の `magnitudeConditionUnknown`）ので、記録の文面も読み方に合わせる。
+    // 控えは言語の組で共有するので、最初に出会った組の読み方で 1 度だけ出る
+    if (!reportedUnknownMagnitudeConditions.has(desc)) {
+      reportedUnknownMagnitudeConditions.add(desc)
+      log.warn(w.common.telegramTextElsewhere === null
+        ? `[tts] 規模の説明に未知の表記があります（そのまま読みます）: ${desc}`
+        : `[tts] 規模の説明に未知の表記があります（表記は読まず、数値で発表されていないと言います。言語 ${locale}）: ${desc}`)
     }
-    case 'quakeNotice': {
-      // 取消は本体の読み上げ（`quakeNoticeToText`）が理由まで読む。本文は添えない。
-      if (event.data.cancelled) return null
-      // **本文は削らずに全文を読む**（題名の行・発表日時・問い合わせ先も含む）。他の種別の本文と
-      // 同じ扱い —— 自由文なので書式が一定せず、行の形で削ると別のお知らせで本題を落としうる。
-      // 聞きたくなければブロックごと切れる（`quakeNoticeBody`）。
+    const body = desc.replace(/^[ＭM]/, '').replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    return w.quake.magnitudeConditionUnknown(body)
+  }
+
+  /** 初報で読む形。「マグニチュードは8を超える巨大地震とみられます。」 */
+  function magnitudeConditionSentence(hypocenter: Hypocenter): string {
+    const predicate = magnitudeConditionPredicate(hypocenter)
+    return predicate ? w.quake.magnitudeIs(predicate) : ''
+  }
+
+  /**
+   * 続報で**値が変わったとき**に読む形。「マグニチュードが更新されました。8を超える巨大地震とみられます。」
+   *
+   * **数値の規模（「マグニチュードは7.1に更新されました。」）と同じく、更新されたことを言う。**
+   * 初報と同じ文へ落とすと、**最大級の地震でだけ「変わった」が声にならない** ——
+   * 「Ｍ不明」から「Ｍ８を超える巨大地震」へ確定する続報がまさにその場面。
+   *
+   * **「〜に更新されました」の枠へ値を入れない。** マグニチュード（数値）を地震（出来事）へ
+   * 更新することになり、「マグニチュードは8を超える巨大地震に更新されました。」と破綻する。
+   * そこで**主題部だけを差し替え**、値は初報と同じ述部で言う。
+   *
+   * **主題部で「マグニチュード」を言うので、述部は主題を持たない**（そのための
+   * {@link MAGNITUDE_CONDITION_PREDICATE} の切り分け）。
+   */
+  function magnitudeConditionAmendSentence(hypocenter: Hypocenter): string {
+    const predicate = magnitudeConditionPredicate(hypocenter)
+    return predicate ? w.quake.magnitudeAmended(predicate) : ''
+  }
+
+  /**
+   * 既読の記録に載せる規模の値。
+   *
+   * **数値と説明を同じ鍵で持つ。** 別々にすると、「Ｍ不明」→「Ｍ８を超える巨大地震」→ 実測値、と
+   * 段階的に確定していく続報で、変わったことを検出できない箇所が出る。
+   */
+  function magnitudeFactValue(hypocenter: Hypocenter): string {
+    return hasMagnitude(hypocenter.magnitude)
+      ? magnitudeText(hypocenter.magnitude)
+      : (hypocenter.magnitudeCondition ?? '')
+  }
+
+  /**
+   * 「〇〇を震源とする」の深さ部分を返す（Destination/ScaleAndDestination 系）。
+   * 表示側 formatDepth と判定を揃える（負値 = 不明 / 0 = ごく浅い）。負値では空文字を返す。
+   * 深さ不明の電文は遠地地震で頻出し（`depth: {value: null, condition: "不明"}`）、
+   * パーサはこれを -1 センチネルに落とすため、0 と同一視すると「ごく浅い場所」と誤読する。
+   */
+  function depthSourcePhrase(h: DepthFact): string {
+    if (!hasDepth(h.depth)) return ''
+    return h.depth === 0 ? w.quake.depthVeryShallowPlace : w.quake.depthOf(h.depth, atLeastSuffix(h))
+  }
+
+  /** 深さを語る関数が受け取る形。`depthAtLeast` は「700km以上」の印（→ `Hypocenter.depthAtLeast`）。 */
+  type DepthFact = Pick<Hypocenter, 'depth' | 'depthAtLeast'>
+
+  /**
+   * 「700km以上」の「以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+   * 読み上げは「深さ700キロメートル以上を震源とする…」「震源の深さは700キロメートル以上に更新されました。」。
+   */
+  function atLeastSuffix(h: DepthFact): string {
+    return h.depthAtLeast ? w.quake.depthAtLeast : ''
+  }
+
+  /**
+   * 既読の記録に載せる深さの値。**「以上」の印も含める** —— 同じ 700 でも「700km」と「700km以上」は
+   * 別の内容で、印が付いた・外れたことも続報の変化として言い直す（値が同じでも印が変われば更新）。
+   */
+  function depthFactValue(h: DepthFact): string {
+    return `${h.depth}${h.depthAtLeast ? '+' : ''}`
+  }
+
+  /**
+   * 「〜に更新されました。」の並びへ入れる深さの句（顕著な地震の震源要素更新のお知らせ 系）。
+   * **「震源の深さ」を含めて返す。** 深さ不明では空文字。
+   *
+   * **ごく浅い（深さ 0）だけ語形が 2 通りになる。** 数値の深さは「震源の深さ120キロメートル」という
+   * 名詞句なので述語「に更新されました」へそのまま繋がるが、ごく浅いは数値を持たず名詞句にできない。
+   * 後ろに規模が続くなら連用中止形（「震源の深さはごく浅く、マグニチュード〜」）で繋ぎ、続かないなら
+   * {@link depthUpdateValue} と同じ「ごく浅い場所」を使って自分で述語へ繋ぐ。ここを連用中止形のまま
+   * 言い切ると「震源の深さはごく浅くに更新されました。」という壊れた文になる。
+   */
+  function depthAmendPhrase(h: DepthFact, hasFollowing: boolean): string {
+    if (!hasDepth(h.depth)) return ''
+    if (h.depth !== 0) return w.quake.depthAmendKm(h.depth, atLeastSuffix(h))
+    return hasFollowing ? w.quake.depthAmendVeryShallowContinuing : w.quake.depthAmendIs(depthUpdateValue(h))
+  }
+
+  function intensityText(scale: IntensityScale | number): string {
+    if (scale <= 0) return ''
+    return w.common.intensity(scale as IntensityScale)
+  }
+
+  /**
+   * 地域名を 1 件も作れなかったときに添える一文。震度が判っていればそれだけを伝え、
+   * 判らなければ何も返さない。`intensityText` は震度不明で空文字を返すので、確かめずに埋めると
+   * 「最大震度を観測しました」という助詞だけの文になる（`maxScale` は無いのが正常な電文もある。
+   * 最大震度を持たない電文は `-1` で届く → `dmdataParser.ts` の `readIntensity`）。
+   */
+  function maxScaleOnlySentence(maxScale: IntensityScale, unreceived = false): string {
+    const label = intensityText(maxScale)
+    if (!label) return ''
+    // **未入電を「観測しました」と言わない。** 電文が「5弱以上・未入電」と明言している値を
+    // 断定形で読むと、実際にはもっと強い可能性があることが音声だけの利用者に伝わらない
+    // （EEW が上限を定めない予想震度を「以上」と読むのと同じ扱い）。
+    // 語は地点を挙げる文と揃える（→ `unreceivedRegionSegments`）。
+    return unreceived ? w.quake.maxScaleOnlyUnreceived(label) : w.quake.maxScaleOnly(label)
+  }
+
+  /**
+   * 上の一文を断片にしたもの。**伝えたことを `maxScaleOnly` として覚える**ので、続報で
+   * 地域名が作れないままでも、同じ震度なら言い直さず、震度が変わったときだけ読み直す。
+   *
+   * `spoken` を渡さない経路（全文を組み立てる `earthquakeToText`）では既読を見ずに必ず返す。
+   */
+  function maxScaleOnlySegments(maxScale: IntensityScale, spoken?: QuakeSpokenState, unreceived = false): SpeechSegment[] {
+    const sentence = maxScaleOnlySentence(maxScale, unreceived)
+    if (!sentence) return []
+    // 既読の鍵に未入電の別も含める。同じ階級でも「観測しました」と「以上と推定されます」は
+    // 別の内容なので、片方を読んだからと言ってもう片方を省いてはいけない。
+    const value = unreceived ? `${maxScale}!` : String(maxScale)
+    if (spoken?.facts.get('maxScaleOnly') === value) return []
+    return [{ text: sentence, refs: [{ kind: 'quakeFact', fact: 'maxScaleOnly', value }] }]
+  }
+
+  /**
+   * 文を続ける。空の文は落とし、語表の区切り（`common.sentenceSep`）を挟む。**日本語は区切りが空なので、ただの連結と同じ**
+   * （英語などは空白を挟まないと前の文の句点と次の文の頭が 1 語に繋がる）。
+   */
+  function joinSentences(...sentences: readonly string[]): string {
+    return sentences.filter(s => s !== '').join(w.common.sentenceSep)
+  }
+
+  /** 取消の文に、取消の理由（→ {@link cancelReasonSentence}）を続ける */
+  function withCancelReason(head: string, cancelText: string | undefined): string {
+    return joinSentences(head, cancelReasonSentence(cancelText))
+  }
+
+  /**
+   * 「21時34分」形式。**日時として読めなければ `null`** —— 呼び出し側は時刻の句ごと落とす。
+   * 素通しにすると「ナンじナンぷん」と**音声に出る**（画面と違い、聞き手は読み飛ばせない）。
+   */
+  function formatTime(isoTime: string): string | null {
+    const d = readDateTime('ttsText.formatTime', isoTime)
+    if (!d) return null
+    // 分をゼロ埋めすると VOICEVOX が「06分」を「ぜろろくふん」と桁読みしてしまうため、
+    // TTS 用テキストではゼロ埋めしない（表示用の formatters.ts の formatTime とは別）
+    return w.common.time(d.getHours(), d.getMinutes())
+  }
+
+
+  /**
+   * 気象庁が書いた文の中で、**日付として確定している「1日」だけ**を読みへ直す。
+   *
+   * **直後が「N時」の形に限る**（`1日16時27分現在の、`）。期間を指す「1日程度」「1日おきに」は
+   * もちろん、「1日2回」のような頻度表現も巻き込まない。前も見るのは `11日` `21日` `31日` の
+   * 2 文字目を拾わないため。
+   *
+   * 実電文由来のローカルデータを走査すると「N日＋数字」はすべて「N日N時」の形だったが、
+   * 自由付加文は書式が決まっていないので、数字が続くだけでは日付と決めつけない。
+   */
+  function speakableDayInText(text: string): string {
+    return text.replace(/(^|[^0-9０-９])1日(?=[0-9０-９]{1,2}時)/g, '$1ついたち')
+  }
+
+  /**
+   * 「10日21時34分」形式。遠地地震は発表が発生から数十分後になることがあり、
+   * 日付をまたいで受信する場合があるため日から読み上げる。
+   *
+   * `formatTime` を呼ばず自前で組むのは、記録に出る名前を呼び出し元と一致させるため。
+   */
+  function formatDayTime(isoTime: string): string | null {
+    const d = readDateTime('ttsText.formatDayTime', isoTime)
+    if (!d) return null
+    return w.common.dayTime(d.getDate(), d.getHours(), d.getMinutes())
+  }
+
+  /**
+   * VXSE43/45 EEW の誤報取消の読み上げテキストを生成する。
+   *
+   * **述語は「取り消されました」。** 気象庁が使う語は「取消」で（→ CLAUDE.md「利用者へ出す語を
+   * 気象庁の表現と揃える」）、カードのオーバーレイも「この緊急地震速報は取り消されました」と
+   * 書いている。津波・南海トラフ臨時情報・地震回数の取消も同じ述語。
+   *
+   * **時刻は取り消された緊急地震速報の第 1 報の発表時刻を渡すこと**（呼び出し側
+   * useLiveEventHandler.ts が受信の記憶から引く）。取消電文自身の `issue.time` は取消を発表した
+   * 時刻で、これを「〜に発表された緊急地震速報」と読むと、取り消された速報がその時刻に出たように
+   * 聞こえる（2026-10-16 12:40 頃の速報の取消を「12時48分に発表された」と読んでいた）。
+   * 分からなければ null を渡し、時刻を言わない文にする。
+   */
+  function eewCancelToText(event: EEWAlert, firstIssueTime: string | null): string {
+    const time = firstIssueTime ? formatTime(firstIssueTime) : null
+    const head = time ? w.eew.cancelledAt(time) : w.eew.cancelled
+    // 地震情報・津波情報と同じ扱い（→ `cancelReasonSentence`）。3 つの電文で揃えないと、
+    // 同じ事象なのに種別によって理由が出たり出なかったりする
+    return withCancelReason(head, event.cancelText)
+  }
+
+  /**
+   * VXSE51/52/53/61 地震情報取消の読み上げテキストを生成する。
+   * time は取消電文自体の発表時刻ではなく、同一 eventId で最後に受信した地震情報の発表時刻を渡すこと
+   * （呼び出し側 useLiveEventHandler.ts で解決する）。
+   */
+  function earthquakeCancelToText(time: string | null, cancelText?: string): string {
+    const formatted = time ? formatTime(time) : null
+    // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。
+    const head = formatted ? w.quake.cancelledAt(formatted) : w.quake.cancelled
+    return withCancelReason(head, cancelText)
+  }
+
+  /**
+   * 取り消された報の種別を、語表の情報の名前へ引く。**自前のキーだけを見る**（`hasOwnProperty`。`constructor` のような値で
+   * 継いだ関数に当たらないように。このリポジトリの型の対象は `Object.hasOwn` を持たない）。引けなければ種別の名前（日本語）のまま言い、言語と種別ごとに 1 度だけ記録を残す
+   */
+  function reportNameToSay(issueType: string): string {
+    const table: Readonly<Record<string, string>> = w.quake.reportName
+    if (Object.prototype.hasOwnProperty.call(table, issueType)) return table[issueType]
+    const key = `${locale}:${issueType}`
+    if (!reportedUnknownReportNames.has(key)) {
+      reportedUnknownReportNames.add(key)
+      log.warn(`[tts] 取消で名指す情報の名前を語表で引けないので、種別の名前のまま読みます（言語 ${locale}・種別 ${issueType}）`)
+    }
+    return issueType
+  }
+
+  /**
+   * 地震カードの**一部の取消**（震源情報まで進んだカードに震度速報だけの取消が届いた等）の読み上げ。
+   * 「23時5分に発表された震度速報は取り消されました。」
+   *
+   * カードは残るので、全体の取消の文（「〜地震情報は取り消されました。」）では誤りになる。取り消された
+   * 情報の名前で言い、時刻もその情報の発表時刻にする（2026-10-15 ユーザー承認「情報名で言う（推奨）」）。
+   * 理由の文の扱いは全体の取消と同じ（`cancelReasonSentence`）。
+   *
+   * 名前は語表の `quake.reportName` で画面の言語の名前へ引く（日本語は電文の種別の名前のまま。ほかの言語は画面の
+   * `quake.issueType` の訳）。表は取り消されうる種別（`QuakeRetractedReport['issueType']`）を全部持つので、引けない名前は
+   * 型の外から来た値だけ —— そのときは渡された名前のまま言う
+   *
+   * @param issueType 取り消された情報の種別（取消電文の種別）
+   * @param time 取り消された報の発表時刻。読めなければ時刻を言わない
+   */
+  function earthquakeReportCancelToText(issueType: QuakeRetractedReport['issueType'], time: string | null, cancelText?: string): string {
+    const formatted = time ? formatTime(time) : null
+    const name = reportNameToSay(issueType)
+    const head = formatted ? w.quake.reportCancelledAt(name, formatted) : w.quake.reportCancelled(name)
+    return withCancelReason(head, cancelText)
+  }
+
+  /**
+   * 取消しの概要（電文の `Body/Text`）を読み上げへ足す句。無ければ空。
+   * → docs/spec/audio-tts-spec.md §4「取消は「取り消された事実」だけを伝える」
+   *
+   * **気象庁が書いた理由をそのまま読む。** アプリの定型文（「取り消されました」）は何が
+   * 起きたかしか言っておらず、なぜ取り消したのかは電文のこの本文にしか無い。
+   *
+   * **ただし取消の宣言だけの本文は読まない**（→ `CANCEL_DECLARATION_SUBJECTS`）。定型文が同じ事実を
+   * 先に述べているので、続けて読むと同じことを 2 度言う。宣言の形でも主語が既知の情報名でなければ
+   * 理由が混ざっているものとして読む（そちらへ倒す理由は `CANCEL_DECLARATION`）。
+   *
+   * **長い本文は続けて読まず、別の発話で最下位の層へ回す**（{@link deferredCancelReasonToSpeak}）。
+   * 取消しの概要は 1〜2 文が通例だが、他の自由文と同じく長文が入りうる。取消の文と同じ発話に足すと、
+   * 読み上げが伸びて後続の電文が待ちの上限に達し割り込む。どちらで読むかの境目は
+   * {@link CANCEL_REASON_INLINE_MAX_CHARS}。
+   */
+  function cancelReasonSentence(cancelText: string | undefined): string {
+    // **この関数は 9 種別（EEW・地震情報・津波・地震回数・長周期地震動・地震・津波に関するお知らせ・
+    // 南海トラフ地震臨時情報・関連解説情報・後発地震注意情報）の
+    // 取消が共有している。**
+    const reason = classifyCancelReason(cancelText)
+    if (reason.kind === 'declaration') {
+      // **省いたことを残す。** 取消は実電文で年に数通しか出ないため、毎回記録しても
+      // 他の記録を埋めない。
+      log.info(`[tts] 取消の宣言だけの本文なので読み上げを省きました（${reason.text}）`)
+      return ''
+    }
+    if (reason.kind === 'unknownDeclaration') {
+      // **宣言の形だが主語が既知の情報名でないので読む。** ここが「落とし損ね」の検知点 ——
+      // 実電文に無い情報名で宣言が来たら、この記録を見て主語の集合へ足すかを判断する
+      // （逆に理由が混ざっていた場合は、読む側へ倒れているので情報は失われない）。
+      log.info(`[tts] 取消の宣言の形だが「${reason.subject}」が既知の情報名でないため読み上げます（${reason.text}）`)
+    }
+    if (reason.kind === 'none') return ''
+    // 気象庁の文を読まない言語は、文の在処だけを言う（短いので長さに関わらず続けて読む。別の発話へは回さない
+    // → {@link deferredCancelReasonToSpeak}）
+    if (w.common.telegramTextElsewhere !== null) return w.common.telegramTextElsewhere
+    if (reason.text.length > CANCEL_REASON_INLINE_MAX_CHARS) {
+      // **回したことを残す。** 別の発話は最下位の層で、待ちきれなければ黙る ——
+      // 鳴らなかったときに「長文だったから別に回した」ことを後から辿れるようにする。
+      log.info(`[tts] 取消しの概要が長いため、別の発話で最下位の層に回します（${reason.text.length}文字）`)
+      return ''
+    }
+    // 電文の本文は句点で終わることが多いが、終わっていなければ足す（次の文と繋がって
+    // 聞こえないため）。**述語は 5 箇所で共有する**（→ {@link endTelegramSentence}）。
+    return endTelegramSentence(reason.text)
+  }
+
+  /** 取消しの概要（`Body/Text`）を読み上げの扱いで分けたもの。→ {@link classifyCancelReason} */
+  type CancelReason =
+    | { kind: 'none' }
+    | { kind: 'declaration'; text: string }
+    | { kind: 'unknownDeclaration'; text: string; subject: string }
+    | { kind: 'reason'; text: string }
+
+  /**
+   * 取消しの概要を、読み上げで同じ扱いを受ける形に分ける。続けて読む側（{@link cancelReasonSentence}）と
+   * 別の発話へ回す側（{@link deferredCancelReasonToSpeak}）が同じ判定を通るための 1 箇所。
+   */
+  function classifyCancelReason(cancelText: string | undefined): CancelReason {
+    // 取消の理由も気象庁が書いた文なので、日時は全角のゼロ埋めで来る（`１６日０１時２５分`）。
+    // 半角・ゼロ埋めなしへ揃えないと先頭の 0 が桁として読まれる（→ {@link normalizeDateTimeForSpeech}）。
+    const text = normalizeDateTimeForSpeech(cancelText ?? '').replace(/\s+/g, ' ').trim()
+    if (!text) return { kind: 'none' }
+    const subject = CANCEL_DECLARATION.exec(text)?.[1]
+    if (subject === undefined) return { kind: 'reason', text }
+    return CANCEL_DECLARATION_SUBJECTS.has(subject)
+      ? { kind: 'declaration', text }
+      : { kind: 'unknownDeclaration', text, subject }
+  }
+
+  /**
+   * 取消の文に続けて読む理由の上限（文字数）。超える理由は別の発話で最下位の層に読む
+   * （{@link deferredCancelReasonToSpeak}。2026-10-19 ユーザー選択「外して最下位の層で読む (推奨)」）。
+   *
+   * 実電文の取消しの概要は 1 文（例「先ほどの、震度速報を取り消します。」）。
+   * 超える本文を取消の文と同じ発話へ足すと、読み上げが伸びて後続の電文が待ちの上限
+   * （`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）に達して割り込む。
+   */
+  const CANCEL_REASON_INLINE_MAX_CHARS = 120
+
+  /**
+   * 取消の文に続けて読むには長すぎる理由を、別の発話にした文。続けて読める長さ・宣言だけの本文・
+   * 理由が無いときは `null`。
+   *
+   * **前置きで何の理由かを名乗る。** 最下位の層は前の発話が終わるのを待つので、取消の文との間に
+   * 別の読み上げが挟まることがある（2026-10-19 ユーザー選択「◯◯が取り消された理由をお伝えします。」）。
+   * **「気象庁の発表文」とは名乗らない** —— その語は設定「気象庁の発表文を読む」のラベルで、この発話は
+   * その設定に従わない（2026-10-19 ユーザー選択「設定に関係なく読む（推奨）」）。
+   *
+   * @param infoName 取消の文が名乗った情報名（「地震情報」「震度速報」「津波警報等」など）
+   */
+  function deferredCancelReasonToSpeak(infoName: string, cancelText: string | undefined): string | null {
+    const reason = classifyCancelReason(cancelText)
+    if (reason.kind !== 'reason' && reason.kind !== 'unknownDeclaration') return null
+    // 気象庁の文を読まない言語は、取消の文に在処を続けて言い終えている（→ {@link cancelReasonSentence}）
+    if (w.common.telegramTextElsewhere !== null) return null
+    if (reason.text.length <= CANCEL_REASON_INLINE_MAX_CHARS) return null
+    return w.common.cancelReasonLead(infoName) + endTelegramSentence(reason.text)
+  }
+
+  /**
+   * 取消の宣言の形。捕獲するのは「何を取り消すか」の主語で、それが情報名そのものなら
+   * 宣言だけの本文（→ `CANCEL_DECLARATION_SUBJECTS`）。
+   * → docs/spec/audio-tts-spec.md §4「文の形だけで落とさない。主語を照合する」
+   *
+   * 「は」も見るのは電文解説資料の記載例（「先ほどの、緊急地震速報（予報）は取り消します。」）が
+   * そちらの形だから。主語は最短で採る（情報名に「を」「は」は含まれない）。
+   *
+   * **形だけで落としてはいけない。** かつて主語の中身を見ずに「読点・句点を挟まない」だけで
+   * 落としていたが、それでは理由を織り込んだ本文まで無音で捨てる:
+   *
+   * - 「先ほどの、装置の誤作動による誤報を取り消します。」
+   * - 「先ほどの、通信障害により発表した緊急地震速報を取り消します。」
+   * - 「先ほどの、観測データの誤りのため震度速報を取り消します。」
+   *
+   * **落とし損ねと誤って落とすのは重さが違う。** 前者は同じことを 2 度述べる元の状態に戻るだけ、
+   * 後者は気象庁が書いた理由を失う。だから主語を照合する側へ倒す。
+   */
+  const CANCEL_DECLARATION = /^先ほどの、?(.+?)(?:を|は)取り消します[。．]?$/
+
+  /**
+   * 取消の宣言で主語に立つ情報名。ここに一致した本文だけを読み上げから落とす
+   * （アプリの定型文が同じ事実を先に述べているため）。
+   *
+   * **実電文で観測できたものだけを入れる**（実配信の標本が無い種別は、気象庁の公式サンプル電文で
+   * 観測できたものまで）。DMDATA アーカイブの目録がある全期間と、国立情報学研究所「気象庁防災情報
+   * XML データベース」（2012-12〜2026-09）を走査して得られた取消は 53 通で、本文は 4 通りしか
+   * なかった。**走査先ごとの通数は docs/spec/quake-spec.md §8 が単一情報源**（ここへ写すと
+   * 更新が片方に留まる）。
+   *
+   * | 本文 | 通数 |
+   * |---|---|
+   * | 先ほどの、緊急地震速報（予報）を取り消します。 | 28 |
+   * | 先ほどの、緊急地震速報（地震動予報）を取り消します。 | 23 |
+   * | 先ほどの、震度速報を取り消します。 | 1 |
+   * | 先ほどの、震源・震度情報を取り消します。 | 1 |
+   *
+   * 「地震回数に関する情報」は実配信の標本が無く、気象庁の公式サンプル電文から採った
+   * （この種別は 2012-12 以降の全アーカイブで 1 通も配信されていない）。
+   *
+   * **標本の無い種別（津波など）では二度述べが残る。** そのとき記録が出る（`cancelReasonSentence`
+   * の「既知の情報名でないため読み上げます」）ので、それを見て足すかを判断する。**先回りして
+   * 情報名の一覧を書き並べないこと** —— 起きていない形に合わせると、理由入りの本文を落とす側へ
+   * 逆戻りする。
+   *
+   * 理由を書く場所であること自体は変わらない。電文解説資料の共通別紙ウ「取消電文の運用」は
+   * `Body/Text` を「取消の概要や理由等の文章」と定めている。
+   */
+  const CANCEL_DECLARATION_SUBJECTS: ReadonlySet<string> = new Set([
+    '緊急地震速報（予報）',
+    '緊急地震速報（地震動予報）',
+    '震度速報',
+    '震源・震度情報',
+    '地震回数に関する情報',
+  ])
+
+  /**
+   * EEW 第1フェーズ（新規発報の即時、または続報での震源更新時）の読み上げテキストを生成する。
+   *
+   * **切り出しの語で区分を伝える。** 実際の電文が別物なので、名前も分ける。
+   *
+   * | `kind` | 読み上げ | 対応する電文 |
+   * |---|---|---|
+   * | `forecast` | 「地震動予報、〇〇で地震。」 | VXSE45 緊急地震速報（地震動予報） |
+   * | `warning` | 「緊急地震速報、〇〇で地震。」 | VXSE43 緊急地震速報（警報） |
+   * | `hypocenterUpdate` | 「震源を更新、〇〇で地震。」 | 続報で震源名が大きく変わったケース |
+   *
+   * **これは気象庁の用語法からの意図的な逸脱。** 気象庁は「緊急地震速報」を警報と予報の両方を
+   * 含む上位の名前として使う。ここでは音声で区別が付くことを優先し、警報級だけを
+   * 「緊急地震速報」と読む。予報級まで「緊急地震速報」と読むと、一般に流れるのが警報だけである
+   * ことから「警報が出た」と聞こえてしまい、実際より重く伝わる。
+   * 2026-08-20 のユーザーの提案「予報は「地震動予報。〇〇で地震」、警報以上は「緊急地震速報。〇〇で地震」というのは
+   * どうですか？」で入れ、2026-10-14 ユーザー選択「地震動予報と読む」で維持した。
+   *
+   * 震源更新では区分に触れない。すでに伝えてあるうえ、変わったのは震源だから。
+   *
+   * **M・深さは読まない。** 続報のたびに動くので、読むなら震度と同じく確定を待つ仕組みが要る
+   * （2026-10-21 ユーザー承認「その理由で記録する (Recommended)」）。
+   *
+   * **震央地名が空なら名乗りだけを言い切る**（「緊急地震速報。」。2026-10-24 ユーザー選択「備えとして直す
+   * (Recommended)」）。空の名前をそのまま埋めると「緊急地震速報、で地震。」と壊れる。名前が空になりうるのは
+   * 強震モニタの取得元（Yahoo の `regionName`。実配信では未観測）で、
+   * DMDATA は全期間 45,079 通すべて名前を持つ。震源更新（`hypocenterUpdate`）で名前が空のときは、
+   * 呼び出し側が言い直しそのものを読まない（言い直す地名が無い）。
+   */
+  function eewAlertToText(event: EEWAlert, kind: 'forecast' | 'warning' | 'hypocenterUpdate'): string {
+    const name = event.earthquake.hypocenter.name.trim()
+    if (!name) return w.eew.leadAlone(EEW_LEAD_PHRASE[kind])
+    return w.eew.leadWithEpicenter(EEW_LEAD_PHRASE[kind], epicenterToSay(name))
+  }
+
+  /**
+   * EEW 第 1 フェーズの切り出し語。区分ごとに 1 つずつ、**全部で 3 通りしかない**。
+   *
+   * 震源名にも予想震度にも依存しないので、起動時に合成して持っておける
+   * （`warmFixedPhrases`）。EEW は間を置かずに読み始める都合で先行合成（`prewarmVoicevox`）が
+   * 使えず、合成の往復がそのまま「声が出るまでの空白」になっていた。実測で 238〜697ms
+   * （2024/1/1 能登のリプレイ。地震情報を切って割り込んだ場面で 479ms）。
+   * 作り置きが当たれば、最初のチャンクはこの往復を丸ごと省ける。
+   *
+   * **句読点で終わること。** `splitIntoChunks` は句読点の後ろで切るため、ここが単独のチャンクに
+   * ならないと作り置きと照合できない（5 文字未満だと次のチャンクに結合される点にも注意）。
+   *
+   * この一致が崩れても**何も起きない**——作り置きは正常に作られ、ただ一度も引かれなくなるだけで、
+   * 症状は「第 1 報の声がわずかに遅い」、ログは無言。文言を変えるときも分割条件を変えるときも
+   * 気づけないので、`voicevox.test.ts` の「読み上げ文の 1 チャンク目が、作り置きの対象と一致する」
+   * が実物どうしを突き合わせて固定している。
+   */
+  const EEW_LEAD_PHRASE: Readonly<Record<'forecast' | 'warning' | 'hypocenterUpdate', string>> = w.eew.lead
+
+  /** {@link EEW_LEAD_PHRASE} の全パターン。作り置きの対象として渡す。 */
+  const EEW_LEAD_PHRASES: readonly string[] = Object.values(EEW_LEAD_PHRASE)
+
+  /**
+   * 予報として発報された緊急地震速報が警報へ上がったことを告げる前置き。
+   *
+   * **第 1.5 フェーズ（対象地方）と第 2 フェーズ（予想値）のどちらが先に鳴っても同じ文言にする**
+   * ため 1 箇所に置く。呼び出し側は「この句が声になったか」で区分の既読を戻すかを決めるので
+   * （`useLiveEventHandler` の `onSettled`）、**文字列を書き写さずにこれを参照すること。**
+   *
+   * **短くするなら {@link splitIntoChunks} の `MIN_CHUNK`（5 文字）との関係を見直すこと。**
+   * それ未満になると後続の句と 1 チャンクへ結合され、「前置きだけが鳴った／鳴らなかった」を
+   * 区別できなくなる。
+   */
+  const EEW_UPGRADE_PHRASE = w.eew.upgrade
+
+  /**
+   * EEW 第 1.5 フェーズ（警報の対象地方）の読み上げ文。
+   *
+   * 第 1 フェーズ（名乗りと震源）と第 2 フェーズ（予想値）のあいだに挟む。**予想値の読み上げを
+   * 遅らせる**のが狙いで、待っているあいだに続報が届けば、第 2 フェーズは新しい確定値を読める。
+   * 同時に「どこが対象か」という、その時点で既に確定している事実を先に伝えられる。
+   *
+   * @param regions これから声にする地方。**呼び出し側が「既に声にした分」を除いて渡す**
+   *   （電文の `LastKind` では判定しない。理由は `readEewWarningRegions` の JSDoc）
+   * @param isAdditional この EEW で既に地方を声にしているか。真なら「新たに」を冠する
+   *   （**判定は「声にしたか」であって「電文が新規と言ったか」ではない**。割り込みで消えた発話を
+   *   基準にすると、一度も声にしていない地方を「新たに」と言うことになる。地震情報の続報と同じ規律）
+   * @param announceUpgrade 「緊急地震速報に切り替わりました。」を前置きするか。**予報として
+   *   発報された EEW が警報へ上がり、まだ区分を声にしていないときだけ真にすること**（判定は
+   *   呼び出し側。`eewIntensityText` の同名引数と同じ材料＝声にした区分で決める）。
+   *
+   *   **この前置きがここに要るのは、地方のブロックが警報級の報にしか入らないため。** 予報から
+   *   警報へ上がった報では、地方の読み上げが必ずその EEW で最初の「警報になった」告知になる。
+   *   区分を第 2 フェーズの前置きだけに任せると、そちらは予想値の安定待ちを経てから鳴るので、
+   *   「〇〇では強い揺れに警戒してください。」が「緊急地震速報に切り替わりました。」より先に出る。
+   *
+   *   文言を第 2 フェーズと同じにしてあるのは、どちらが先に鳴っても聞こえ方を揃えるため。
+   *   前置きを声にしたら呼び出し側が区分を既読にするので、両方から言われることはない。
+   *
+   * 区切りに読点を使うのは、中黒が音にならず合成の区切りにもならないため（→ §4「読み上げ文で
+   * 名前を並べるときの書き方」）。
+   */
+  function eewWarningRegionsText(
+    regions: readonly string[], isAdditional: boolean, announceUpgrade = false,
+  ): string {
+    if (regions.length === 0) return ''
+    const names = regions.map(eewWarningRegionToSay).join(w.common.listSep)
+    const prefix = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
+    return joinSentences(prefix, isAdditional
+      ? w.eew.warningRegionsAdditional(names, EEW_WARNING_REGIONS_CLOSING)
+      : w.eew.warningRegions(names, EEW_WARNING_REGIONS_CLOSING))
+  }
+
+  /**
+   * {@link eewWarningRegionsText} の締めの句。**地方名の既読はこの句が声になったかで決める**
+   * （`useLiveEventHandler` の第 1.5 フェーズ）。地方名だけ鳴って締めが切られた回は、
+   * 「どこで何に警戒するか」が伝わっていないので、既読にせず次の報で読み直す。
+   * 文を作る側と判定する側が同じ文字列を見るよう、ここに 1 つだけ置く。
+   */
+  const EEW_WARNING_REGIONS_CLOSING = w.eew.warningRegionsClosing
+
+  /**
+   * 警報の対象地方を声にするときの名前（電文の名前 → 読み上げの言語の名前。日本語は電文の名前のまま）。
+   * **地方名が鳴ったかの判定（`useLiveEventHandler` の第 1.5 段）はこれで照合する** —— 電文の名前で探すと、
+   * 訳した言語では「Kanto」の中に「関東」が見つからず、鳴っても既読にならずに報ごとに読み直す
+   */
+  function eewWarningRegionToSay(name: string): string {
+    return w.eew.warningRegionName(name)
+  }
+
+  /**
+   * 予想震度が付いていないときの句。理由の判定は `eewNoForecastReason` に委ねる
+   * （待たずに読むかどうかの判断と同じ判定を使うため。二重に持つと食い違う）。
+   *
+   * `singleStation`（待ち終えても値が付かなかった精度ランク 1）も「単独点処理のため」と読む
+   * （2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
+   */
+  function noForecastText(event: EEWAlert, noForecastWaited: boolean): string {
+    switch (eewNoForecastReason(event, noForecastWaited)) {
+      case 'assumed':
+      case 'singleStation': return w.eew.noForecast.singleStation
+      case 'deep':    return w.eew.noForecast.deep
+      // 最大予想震度 0 の報。電文が言い切った値なので「予想最大震度0。」と読む
+      // （2026-10-30 ユーザー選択「予想最大震度 0 (Recommended)」。読み上げは「予想最大震度0。」）
+      case 'belowScale1': return w.eew.noForecast.belowScale1
+      case 'unknown': return w.eew.noForecast.unknown
+    }
+  }
+
+  /**
+   * 震度部分だけの読み上げ文（「予想最大震度〇〇。」・最大予想震度 0 の報の「予想最大震度0。」、または理由付きの「予想震度なし。」）。
+   * `eewIntensityText` が内部で使う（`lpgmClass` が未確定・0 のときは階級部分が空文字になる
+   * ことで、結果的にこちらだけが声になる）。
+   *
+   * `scaleInfo` は呼び出し側で確定させた値を渡す（`event` から直接取り直さない）。安定待ちで
+   * 「この値に確定した」と判定したタイミングと、実際に声になるタイミングにはズレがありうるため、
+   * どの値を読んだかを呼び出し側が制御できるようにしている。
+   *
+   * 震度を伝えられないときに階級句を落とすのは、結合する `eewIntensityText` の役目
+   * （この関数は震度部分だけを組み立てる）。
+   *
+   * `noForecastWaited` … 値の付かない待ちが切れたか（`eewNoForecastReason` の `waited`）。
+   * 震度があるときは使わない。
+   */
+  function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert, noForecastWaited: boolean): string {
+    if (scaleInfo.scale > 0) {
+      return w.eew.maxScale(scaleInfo.scale, scaleInfo.orAbove)
+    }
+    return noForecastText(event, noForecastWaited)
+  }
+
+  /** 電文が最大予想長周期地震動階級を 0 と言い切った報で読む句（→ `eewIntensityText`）。 */
+  const EEW_LPGM_CLASS_ZERO_TEXT = w.eew.lpgmClassZero
+
+  /**
+   * 長周期地震動階級部分だけの読み上げ文（「予想最大階級〇。」）。0 なら空文字列
+   * （句ごと省く。音声には地図の色フォールバックのような逃げ場が無く、不正値がそのまま
+   * 声に出るのを避けるため）。
+   */
+  function eewLpgmOnlyText(lpgmClass: number, over = false): string {
+    // 「程度以上」は気象庁の表現（→ `getLpgmClassLabelWithApproxAbove` のコメント）。
+    return lpgmClass > 0 ? w.eew.maxLpgmClass(lpgmClass, over) : ''
+  }
+
+
+  /**
+   * EEW 第2フェーズ（予想値）の読み上げテキストを、震度・階級それぞれの部分から組み立てる。
+   * `eewScaleOnlyText` / `eewLpgmOnlyText` の結合ロジックを呼び出し側（`useLiveEventHandler`）と
+   * 共有するためのヘルパー。初報・続報の区別なく同じ形で読む。
+   *
+   * `scaleInfo`・`lpgmClass` は呼び出し側で確定させた値を渡す（`event` から直接取り直さない）。
+   * 安定待ちで「この値に確定した」と判定したタイミングと、実際に声になるタイミングにはズレが
+   * ありうるため、どの値を読んだかを呼び出し側が制御できるようにしている。
+   *
+   * `announceUpgrade` が真のとき「緊急地震速報に切り替わりました。」を前置きする。
+   * **予報として発報された EEW が警報へ格上げされたときだけ真にすること**（判定は呼び出し側）。
+   *
+   * 遷移の言い方にしているのは、第 1 フェーズで「地震動予報、〇〇で地震。」と伝えてあるため。
+   * 聞き手は前の区分を知っているので「何から何に変わったか」が通じる。ここを「警報。」のような
+   * 区分名だけにすると、値の読み上げの前に単語が挟まるだけで変化が伝わらない。
+   *
+   * 逆に、初報から警報だった場合はここでは何も前置きしない。第 1 フェーズが既に
+   * 「緊急地震速報、〇〇で地震。」と伝えており、重ねて言う意味がないため。
+   *
+   * **「特別警報」は読み上げない。** 特別警報の条件を満たしていても、格上げとして読み上げるのは
+   * 予報→警報のときだけ。気象庁が発表時にこの名称を用いないため（根拠と条件は
+   * docs/spec/eew-spec.md §4）。画面表示・ブラウザ通知・通知音は内部の重大度区分として 2 段階を保つ。
+   * 声・地図の吹き出し・ウィンドウタイトル・電文ログでは特別警報と警報を言い分けない
+   * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
+   *
+   * 引き上げ専用の短句（「震度6弱に引き上げ。」）は持たない。同じ形で言い直せば足りるうえ、
+   * 差分の言い方は「基準にした値を実際に発話したか」に依存し、割り込みで消えた発話を基準に
+   * すると一度も声に出していない値からの引き上げを語ることになるため。
+   *
+   * 呼び出し側（`useLiveEventHandler`）は震度・階級のどちらが先に確定していても常にこの関数を
+   * 呼ぶ——未確定の階級は `lpgmClass=0` として渡せば `eewLpgmOnlyText` が空文字を返し、
+   * 結果的に震度部分だけが声になる（「個別に呼び分ける」のではなく、0 扱いで自然に省略させる）。
+   */
+  function eewIntensityText(
+    scaleInfo: EewMaxScaleInfo, lpgmClass: number, event: EEWAlert,
+    /** 値の付かない待ちが切れたか（`eewScaleOnlyText` の同名引数）。 */
+    noForecastWaited: boolean,
+    announceUpgrade = false,
+    /**
+     * 階級が「程度以上」だったか。**`event` から引き直さない** —— 渡される `lpgmClass` は
+     * 安定待ちを経た確定値で、現在の報の値と食い違いうる。引き直すと別の値に語を貼り付ける。
+     */
+    lpgmOver = false,
+    /**
+     * 読み上げ設定。`readEewLpgmClass` が偽なら階級の句を落とす（既定＝未指定は読む）。
+     * 震度側は落とさない ―― 緊急地震速報の主題そのもので、切る選択肢を設けていない。
+     */
+    opts?: TtsSpeechOptions,
+  ): string {
+    const prefix = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
+    // 上限が定まらない報（仮定震源要素の初報など）は「震度4以上」と読む。値だけ読むと
+    // 下限を断定した放送になる（判定は eewMaxScaleInfo・語の付け方は表示と共通）。
+    //
+    // **震度を伝えられないときは階級も読まない**（判定は `canPresentLpgmClass`。カード表示・
+    // 第 2 フェーズの言い直しと同じ述語を共有する。理由はそちらのコメント）。
+    const scaleText = eewScaleOnlyText(scaleInfo, event, noForecastWaited)
+    //
+    // **電文が階級 0 と言い切った報は「予想最大階級0。」と読む**（→ `isEewLpgmClassZeroForecast`）。
+    // 確定した階級（`lpgmClass`）が 0 のときだけ `event` から見る —— 0 は「階級を載せていない」とも
+    // 同じ値なので、言い切ったかどうかは電文の印にしか無い。後の報で階級 1 以上へ上がれば、
+    // 既読（階級 0 として記録される）より高いので言い直しの経路に乗る。
+    const readLpgm = opts?.readEewLpgmClass ?? true
+    const lpgmText = !readLpgm ? ''
+      : canPresentLpgmClass(scaleInfo.scale, lpgmClass) ? eewLpgmOnlyText(lpgmClass, lpgmOver)
+      : statesEewLpgmClassZero(event, scaleInfo.scale, lpgmClass, readLpgm) ? EEW_LPGM_CLASS_ZERO_TEXT
+      : ''
+    return joinSentences(prefix, scaleText, lpgmText)
+  }
+
+  /**
+   * 試聴文を組むための緊急地震速報。**画面にも音にも流れない**——`voicevoxPreviewTexts` が
+   * 読み上げ文を作るためだけに使う。
+   *
+   * 読み上げ文が見るのは震源名と、予想震度が付いていないときの理由（`eewNoForecastReason`）だけ。
+   * それ以外は型を満たすために置いた値で、**座標・深さ・規模は声にならない**（`test` も同じで、
+   * 流す経路に載っていないため抑制の意味を持たない）。**読み上げ文の側が新しいフィールドを
+   * 読むようになったら、ここの値が声にしてよいものかを見直すこと。**
+   */
+  const PREVIEW_EEW: EEWAlert = {
+    kind: 'eew',
+    origin: 'test',
+    id: 'voicevox-preview',
+    time: '',
+    test: true,
+    earthquake: {
+      originTime: '',
+      arrivalTime: '',
+      condition: '',
+      hypocenter: { name: '三陸沖', latitude: 38.5, longitude: 143.0, depth: 10, magnitude: 7.2 },
+    },
+    severity: 'Warning',
+    cancelled: false,
+  }
+
+  /** 試聴で読ませる予想震度（6強）。語の組み立てを実運用と共有するため階級値で持つ。 */
+  const PREVIEW_EEW_SCALE: EewMaxScaleInfo = { scale: 60, orAbove: false }
+
+  /**
+   * 設定の窓の「試聴」で読ませる文。緊急地震速報（警報）を想定して
+   * 「緊急地震速報、三陸沖で地震。」「予想最大震度6強。」を返す。
+   *
+   * **文字列を直接書かず、実運用と同じ関数から組む。** 直接書くと緊急地震速報の文型を変えたときに
+   * 試聴だけ古い形で残り、試聴で聞いた鳴り方と実際の鳴り方が食い違う。実際にそうなっていた——
+   * 地震情報の文型を借りた「三陸沖を震源とするマグニチュード7.2の地震が発生しました。」を
+   * 読ませており、緊急地震速報はその形を一度も作らない。
+   *
+   * **発話ごとに分けて返す。繋げて 1 つにしない。** 実運用は第 1 フェーズ（切り出しと震源）と
+   * 第 2 フェーズ（予想値）を別々に鳴らすため、「〇〇で地震。」はそこでは最後のチャンクになり、
+   * 末尾の句点に間が付かない。繋げて 1 回で渡すと途中のチャンクへ変わり、**実運用には無い
+   * 110ms の無音が挟まる**（`utils/voicevox.ts` の `CHUNK_BREAK_PAUSE`）。
+   *
+   * **ただし発話の間隔までは再現しない。** 実運用の第 2 フェーズは続報を待つ安定待ちを経てから
+   * 声になるもので（§6）、待ち時間は電文の到着間隔で決まる。試聴は前の発話が終わり次第続ける。
+   */
+  function voicevoxPreviewTexts(): readonly string[] {
+    return [
+      eewAlertToText(PREVIEW_EEW, 'warning'),
+      eewIntensityText(PREVIEW_EEW_SCALE, 0, PREVIEW_EEW, false),
+    ]
+  }
+
+  function domesticTsunamiText(t: DomesticTsunami): string {
+    return w.quake.domesticTsunami[t]
+  }
+
+  /**
+   * 震源要素を伝える句を、要素ごとに参照付きの断片へ分ける。
+   * 連結すると「〇〇、深さ120キロメートルを震源とするマグニチュード7.1の地震が発生しました。」になる。
+   * 震源名・深さ・規模のいずれが欠けても文が破綻しないよう、欠けた要素は句ごと省く（震源名が取れない
+   * 電文では震源に触れず規模だけを伝える文になる）。
+   *
+   * 要素ごとに分けるのは、**チャンクが読点で切られる**ため。震源名と深さの間には読点が入るので、
+   * ひとつの断片にまとめると「震源名しか鳴っていないのに深さも規模も声になった」と記録される。
+   *
+   * **並び順は語表（`quake.occurrence`）が決める**（2026-11-17 ユーザー選択「言語の側で決める (Recommended)」。英語などは
+   * 「地震が起きた」を先に言い、震源を後から言う）。ここは言える要素の文字列を渡し、返った並びのとおりに、要素は記録つきの
+   * 断片に、語は記録なしの断片にして並べる。数値にならない規模の文（→ magnitudeConditionSentence）も並びの 1 要素
+   */
+  function quakeOccurrenceSegments(
+    hypocenter: Hypocenter,
+    opts: TtsSpeechOptions | undefined,
+    /**
+     * 文の頭から始まるか（前に時刻の句が無い）。真なら先頭の小文字を大文字にする（英語などの「an earthquake …」が名乗りの
+     * 文の後ろで文頭になるため）。大文字と小文字の無い字（日本語・中国語・韓国語）は変わらない
+     */
+    startsSentence: boolean,
+  ): SpeechSegment[] {
+    const segments = quakeOccurrenceParts(hypocenter, opts)
+    if (!startsSentence || segments.length === 0) return segments
+    const [first, ...rest] = segments
+    return [{ ...first, text: first.text.replace(/^\p{Ll}/u, c => c.toUpperCase()) }, ...rest]
+  }
+
+  /** {@link quakeOccurrenceSegments} の中身（文頭の大文字にする前の断片） */
+  function quakeOccurrenceParts(hypocenter: Hypocenter, opts?: TtsSpeechOptions): SpeechSegment[] {
+    const tellable = tellableHypocenterFacts(hypocenter, opts)
+    const magRef: SpeechRef[] = [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter) }]
+    const numeric = magnitudePhrase(hypocenter.magnitude)
+    const elements: Record<Exclude<QuakeOccurrencePart['kind'], 'text'>, SpeechSegment | null> = {
+      name: tellable.has('hypocenterName')
+        ? { text: epicenterToSay(hypocenter.name), refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] }
+        : null,
+      // 深さは震源名の句の中でしか言わない（→ `tellableHypocenterFacts`。深さが言えるなら震源名もある）
+      depth: tellable.has('depth')
+        ? { text: depthSourcePhrase(hypocenter), refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] }
+        : null,
+      magnitude: tellable.has('magnitude') && numeric ? { text: numeric, refs: magRef } : null,
+      magnitudeSentence: tellable.has('magnitude') && !numeric ? { text: magnitudeConditionSentence(hypocenter), refs: magRef } : null,
+    }
+    const parts = w.quake.occurrence({
+      ...(elements.name ? { name: elements.name.text } : {}),
+      ...(elements.depth ? { depth: elements.depth.text } : {}),
+      ...(elements.magnitude ? { magnitude: elements.magnitude.text } : {}),
+      ...(elements.magnitudeSentence ? { magnitudeSentence: elements.magnitudeSentence.text } : {}),
+    })
+    const segments: SpeechSegment[] = []
+    for (const part of parts) {
+      if (part.kind === 'text') {
+        segments.push(plain(part.text))
+        continue
+      }
+      // 語表が言えない要素を並べたら落とす（言えない要素の記録を付けると、声にしていない事実が既読になる）
+      const element = elements[part.kind]
+      if (element) segments.push(element)
+    }
+    return segments
+  }
+
+  /** 津波区分の文を参照付きの断片にする（続報で区分が変わったときだけ読み直すため）。 */
+  function domesticTsunamiSegment(t: DomesticTsunami): SpeechSegment {
+    return { text: domesticTsunamiText(t), refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: t }] }
+  }
+
+  /**
+   * 読み上げで読む、区分を決める固定付加文の文。**0211 だけ括弧書きを除き、ほかは画面と同じ気象庁の文。**
+   *
+   * 0211 は読み上げでは「津波警報等を発表中です。」と読む（2026-11-05 ユーザー選択「読み上げだけ「津波警報等を発表中です。」 (Recommended)」。
+   * 2026-10-23 の「気象庁の原文を読む」を 0211 の読み上げについてだけ覆した）。括弧書き「（大津波警報・津波警報あるいは
+   * 津波注意報）」は「等」の中身の説明で、声では本題の前に警報の名前が続いてしまう。画面の地震カードは電文の全文のまま
+   * （`domesticTsunamiCardForecastText`）。
+   */
+  const DOMESTIC_TSUNAMI_CODE_SPEECH: Readonly<Record<DomesticTsunamiCode, string>> = w.quake.domesticTsunamiCode
+
+  /**
+   * 遠地地震に関する情報の付加文の原文を、読み上げる形にする。**原文の 0211 の文だけを読み上げ用の文へ置き換え**、
+   * ほかの文はそのまま読む（2026-11-05 ユーザー選択「遠地地震も「津波警報等を発表中です。」 (Recommended)」。画面は全文のまま）。
+   * 照合は表の文との完全一致で、文面が一字でも違えば原文のまま読む。
+   */
+  function speakableForecast(text: string): string {
+    // 直すのは電文の原文（日本語）なので、差し込むのも日本語の文（画面の言語によらない）
+    return text.split(DOMESTIC_TSUNAMI_CODE_TEXT['0211']).join(jaSpeech.quake.domesticTsunamiCode['0211'])
+  }
+
+  /**
+   * 遠地地震の付加文を、日本語以外の言語でコードから訳した文の断片にする（在処の文は呼び出し側が続ける）。
+   *
+   * **並びは付加文の原文と同じ順**（2026-11-17 ユーザー選択「原文と同じ順 (Recommended)」）。電文はコードの並びを付加文の
+   * 原文（`forecastText`）の文の並びとして持つので、各コードの文（気象庁のコード表の文。022x 系は日本語の語表の
+   * `quake.foreignTsunamiCode`、国内は `DOMESTIC_TSUNAMI_CODE_TEXT`）が原文のどこに現れるかで並べる。原文に見つからない文は、
+   * 022x 系 → 国内の文の順で後ろへ回す（見つかった文の並びは崩さない）。
+   *
+   * **言う文は、解読が残したコードと、原文の中に見つかったコード表の文の両方**（重なりは 1 つ）。解読がコードを残すようにする前に
+   * 端末へ控えたカードは `foreignTsunamiCodes` の欄を持たない（区分を決めたコードも持たないことがある）が、原文は持つ。
+   *
+   * 国内の文は、区分を決めたコード（カードの欄か、原文に見つかったコード表の文）があればその文。どちらも無く区分が「不明」で
+   * なければ（津波電文から借りた区分）区分の文。区分も「不明」なら言わない
+   */
+  function translatedForecastSegments(event: JMAQuake, forecastOriginal: string): SpeechSegment[] {
+    // 原文に見つからない文の位置。**有限の大きな値にする** —— 無限大どうしの差は NaN になり、比べ方が NaN の扱いに頼ってしまう。
+    // 見つからない文どうしは差が 0 になり、下の並べ替えの次の鍵（022x 系 → 国内の順・元の順）で決まる
+    const NOT_FOUND = Number.MAX_SAFE_INTEGER
+    const positionOf = (sentence: string): number => {
+      const at = forecastOriginal.indexOf(sentence)
+      return at < 0 ? NOT_FOUND : at
+    }
+    const parts: { at: number; fallback: number; segment: SpeechSegment }[] = []
+
+    const foreignCodes = new Set<ForeignTsunamiCode>(event.earthquake.foreignTsunamiCodes ?? [])
+    for (const foreignCode of Object.keys(jaSpeech.quake.foreignTsunamiCode) as ForeignTsunamiCode[]) {
+      if (forecastOriginal.includes(jaSpeech.quake.foreignTsunamiCode[foreignCode])) foreignCodes.add(foreignCode)
+    }
+    for (const foreignCode of foreignCodes) {
+      parts.push({
+        at: positionOf(jaSpeech.quake.foreignTsunamiCode[foreignCode]),
+        fallback: 0,
+        segment: plain(w.quake.foreignTsunamiCode[foreignCode]),
+      })
+    }
+
+    const { domesticTsunami: t, domesticTsunamiCode: cardCode } = event.earthquake
+    // カードにコードが無ければ、原文に見つかったコード表の文のうち最初のもの
+    const textCode = cardCode ?? (Object.keys(DOMESTIC_TSUNAMI_CODE_TEXT) as DomesticTsunamiCode[])
+      .filter(c => forecastOriginal.includes(DOMESTIC_TSUNAMI_CODE_TEXT[c]))
+      .sort((a, b) => positionOf(DOMESTIC_TSUNAMI_CODE_TEXT[a]) - positionOf(DOMESTIC_TSUNAMI_CODE_TEXT[b]))[0]
+    const domestic: SpeechSegment | null = cardCode
+      ? domesticTsunamiSegmentOf(event)
+      : textCode
+        ? { text: DOMESTIC_TSUNAMI_CODE_SPEECH[textCode], refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: domesticTsunamiFactValue(t, textCode) }] }
+        : t !== '不明' ? domesticTsunamiSegmentOf(event) : null
+    if (domestic) {
+      parts.push({ at: textCode ? positionOf(DOMESTIC_TSUNAMI_CODE_TEXT[textCode]) : NOT_FOUND, fallback: 1, segment: domestic })
+    }
+    // 安定な並べ替え: 原文での位置 → 見つからないものは 022x 系 → 国内の順 → 元の順
+    return parts
+      .map((p, i) => ({ ...p, i }))
+      .sort((a, b) => (a.at - b.at) || (a.fallback - b.fallback) || (a.i - b.i))
+      .map(p => p.segment)
+  }
+
+  /**
+   * 津波区分の既読・差分の鍵。**区分とコードの組で作る** —— 区分が同じでもコードが違えば読み上げる文が
+   * 違う（0212 と 0213 はどちらも「若干の海面変動」）ので、区分だけで比べると続報で文が変わっても黙る。
+   */
+  function domesticTsunamiFactValue(t: DomesticTsunami, code: DomesticTsunamiCode | undefined): string {
+    return code ? `${t}:${code}` : t
+  }
+
+  /**
+   * 国内の地震情報の津波の一文。**区分を決めたコードを持てば、そのコードの気象庁の文を読む**
+   * （2026-10-23 ユーザー選択「気象庁の原文を読む (Recommended)」、範囲は同日の選択「A: 発表文の内訳に足す (Recommended)」で
+   * 津波の文だけにした）。0211 だけは括弧書きを除いた文を読む（→ {@link DOMESTIC_TSUNAMI_CODE_SPEECH}）。
+   *
+   * 区分から文を起こすと、区分へ丸めたぶん気象庁が書いていないことを言う —— 0230「この地震による日本への
+   * 津波の影響はありません。」を 0215 の文で読み、0213・0214 の「注意してください」を「被害の心配はありません」に、
+   * 0216 の「震源が海底の場合」を「ため」に変える（コード表との突き合わせは docs/jma-wording-audit.md E1〜E3）。
+   *
+   * **コードを持たないときは区分の文を読む。** 原文を持たない電文と、区分を津波電文から借りたとき
+   * （借りるときにコードを捨てる）。
+   */
+  function domesticTsunamiSegmentOf(event: JMAQuake): SpeechSegment {
+    const { domesticTsunami: t, domesticTsunamiCode: code } = event.earthquake
+    return {
+      text: code ? DOMESTIC_TSUNAMI_CODE_SPEECH[code] : domesticTsunamiText(t),
+      refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: domesticTsunamiFactValue(t, code) }],
+    }
+  }
+
+  /**
+   * 「震源の深さは〇〇に更新されました。」の〇〇部分。
+   *
+   * {@link depthSourcePhrase} は「深さ10キロメートル」を返すため、この文には使えない
+   * （「震源の深さは深さ10キロメートルに」と重なる）。深さ不明では空文字。
+   */
+  function depthUpdateValue(h: DepthFact): string {
+    if (!hasDepth(h.depth)) return ''
+    return h.depth === 0 ? w.quake.depthVeryShallowPlace : w.quake.depthKm(h.depth, atLeastSuffix(h))
+  }
+
+  /**
+   * この震源要素のうち、**声にしうるもの**（＝記録されうるもの）。
+   *
+   * **読む側（{@link quakeOccurrenceSegments} / {@link changedFactSegments}）と、記録を待つ側
+   * （{@link hasUnspokenFact}）は必ずこれを使うこと。** 条件を各所に書くと必ずずれる ―― 実際、
+   * 深さの条件が生成側とだけ食い違い、記録される機会の無い事実を待って**その地震だけ永久に
+   * 全文読みへ戻る**不具合を作った（docs/spec/audio-tts-spec.md §4）。
+   *
+   * **深さは震源名の句の中でしか読まれない**（2026-10-21 ユーザー承認）**。**
+   *
+   * **先に件数を数えてから決めた。** ユーザー選択「先に件数を数える (Recommended)」に応えて、
+   * DMDATA のアーカイブの控え（`.cache/dmdata-archive-cache/telegram-earthquake`。2,135 日・
+   * 2020-11-18〜2026-10-18）の地震情報を数えた。震源名が空なのは震源要素を持たない震度速報
+   * 1,771 通だけで、**「深さは判っているのに名前が無い」電文は 0 件**（震度速報は深さも持たない）。
+   * 起きない形として残す。震源名が空の電文では「〇〇、深さ10キロメートルを
+   * 震源とする」の句ごと落ちるため、深さが判っていても声にならない。
+   */
+  function tellableHypocenterFacts(hypocenter: Hypocenter, opts?: TtsSpeechOptions): Set<QuakeFact> {
+    // 既定（未指定）は従来どおり深さ・規模とも語る。設定で切ったときだけ震源名へ絞る。
+    const detail = opts?.readHypocenterDetail ?? true
+    const facts = new Set<QuakeFact>()
+    if (hypocenter.name) {
+      facts.add('hypocenterName')
+      if (detail && depthSourcePhrase(hypocenter)) facts.add('depth')
+    }
+    if (!detail) return facts
+    // 数値が読めなくても、気象庁が説明を添えていれば規模は語れる（「Ｍ８を超える巨大地震」）。
+    if (magnitudePhrase(hypocenter.magnitude) || magnitudeConditionSentence(hypocenter)) facts.add('magnitude')
+    return facts
+  }
+
+  /**
+   * 上に津波区分を足した、この電文が声にしうる事実の全体。
+   *
+   * **`maxScaleOnly` はここに載せない。** これは「地域名を作れなかったときの代替」であって
+   * 電文が普通に伝える事実ではない。載せると `hasUnspokenFact` が常に真を返し、地域名を作れる
+   * 正常な地震でも差分の経路に入らなくなる（毎報が全文になる）。
+   */
+  function tellableFacts(event: JMAQuake, opts?: TtsSpeechOptions): Set<QuakeFact> {
+    const facts = tellableHypocenterFacts(event.earthquake.hypocenter, opts)
+    if (domesticTsunamiText(event.earthquake.domesticTsunami)) facts.add('domesticTsunami')
+    return facts
+  }
+
+  /**
+   * この電文が伝える震源要素・津波区分のうち、**まだ一度も声にしていないもの**があるか。
+   *
+   * あるなら続報でも差分にせず、初報と同じ形（時刻・震源・規模・津波を通しで言う文）へ回す。
+   * 未記録には理由が 2 つあり、**どちらも「更新されました」と言うのは正しくない**。
+   *
+   * - 初報の時点では値が不明だった（深さ・規模は後の報で確定することがある）
+   * - 初報の該当箇所が割り込みで鳴らなかった（→ docs/spec/audio-tts-spec.md §4
+   *   「既読になるのは「声になった分」だけ」）
+   *
+   * **未記録を「変化なし」として省いてはいけない。** 省くと、その要素はその地震の続報が続く限り
+   * 二度と声にならない（同じ種別の報が来る限り初報の経路にも戻らない）。区域側の
+   * {@link isUnspokenRegion} が「未記録＝読む」としているのと、意味を揃えるための判定。
+   */
+  function hasUnspokenFact(event: JMAQuake, spoken: QuakeSpokenState, opts?: TtsSpeechOptions): boolean {
+    return [...tellableFacts(event, opts)].some(fact => !spoken.facts.has(fact))
+  }
+
+  /**
+   * 続報で「値が変わった震源要素」だけを言い直す断片列を作る。変化が無ければ空。
+   *
+   * **震度速報では呼ばないこと。** 震度速報は震源要素も津波区分も伝えない電文で、
+   * `hypocenter` はセンチネル（`-200` / `-1`）、`domesticTsunami` は「調査中」が入る。
+   * 素直に比べると、震源情報で伝えた「津波の心配はありません」から変化したと誤検出し、
+   * 続報のたびに「津波の有無を調査中です」と言い出す。
+   */
+  function changedFactSegments(event: JMAQuake, spoken: QuakeSpokenState, opts?: TtsSpeechOptions): SpeechSegment[] {
+    const { hypocenter, domesticTsunami } = event.earthquake
+    const tellable = tellableFacts(event, opts)
+    const segments: SpeechSegment[] = []
+    // 声にしうる事実のうち、記録と値が違うものだけ。未記録がここへ来ることは無い
+    // （呼び出し前に {@link hasUnspokenFact} で弾き、初報と同じ形で言い直す側へ回している）。
+    // `has` の判定はその保証が崩れたときの安全弁として残す。
+    const changed = (fact: QuakeFact, value: string): boolean =>
+      tellable.has(fact) && spoken.facts.has(fact) && spoken.facts.get(fact) !== value
+
+    if (changed('hypocenterName', hypocenter.name)) {
+      segments.push({ text: w.quake.hypocenterAmended(epicenterToSay(hypocenter.name)), refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] })
+    }
+    if (changed('magnitude', magnitudeFactValue(hypocenter))) {
+      const value = magnitudeFactValue(hypocenter)
+      // 数値にならない規模は「〜に更新されました」の枠へ入れられない（「8を超える巨大地震に
+      // 更新されました」と破綻する）。**それでも更新されたことは言う** —— 主題部だけを
+      // 差し替えた形を使う（→ `magnitudeConditionAmendSentence`）。
+      const text = hasMagnitude(hypocenter.magnitude)
+        ? w.quake.magnitudeAmendedTo(magnitudeText(hypocenter.magnitude))
+        : magnitudeConditionAmendSentence(hypocenter)
+      segments.push({ text, refs: [{ kind: 'quakeFact', fact: 'magnitude', value }] })
+    }
+    if (changed('depth', depthFactValue(hypocenter))) {
+      segments.push({ text: w.quake.depthAmendedTo(depthUpdateValue(hypocenter)), refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
+    }
+    if (changed('domesticTsunami', domesticTsunamiFactValue(domesticTsunami, event.earthquake.domesticTsunamiCode))) {
+      segments.push(domesticTsunamiSegmentOf(event))
+    }
+    return segments
+  }
+
+  /**
+   * 区域より下の階層（観測点・市町村）に、前に声にした報から何が起きたか。
+   *
+   * | 値 | 意味 |
+   * |---|---|
+   * | `lowered` | 観測点か市町村が減った、または震度が下がった（他の変化より優先する） |
+   * | `added` | 観測点か市町村が増えた |
+   * | `updated` | 顔ぶれは同じだが震度が上がった |
+   * | `none` | どれも起きていない（＝本当に変化が無い） |
+   * | `unknown` | 比べる相手がいない（この地震でまだ 1 通も声にしていない） |
+   *
+   * **`none` と `unknown` を混ぜないこと。** 前者は「変わりはありません」と言い切ってよい根拠だが、
+   * 後者は何も判らないだけで、言い切ると嘘になりうる。
+   *
+   * **`lowered` を他より先に見る。** 下がったものがあるのに「変わっていません」と言うと嘘になる
+   * （2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
+   */
+  type ObservationChange = 'lowered' | 'added' | 'updated' | 'none' | 'unknown'
+
+  /**
+   * 観測点を指す鍵。**コードがあれば優先する** —— 観測点名は全国で一意とは限らない。
+   * DMDATA の観測点は `pref` が空なので、名前へ落ちたときは実質 `addr` だけで引く。
+   */
+  function stationKey(p: { code?: string; pref: string; addr: string }): string {
+    return p.code ? `c:${p.code}` : `n:${p.pref}|${p.addr}`
+  }
+
+  /** 市町村を指す鍵（観測点と同じ規則）。 */
+  function cityKey(c: { code?: string; pref: string; name: string }): string {
+    return c.code ? `c:${c.code}` : `n:${c.pref}|${c.name}`
+  }
+
+  /**
+   * 前に声にした報と、いまの電文を突き合わせる。
+   *
+   * **なぜ電文の `Revise` を使わないか。** 気象庁は続報の観測点・市町村へ `追加` `上方修正`
+   * `下方修正` を書いており（→ `EarthquakePoint.revise`）、実電文で突き合わせの結果と一致することも
+   * 確かめた（実例は `docs/spec/audio-tts-spec.md` 改訂履歴 2026-09-17）。それでも採らない。
+   *
+   * - **問いが違う。** `Revise` が答えるのは「**直前の報**から何が変わったか」。こちらが要るのは
+   *   「**最後に声にした報**から何が変わったか」で、割り込みで鳴らなかった報があると食い違う
+   *   （記録を声になった分だけ進める規律の帰結 → `docs/spec/audio-tts-spec.md` §4）。
+   *
+   * 突き合わせならこれを満たせる。`Revise` は逆に**検証の材料**として使える（テストで実電文の
+   * 値と突き合わせの結果が一致することを固定してある）。
+   *
+   * **区域・都道府県の集約点（`isArea`）は数えない。** あれは区域の差分がもう見ており、
+   * 増えていればこの関数を呼ぶ経路（差分が空）へそもそも入らない。
+   */
+  function observationChange(event: JMAQuake, spoken: QuakeSpokenState): ObservationChange {
+    const prev = spoken.observed
+    if (!prev) {
+      // **正常な見送りと、機能が死んでいるのを見分けられるようにする。** その地震でまだ 1 通も
+      // 声にしていないなら比べる相手がいないのは当たり前だが、区域や震源要素は何度も声にして
+      // いるのに観測点の記録だけ無いなら、**発話が毎回割り込まれて最後の断片まで届いていない**
+      // （記録はチャンク単位で進み、この参照は最後の断片に載っているため）。後者は黙るだけで
+      // 嘘は言わないが、この一文が永久に出なくなる。
+      if (spoken.regions.size > 0 || spoken.facts.size > 0) {
+        log.debug('[tts] 観測点の記録が無いため、区域より下の階層の変化を判定できない（発話が最後まで鳴っていない可能性）')
+      }
+      return 'unknown'
+    }
+
+    // 鍵が衝突したら記録を残す。**黙って上書きすると、別の観測点の震度と突き合わせて
+    // 「変わりなし」とも「更新された」とも誤りうる**（どちらも嘘）。`code` は実電文でほぼ必ず
+    // 入るので、ここへ来るのは配信の形が変わったとき。
+    const indexOf = <T,>(items: readonly T[], keyOf: (x: T) => string, scaleOf: (x: T) => number, what: string): Map<string, number> => {
+      const map = new Map<string, number>()
+      let collisions = 0
+      for (const item of items) {
+        const key = keyOf(item)
+        if (map.has(key)) collisions++
+        map.set(key, scaleOf(item))
+      }
+      if (collisions > 0) log.warn(`[tts] ${what}の鍵が重複した（${collisions} 件）。区域より下の階層の変化を誤って判定しうる`)
+      return map
+    }
+
+    const nowStations = event.points.filter(p => !p.isArea)
+    const prevStations = indexOf(prev.points.filter(p => !p.isArea), stationKey, p => p.scale, '観測点')
+    const nowCities = event.cities ?? []
+    const prevCities = indexOf(prev.cities, cityKey, c => c.scale, '市町村')
+
+    // **減った・下がったことも見る**（2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
+    // 気象庁は続報で観測点・市町村の震度を下方修正する（`Revise` の値域に「下方修正」がある。
+    // 電文解説資料 Ⅱ.33-5）。見ないと、下がった続報で「変わっていません」と言い切ってしまう。
+    //
+    // **消えたかどうかは、今の報がその階層を運んでいるときだけ見る。** 減って見える形は**種別の違い**
+    // でも起きる ―― 観測点を運ばない報が地震情報のあとに届けば、観測点は全部「消えた」ように見える。
+    // その階層を 1 件も持たない報では消えたと数えない。
+    let added = false
+    let updated = false
+    let lowered = false
+    for (const p of nowStations) {
+      const before = prevStations.get(stationKey(p))
+      if (before === undefined) added = true
+      else if (p.scale < before) lowered = true
+      else if (before !== p.scale) updated = true
+    }
+    for (const c of nowCities) {
+      const before = prevCities.get(cityKey(c))
+      if (before === undefined) added = true
+      else if (c.scale < before) lowered = true
+      else if (before !== c.scale) updated = true
+    }
+    if (nowStations.length > 0) {
+      const nowKeys = new Set(nowStations.map(stationKey))
+      for (const key of prevStations.keys()) if (!nowKeys.has(key)) lowered = true
+    }
+    if (nowCities.length > 0) {
+      const nowKeys = new Set(nowCities.map(cityKey))
+      for (const key of prevCities.keys()) if (!nowKeys.has(key)) lowered = true
+    }
+    if (lowered) return 'lowered'
+    if (added) return 'added'
+    return updated ? 'updated' : 'none'
+  }
+
+  /**
+   * 前の報から震度が下がった・観測が減った続報で、「変わっていません」の代わりに言う一文。
+   *
+   * **下がった値は読まない。** 言うのは「更新された」ことだけ（2026-10-19 ユーザー承認
+   * 「言い切りを外す (推奨)」）。前置きの情報名（「地震情報が更新されました。」）は呼び出し側が付ける。
+   */
+  const OBSERVED_INTENSITY_UPDATED = w.quake.observedIntensityUpdated
+
+  /**
+   * 「更新されました」のあとに続ける一文。**名乗りだけで終わらせないための断片。**
+   *
+   * 読み上げの地域名は一次細分区域までしか下りないので、区域の最大震度が据え置きのまま
+   * 観測点だけが増えた続報は差分が空になる。そのとき「更新されました。」で切ると、聞き手には
+   * 「何が？」しか残らない。
+   *
+   * **「地域ごとの最大震度」と言い切る。** 「各地の震度」では市町村の段を含んで読めてしまい、
+   * そちらは実際に上がっていることがある。読み上げが伝えてきた単位＝区域の最大震度に限れば、
+   * 据え置きであることは正しい（実例は `docs/spec/audio-tts-spec.md` 改訂履歴 2026-09-17）。
+   *
+   * **区域より下の階層を運ぶ種別（地震情報）専用。** 震度速報（区域まで）と震源情報（震源要素のみ）は
+   * **そもそも探す先が無い**ので、区域・震源要素の差分が空ならそれだけで「変わりはありません」と
+   * 言い切れる。観測点の記録を待たせない ―― あちらは `points` を運ばないので記録が作られず、
+   * 待たせると永久に名乗りだけで終わる。
+   *
+   * **区域の最大震度が下がった・区域が消えた報はここへ来ない**（呼び出し側が先に
+   * {@link regionsLoweredSince} で見て {@link OBSERVED_INTENSITY_UPDATED} を出す）。
+   *
+   * @param change 区域より下の階層で起きたこと
+   */
+  function noRegionChangeSegments(change: ObservationChange): SpeechSegment[] {
+    if (change === 'unknown') return []
+    // 下がった・減ったものがあるなら言い切らない。下がった値そのものは読まない
+    // （2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
+    if (change === 'lowered') return [plain(OBSERVED_INTENSITY_UPDATED)]
+    if (change === 'added') return [plain(w.quake.stationsAddedRegionsSame)]
+    if (change === 'updated') return [plain(w.quake.stationsUpdatedRegionsSame)]
+    return [plain(w.quake.noChange)]
+  }
+
+  /**
+   * その報が運んでいた観測点・市町村を、**読み終えたときに記録する**ための参照を最後の断片へ足す。
+   *
+   * **最後の断片に載せる。** 途中で切られた発話は記録を進めない（次の報でもう一度伝える）。
+   * 断片を増やさず既存の最後のものへ足すのは、空文字の断片がチャンクの割り当てを乱すため。
+   * 割り当てはチャンク単位なので、その断片が読点で複数チャンクに割れればどれが鳴っても記録は進む。
+   *
+   * **観測点も市町村も運んでいない報では記録を発行しない。** 同じ地震の記録は種別を跨いで共有されるので
+   * （`quakeSpeechTopic`）、**空で上書きすると前に伝えた観測点が記録から消える**。次の報は
+   * 「比べる相手がいない」ではなく「全部が初出」と読み、何も増えていないのに
+   * 「観測地点が追加されました」と**嘘を言う**。気象庁は種別の違う電文を前後して発表するので、
+   * これは実運用で起きる順序（→ 設定の窓「種別遷移テスト」がその順序そのもの）。
+   *
+   * **数えるのは観測点（`isArea` が偽）と市町村だけ。`points` の件数で見ない。** 震度速報は
+   * `points` に**区域と都道府県の集約点だけ**を積むので、件数で見ると「運んでいる」と誤判定し、
+   * 観測点ゼロの記録で上書きしてしまう（震源情報・VXSE61 と同じ結果になる）。
+   */
+  function withObservedRef(segments: SpeechSegment[], event: JMAQuake): SpeechSegment[] {
+    if (segments.length === 0) return segments
+    const carriesStations = event.points.some(p => !p.isArea)
+    if (!carriesStations && (event.cities?.length ?? 0) === 0) return segments
+    const observed: SpokenObservation = { points: event.points, cities: event.cities ?? [] }
+    const last = segments[segments.length - 1]
+    return [
+      ...segments.slice(0, -1),
+      { ...last, refs: [...last.refs, { kind: 'quakeObserved', observed }] },
+    ]
+  }
+
+  /**
+   * VXSE51/52/53/61 地震情報の読み上げを断片列で生成する。
+   * isNew=false のとき更新報として冒頭に通知する。
+   *
+   * `spoken` を渡すと**続報は差分だけを読む**（既に声になった区域・震源要素を省く）。
+   * 省略すると全文を組み立てる（{@link earthquakeToText} 経由の呼び出し）。
+   *
+   * 差分が空になっても**名乗りは読む**（黙らない。理由は下の `return` のコメント）。名乗りだけで
+   * 終わらせないための一文は {@link noRegionChangeSegments} が足す。
+   *
+   * **これは内側の組み立て。** 呼び出し側が使うのは {@link earthquakeToSegments} で、あちらが
+   * 観測点の記録（{@link withObservedRef}）を最後の断片へ載せる。ここへ直接足さないのは、
+   * `return` が 6 つあり 1 つ書き忘れても型検査もテストも通ってしまうため。
+   */
+  function buildEarthquakeSegments(
+    event: JMAQuake,
+    opts: TtsSpeechOptions,
+    isNew: boolean,
+    spoken?: QuakeSpokenState,
+    /**
+     * 区域を差分にせず**通しで読む**。その地震で最初に届いた確定情報（震源・震度情報／各地の
+     * 震度情報）にだけ真を渡す（判定は `useLiveEventHandler`）。
+     *
+     * 速報を細切れに聞いた耳へ、確定した観測を 1 度だけまとめて示すため。震源要素が「その種別の
+     * 初報では通しで言う」のと規則を揃える意味もある（従来は同じ報の中で震源要素は通し・地域は
+     * 差分と割れていた）。**2 回目以降は差分に戻す** ―― 種別ごとに通しで読むと、確定情報が
+     * 2 種類届く経路で全文を 2 度聞くことになる。
+     */
+    readAllRegions = false,
+  ): SpeechSegment[] {
+    const { hypocenter, maxScale, domesticTsunami } = event.earthquake
+    const type = event.issue.type
+    // その地震について何かを声にしたことがあるか。差分が空でも、まだ何も伝えていないなら黙らない。
+    const saidSomething = spoken != null && (spoken.regions.size > 0 || spoken.facts.size > 0)
+
+    if (type === '震度速報') {
+      const prefix = reportLead(w.quake.label.intensityReport, isNew)
+      // **震度速報では震源を語らない。** 借りた震源（→ `utils/borrowFromTsunami.ts`）を
+      // ここで読むと、気象庁が震度速報で震源を発表していないのに**震源情報（VXSE52）を
+      // 受け取ったように聞こえる**。借りた震源を声にするのは、その値を運んできた津波電文の
+      // 読み上げの側（`tsunamiToSegments`）。画面のカードには出どころ付きで出している。
+      const regionSegs = buildRegionSegments(event.points, maxScale, opts, hypocenter, spoken)
+      // 未入電の区域は述語が違うので別の文にする（→ `unreceivedRegionSegments`）。
+      const unreceivedSegs = unreceivedRegionSegments(event.points, opts, hypocenter, spoken)
+      if (regionSegs.length > 0 || unreceivedSegs.length > 0) {
+        return [plain(prefix), ...regionSegs, ...unreceivedSegs]
+      }
+      // 区域を挙げられないとき（差分なし・区域を持たない異常な電文）は最大震度だけでも伝える。
+      // **区域を一度も読めていない地震に限る**（判定は下の地震情報の経路と揃える。揃えないと
+      // 区域を読めている地震の据え置きの続報でも最大震度を言い直す）。
+      // 同じ震度を既に伝えていれば `maxScaleOnlySegments` が空を返す。震度も判らないときも空になるが、
+      // 初報なら名乗りだけは返す（「震度速報。」で終わる。震度の値が欠けた文は作らない）。
+      const fallback = spoken == null || spoken.regions.size === 0
+        ? maxScaleOnlySegments(maxScale, spoken, isMaxScaleUnreceived(maxScale, event.points))
+        : []
+      // **伝えることが無くても名乗りは読む。** 黙ると「電文が来たのに何も起きなかった」ようにしか
+      // 聞こえない（docs/spec/audio-tts-spec.md §4）。
       //
-      // **自由付加文（`freeText`）は本文に続けて同じ発話で読む**（2026-10-19 ユーザー承認
-      // 「本文に続けて出す (推奨)」）。設定のブロックは増やさず本文と同じ `quakeNoticeBody` に従う。
-      const body = joinTelegramTexts([
-        pick('quakeNoticeBody', event.data.body),
-        pick('quakeNoticeBody', event.data.freeText),
-      ], reads)
-      // **主題は `id` で作る。`eventId` ではない。** お知らせの `EventID` は発表時刻の分で、同じ分の別の
-      // お知らせと重なる。`eventId` で作ると、先のお知らせと同じ文（問い合わせ先の行など）が既読として飛ばされる。
-      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.id))
+      // **ただし名乗りだけでは終わらせない。** 「更新されました」で切ると、聞き手には「何が？」しか
+      // 残らない。**震度速報は区域までしか運ばない種別**なので（実測: 電文に `IntensityStation` も
+      // `City` も 1 件も入らない）、区域の差分が空ならそれだけで「変わりがない」と言い切れる
+      // ―― 観測点の記録は見ない（この種別では作られないので、待たせると永久に名乗りだけで終わる）。
+      //
+      // **震度について何かを伝えたことがあるのを条件にする。** 区域を挙げた地震はもちろん、
+      // 地域名を作れず最大震度だけを伝えた地震（`maxScaleOnly`）でも「変わりはない」と言い切れる。
+      // どちらも無い（震度そのものを一度も声にしていない）なら根拠が無いので黙る。
+      const toldIntensity = !!spoken && (spoken.regions.size > 0 || spoken.facts.has('maxScaleOnly'))
+      //
+      // **区域が下がった・消えた報では言い切らない**（名乗りの「震度速報が更新されました。」だけで
+      // 終える。2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。比べるのは前の報の震度3以上の
+      // 区域だけ（震度速報が運ぶ範囲。→ `regionsLoweredSince`）。
+      const noChange = !isNew && spoken && fallback.length === 0 && toldIntensity
+        && !regionsLoweredSince(event, spoken, 30)
+        ? [plain(w.quake.intensityNoChange)]
+        : []
+      return [plain(prefix), ...fallback, ...noChange]
     }
-    // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
-    case 'estimatedIntensity':
-      return null
-    // 国際津波関連情報の本文は英文で、日本語の声では読めない（読むのは `internationalTsunamiToText` の要約だけ）
-    case 'internationalTsunami':
-      return null
+
+    const time = formatTime(event.earthquake.time)
+
+    if (type === '顕著な地震の震源要素更新のお知らせ') {
+      // この電文（VXSE61）は震源要素の更新のみを伝え、津波の有無は含まない。
+      // 津波情報は別電文（VTSE41/51/52）で発表されるため、ここでは読み上げない。
+      //
+      // **差分を取らない。** 「更新されたこと」自体が電文の主旨なので、値が既に声になっていても
+      // 省かない。ただし読んだ値は記録する（記録しないと、後続の続報が同じ値を「更新」と言い直す）。
+      const amended: SpeechSegment[] = []
+      // **深さの語形は後ろに規模が続くかどうかで変わる**（理由は depthAmendPhrase）。順に組み立てる前に
+      // 規模が並ぶかを決めておく。
+      const magnitudeFollows = hasMagnitude(hypocenter.magnitude)
+      const depth = depthAmendPhrase(hypocenter, magnitudeFollows)
+      if (depth) amended.push({ text: depth, refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
+      if (magnitudeFollows) {
+        const value = magnitudeText(hypocenter.magnitude)
+        if (amended.length > 0) amended.push(plain(w.quake.amendSep))
+        amended.push({ text: w.quake.magnitudeValue(value), refs: [{ kind: 'quakeFact', fact: 'magnitude', value }] })
+      }
+      // 時刻が日時として読めなければ句ごと落とす（「ナンじナンぷん頃発生した」と読ませない）。
+      // 震源名だけでも文は成立する。
+      const head = plain(w.quake.prominentAmendHead(time, epicenterToSay(hypocenter.name)))
+      // 数値にならない規模は「〜に更新されました」の並びへ入れられないので、別の文で後に足す。
+      // **ここは初報の形（「マグニチュードは〜」）のまま。** この電文は名乗りと直前の文が既に
+      // 「更新」を言っているので、`magnitudeConditionAmendSentence` を使うと 1 回の発話で
+      // 「更新」が 3 度重なる（続報の差分では前に「更新」を言う文が無いので、あちらは要る）。
+      const magCondition = magnitudeConditionSentence(hypocenter)
+      const conditionSegments: SpeechSegment[] = magCondition
+        ? [{ text: magCondition, refs: [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter) }] }]
+        : []
+      // 深さ・規模とも不明なら要素を並べられないため、更新があった事実だけを伝える。
+      return amended.length > 0
+        ? [head, ...amended, plain(w.quake.amendedTail), ...conditionSegments]
+        : [head, plain(w.quake.hypocenterElementsAmended), ...conditionSegments]
+    }
+
+    if (type === '遠地地震') {
+      // 気象庁「遠地地震に関する情報」（VXSE53・Head/Title で識別）。国外の規模の大きな地震を
+      // 日本への津波影響とあわせて伝える電文で、国内震度は伴わない（maxScale は常に -1）。
+      //
+      // **差分を取らない。** 付加文（`forecastText`）が本文の主体で、区分の値だけを比べても
+      // 何が変わったか分からない。発表自体が稀で、続報も数報にとどまる。
+      const prefix = reportLead(w.quake.label.distant, isNew)
+      // 付加文の原文を優先する。遠地地震は 022x/023x 系の付加文を併用するため、
+      // domesticTsunami（021x 系の区分）へ丸めると意味が落ちる。
+      // 原文を持たない電文は区分から文を起こし、海外への津波の見通し
+      // （`foreignTsunamiText`）があれば続ける。
+      // **空白だけの付加文もここで区分側へ倒れる**（{@link endTelegramSentence} が空を返す）。
+      // 原文に 0211 の文があれば、国内の地震情報と同じく括弧書きを除いて読む（{@link speakableForecast}）。
+      //
+      // **気象庁の文を読まない言語（`telegramTextElsewhere` が null でない）は、付加文と海外への津波の見通しを読まずに
+      // 文の在処を言う**（どちらも気象庁が書いた日本語の文。2026-11-16 ユーザー選択「読まずに「画面にある」と言う」）。
+      // **付加文があるときは、原文の代わりにコードから引く決まった文を訳して読む**。並びは付加文の原文と同じ順
+      // （2026-11-17 ユーザー選択「原文と同じ順 (Recommended)」。→ {@link translatedForecastSegments}）:
+      // - 022x 系の文（2026-11-17 ユーザー選択「022x の文を訳して読む (Recommended)」）
+      // - 国内の津波の文（区分を決めたコードの文。`domesticTsunamiSegmentOf`）。区分は 0229・0230 のような遠地地震の
+      //   コードも丸めた値で、コードの文のほうが付加文の原文（コード表の文そのもの）に近い。コードが無く区分が「不明」なら
+      //   言わない（付加文が 022x 系だけの電文。区分を決める文が原文に無いので、「不明」は気象庁が書いたことではない）。
+      //   既読の鍵は言ったときだけ付く（断片ごと入れないので）
+      // 最後に在処の文（知らないコードの文と、訳さなかった言い回しを受け持つ）。
+      // 付加文が無いときは区分の文を読み、海外への見通しがあれば在処の文を続ける（見通しも無ければ在処の文は言わない）
+      const elsewhere = w.common.telegramTextElsewhere
+      const forecastOriginal = endTelegramSentence(event.forecastText)
+      const foreign = endTelegramSentence(event.foreignTsunamiText)
+      const tail: SpeechSegment[] = elsewhere === null
+        ? (forecastOriginal
+          ? [plain(speakableForecast(forecastOriginal))]
+          : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(foreign)] : [])])
+        : (forecastOriginal
+          ? [...translatedForecastSegments(event, forecastOriginal), elsewhereSegment(elsewhere)]
+          : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [elsewhereSegment(elsewhere)] : [])])
+      // 時刻が日時として読めなければ句ごと落とす（上の地震情報と同じ扱い）。
+      const dayTime = formatDayTime(event.earthquake.time)
+      return [
+        plain(`${prefix}${dayTime ? w.common.atAround(dayTime) : ''}`),
+        ...quakeOccurrenceSegments(hypocenter, opts, !dayTime),
+        ...tail,
+      ]
+    }
+
+    const isEpicenterOnly = type === '震源情報' || type === 'その他'
+    const label = isEpicenterOnly ? w.quake.label.epicenter : w.quake.label.quake
+
+    // 続報は変化したところだけを読む。震源要素・津波区分・震度の地域のいずれにも変化が
+    // 無ければ**名乗りだけで終える**（黙らない。理由は下の `return` のコメント）。
+    // まだ声にしていない震源要素があるなら差分にしない（理由は `hasUnspokenFact`）。
+    if (!isNew && spoken && saidSomething && !hasUnspokenFact(event, spoken, opts)) {
+      const facts = changedFactSegments(event, spoken, opts)
+      const regionSegs = isEpicenterOnly
+        ? []
+        : buildRegionSegments(event.points, maxScale, opts, hypocenter, readAllRegions ? undefined : spoken)
+      // **ここも未入電の文を出す。** 落とすと、震源要素・津波区分がいずれも既出のまま新しく
+      // 未入電の区域が加わった続報で、その区域が一度も声にならない（震度速報以外の続報は
+      // 必ずこの経路を通る）。
+      const unreceivedSegs = isEpicenterOnly
+        ? []
+        : unreceivedRegionSegments(event.points, opts, hypocenter, readAllRegions ? undefined : spoken)
+      // 地域名を作れないまま続報が来ても震度は伝える。ここに保険が無いと、観測点が座標テーブルで
+      // 解決できない状態が続く地震で、初報の 1 回しか震度を伝えられない（以降はこの経路に入り、
+      // 区域も差分も空のまま黙る）。
+      // **区域を一度も読めていない地震に限る**（`spoken.regions` が空）。`regionSegs` が空かどうかで
+      // 判定すると、区域を読めている地震の据え置きの続報でも最大震度を言い直す。
+      // 同じ震度を既に伝えていれば `maxScaleOnlySegments` が空を返す。
+      const fallback = !isEpicenterOnly && regionSegs.length === 0 && unreceivedSegs.length === 0 && spoken.regions.size === 0
+        ? maxScaleOnlySegments(maxScale, spoken, isMaxScaleUnreceived(maxScale, event.points))
+        : []
+      // 伝えることが無くても名乗りは読む（理由は震度速報の同じ箇所）。
+      //
+      // **名乗りだけで終わるなら、区域より下の階層を見て中身を足す。** 読み上げの地域名は
+      // 一次細分区域までしか下りないので、区域の最大震度が据え置きのまま観測点だけが増えた
+      // 続報はここへ落ちる（実例は `docs/spec/audio-tts-spec.md` 改訂履歴 2026-09-17）。
+      //
+      // **震源情報・その他（`isEpicenterOnly`）は震源要素しか運ばない**ので、その差分が空なら
+      // それだけで言い切れる（観測点の記録は見ない。この種別では作られない）。下の階層を持つのは
+      // 震源・震度情報（VXSE53）だけ。
+      const nothingSaid = facts.length === 0 && regionSegs.length === 0 && unreceivedSegs.length === 0 && fallback.length === 0
+      //
+      // **区域の最大震度が下がった・区域が消えた報では言い切らない**（2026-10-19 ユーザー承認
+      // 「言い切りを外す (推奨)」）。観測点・市町村の側で下がったものは `observationChange` が
+      // `lowered` として返す。どちらも下がった値そのものは読まない。
+      const noChange = !nothingSaid
+        ? []
+        : isEpicenterOnly
+          ? [plain(w.quake.hypocenterNoChange)]
+          : regionsLoweredSince(event, spoken, 0)
+            ? [plain(OBSERVED_INTENSITY_UPDATED)]
+            : noRegionChangeSegments(observationChange(event, spoken))
+      return [plain(reportLead(label, false)), ...facts, ...regionSegs, ...unreceivedSegs, ...fallback, ...noChange]
+    }
+
+    const prefix = reportLead(label, isNew)
+    // **津波電文が先に震源を伝えていても、ここでは通しで読む。** 津波は「震源を伝える電文」の
+    // 1 つとして震源情報（VXSE52）と同じ扱いにしてあり、特別扱いしない —— 震源情報が先に震源を
+    // 伝えた地震でも、種別ごとの初報では通しで言う（速報を細切れに聞いた耳へ、確定した観測を
+    // 1 度まとめて示すため）。同じ種別の続報で言い直さないのは差分の経路が見る。
+    const segments: SpeechSegment[] = [
+      // 時刻が読めなければ句ごと落とす。この後に続く `quakeOccurrenceSegments` が震源名から
+      // 読み始めるので、文としては「地震情報。石川県能登地方で地震が発生しました。」になる。
+      plain(`${prefix}${time ? w.common.atAround(time) : ''}`),
+      ...quakeOccurrenceSegments(hypocenter, opts, !time),
+      domesticTsunamiSegmentOf(event),
+    ]
+    if (!isEpicenterOnly) {
+      const regionSegs = buildRegionSegments(event.points, maxScale, opts, hypocenter, readAllRegions ? undefined : spoken)
+      // 地域名を作れなかった場合も、震度が判っていれば最大震度だけは伝える（震度速報と同じ扱い）。
+      // 揃えないと、この電文だけ震度に一切触れずに終わる。
+      // ここも区域を一度も読めていない地震に限る。上の差分の経路と判定を揃えないと、震源要素だけが
+      // 変わった続報（区域は据え置き）で最大震度を言い直す。
+      const unreceivedSegs = unreceivedRegionSegments(event.points, opts, hypocenter, readAllRegions ? undefined : spoken)
+      if (regionSegs.length > 0 || unreceivedSegs.length > 0) segments.push(...regionSegs, ...unreceivedSegs)
+      else if (!spoken || spoken.regions.size === 0) segments.push(...maxScaleOnlySegments(maxScale, spoken, isMaxScaleUnreceived(maxScale, event.points)))
+    }
+    return segments
+  }
+
+  /**
+   * VXSE51/52/53/61 地震情報の読み上げを断片列で生成する（引数の意味は
+   * {@link buildEarthquakeSegments}）。
+   *
+   * 組み立てた断片列の**最後に、その報が運んでいた観測点・市町村への参照を足す**。これが
+   * 次の報で「区域の震度は据え置きだが観測点は増えた」を見分ける材料になる
+   * （→ {@link observationChange}）。**入口を 1 つにしてあるのは、内側の `return` が 6 つあり、
+   * 分岐ごとに足す形にすると書き忘れても何も起きないから**（読み上げは普段どおり鳴り、
+   * 続報で「変わりはありません」と嘘を言うようになるだけで、例外もログも出ない）。
+   */
+  function earthquakeToSegments(
+    event: JMAQuake,
+    opts: TtsSpeechOptions,
+    isNew: boolean,
+    spoken?: QuakeSpokenState,
+    readAllRegions = false,
+  ): SpeechSegment[] {
+    const built = withElsewhereForUnknownMagnitude(buildEarthquakeSegments(event, opts, isNew, spoken, readAllRegions), event)
+    return withRegionSnapshotRef(withObservedRef(built, event), event)
+  }
+
+  /**
+   * 規模の説明が知らない表記で、その文（「数値で発表されていない」）を言った発話の末尾に、在処の文を 1 度だけ足す
+   * （気象庁の文を読まない言語だけ。2026-11-17 ユーザー選択「数値でないと言い、在処を言う (Recommended)」）。
+   *
+   * **規模の文の中で言わず末尾へ寄せる**のは、遠地地震の付加文の在処の文と 2 度言わないため。発話に在処の文が
+   * 既にあれば足さない。規模の文を言ったかは、規模の既読の鍵を持つ断片があるかで見る（知らない表記の規模は数値でないので、
+   * その鍵を持つのは規模の文だけ）
+   */
+  function withElsewhereForUnknownMagnitude(segments: SpeechSegment[], event: JMAQuake): SpeechSegment[] {
+    const elsewhere = w.common.telegramTextElsewhere
+    if (elsewhere === null || !isUnknownMagnitudeCondition(event.earthquake.hypocenter)) return segments
+    const toldMagnitude = segments.some(s => s.refs.some(r => r.kind === 'quakeFact' && r.fact === 'magnitude'))
+    if (!toldMagnitude || segments.some(s => s.text.includes(elsewhere))) return segments
+    return [...segments, elsewhereSegment(elsewhere)]
+  }
+
+  /**
+   * 在処の文の断片（文の区切りつき）。断片は区切りを挟まずにつなぐので、後ろに別の文が続いても（「また、」で継ぐ受信処理の経路）
+   * 1 語につながらないよう、文の区切り（`common.sentenceSep`）を添える。在処の文を発話へ足す所はどれもこれを使う
+   */
+  function elsewhereSegment(elsewhere: string): SpeechSegment {
+    return plain(`${elsewhere}${w.common.sentenceSep}`)
+  }
+
+  /** 規模が数値でなく、説明が語表に無い表記か（→ {@link magnitudeConditionPredicate}） */
+  function isUnknownMagnitudeCondition(hypocenter: Hypocenter): boolean {
+    const desc = hypocenter.magnitudeCondition
+    return !!desc && !hasMagnitude(hypocenter.magnitude) && !Object.prototype.hasOwnProperty.call(MAGNITUDE_CONDITION_PREDICATE, desc)
+  }
+
+  /**
+   * その報の区域ごとの最大震度を、**読み終えたときに記録する**ための参照を最後の断片へ足す
+   * （→ `QuakeSpokenState.regionSnapshot`）。載せ方の規律は {@link withObservedRef} と同じ。
+   *
+   * **地域名を 1 つも作れない報では記録を発行しない。** 震源情報のように区域を運ばない報で空に
+   * 置き換えると、次の報で比べる相手が消える。
+   */
+  function withRegionSnapshotRef(segments: SpeechSegment[], event: JMAQuake): SpeechSegment[] {
+    if (segments.length === 0) return segments
+    const regions = regionScaleMap(event.points, event.earthquake.maxScale)
+    if (regions.size === 0) return segments
+    const last = segments[segments.length - 1]
+    return [
+      ...segments.slice(0, -1),
+      { ...last, refs: [...last.refs, { kind: 'quakeRegionSnapshot', regions }] },
+    ]
+  }
+
+  /** VXSE51/52/53/61 地震情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
+  function earthquakeToText(event: JMAQuake, opts: TtsSpeechOptions, isNew: boolean): string {
+    return joinSegments(earthquakeToSegments(event, opts, isNew))
+  }
+
+  /**
+   * 波高の表記を読める形にする。"３ｍ" → "3メートル"、"10m以上" → "10メートル以上"、
+   * "０．５ｍ" → "0.5メートル" など。
+   *
+   * **全角と半角の両方が来る。** 波高そのものは両経路とも半角で渡ってくる（`dmdataParser` の
+   * `toHalfWidthHeightDesc`）が、この関数は `headline`（電文の文章）にも通しており、そちらは
+   * 全角のまま。片方だけを変換すると素通りした側が「えむ」と読まれる。
+   *
+   * 単位を置き換えるのは**数字の直後だけ**。この関数は `headline`（電文の文章）にも通すので、
+   * 無条件に m を置き換えると文中の語を壊す。大文字の M を対象にしないのも同じ理由で、
+   * 数字の直後の M はマグニチュード（「M7.6」）を指す。
+   */
+  function tsunamiHeightToSpeech(description: string): string {
+    return w.tsunami.heightToSpeech(description)
+  }
+
+  /**
+   * 数値で表せない予想波高（気象庁の「巨大」「高い」）を、文に馴染む言い方に直す（予想波高と観測した波高の両方が通る）。
+   *
+   * この 2 つは規模が大きく数値化できないときの定型表記で、そのまま並べると
+   * 「岩手県で巨大が予想されています」と崩れる。活用が違う（「巨大」は形容動詞、「高い」は
+   * 形容詞）ので機械的に語尾を足せず、表記ごとに持つ。
+   *
+   * 表になければそのまま通す。知らない表記を無理に加工して壊すより、少しぎこちない方がまし。
+   */
+  const NON_NUMERIC_HEIGHT_PHRASE: Readonly<Record<string, string>> = w.tsunami.nonNumericHeight
+
+  function heightPhrase(description: string): string {
+    const spoken = heightToSay(description)
+    if (/\d/.test(spoken)) return spoken
+    const phrase = Object.prototype.hasOwnProperty.call(NON_NUMERIC_HEIGHT_PHRASE, spoken.trim()) ? NON_NUMERIC_HEIGHT_PHRASE[spoken.trim()] : undefined
+    // 素通しした表記は記録に残す。読み上げは崩れた文のまま流れるので、聞くまで気づけない
+    if (!phrase) log.debug('[tts] 波高の表記が表に無い（そのまま読む）', spoken)
+    return phrase ?? spoken
+  }
+
+  /**
+   * 予想・観測の波高の表記を声にする形へ（語表の `heightToSpeech`）。
+   *
+   * 日本語以外の語表が読むのは数の表記（「1m」「10m超」「0.2m未満」「1.2m以上」）と「巨大」「高い」だけ。**それ以外の表記は
+   * 電文の語のまま読む**ので、値ごとに記録を残す（知らない表記を作り変えて壊すより、そのまま読むほうがまし）。
+   *
+   * 控え（`.cache/dmdata-archive-cache/telegram-earthquake` の日ごとの束 2,147 日。津波の電文は 2020-12-21〜2026-10-15 の
+   * VTSE41 184 通・VTSE51 426 通・VTSE52 41 通）で数えると、予想波高の表記は 11 種（「０．２ｍ未満」「１ｍ」「３ｍ」「５ｍ」「１０ｍ」
+   * 「１０ｍ超」「高い」「巨大」と、頭に全角の空白が付いた「１ｍ」「３ｍ」「５ｍ」）、観測した波高は数と「以上」の形だけで、
+   * どれもこの関数の扱う形に入る（2026-11-18 に数えた）。表記が空のもの（予想波高の 570 件）は、解読の段が値から作る
+   * （値が数なら「数m」の形で、ここで読める。値が無ければ波高を作らず、ここへは届かない）
+   */
+  function heightToSay(description: string): string {
+    if (locale !== 'ja' && parseTsunamiHeight(description) === null
+      && !Object.prototype.hasOwnProperty.call(NON_NUMERIC_HEIGHT_PHRASE, description.trim())) {
+      warnUntranslatedTsunamiValue('height', description, '波高の表記を電文の語のまま読みます')
+    }
+    return tsunamiHeightToSpeech(description)
+  }
+
+  /**
+   * 予想波高が付いていない区域を「〇〇にも津波警報が発表されています。」で補う。
+   *
+   * 区域名を波高の文でだけ挙げる作りなので、**波高を持たない区域はそのままだと読み上げから
+   * 落ちる**。予想波高が数値で来ない電文は実際にある（「巨大」「高い」の表記は DMDATA 経路で
+   * `maxHeight` ごと落ちる。→ `dmdataParser`）ほか、警報が先に出て波高が後続報で付くこともある。
+   * 発表されている区域を黙って省くわけにはいかない。
+   *
+   * **判定は `hasForecastHeight` に任せる**（カードの波高見出しと同じ述語）。`maxHeight` の有無で
+   * 見ると、値が 0 で条件も無い区域が波高の文にもここにも入らず、どこにも現れなくなる。
+   */
+  function areasWithoutHeightSentence(
+    areas: readonly TsunamiArea[],
+    observations: readonly TsunamiObservation[],
+    gradeLabel: string,
+  ): SpeechSegment[] {
+    const without = areas.filter(a => !hasForecastHeight(a))
+    if (without.length === 0) return []
+    return [
+      ...areaNameSegments(orderAreasForSpeech(without, observations)),
+      plain(w.tsunami.alsoIssued(gradeLabel)),
+    ]
+  }
+
+  /**
+   * 等級を告げる断片。**その等級のカードを指す参照を持たせる。**
+   *
+   * 追従スクロールが「また、次の地域に津波警報が発表されています」を読んだ時点でカードの頭へ
+   * 移れるようにするため。区域名を読み始めてから動くと、等級の見出しが視野の上に切れたまま
+   * 区域だけが見える形になる。
+   */
+  function gradeSegment(text: string, grade: TsunamiGrade): SpeechSegment {
+    return { text, refs: [{ kind: 'grade', grade }] }
+  }
+
+  /**
+   * 区域名を区切り（語表の `tsunami.areaSep`。日本語は読点）で連結した断片列を作る（各区域名が自分を指す参照を持つ）。
+   * 区切りを地名の区切りと分けるのは、区域名の訳がコンマを含む言語で、名前の中のコンマと区域の切れ目を聞き分けるため
+   */
+  function areaNameSegments(areas: readonly TsunamiArea[]): SpeechSegment[] {
+    const segments: SpeechSegment[] = []
+    areas.forEach((a, i) => {
+      if (i > 0) segments.push(plain(w.tsunami.areaSep))
+      // 声にするのは画面の言語の名前、鍵は日本語の名前（既読と追従は言語によらない）
+      segments.push({ text: tsunamiPlaceToSay('tsunamiArea', a.name), refs: [{ kind: 'area', code: a.code, name: a.name }] })
+    })
+    return segments
+  }
+
+  /**
+   * 「岩手県、宮城県で10メートル以上、福島県で6メートルが予想されています。」の形の文を作る。
+   *
+   * **区域名と波高を 1 文で言い切る。** 区域を挙げる文と波高を伝える文を分けると、同じ区域名を
+   * 2 回読むことになる（予報区が数十に及ぶ大規模警報では、それだけで読み上げが倍近く伸びる）。
+   * 読み上げが長引くと、優先度の低い電文が待ちの上限に達して割り込み、津波の読み上げが途中で
+   * 切られる（`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）。冗長さは聞き心地だけの問題ではない。
+   *
+   * **渡すのは 1 つの等級の区域だけ。** 等級をまたいで 1 文にまとめない ―― カードは等級ごとに
+   * 分かれているので、まとめると読み上げの句がカードを跨ぎ、追従スクロールがその間の行を
+   * 含んだ範囲を対象にする。
+   *
+   * **句の区切りはカードの波高見出しに合わせる**（`groupAreasForCardDisplay`）。波高の文字列だけを
+   * キーにまとめると、間に別の波高の区域が挟まっていても飛び越えて 1 つの句にしてしまう。
+   * たとえば電文順が A(3m)・B(6m)・C(3m) のとき「A、Cで3メートル、Bで6メートル」と読むと
+   * A と C が同じ句に入り、追従がその間の B の行を跨いだ範囲を対象にする。
+   *
+   * 波高を持つ区域が 1 つも無ければ空を返す（呼び出し側が区域名だけを挙げる文に切り替える）。
+   * `areas` は**並べ替える前**のものを渡すこと（グループの境界は電文順で決まる）。
+   */
+  function areaHeightSentence(
+    areas: readonly TsunamiArea[],
+    observations: readonly TsunamiObservation[],
+  ): SpeechSegment[] {
+    const groups = groupAreasForCardDisplay([...areas], [...observations])
+      // 判定は `hasForecastHeight` に揃える（`maxHeight` の有無で見ると、グループ分けの側と
+      // 基準が食い違って区域が落ちる。理由は `areasWithoutHeightSentence` の JSDoc）
+      .map(g => ({ heightLabel: g.heightLabel, areas: g.areas.filter(hasForecastHeight) }))
+      .filter(g => g.heightLabel !== null && g.areas.length > 0)
+    if (groups.length === 0) return []
+
+    const segments: SpeechSegment[] = []
+    groups.forEach((g, i) => {
+      // 組どうしの区切りは区域どうしの区切りと分ける（英語などは組ごとに文を切る。→ 語表の `tsunami.heightGroupSep`）
+      if (i > 0) segments.push(plain(w.tsunami.heightGroupSep))
+      segments.push(...areaNameSegments(g.areas))
+      segments.push(plain(w.tsunami.forecastHeightAt(heightPhrase(g.heightLabel!))))
+    })
+    segments.push(plain(w.tsunami.heightsExpected))
+    return segments
+  }
+
+  /**
+   * 上位の等級より下の区域を、等級ごとに読む。
+   * 例:「また、次の地域に津波警報が発表されています。青森県太平洋沿岸、茨城県で3メートルが
+   * 予想されています。また、次の地域に津波注意報が発表されています。北海道太平洋沿岸東部で
+   * 1メートルが予想されています。」
+   *
+   * 高さを等級ごとに添えるのは、**その区域にいる人へ高さを伝えるため**（上位の警報の高さだけを
+   * 読むと、注意報の区域には何も伝わらない）。
+   *
+   * **「次の地域に」で等級を先に言い切り、区域名は次の文で波高と一緒に挙げる。** 区域を挙げる
+   * 文と波高の文を分けると同じ区域名を 2 回読むことになる（→ `areaHeightSentence`）。
+   * 波高がまだ付いていない区域だけの等級では挙げる先が無くなるので、その場合に限り
+   * 「〇〇に津波警報が発表されています」と区域名を直接続ける形に落とす。
+   */
+  function lowerGradeSentence(
+    areas: readonly TsunamiArea[],
+    topGrade: string,
+    observations: readonly TsunamiObservation[],
+  ): SpeechSegment[] {
+    const segments: SpeechSegment[] = []
+    for (const g of GRADE_ORDER) {
+      if (g === topGrade) continue
+      const inGrade = areas.filter(a => a.grade === g)
+      if (inGrade.length === 0) continue
+      const heights = areaHeightSentence(inGrade, observations)
+      // 等級ごとに「また、」で始める。文が切れる位置が耳で分かるようにするため
+      segments.push(plain(w.common.also))
+      if (heights.length > 0) {
+        segments.push(gradeSegment(w.tsunami.issuedForAreasBelow(tsunamiGradeLabel(g)), g))
+        segments.push(...heights)
+        segments.push(...areasWithoutHeightSentence(inGrade, observations, tsunamiGradeLabel(g)))
+      } else {
+        segments.push(...areaNameSegments(orderAreasForSpeech(inGrade, observations)))
+        segments.push(plain(w.tsunami.issuedFor(tsunamiGradeLabel(g))))
+      }
+    }
+    return segments
+  }
+
+  /**
+   * 読み上げで区域を並べる順を決める。
+   *
+   * **カードの表示順に合わせる**（`sortAreasForCardDisplay`）。電文順（気象庁の地理順）の
+   * ままにすると、観測が入り始めた続報で読み上げ順とカードの並びが乖離し、読み上げに
+   * 追従するスクロールが 1 チャンクごとに上下へ往復する（docs/spec/audio-tts-spec.md §4）。
+   */
+  function orderAreasForSpeech(
+    areas: readonly TsunamiArea[],
+    observations: readonly TsunamiObservation[],
+  ): TsunamiArea[] {
+    return sortAreasForCardDisplay([...areas], [...observations])
+  }
+
+  /**
+   * 区域の並べ替えに使う観測点を決める。
+   *
+   * **カードが持っている観測点の全体（マージ済み）を渡すこと。** 区域の並びは「その区域で最も
+   * 深刻な実測波高」で決まるため（`sortAreasByObservation`）、その電文が運んできた分だけで
+   * 並べるとカードと食い違う。等級を切り替える報（警報 → 注意報など）は観測点をほとんど
+   * 載せないので、渡さないと読み上げだけが電文順（気象庁の地理順）に戻り、追従スクロールが
+   * カード上を往復する。
+   *
+   * 省略時は電文が載せた分で並べる。呼び出し側が画面の津波を持たないテストのための既定値で、
+   * 実際の受信経路（`useLiveEventHandler`）では必ず渡す。
+   */
+  function observationsForAreaOrder(
+    event: JMATsunami,
+    observationsForOrder?: readonly TsunamiObservation[],
+  ): readonly TsunamiObservation[] {
+    return observationsForOrder ?? event.observations ?? []
+  }
+
+  /**
+   * VTSE41/51/52 津波情報（新規発表・引き上げ）の読み上げを断片列で返す。
+   *
+   * `observationsForOrder` は区域の並べ替えにだけ使う（→ `observationsForAreaOrder`）。
+   * 読み上げる内容は `event` だけで決まる ―― 等級の発表では観測点の実測値を読まない。
+   */
+  /**
+   * 津波電文が載せている原因地震の震源を伝える断片列。まだ声にしていない事実が無ければ空。
+   *
+   * **津波警報を伴う地震では、この震源が地震情報より数分早く届く**（能登 2024/1/1 は津波警報が
+   * 16:12・地震情報が 16:16）。震源を持たない震度速報が何通も流れるあいだ、震源を知らせられるのは
+   * この電文だけ（→ `utils/borrowFromTsunami.ts`）。
+   *
+   * **語順は津波の文脈に合わせる。** 地震情報は「〇〇、深さ…を震源とするマグニチュード…の地震が
+   * 発生しました。」と震源から入るが、ここは等級と区域を言い終えた後に続く文なので、何の震源かを
+   * 先に示す。**「震源情報」の語は使わない** —— 気象庁は津波電文で震源を伝えているのであって、
+   * 地震情報の「震源情報」（VXSE52）を出したわけではない。
+   *
+   * **通しで語るのは、まだ声にしていない事実があるときだけ。** 記録は地震ごとに種別を跨いで共有するので、
+   * 地震情報が先に震源を伝えていれば黙る。津波の続報は 40 通を超えるため、これが無いと毎報で繰り返す。
+   * 全部を語り終えていて値が変わった事実があれば、その事実だけを短く言い直す（→ `sourceHypocenterChangedSegments`）。
+   *
+   * **追従用の印（`borrowedHypocenter`）を全断片へ付ける。** 読んでいるあいだ、その地震のカードを
+   * 見せるため（→ `ttsFollow.ts`）。震源そのものは `quakeFact` で別に記録される。
+   */
+  /** 既読を渡されなかったとき（試聴・先読みの合成）は、原因地震を既読なしで並べる。 */
+  function tsunamiSourceSpokens(event: JMATsunami, spoken: TsunamiQuakeSpoken | undefined): readonly TsunamiSourceSpoken[] {
+    if (spoken) return spoken.sources
+    return (event.sourceEarthquakes ?? []).map(source => ({ source, spoken: undefined, subject: undefined, quakeReportedLater: false }))
+  }
+
+  /**
+   * 津波の読み上げで声になった参照を、それぞれの地震の既読へ積む。
+   *
+   * 原因地震の事実（`sourceIndex` 付き）はその原因地震の既読へ、それ以外（失効時刻）は `expiry` へ。
+   * **地震情報の読み上げは {@link applySpokenRefs} を使う**（こちらは津波専用）。
+   */
+  function applyTsunamiSpokenRefs(spoken: TsunamiQuakeSpoken, refs: readonly SpeechRef[]): void {
+    for (const ref of refs) {
+      if (ref.kind === 'quakeFact' && ref.sourceIndex !== undefined) {
+        const state = spoken.sources[ref.sourceIndex]?.spoken
+        if (state) applySpokenRefs(state, [ref])
+        continue
+      }
+      if (spoken.expiry) applySpokenRefs(spoken.expiry, [ref])
+    }
+  }
+
+  function sourceHypocenterSegments(
+    event: JMATsunami,
+    spoken: TsunamiQuakeSpoken | undefined,
+    opts?: TtsSpeechOptions,
+  ): SpeechSegment[] {
+    return tsunamiSourceSpokens(event, spoken).flatMap((entry, index) =>
+      oneSourceHypocenterSegments(entry, index, opts))
+  }
+
+  /**
+   * 原因地震 1 件の震源を語る文。
+   *
+   * **2 つ目以降は「また、もう一つの地震の震源は」で始める**（2026-10-15 ユーザー承認「読む（推奨）」）。
+   * 気象庁は別の地震が寄与すると同じ警報を切り替えて原因地震を足す（電文解説資料 Ⅰ.別02-7 出現例６）。
+   * 1 つ目と同じ「この地震の震源は」で読むと、どちらの地震の話かが耳で分からない。
+   *
+   * 既読は**その地震の主題**に積む（`sourceIndex` で原因地震を指す → {@link applyTsunamiSpokenRefs}）。
+   */
+  function oneSourceHypocenterSegments(
+    entry: TsunamiSourceSpoken,
+    index: number,
+    opts?: TtsSpeechOptions,
+  ): SpeechSegment[] {
+    const src = entry.source
+    const spoken = entry.spoken
+    if (!src.hypocenterName) return []
+    const hypocenter = tsunamiSourceHypocenter(src)
+    const tellable = tellableHypocenterFacts(hypocenter, opts)
+    // **震源名が無ければ文ごと出さない。** 規模だけを「この地震の震源は、マグニチュードは…」と
+    // 繋ぐと主語を欠いた文になる。
+    if (!tellable.has('hypocenterName')) return []
+    // **まだ声にしていない事実があれば、震源を通しで語る。** 全部を語り終えていれば、
+    // 値が変わった事実だけを短く言い直す（→ {@link sourceHypocenterChangedSegments}）。
+    if (![...tellable].every(fact => spoken?.facts.has(fact))) {
+      const follow: SpeechRef = entry.subject ? { kind: 'borrowedHypocenter', subject: entry.subject } : { kind: 'borrowedHypocenter' }
+      const lead = index === 0 ? w.tsunami.sourceLead : w.tsunami.sourceLeadOther
+      const segments: SpeechSegment[] = [{ text: lead, refs: [follow] }]
+      segments.push({
+        text: epicenterToSay(hypocenter.name),
+        refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name, sourceIndex: index }, follow],
+      })
+      if (tellable.has('depth')) {
+        segments.push({ text: w.quake.hypocenterDepthSep, refs: [follow] })
+        segments.push({
+          text: depthSourcePhrase(hypocenter),
+          refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter), sourceIndex: index }, follow],
+        })
+      }
+      const magRef: SpeechRef[] = [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter), sourceIndex: index }, follow]
+      const numeric = hasMagnitude(hypocenter.magnitude) ? magnitudeText(hypocenter.magnitude) : ''
+      if (tellable.has('magnitude') && numeric) {
+        segments.push({ text: w.tsunami.sourceMagnitudeLead, refs: [follow] })
+        // 数値も語表に通す（小数点をコンマで読む言語。鍵は電文の値のまま）
+        segments.push({ text: w.tsunami.sourceMagnitude(numeric), refs: magRef })
+      }
+      segments.push({ text: w.tsunami.sourceTail, refs: [follow] })
+      // 数値にならない規模（「Ｍ８を超える巨大地震」）は別の文で伝える。句へ差し込むと
+      // 「マグニチュードはＭ８を超える巨大地震です」と重なる（地震情報側と同じ扱い）。
+      if (tellable.has('magnitude') && !numeric) {
+        segments.push({ text: magnitudeConditionSentence(hypocenter), refs: magRef })
+      }
+      return segments
+    }
+    return sourceHypocenterChangedSegments(entry, index, hypocenter, tellable)
+  }
+
+  /**
+   * 原因地震 1 件の震源のうち、**声にした値から変わった事実だけ**を言い直す文。変化が無ければ空。
+   *
+   * 2026-10-14 ユーザー選択「変わった値だけ言い直す（推奨）」（選択肢の説明は「全部を語り終えていて値が
+   * 違う事実があるときだけ、変わった値を短く言う」）。入れるのは等級を名乗る発表文だけ（2026-10-19
+   * ユーザー選択「発表文だけ (Recommended)」）。文面は「この地震の」を冠した形（2026-10-19 ユーザー
+   * 選択「「この地震の」を付ける (Recommended)」）—— 津波の文の後ろで「マグニチュードは…」とだけ言うと、
+   * 何の規模か分からない。
+   *
+   * 能登 2024/1/1 では、M7.4 → 7.6 は大津波警報へ上がった 16:22 の津波警報（VTSE41）に載り、
+   * 地震情報が伝えたのは 2 分後の 16:24 だった。**記録は地震情報と共有する**ので、ここで伝えた値を
+   * 地震情報の続報（{@link changedFactSegments}）は言い直さない。
+   *
+   * 並び（震源名 → 規模 → 深さ）と判定は地震情報の続報に揃える。
+   */
+  function sourceHypocenterChangedSegments(
+    entry: TsunamiSourceSpoken,
+    index: number,
+    hypocenter: Hypocenter,
+    tellable: Set<QuakeFact>,
+  ): SpeechSegment[] {
+    const spoken = entry.spoken
+    // 地震情報がこの報より後に出ているなら、この報の値のほうが古いかもしれない（→ `quakeReportedLater`）。
+    if (!spoken || entry.quakeReportedLater) return []
+    const changed = (fact: QuakeFact, value: string): boolean =>
+      tellable.has(fact) && spoken.facts.has(fact) && spoken.facts.get(fact) !== value
+    const follow: SpeechRef = entry.subject ? { kind: 'borrowedHypocenter', subject: entry.subject } : { kind: 'borrowedHypocenter' }
+    const first = index === 0
+    const sentences: SpeechSegment[] = []
+    const push = (text: string, fact: QuakeFact, value: string) => {
+      if (!text) return
+      sentences.push({ text, refs: [{ kind: 'quakeFact', fact, value, sourceIndex: index }, follow] })
+    }
+
+    if (changed('hypocenterName', hypocenter.name)) {
+      push(w.tsunami.sourceHypocenterAmended(first, epicenterToSay(hypocenter.name)), 'hypocenterName', hypocenter.name)
+    }
+    const magValue = magnitudeFactValue(hypocenter)
+    if (changed('magnitude', magValue)) {
+      // 数値にならない規模は「〜に更新されました」の枠に入らない（地震情報側と同じ扱い。
+      // → `magnitudeConditionAmendSentence`）。
+      const predicate = magnitudeConditionPredicate(hypocenter)
+      const text = hasMagnitude(hypocenter.magnitude)
+        ? w.tsunami.sourceMagnitudeAmendedTo(first, magnitudeText(hypocenter.magnitude))
+        : predicate ? w.tsunami.sourceMagnitudeAmended(first, predicate) : ''
+      push(text, 'magnitude', magValue)
+    }
+    // 値の作り方は記録（初めて語るときの `depthFactValue`）と揃える。「以上」の印が付いた・外れただけでも更新。
+    const depthValue = depthFactValue(hypocenter)
+    if (changed('depth', depthValue)) {
+      push(w.tsunami.sourceDepthAmendedTo(first, depthUpdateValue(hypocenter)), 'depth', depthValue)
+    }
+    // 2 つ目以降の地震は、通しで語るときと同じく「また、」で話題の切れ目を示す。
+    if (index > 0 && sentences.length > 0) sentences[0] = { ...sentences[0], text: `${w.common.also}${sentences[0].text}` }
+    return sentences
+  }
+
+  /**
+   * 津波の失効時刻（電文の `ValidDateTime`）を伝える句。
+   *
+   * **読み上げの末尾に置く** —— 震源よりさらに後。等級・行動・区域・波高・震源を言い終えた後で
+   * いちばん緊急度の低い事実を足す形にしてある（`tsunamiToSegments` の並び）。
+   *
+   * **一度言ったら黙る。値が変わったら言い直す。** 判定は `QuakeSpokenState.facts` の
+   * `tsunamiExpiry` で、記録は読み上げの完了時に `applySpokenRefs` が進める。気象庁は期限を
+   * 伝えた報にだけ `ValidDateTime` を載せ以後の続報には載せないが、**引き継ぎ
+   * （`latestValidDateTime`）が同じ値を毎報に載せ続ける**ので、既読を見ないと続報のたびに
+   * 失効時刻を繰り返すことになる。
+   *
+   * **等級の語は電文から採る**（`gradeLabel`）。実電文では期限が付くのは「警報・注意報が解除されて
+   * 予報だけが残った段階」だけ（→ `docs/spec/tsunami-spec.md` §3「有効期限は報ではなく津波に付く」）
+   * なので、ふだんは「この津波予報の失効時刻は」になる。**それでも等級で固定しない** ——
+   * 警報に期限が付いた報が来たときに「津波予報」と名乗ると、見出しと食い違う。
+   *
+   * **日をまたぐときだけ日付から読む。** 発表と同じ日なら時刻だけで足りる（実電文では能登が
+   * 同日・日向灘が翌日で、どちらの形も出る）。
+   *
+   * **呼ぶのは等級を名乗る 2 つの文 —— 発表文（{@link tsunamiToSegments}）と降格文
+   * （{@link tsunamiDowngradeToSegments}）。どちらにも必ず足すこと。** 気象庁が期限を載せるのは
+   * 「予報のみの発表」と「警報・注意報が解除されて予報のみが残る」の 2 通りで、前者は発表文・
+   * 後者は降格文へ流れる（条件と実電文の並びは `docs/spec/tsunami-spec.md` §3「有効期限は報では
+   * なく津波に付く」）。**片方へ足し忘れると、その経路の電文では一度も声にならない** ——
+   * 実際に降格文で落とし、どの検証にも掛からなかった。穴の形と守り方は
+   * `useLiveEventHandler.tsunamiExpiry.test.ts` の冒頭が持つ。
+   *
+   * **観測点更新・区域単位の等級変化・変化を伝えない続報の 3 経路は、この句ではなく
+   * {@link tsunamiExpiryChangeSegments} が受け持つ。** あちらへ渡るのは「等級は動いていない」報で、
+   * 期限を載せることは稀だが無くはない（全期間 436 通のうち 4 通。うち 3 通は期限だけが延びた報）。
+   * 発表文の形（「この〜の失効時刻は、…です。」）は等級の名乗りの後ろに置く前提なので、名乗りの無い
+   * 報では「延長されました」の形で言う。
+   *
+   * **`spoken` が無いときは毎回読む。** 呼び出し側の既読は地震ごと（`quake:<eventId>`）に持つので、
+   * `eventId` を持たない電文では `undefined` が渡る（→ `useLiveEventHandler.ts` の
+   * `quakeSpokenState`）。そのまま毎報で失効時刻を言うことになるが、**そうなる電文があるかは
+   * 数えていない** —— 国内の津波電文は原因地震の `EventID` を持つのがふつうで、識別子を欠く報と
+   * 期限を載せる報が重なる形は確かめていない。同じ弱点は震源の言い直し
+   * （{@link sourceHypocenterSegments}）が先に持っていて、こちらはそれを継いでいるだけ。
+   */
+  /**
+   * 失効時刻の読み上げの文と既読の鍵。日付を添えるかの判定は画面と共有する（`expiryNeedsDate`）。読めない日時は null。
+   *
+   * **鍵は言語に依らない形（`日/時:分`。日付を添えないときは `時:分`）。** 読み上げる文をそのまま鍵にすると、言語を
+   * 切り替えたとき同じ失効時刻を「まだ言っていない」と読み直す。鍵の単位は読み上げる単位（日・時・分）にそろえる ——
+   * 秒だけ違う 2 つの時刻は同じ鍵になり、同じ時刻を二度言わない。
+   */
+  function expiryTextAndKey(baseTime: string, iso: string): { text: string; key: string } | null {
+    const withDate = expiryNeedsDate(baseTime, iso)
+    const text = withDate ? formatDayTime(iso) : formatTime(iso)
+    const d = readDateTime('ttsText.expiryKey', iso)
+    if (!text || !d) return null
+    const hm = `${d.getHours()}:${d.getMinutes()}`
+    return { text, key: withDate ? `${d.getDate()}/${hm}` : hm }
+  }
+
+  function tsunamiExpirySegments(
+    event: JMATsunami,
+    gradeLabel: string,
+    spoken?: TsunamiQuakeSpoken,
+  ): SpeechSegment[] {
+    if (event.cancelled || !event.validDateTime) return []
+    // 日時として読めない失効時刻はここで落ちる。
+    const expiry = expiryTextAndKey(event.time, event.validDateTime)
+    if (!expiry) return []
+    if (spoken?.expiry?.facts.get('tsunamiExpiry') === expiry.key) return []
+    return [
+      plain(w.tsunami.expiryLead(gradeLabel, expiry.text)),
+      { text: expiry.text, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value: expiry.key }] },
+      plain(w.tsunami.expiryTail),
+    ]
+  }
+
+  /**
+   * 等級を名乗らない報で、**失効時刻が前の報から動いたこと**を伝える文。
+   *
+   * 「津波予報の失効時刻が、19日14時に延長されました。」（早まったときは「〜に変更されました。」。
+   * 2026-10-24 ユーザー選択「延長と言う (Recommended)」）。
+   *
+   * **等級が動かない続報でも期限は延びる。** 津波予報が長引くと、気象庁は等級を変えずに期限だけを
+   * 延ばした報を出す（全期間の津波警報等 436 通のうち、何も声にならなかった続報 4 通のうち 3 通。例 2022-01-17 13:59、1/17 14:00 → 1/18 14:00）。
+   * その報は観測点も等級の変化も持たないので、従来は一言も声にならなかった（2026-10-21 ユーザー選択
+   * 「延びたら読む (Recommended)」）。等級を名乗る 2 つの文（{@link tsunamiToSegments}・
+   * {@link tsunamiDowngradeToSegments}）は期限を {@link tsunamiExpirySegments} で語るので、
+   * この文を呼ぶのはそれ以外の経路（観測点の更新・区域単位の等級変化・変化を伝えない続報）だけ。
+   *
+   * **既読は発表文と同じ鍵**（`tsunamiExpiry`）に積む。どちらの文で語っても、同じ値を二度言わない。
+   * 前の報が期限を持たない（初めて付いた）・同じ値・読めない値のときは何も言わない ——
+   * 「延長」か「変更」かを言い分けられないため（初めて付いたときに黙るのは 2026-10-24 ユーザー選択「今のまま黙る (Recommended)」。
+   * 等級を名乗る発表文・降格文は期限を自分で語るので、そちらで伝わる）。
+   *
+   * **比べるのは「当てる前」と「当てた後」の津波の期限**で、届いた報自身の期限ではない。順番が前後して届いた古い報は
+   * 状態に採られない（作成時刻の順に重ね直す。`mergeTsunamiReports`）ので、報の値を読むと、表示していない古い期限を
+   * 「変更されました」と言うことになる。当てた後で比べれば、古い報では期限が動かず黙る。等級も当てた後の津波から採る
+   * （観測点だけの報は区域を持たない）。
+   *
+   * @param previousValidDateTime 前の報までに知っていた失効時刻（受信処理が当てる前の津波の値）
+   * @param applied その報を当てた後の津波（受信処理の `stepTsunamiState` の結果。津波が終わったなら undefined）
+   */
+  function tsunamiExpiryChangeSegments(
+    event: JMATsunami,
+    previousValidDateTime: string | undefined,
+    applied: JMATsunami | undefined,
+    spoken: TsunamiQuakeSpoken | undefined,
+  ): SpeechSegment[] {
+    const current = applied?.validDateTime
+    if (event.cancelled || !applied || !current || !previousValidDateTime) return []
+    const now = Date.parse(current)
+    const prev = Date.parse(previousValidDateTime)
+    if (!Number.isFinite(now) || !Number.isFinite(prev) || now === prev) return []
+    const topGrade = GRADE_ORDER.find(g => applied.areas.some(a => a.grade === g))
+    if (!topGrade) return []
+    const expiry = expiryTextAndKey(event.time, current)
+    if (!expiry) return []
+    if (spoken?.expiry?.facts.get('tsunamiExpiry') === expiry.key) return []
+    // **読み上げで同じ時刻に聞こえる変化は言わない**（分より細かい違いだけの延長。「16時22分に延長されました」と
+    // 前と同じ時刻を言うことになる）。鍵は読み上げる単位（日・時・分）で作るので、鍵の一致で見分けられる。
+    if (expiryTextAndKey(event.time, previousValidDateTime)?.key === expiry.key) return []
+    // 延長か変更かは、時刻の前で言う言語（英語など）と後ろで言う言語（日本語）がある。前は語表の `expiryChangeLead` が、
+    // 後ろは `expiryExtended`・`expiryChanged` が受け持つ（2026-11-17 ユーザー選択「この案で入れる (Recommended)」の 15 節）
+    const extended = now > prev
+    return [
+      plain(w.tsunami.expiryChangeLead(tsunamiGradeLabel(topGrade), extended, expiry.text)),
+      { text: expiry.text, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value: expiry.key }] },
+      plain(extended ? w.tsunami.expiryExtended : w.tsunami.expiryChanged),
+    ]
+  }
+
+  function tsunamiToSegments(
+    event: JMATsunami,
+    observationsForOrder?: readonly TsunamiObservation[],
+    quakeSpoken?: TsunamiQuakeSpoken,
+    opts?: TtsSpeechOptions,
+  ): SpeechSegment[] {
+    const topGrade = GRADE_ORDER.find(g => event.areas.some(a => a.grade === g))
+    if (!topGrade) return []
+
+    const observations = observationsForAreaOrder(event, observationsForOrder)
+    // 波高の文はグループの境界が電文順で決まるため、並べ替える前のものを渡す
+    const rawTopAreas = event.areas.filter(a => a.grade === topGrade)
+    const gradeLabel = tsunamiGradeLabel(topGrade)
+    const action = evacuationActionToSay(event, topGrade)
+    const heights = areaHeightSentence(rawTopAreas, observations)
+    // **震源は後ろに置く。** 等級・行動・区域を言い終えてから足す（→ `sourceHypocenterSegments`）。
+    const source = sourceHypocenterSegments(event, quakeSpoken, opts)
+    // **失効時刻はその震源よりさらに後 —— 文の最後。** 緊急度のいちばん低い事実なので、
+    // 等級・行動・区域・波高・震源のすべてを言い終えてから足す（→ `tsunamiExpirySegments`）。
+    const expiry = tsunamiExpirySegments(event, gradeLabel, quakeSpoken)
+
+    // **等級と行動を先に言い切る。** 区域を全部読んでから避難を促すと、予報区が多いほど行動指示が
+    // 遅れる。区域名は次の文で波高と一緒に挙げるので、聞き手が待たされるのは高さの情報だけ。
+    if (heights.length > 0) {
+      return withElsewhereForUnknownSourceMagnitude([
+        gradeSegment(w.tsunami.gradeIssued(gradeLabel) + action, topGrade),
+        ...heights,
+        ...areasWithoutHeightSentence(rawTopAreas, observations, gradeLabel),
+        ...lowerGradeSentence(event.areas, topGrade, observations),
+        ...source,
+        ...expiry,
+      ], event, quakeSpoken)
+    }
+    // 波高がまだ付いていない（続報で後から付く）場合は、区域名を直接挙げる。
+    //
+    // **等級名が 2 回出るが、これは頭の名乗りを残すための代償**（→ docs/spec/tts-sentence-inventory.md
+    // §4-10・§5）。「〈区域〉に発表されました」は区域が述語の前に来るので、頭の `${gradeLabel}。` を
+    // 外すと**等級が判るまで区域名を全部聞くことになる**（予報区が多いほど遅れる）。上の波高あり経路が
+    // 等級と行動を先に言い切っているのと同じ理由で、重複のほうを受け入れる。
+    return withElsewhereForUnknownSourceMagnitude([
+      plain(w.common.issued(gradeLabel)),
+      ...areaNameSegments(orderAreasForSpeech(rawTopAreas, observations)),
+      plain(w.tsunami.issuedForAreas(gradeLabel) + action),
+      ...lowerGradeSentence(event.areas, topGrade, observations),
+      ...source,
+      ...expiry,
+    ], event, quakeSpoken)
+  }
+
+  /**
+   * 気象庁の付加文の 1 行目（避難の呼びかけ）を採り、採れなければ等級ごとの文（語表の `fallbackEvacuation`）。
+   *
+   * **気象庁の文を読まない言語は付加文を採らず、いつも等級ごとの訳文を読む**（画面と同じ。2026-11-10 ユーザー選択
+   * 「等級ごとの訳文を出す (Recommended)」）。付加文の全文は「気象庁の発表文」の発話が在処の文で受けるので、ここでは在処を言わない
+   */
+  function evacuationActionToSay(event: JMATsunami, grade: TsunamiGrade): string {
+    const telegramLine = w.common.telegramTextElsewhere === null ? evacuationActionLine(event.warningComments) : undefined
+    return telegramLine ?? w.tsunami.fallbackEvacuation(grade)
+  }
+
+  /**
+   * 原因地震の規模が知らない表記で、その文（「数値で発表されていない」）を言った発話の末尾に、在処の文を 1 度だけ足す
+   * （気象庁の文を読まない言語だけ。地震情報の {@link withElsewhereForUnknownMagnitude} と同じ。2026-11-17 ユーザー選択
+   * 「数値でないと言い、在処を言う (Recommended)」）。
+   *
+   * 規模の文を言ったかは、その原因地震の規模の既読の鍵を持つ断片があるかで見る（知らない表記の規模は数値でないので、その鍵を
+   * 持つのは規模の文だけ）。発話に在処の文が既にあれば足さない（区切りは {@link elsewhereSegment}）
+   */
+  function withElsewhereForUnknownSourceMagnitude(
+    segments: SpeechSegment[],
+    event: JMATsunami,
+    quakeSpoken: TsunamiQuakeSpoken | undefined,
+  ): SpeechSegment[] {
+    const elsewhere = w.common.telegramTextElsewhere
+    if (elsewhere === null) return segments
+    const unknownSources = new Set(tsunamiSourceSpokens(event, quakeSpoken)
+      .flatMap((entry, index) => (isUnknownMagnitudeCondition(tsunamiSourceHypocenter(entry.source)) ? [index] : [])))
+    if (unknownSources.size === 0) return segments
+    const toldUnknown = segments.some(s => s.refs.some(r =>
+      r.kind === 'quakeFact' && r.fact === 'magnitude' && r.sourceIndex !== undefined && unknownSources.has(r.sourceIndex)))
+    if (!toldUnknown || segments.some(s => s.text.includes(elsewhere))) return segments
+    return [...segments, elsewhereSegment(elsewhere)]
+  }
+
+  function tsunamiToText(
+    event: JMATsunami,
+    observationsForOrder?: readonly TsunamiObservation[],
+  ): string {
+    return joinSegments(tsunamiToSegments(event, observationsForOrder))
+  }
+
+  /**
+   * VTSE41/51/52 津波情報 引き下げ時の読み上げを断片列で返す。
+   *
+   * `observationsForOrder` の役割は `tsunamiToSegments` と同じ。**引き下げこそ渡すこと** ――
+   * 警報から注意報へ切り替える報が届くころには観測が出揃っており、カードは実測波高の順に
+   * 並び替わっている。
+   *
+   * **`quakeSpoken` は任意にしない。** 渡し忘れても型チェックは通り、失効時刻（下記）が黙るだけで
+   * 例外もログも出ない。**実電文で期限を載せるのはこの降格報**なので、それは「実運用では一度も
+   * 声にならない」と同じこと（→ {@link tsunamiExpirySegments}）。読まないと決めた呼び出し元は
+   * `undefined` を明示する。
+   */
+  function tsunamiDowngradeToSegments(
+    event: JMATsunami,
+    observationsForOrder: readonly TsunamiObservation[] | undefined,
+    quakeSpoken: TsunamiQuakeSpoken | undefined,
+  ): SpeechSegment[] {
+    const topGrade = GRADE_ORDER.find(g => event.areas.some(a => a.grade === g))
+    if (!topGrade) return [plain(tsunamiCancelToText(event.cancelReason))]
+
+    const observations = observationsForAreaOrder(event, observationsForOrder)
+    const rawTopAreas = event.areas.filter(a => a.grade === topGrade)
+    const gradeLabel = tsunamiGradeLabel(topGrade)
+    const heights = areaHeightSentence(rawTopAreas, observations)
+    // **失効時刻は文の最後。** 発表文と同じ置き場所（→ `tsunamiExpirySegments`）。
+    // **降格文は震源を語らない**ので、発表文の並びにある震源の句はここには無い（まだ声にしていなくても語らない。
+    // 最初の報が降格報になるのは起動・リプレイで状況を再現しきれないときだけ —— 2026-10-21 ユーザー「だからその時の状況を
+    // 再現するって言ってますよね。」で、推した「まだなら語る」を採らずこのまま残した）。
+    const expiry = tsunamiExpirySegments(event, gradeLabel, quakeSpoken)
+
+    if (heights.length > 0) {
+      return [
+        gradeSegment(w.tsunami.downgradedBelow(gradeLabel), topGrade),
+        ...heights,
+        ...areasWithoutHeightSentence(rawTopAreas, observations, gradeLabel),
+        ...lowerGradeSentence(event.areas, topGrade, observations),
+        ...expiry,
+      ]
+    }
+    return [
+      plain(w.tsunami.downgradedLead(gradeLabel)),
+      ...areaNameSegments(orderAreasForSpeech(rawTopAreas, observations)),
+      plain(w.tsunami.issuedFor(gradeLabel)),
+      ...lowerGradeSentence(event.areas, topGrade, observations),
+      ...expiry,
+    ]
+  }
+
+  /**
+   * VTSE41/51/52 津波情報 引き下げ時の読み上げテキストを生成する。
+   *
+   * **既読を持たない**（`quakeSpoken` に `undefined` を渡す）。既読の照合が効かないので、
+   * 期限を持つ電文を渡せば失効時刻は毎回載る —— 文の形を見るテストと抑揚の計測台
+   * （`ttsSentenceSweep.probe.test.ts`）からしか呼ばれず、そちらは「一度言ったら黙る」を
+   * 見る場ではないため、これでよい。本番の読み上げは断片列のほう
+   * （{@link tsunamiDowngradeToSegments}）を既読付きで直接使う。
+   */
+  function tsunamiDowngradeToText(
+    event: JMATsunami,
+    observationsForOrder?: readonly TsunamiObservation[],
+  ): string {
+    return joinSegments(tsunamiDowngradeToSegments(event, observationsForOrder, undefined))
+  }
+
+  /**
+   * 区域単位で等級が動いた報（一部解除・一部切替・一部引き上げ）の読み上げを断片列で返す。
+   *
+   * 例:「福岡県日本海沿岸、佐賀県北部の津波注意報が津波予報に切り替えられました。」
+   * 「京都府の津波注意報が津波警報に引き上げられました。また、石川県能登の大津波警報が
+   * 津波警報に切り替えられました。」
+   *
+   * **動いた区域だけを挙げ、残っている区域は語らない。** この報で聞き手が知りたいのは自分の
+   * 地域が変わったかどうかで、発表中の区域の全体像はカードが示す。全区域を読む発表文
+   * （`tsunamiToSegments`）と役割を分けている。**ここでいう「発表文」は津波の等級を全区域ぶん読む
+   * 文のことで、利用者が耳にする「気象庁の発表文」（→ `telegramTextToSpeak`）とは別物。**
+   *
+   * **行動指示（「海岸から離れてください」等）も付けない。** 等級の発表と違い、この報は
+   * 「どこがどう変わったか」を伝えるためのもの（残りの区域と行動指示を読まないのは 2026-10-21 ユーザー選択
+   * 「今のまま記録する (Recommended)」）。
+   *
+   * 遷移の組ごとに 1 文を置き、2 文目以降を「また、」で継ぐ（等級ごとに文を分ける
+   * `lowerGradeSentence` と同じ作法）。区域名は自分の組の中で読点連結し、助詞は述語の直前に
+   * 1 つだけ置く（→ docs/spec/audio-tts-spec.md §4）。
+   *
+   * 変化が無ければ空を返す（呼び出し側が観測点更新の読み上げへ落とす）。
+   *
+   * **受け取るのは既読を除いた組。** `LastKind` は変化した後の続報にも載り続けるため、電文から
+   * 毎回組を作り直すと同じ文を繰り返す（→ `selectUnspokenAreaGradeChanges`）。既読の判断は
+   * 呼び出し側（発話の直前に記録を進める側）が持つ。
+   *
+   * @param changes 読み上げる等級変化の組。並びがそのまま文の順になる
+   */
+  function tsunamiAreaGradeChangeToSegments(changes: readonly TsunamiAreaGradeChange[]): SpeechSegment[] {
+    const segments: SpeechSegment[] = []
+    changes.forEach((change, i) => {
+      // 遷移元を読めないのは解除の組だけ（`TsunamiAreaGradeChange.from`）。それ以外の組で来たら文にしない
+      // （何から何へ動いたかを言えない。`tsunamiAreaGradeChanges` がこの形を作らない）。
+      if (change.from === undefined && change.to !== TSUNAMI_GRADE_LIFTED) return
+      if (i > 0) segments.push(plain(w.common.also))
+      segments.push(...areaNameSegments(change.areas))
+      if (change.to === TSUNAMI_GRADE_LIFTED) {
+        // 解除された区域。遷移先に等級の名前が無いので「〜に切り替えられました」とは言えない。
+        // **残っている区域の話も、行動の指示も足さない**（他の遷移と同じ方針）。
+        // 前回の等級を読めない区域は「津波警報等」と言う（2026-10-24 ユーザー選択「「津波警報等が解除」 (Recommended)」。
+        // 全区域の解除の文「津波警報等は全て解除されました。」と同じ語）。
+        segments.push(plain(w.tsunami.areaLifted(change.from === undefined ? w.tsunami.warningsEtc : tsunamiGradeLabel(change.from))))
+        return
+      }
+      if (change.from === undefined) return
+      if (change.from === 'Unknown') {
+        // 前回は津波なし（`LastKind` が 00 等）。「〜の津波なしが」とは言えないので、
+        // 波高が付いていない発表文と同じ言い方に落とす。
+        segments.push(plain(w.tsunami.issuedForAreas(tsunamiGradeLabel(change.to))))
+        return
+      }
+      segments.push(plain(w.tsunami.areaGradeChanged(tsunamiGradeLabel(change.from), tsunamiGradeLabel(change.to), change.raised)))
+    })
+    return segments
+  }
+
+  /**
+   * 区域単位で等級が動いた報（`tsunamiAreaGradeChangeToSegments`）のあとに添える避難の呼びかけ。
+   *
+   * **警報等（大津波警報・津波警報・津波注意報）がその報に残っていれば、発表文と同じ呼びかけを 1 文足す**
+   * （2026-10-30 ユーザー選択「残っていれば呼びかけを足す (Recommended)」）。文は発表文（`tsunamiToSegments`）と同じく
+   * 気象庁の付加文（`evacuationActionLine`）を先に採り、採れなければ残っている最上位の等級の文
+   * （`fallbackEvacuationAction`）へ落ちる。**警報等が残らない報（予報だけ・全解除）には足さない** —— 予報の文は
+   * 「被害の心配はありません」で、避難の呼びかけではない。
+   *
+   * 呼びかけの付加文が付いた区域単位の等級変化の報は全期間で 2 通（2022-01-15 17:54・2026-04-20 08:08）。
+   */
+  function tsunamiAreaGradeChangeActionSegments(event: JMATsunami): SpeechSegment[] {
+    const topWarningGrade = GRADE_ORDER.find(g => g !== 'Forecast' && event.areas.some(a => a.grade === g))
+    if (!topWarningGrade) return []
+    const action = evacuationActionToSay(event, topWarningGrade)
+    return action ? [plain(action)] : []
+  }
+
+  /**
+   * 等級は据え置きのまま予想波高だけが動いた続報で、動いた区域だけを読む
+   * （2026-10-30 ユーザー選択。例「予想される津波の高さが変わりました。岩手県で10メートル超が予想されています。」）。
+   *
+   * 区域と波高の文は発表文と同じ `areaHeightSentence` で組み、等級ごとに 1 文にして 2 文目以降を「また、」で継ぐ
+   * （等級をまたいで 1 文にしない理由は `areaHeightSentence`）。動いた区域が無ければ空を返す。
+   *
+   * @param changed 動いた区域（`forecastHeightChangedAreas` の結果）。並べ替える前のものを渡す
+   */
+  function tsunamiForecastHeightChangeToSegments(
+    changed: readonly TsunamiArea[],
+    observations: readonly TsunamiObservation[],
+  ): SpeechSegment[] {
+    const sentences: SpeechSegment[] = []
+    for (const g of GRADE_ORDER) {
+      const inGrade = changed.filter(a => a.grade === g)
+      if (inGrade.length === 0) continue
+      const sentence = areaHeightSentence(inGrade, observations)
+      if (sentence.length === 0) continue
+      if (sentences.length > 0) sentences.push(plain(w.common.also))
+      sentences.push(...sentence)
+    }
+    if (sentences.length === 0) return []
+    return [plain(w.tsunami.forecastHeightChanged), ...sentences]
+  }
+
+  /** 区域単位で等級が動いた報の読み上げテキストを生成する。 */
+  function tsunamiAreaGradeChangeToText(changes: readonly TsunamiAreaGradeChange[]): string {
+    return joinSegments(tsunamiAreaGradeChangeToSegments(changes))
+  }
+
+  /**
+   * 誤報の取消（`tsunamiCancelToText` の `retracted`）が名乗る情報の名前。取消の長い理由を別の発話で読むときの前置きに渡す
+   * （→ `useLiveEventHandler.ts` の `speakDeferredCancelReason`）。前置きと名乗りを同じ語にするため、語表から引く
+   */
+  const TSUNAMI_WARNINGS_ETC_NAME = w.tsunami.warningsEtc
+
+  /** VTSE41/51/52 津波警報等 全解除の読み上げテキストを cancelReason ごとに生成する。 */
+  function tsunamiCancelToText(cancelReason: JMATsunami['cancelReason'], cancelText?: string): string {
+    const head = cancelReason === 'retracted'
+      ? w.tsunami.retracted
+      : cancelReason === 'expired'
+        // **述語は画面と同じ**（`CANCEL_REASON_LABEL` の `expired`）。語は電文の要素名
+        // （`ValidDateTime`＝失効時刻）へ揃えてある。
+        ? w.tsunami.expired
+        : w.tsunami.allLifted
+    // 取消しの概要は取消電文にしか入らない。解除・失効では電文に無いので空のまま
+    return withCancelReason(head, cancelText)
+  }
+
+  /**
+   * 津波情報（VTSE51）・沖合の津波観測に関する情報（VTSE52）だけの取消を伝える文。
+   *
+   * **取り消された事実だけを伝え、理由は読まない**（後発地震注意情報の取消と揃える。
+   * 2026-10-15 ユーザー承認「読み上げて組み直す（推奨）」）。警報等は生きているので「津波警報等」とは言わない。
+   * 情報名は電文の正式名（→ `docs/spec/quake-spec.md` §3「「警報等」を「津波警報」と書かない」と同じ考え方）。
+   */
+  function tsunamiPartialRetractionToText(headType: 'VTSE51' | 'VTSE52'): string {
+    return headType === 'VTSE51' ? w.tsunami.infoRetracted : w.tsunami.offshoreRetracted
+  }
+
+  /** 観測点を districtName（津波予報区）ごとにまとめる。区域名を持たない観測は単独の項目にする。 */
+  function groupObservationsByDistrict(
+    items: readonly TsunamiObservation[],
+  ): { districtName: string | null; districtCode?: string; items: TsunamiObservation[] }[] {
+    const groups: { districtName: string | null; districtCode?: string; items: TsunamiObservation[] }[] = []
+    for (const o of items) {
+      const key = o.districtName ?? null
+      const existing = key !== null ? groups.find(g => g.districtName === key) : undefined
+      if (existing) existing.items.push(o)
+      else groups.push({ districtName: key, districtCode: o.districtCode, items: [o] })
+    }
+    return groups
+  }
+
+  /**
+   * グループごとに「区域名、地点1で〜、地点2で〜」の形の断片列を作る。
+   * `renderStation` が 1 地点ぶんの文言を返す（波高あり／地点名のみで使い分ける）。
+   */
+  function observationDetailSegments(
+    items: readonly TsunamiObservation[],
+    renderStation: (obs: TsunamiObservation) => string,
+  ): SpeechSegment[] {
+    const segments: SpeechSegment[] = []
+    groupObservationsByDistrict(items).forEach((g, gi) => {
+      if (gi > 0) segments.push(plain(w.tsunami.stationSep))
+      segments.push(...districtNameSegments(g))
+      g.items.forEach((o, i) => {
+        if (i > 0) segments.push(plain(w.tsunami.stationSep))
+        segments.push({ text: tsunamiPlaceToSay('tsunamiStation', o.name), refs: [{ kind: 'station', name: o.name }] })
+        const rest = renderStation(o)
+        if (rest) segments.push(plain(rest))
+      })
+    })
+    return segments
+  }
+
+  /**
+   * 観測点の組の頭の区域名と、観測点名との区切り（区域名を持たない組は空）。
+   *
+   * **区切りは 3 つに分けてある**（語表の `tsunami.districtStationSep`・`stationSep`）。日本語はどれも読点だが、区域名の訳が
+   * コンマを含む言語では、1 つの区切りが「区域と観測点」「観測点どうし」「区域の組どうし」を兼ねると、どこで区域が変わったか聞き分けられない
+   */
+  function districtNameSegments(g: { districtName: string | null; districtCode?: string }): SpeechSegment[] {
+    if (!g.districtName) return []
+    return [
+      { text: tsunamiPlaceToSay('tsunamiArea', g.districtName), refs: [{ kind: 'area', code: g.districtCode, name: g.districtName }] },
+      plain(w.tsunami.districtStationSep),
+    ]
+  }
+
+  /**
+   * 予告型の列挙を組む。「次の地点で〜」の見出しに続けて地点ごとの句を読点で連ね、
+   * **最後の句にだけ述語の語尾を足す**。
+   *
+   * 例:「石川県能登、輪島港で、16時10分に押し波が到達し、16時21分に1.2メートルを観測、
+   * 富山県、富山で16時23分に0.5メートルを観測しました。」
+   *
+   * **地点ごとの句は述語の語幹（「を観測」「に更新」）で閉じること。** 第1波を織り込むと句の
+   * 中に読点が入るので、読点だけでは地点の切れ目を示せなくなる —— 読点が「区域と地点」「句の
+   * 中」「地点どうし」の 3 つを兼ねてしまい、どこで地点が変わったのか耳で追えない。語幹が
+   * 鳴るたびに 1 地点ぶんが終わったと分かる。
+   *
+   * `renderStation` は語幹まで含めた句を返し、`tail` は**最後の地点にだけ**付く語尾
+   * （「しました。」「されました。」）。語幹と語尾が繋がって 1 つの述語になる形にすること。
+   *
+   * **最後かどうかは区域でまとめ直したあとの並びで数える。** {@link groupObservationsByDistrict}
+   * は離れた同名区域を 1 つの組へ寄せるため、入力の並びの末尾が読み上げの末尾とは限らない。
+   */
+  function observationListSegments(
+    items: readonly TsunamiObservation[],
+    renderStation: (obs: TsunamiObservation) => string,
+    tail: string,
+  ): SpeechSegment[] {
+    const segments: SpeechSegment[] = []
+    const total = items.length
+    let spokenCount = 0
+    groupObservationsByDistrict(items).forEach((g, gi) => {
+      if (gi > 0) segments.push(plain(w.tsunami.stationSep))
+      segments.push(...districtNameSegments(g))
+      g.items.forEach((o, i) => {
+        if (i > 0) segments.push(plain(w.tsunami.stationSep))
+        segments.push({ text: tsunamiPlaceToSay('tsunamiStation', o.name), refs: [{ kind: 'station', name: o.name }] })
+        spokenCount += 1
+        segments.push(plain(renderStation(o) + (spokenCount === total ? tail : '')))
+      })
+    })
+    return segments
+  }
+
+  /**
+   * 第1波の材料（到達時刻と押し引き）。日時として読めなければ `null` —— 句ごと落とす。
+   *
+   * **押し引き（`Initial`）は第1波の属性で、最大波には付かない。** 最大波の句へ混ぜると
+   * 「最大波が押し波だった」という別の事実を言うことになるので、必ず到達時刻と対で読む。
+   * 電文では `Initial` は必須ではなく到達時刻だけが入ることもある（その場合は「第一波」と呼ぶ）。
+   *
+   * **「第1波」ではなく漢数字で書くこと。** 読みはどちらも「だいいっぱ」で誤読ではないが、
+   * 算用数字だと合成エンジンが `ダ'イ ｜ イッ'パ` と 2 アクセント句に割り、「だい・いっぱ」と
+   * ぶつ切りに聞こえる（実測。漢数字なら `ダイイ'ッパ` の 1 句）。**アプリが組む文なので表記が
+   * 確定しており、辞書に置くより生成側で直すほうが素直**（日付の「1日」→「ついたち」と同じ判断。
+   * あちらは日付か期間かが曖昧で辞書に置けないという事情もある）。画面に出す語は気象庁の表記
+   * （「第１波識別不能」）に揃えてあるので、ここを変えても表示側には影響しない。
+   */
+  function firstWaveParts(o: TsunamiObservation): { time: string; initial: string } | null {
+    const time = o.arrivalTime ? formatTime(o.arrivalTime) : null
+    if (!time) return null
+    // 日本語以外の語表が訳せる押し引きは電文の「押し」「引き」だけ。ほかの語は「第一波」と言い（語表の `firstWaveKind` が受け持つ）、
+    // 押し引きを言わなかったことを 1 度だけ残す
+    if (o.initial !== undefined && !KNOWN_FIRST_WAVE_INITIALS.has(o.initial)) {
+      warnUntranslatedTsunamiValue('firstWaveInitial', o.initial, '押し引きを言わず第一波と言います')
+    }
+    return { time, initial: w.tsunami.firstWaveKind(o.initial) }
+  }
+
+  /** 電文の第 1 波の押し引き（`Initial`）の語（→ `docs/spec/tsunami-spec.md`）。日本語以外の語表はこの 2 つを訳す */
+  const KNOWN_FIRST_WAVE_INITIALS: ReadonlySet<string> = new Set(['押し', '引き'])
+
+  /** 「まだ第1波を声にしていない観測点名」を引ける最小の形（`Set` でも `Map` でもそのまま渡せる）。 */
+  /**
+   * 「前に声にした第1波の内容」を引ける最小の形（`Map<観測点名, 鍵>` をそのまま渡せる）。
+   *
+   * **名前ではなく内容（`firstWaveSpokenKey` の鍵）で引く。** 名前だけで既読を判定していた頃は、
+   * 同じ観測点で「波高が上がった」と「第1波が訂正された」が同じ報に来ると、訂正された第1波が
+   * 一度も声にならないまま既読として記録されていた（波高の文は名前が既読なら織り込まず、
+   * 第1波の文は「波高の文で読まれるはず」として除外するため、どちらからも落ちる）。
+   */
+  type SpokenFirstWaveLookup = { get(name: string): string | undefined }
+
+  /**
+   * 「前に声にした最大波の観測時刻」を引ける最小の形（`Map<観測点名, ISO 時刻>` をそのまま渡せる）。
+   *
+   * 渡すのは**読み上げ用の記憶**（`useLiveEventHandler` の `spokenObsMaxHeightTimeRef`）。画面用の
+   * 記憶を渡すと、割り込みで鳴らなかった報の時刻が「既に伝えた」ことになり、その時刻を一度も
+   * 声にしないまま次へ進む。
+   */
+  type SpokenMaxHeightTimeLookup = { get(name: string): string | undefined }
+
+  /**
+   * `maxPoints` で読み上げから外した地点数を伝える一文を返す（外していなければ空の断片列）。
+   *
+   * **黙って捨てないこと。** 観測点の選抜は深刻な順（`compareObservedHeightDesc`）に上位だけを
+   * 読むため、「○m以上」が複数あって上限を超えたときは、そのうちの一部が読み上げから落ちる。
+   * 落ちたことを言わないと、聞いた人は読まれた地点が最大だと受け取る。
+   *
+   * **述語に貼り付けず独立した一文にする。** 観測波高の読み上げは新規と更新で述語が変わるため
+   * （「〜を観測しました」／「〜に更新されました」）、末尾の句に混ぜると外した地点が更新扱いに
+   * なる。外した地点は新規・更新のどちらでもありうるので、どちらにも寄せない言い方にする。
+   *
+   * 観測波高の読み上げと到達確認の読み上げ（`tsunamiArrivalToSegments`）で共有する。地点数の
+   * 言い方を手で複製すると、片方だけ変えたときに黙って乖離する（続く述語だけを引数で受ける）。
+   *
+   * **助詞は述語に合わせて選ぶ。** 既定の「でも」は場所を示す「で」で、そこで何かを観測した・
+   * 到達を確認したという述語に続く形。**欠測は観測点そのものの状態**（その場所で何かが起きた
+   * わけではない）なので、「で」を落として「ほか○地点も」にする。
+   */
+  function omittedPointsSentence(total: number, shown: number, sentence: (omitted: number) => string): SpeechSegment[] {
+    const omitted = total - shown
+    return omitted > 0 ? [plain(sentence(omitted))] : []
+  }
+
+  // 波高つきの 1 地点ぶん（地点名は呼び出し側が断片にするので、それに続く部分だけを返す）。
+  // 単位の読み替えは予想波高と同じ関数に通す（全角・半角の扱いを 2 か所に分けない）。
+  // 「以上」の補完はカード・地図と同じ `overSuffixedHeight` に通す（補ってから単位を読み替える順）。
+  // この 2 つは可換で、どちらを先に通しても同じ文字列になる。順序に意味を持たせていない。
+  function observedHeightSuffix(o: TsunamiObservation): string {
+    return w.tsunami.observedHeightAt(heightPhrase(overSuffixedHeight(o.height!, w.tsunami.heightLabel)))
+  }
+
+  /** 観測点更新で読み上げる件数の上限（多いときは波高の大きい順に絞る）。 */
+  const OBS_UPDATE_SPEAK_MAX_POINTS = 5
+
+  /**
+   * 観測点更新のうち**実際に読み上げる分**を選ぶ（波高を持つものだけ・降順・上限まで）。
+   *
+   * **読み上げた観測点を既読として記録する側も、必ずこの関数で絞ること**
+   * （`useLiveEventHandler` の `spokenObsHeightRef`）。絞り方を別々に書くと、上限で読まなかった
+   * 観測点まで既読になり、その値は二度と読まれない（波高がさらに上がるまで差分に出てこない）。
+   */
+  function selectObservationUpdatesToSpeak(
+    updatedObs: readonly TsunamiObservation[],
+    maxPoints = OBS_UPDATE_SPEAK_MAX_POINTS,
+  ): TsunamiObservation[] {
+    const obs = updatedObs.filter(o => o.height !== undefined)
+    // 深刻な順に選抜する（規則はカードの並びと同じ compareObservedHeightDesc）。**値の大小だけで
+    // 切らないこと。** maxPoints で打ち切るため、値の大小で並べると「○m以上」の観測点が上位から
+    // 押し出されて読み上げから丸ごと落ちる。カードなら下の方でも残るが、音は落ちたら気づけない。
+    return [...obs].sort((a, b) => compareObservedHeightDesc(a.height!, b.height!)).slice(0, maxPoints || Infinity)
+  }
+
+  /**
+   * 「前に声にした波高がある観測点名」を引ける最小の形（`Set` でも `Map` でもそのまま渡せる）。
+   *
+   * 渡すのは**読み上げ用の記憶**（`useLiveEventHandler` の `spokenObsHeightRef`）。画面用の記憶
+   * （受信時に進む）を渡してはいけない。割り込みで鳴らなかった観測点が「既に伝えた」ことになり、
+   * 一度も声にしていない地点を「更新されました」と言う。
+   */
+  type SpokenHeightLookup = { has(name: string): boolean }
+
+  /**
+   * VTSE41/51/52 津波観測情報 更新点のみ読み上げテキストを生成する。
+   * updatedObs は最大波高が更新された観測点のみを渡す（波高降順で最大 maxPoints 件）。
+   *
+   * **「新たに」と「更新」を言い分ける。** 津波が新しい場所に届いたのと、既に届いていた場所で波が
+   * 高くなったのは、聞き手にとって意味が違う（画面のカードも新規＝緑・更新＝黄で区別している）。
+   * 境界は `spokenHeights` に前値があるかどうかだけで、名前を聞いたことがあるかでは判定しない。
+   * 到達確認だけ読んだ観測点（「最大波高は観測中です」まで言った地点）に初めて値が付いた場合は、
+   * 波高としては初出なので「新たに」側に入る ―― 前値が無いのに「更新」と言えば嘘になる。
+   *
+   * 2 群に分かれたら、**深刻な波高を含む群を先に読み、後ろを「また、」で継ぐ**。最悪の値を先に
+   * 伝えるという選抜の方針を、群に割ったあとも崩さないため。
+   *
+   * **群の中を読む順は `updatedObs` の並びをそのまま使う。** 呼び出し側がカードの並び
+   * （`sortObservationsForCardDisplay`）で渡すこと。深刻な順に読み直すとカード上を上下に往復する
+   * （→ [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md) §9）。深刻な順は**どれを読むかの選抜
+   * だけ**に使う ―― 選抜と並び順は別物。
+   */
+  function tsunamiObservationUpdateToSegments(
+    updatedObs: TsunamiObservation[],
+    headline?: string,
+    maxPoints = OBS_UPDATE_SPEAK_MAX_POINTS,
+    spokenHeights?: SpokenHeightLookup,
+    spokenFirstWaves?: SpokenFirstWaveLookup,
+    spokenMaxHeightTimes?: SpokenMaxHeightTimeLookup,
+  ): SpeechSegment[] {
+    // 選抜は selectObservationUpdatesToSpeak に集約する（既読を記録する側と同じ絞り方にするため）。
+    // obs は「波高を持つ総数」で、読み上げなかった件数（omittedPointsSentence）を数えるのに要る。
+    const obs = updatedObs.filter(o => o.height !== undefined)
+    const selected = selectObservationUpdatesToSpeak(updatedObs, maxPoints)
+    if (selected.length === 0) return []
+    // 最も深刻な観測点（選抜が深刻な順に返すので先頭）。どちらの群を先に読むかだけに使う。
+    const worst = selected[0]
+    // 選抜した分を**入力の並びに戻して**読む（並びの根拠は上の説明）。
+    const chosen = new Set(selected)
+    const inReadingOrder = obs.filter(o => chosen.has(o))
+    // 見出し文の前処理は満潮時刻の報と共有する（→ {@link speakableHeadline}）。
+    // **末尾の句点もそこで足る** —— 直後に観測点の文が続くので、無いと 1 文に聞こえる。
+    // **気象庁の文を読まない言語は、見出し文の代わりに在処の文を言う**（報ごと。2026-11-17 ユーザー選択「報ごとに在処を言う」）。
+    // 言うのは日本語が見出し文を読む所だけ（2026-11-18 ユーザー選択「日本語が気象庁の文を読む所だけ (Recommended)」）。
+    // 見出し文が無い報と、波高の文を持たない報（名乗りは `tsunamiObservationLeadSegments`）では言わない
+    const elsewhere = w.common.telegramTextElsewhere
+    const headlinePart = elsewhere === null
+      ? speakableHeadline(headline)
+      : headline?.trim() ? `${elsewhere}${w.common.sentenceSep}` : ''
+    // **選抜した結果を分けるだけ。** 群ごとに選抜し直すと上限が実質 2 倍になり、既読を記録する側
+    // （`selectObservationUpdatesToSpeak` を使う）と読み上げた集合が食い違う。
+    const raised = inReadingOrder.filter(o => spokenHeights?.has(o.name) ?? false)
+    const firstTime = inReadingOrder.filter(o => !(spokenHeights?.has(o.name) ?? false))
+    /**
+     * 1 地点ぶんの句。**第1波がまだ声になっていなければ同じ句へ織り込む。**
+     *
+     * 織り込まずに第1波を別の文にすると、観測点が初めて現れる報で**同じ地点名を 2 回読む**
+     * （2024 年能登半島地震の 1 日で、読み上げの出る 34 報のうち 13 報がその形だった。
+     * 観測点は最大波と第1波が同時に初出になることが多いため）。
+     *
+     * 第1波を織り込む地点は句の中に読点が入るので、地点の切れ目は語幹（`stem`）が示す
+     * （→ {@link observationListSegments}）。
+     */
+    const clauseOf = (o: TsunamiObservation, updated: boolean): string => {
+      // **折り込むのは初出の第1波だけ。** 訂正（前に別の内容を声にした地点）はここへ入れない ——
+      // この句の言い回しは「〜に◯◯波が到達し」で、**初出の形**（動詞が続くので助詞は「に」）。訂正は
+      // 「〜の◯◯波へ更新されました」という別の文型で読む決まりなので（→ {@link tsunamiFirstWaveToSegments}）、
+      // 折り込むと訂正であることが聞き分けられない。訂正を拾うのは `firstWaveChanged` の側。
+      const fw = spokenFirstWaves?.get(o.name) === undefined ? firstWaveParts(o) : null
+      // **最大波の観測時刻は、前に声にしたものと変わったときだけ添える。** 波高だけが上がった
+      // 報でも時刻を読んでいた頃は、同じ時刻を報のたびに言い直していた（電文の波高は 0.1m 刻みで、
+      // 実測が動いても表示が変わらない間は時刻だけが進む —— その逆に、時刻が据え置きのまま
+      // 波高だけ上がる形も起きる）。前が無い（初出）なら読む —— 聞き手はその時刻を知らない。
+      const spokenAt = spokenMaxHeightTimes?.get(o.name)
+      const at = o.maxHeightDateTime && o.maxHeightDateTime !== spokenAt ? formatTime(o.maxHeightDateTime) : null
+      // 予想波高と同じ `heightPhrase` に通す（数字の無い語が来ても、表で引き直し、訳せなければ記録が残る）
+      const value = heightPhrase(overSuffixedHeight(o.height!, w.tsunami.heightLabel))
+      return w.tsunami.heightClause(fw, at, value, updated)
+    }
+    /**
+     * 群ごとの一文。**見出しで出来事を言い切り、地点は次に並べる**（等級の発表文
+     * `lowerGradeSentence` と同じ作法）。地点を全部読んでから述語が来る形は、地点が増える
+     * ほど何の話か分からないまま待たされる。
+     */
+    const sentenceOf = (items: TsunamiObservation[], isRaised: boolean): SpeechSegment[] => {
+      if (items.length === 0) return []
+      return [
+        plain(isRaised ? w.tsunami.maxWaveUpdatedLead : w.tsunami.newlyObservedLead),
+        ...observationListSegments(
+          items,
+          // **更新の着点は「へ」。** この句には最大波の観測時刻（「16時41分に」）も入るので、
+          // 「に」で受けると「16時41分に3.0メートルに更新されました」と同じ助詞が 2 度続く。
+          // しかも `MaxHeight/DateTime` は**波を観測した時刻**であって更新（発表）の時刻ではないため、
+          // 着点が「に」のままだと「16時41分に更新した」とも読める。着点を「へ」にすれば
+          // 「に」＝いつ観測したか・「へ」＝何に変わったか、と役割で分かれる
+          // （→ {@link tsunamiMaxHeightTimeToSegments} / {@link tsunamiFirstWaveToSegments} と同じ規律）。
+          // 述語の語幹（日本語の「へ更新」「を観測」）を句のどこに置くかは語表の `heightClause` が決める
+          o => clauseOf(o, isRaised),
+          isRaised ? w.tsunami.tailUpdated : w.tsunami.tailObserved,
+        ),
+      ]
+    }
+    // 深刻な観測点を含む群を先に置く（最も深刻な観測点がどちらの群に入ったかで決まる）。
+    const raisedLeads = raised.includes(worst)
+    const lead = sentenceOf(raisedLeads ? raised : firstTime, raisedLeads)
+    const follow = sentenceOf(raisedLeads ? firstTime : raised, !raisedLeads)
+    return [
+      plain(w.tsunami.observationInfoLead + headlinePart),
+      ...joinWithAlso(lead, follow),
+      ...omittedPointsSentence(obs.length, selected.length, w.tsunami.omittedObserving),
+    ]
+  }
+
+  function tsunamiObservationUpdateToText(
+    updatedObs: TsunamiObservation[],
+    headline?: string,
+    maxPoints = OBS_UPDATE_SPEAK_MAX_POINTS,
+    spokenHeights?: SpokenHeightLookup,
+    spokenFirstWaves?: SpokenFirstWaveLookup,
+    spokenMaxHeightTimes?: SpokenMaxHeightTimeLookup,
+  ): string {
+    return joinSegments(tsunamiObservationUpdateToSegments(
+      updatedObs, headline, maxPoints, spokenHeights, spokenFirstWaves, spokenMaxHeightTimes,
+    ))
+  }
+
+  /**
+   * 話題の変わる断片列を「また、」で継ぐ。
+   *
+   * 別々の関数が組んだ文をそのまま並べると、境目に手がかりの無い文が 2 つ続く。津波の観測情報で
+   * 「新たに隠岐、隠岐西郷で0.1メートルを観測しました。」の直後に「兵庫県北部、豊岡市津居山で
+   * 到達を確認しました。」が来る形がそれで、**どちらも「地名で〜しました」の同じ形**なので、
+   * 後ろの文が前の文の続き（同じ観測点の話）に聞こえる。区切り方は等級ごと
+   * （{@link lowerGradeSentence}）・新規と更新の群（{@link tsunamiObservationUpdateToSegments}）で
+   * 既に使っているものに揃える。
+   *
+   * **どちらかが空なら接続語を付けない。** 前段が無いのに「また、」で始まる文にしないため。
+   */
+  function joinWithAlso(
+    lead: readonly SpeechSegment[],
+    follow: readonly SpeechSegment[],
+  ): SpeechSegment[] {
+    if (lead.length === 0 || follow.length === 0) return [...lead, ...follow]
+    return [...lead, plain(w.common.also), ...follow]
+  }
+
+  /** 到達確認で読み上げる件数の上限（多いときは渡された並びの先頭から採る）。 */
+  const ARRIVAL_SPEAK_MAX_POINTS = 5
+
+  /**
+   * 到達確認のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
+   *
+   * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
+   * `spokenObsNamesRef`）。上限で読まなかった観測点まで既読にすると、その到達確認は二度と
+   * 読まれない（波高更新側の `selectObservationUpdatesToSpeak` と同じ約束）。
+   */
+  function selectArrivalsToSpeak(
+    obs: readonly TsunamiObservation[],
+    maxPoints = ARRIVAL_SPEAK_MAX_POINTS,
+  ): TsunamiObservation[] {
+    return obs.slice(0, maxPoints || Infinity)
+  }
+
+  /**
+   * 最大波高が未確定（「観測中」）のまま新規に到達が確認された観測点の読み上げテキストを生成する。
+   * まだ maxHeight の数値が出ていない観測点（JMA電文で maxHeight.condition = "観測中"）が対象。
+   * 波高が未確定であること自体も明示的に読み上げる。件数は maxPoints で絞り、他 tsunami 系読み上げと同様に上限を設ける。
+   * 波高読み上げ（observationDetailSegments）と同様に districtName（津波予報区）ごとにグループ化する。
+   *
+   * **読む順は渡された並びのまま。** 波高更新の読み上げと同じく、呼び出し側がカードの並び
+   * （`sortObservationsForCardDisplay`）で渡すこと。上限で落とすのも先頭からなので、並びが
+   * カードと違うとカード上で飛び飛びの地点が読まれる。
+   */
+  function tsunamiArrivalToSegments(
+    obs: TsunamiObservation[],
+    maxPoints = ARRIVAL_SPEAK_MAX_POINTS,
+    spokenFirstWaves?: SpokenFirstWaveLookup,
+  ): SpeechSegment[] {
+    if (obs.length === 0) return []
+    const shown = selectArrivalsToSpeak(obs, maxPoints)
+    // **「微弱」の観測点に「観測中」と言わない。** 微弱は「観測した波がごく小さい」ことを
+    // 気象庁が伝えている状態で、値がこれから出るわけではない（電文解説資料 Ⅱ.12）。
+    const weak = shown.filter(o => o.condition?.weak)
+    const observing = shown.filter(o => !o.condition?.weak)
+    /**
+     * 織り込める第1波（**初出だけ**）。訂正は専用の文へ回す —— この句の言い回し
+     * 「〜に◯◯波を観測」は初出の形で、訂正は「〜の◯◯波へ更新されました」と読む決まり。
+     *
+     * **波高の文（`tsunamiObservationUpdateToSegments`）と切り分けを揃えること。** 揃えないと、
+     * 欠測から復帰した観測点（到達確認の既読は落ちるが第1波の既読は残る）で、同じ第1波が
+     * この文と訂正の文の両方に出る。
+     */
+    const foldable = (o: TsunamiObservation) =>
+      spokenFirstWaves?.get(o.name) === undefined ? firstWaveParts(o) : null
+    // 第1波の時刻が読めた地点は「〇時〇分に押し波を観測」、読めない地点（`FirstHeight` が
+    // `Condition`「第１波識別不能」だけを持つ形）は従来どおり「到達を確認」。**地点ごとに
+    // 述語の語幹を持たせる**ので、両方が混じっても 1 文に並べられる。
+    const clauseOf = (o: TsunamiObservation): string => {
+      const fw = foldable(o)
+      return fw ? w.tsunami.firstWaveObservedClause(fw.time, fw.initial) : w.tsunami.arrivalConfirmedClause
+    }
+    // **第1波の時刻を読める地点が 1 つも無ければ、従来の一文へ落とす。** 句が「〇〇で到達を
+    // 確認」だけになるので、見出しを付けると同じことを 2 回言うことになり、地点ごとに語幹を
+    // 繰り返す意味も無い（切れ目は読点だけで足りる）。
+    //
+    // **見出しは「観測中」「微弱」の 2 群に 1 回だけ。** 群ごとに付けると、両方が揃った報で
+    // 同じ見出しが「また、」を挟んで 2 回鳴る。
+    const anyTimed = shown.some(o => foldable(o) !== null)
+    const listOf = (items: TsunamiObservation[], tail: string): SpeechSegment[] => {
+      if (items.length === 0) return []
+      return anyTimed
+        ? observationListSegments(items, clauseOf, w.tsunami.tailObserved + tail)
+        : [...observationDetailSegments(items, () => ''), plain(w.tsunami.arrivalConfirmedTail + tail)]
+    }
+    return [
+      ...(anyTimed ? [plain(w.tsunami.arrivalLead)] : []),
+      ...joinWithAlso(
+        listOf(observing, w.tsunami.maxHeightObserving),
+        listOf(weak, w.tsunami.maxHeightWeak),
+      ),
+      ...omittedPointsSentence(obs.length, shown.length, w.tsunami.omittedArrival),
+    ]
+  }
+
+  function tsunamiArrivalToText(
+    obs: TsunamiObservation[],
+    maxPoints = 5,
+    spokenFirstWaves?: SpokenFirstWaveLookup,
+  ): string {
+    return joinSegments(tsunamiArrivalToSegments(obs, maxPoints, spokenFirstWaves))
+  }
+
+  /** 最大波の観測時刻だけが更新された観測点を読み上げる件数の上限。 */
+  const MAX_HEIGHT_TIME_SPEAK_MAX_POINTS = 5
+
+  /**
+   * 最大波の観測時刻の更新のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
+   *
+   * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
+   * `spokenObsMaxHeightTimeRef`）。上限で読まなかった観測点まで既読にすると、その更新は
+   * 二度と読まれない（到達確認・欠測・波高更新と同じ約束）。
+   */
+  function selectMaxHeightTimeUpdatesToSpeak(
+    obs: readonly TsunamiObservation[],
+    maxPoints = MAX_HEIGHT_TIME_SPEAK_MAX_POINTS,
+  ): TsunamiObservation[] {
+    return obs.slice(0, maxPoints || Infinity)
+  }
+
+  /**
+   * 波高は据え置きのまま、最大波の観測時刻だけが更新された観測点を読み上げる。
+   *
+   * **気象庁が「更新した」と言っているのに、アプリだけが黙っていた電文**がこれ。
+   * 波高の既読判定（`hasObservedHeightRisen`）は値が上がったときだけ通すので、
+   * 2024 年能登半島地震の 01/02 00:51 のように「舞鶴 0.4m・玄海町仮屋 0.1m のまま、
+   * 最大波の時刻だけが動いた」報は読み上げ文が空になり、通知音だけが鳴っていた。
+   *
+   * **同じ高さの波がまた来たという事実を伝える。** 危険度が上がったわけではないので、
+   * **波高は読まない**（前の報で既に声にしている値を繰り返すだけになる。2026-10-21 ユーザー選択
+   * 「今のまま記録する (Recommended)」）。読むのは地点名と新しい観測時刻だけ。波高を言い直すと、値が上がったのか時刻だけが動いたのかを聞き分け
+   * られなくなる —— 群を分けている意味がそこにある。
+   *
+   * **更新の着点は「へ」。** 「23時26分**に**更新」だと「23時26分に更新した」とも読め、更新の時刻
+   * なのか更新後の観測時刻なのか紛れる。「へ」なら変化の行き先だとはっきりする。
+   * **これは観測情報の 3 つの群に共通する規律**で、波高の更新（{@link tsunamiObservationUpdateToSegments}）も
+   * 第1波の訂正（{@link tsunamiFirstWaveToSegments}）も「〜へ更新されました」で閉じる。
+   * 着点でない観測時刻だけが「に」（波高の群）か「の」（第1波の群。時刻が着点の中身なので名詞句へ畳む）を取る。
+   *
+   * **読む順は渡された並びのまま**（波高更新・到達確認と同じ。呼び出し側がカードの並びで渡す）。
+   */
+  function tsunamiMaxHeightTimeToSegments(
+    obs: TsunamiObservation[],
+    maxPoints = MAX_HEIGHT_TIME_SPEAK_MAX_POINTS,
+  ): SpeechSegment[] {
+    if (obs.length === 0) return []
+    const shown = selectMaxHeightTimeUpdatesToSpeak(obs, maxPoints)
+    // **時刻を 1 つも読めなければ従来の一文へ落とす。** この経路へ来る観測点は電文が時刻を
+    // 持っている前提だが（`hasMaxHeightTimeAdvanced` が `MaxHeight/DateTime` の存在を要求する）、
+    // 日時として読めない値なら `formatTime` が `null` を返す。そのとき「〇〇で更新、△△で更新
+    // されました」と語幹だけを繰り返しても何も伝わらないので、地点名を連ねる形へ戻す。
+    const anyTimed = shown.some(o => (o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null) !== null)
+    return [
+      ...(anyTimed
+        ? [
+          plain(w.tsunami.maxHeightTimeLead),
+          ...observationListSegments(
+            shown,
+            o => {
+              const at = o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null
+              return w.tsunami.updatedAtClause(at)
+            },
+            w.tsunami.tailUpdated,
+          ),
+        ]
+        : [
+          ...observationDetailSegments(shown, () => ''),
+          // **読点は述語の形で決まる。** ここは「で」のあとに別の主語（「最大波の観測時刻が」）が
+          // 続くので、読点を挟まないと最後の地点名と主語が繋がって聞こえる。到達確認の受け皿
+          // （{@link tsunamiArrivalToSegments}）が「で到達を確認しました」と読点なしなのは、
+          // あちらは「で」の直後が動詞句だから。**形を揃えるために片方を機械的に合わせない。**
+          plain(w.tsunami.maxHeightTimeTail),
+        ]),
+      ...omittedPointsSentence(obs.length, shown.length, w.tsunami.omittedUpdated),
+    ]
+  }
+
+  /**
+   * **欠測となっている観測点**で、最大波の観測時刻だけが更新された報の読み上げ。
+   *
+   * 「欠測となっている観測点で、最大波の観測時刻が更新されました。〇〇で23時26分へ更新されました。」
+   * （2026-10-24 ユーザー選択「欠測を前に置く (Recommended)」。2026-10-21 選択「読む (Recommended)」）。
+   *
+   * 欠測の観測点も、電文は「これまでの最大波」とその観測時刻を `Revise`「更新」で送り直すことがある
+   * （断続的な欠測）。{@link tsunamiMaxHeightTimeToSegments} は欠測を外している —— 観測できていない地点に
+   * 「更新されました」とだけ言うと、いま観測できているように聞こえるため。そこで**欠測であることを先に
+   * 言ってから**時刻を伝える。件数の上限と選び方は時刻の群と共有する（{@link selectMaxHeightTimeUpdatesToSpeak}）。
+   */
+  function tsunamiMissingMaxHeightTimeToSegments(
+    obs: TsunamiObservation[],
+    maxPoints = MAX_HEIGHT_TIME_SPEAK_MAX_POINTS,
+  ): SpeechSegment[] {
+    if (obs.length === 0) return []
+    const shown = selectMaxHeightTimeUpdatesToSpeak(obs, maxPoints)
+    const anyTimed = shown.some(o => (o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null) !== null)
+    return [
+      ...(anyTimed
+        ? [
+          plain(w.tsunami.missingMaxHeightTimeLead),
+          ...observationListSegments(
+            shown,
+            o => {
+              const at = o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null
+              return w.tsunami.updatedAtClause(at)
+            },
+            w.tsunami.tailUpdated,
+          ),
+        ]
+        // 時刻を 1 つも読めなければ地点名を連ねる形へ落とす（時刻の群と同じ扱い）。
+        : [
+          plain(w.tsunami.missingPrefix),
+          ...observationDetailSegments(shown, () => ''),
+          plain(w.tsunami.maxHeightTimeTail),
+        ]),
+      ...omittedPointsSentence(obs.length, shown.length, w.tsunami.omittedUpdated),
+    ]
+  }
+
+  /** 第1波の内容が更新された観測点を読み上げる件数の上限。 */
+  const FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS = 5
+
+  /**
+   * 第1波の更新のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
+   *
+   * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
+   * `spokenObsFirstWaveRef`）。上限で読まなかった観測点まで既読にすると、その更新は
+   * 二度と読まれない（到達確認・欠測・波高更新と同じ約束）。
+   */
+  function selectFirstWaveUpdatesToSpeak(
+    obs: readonly TsunamiObservation[],
+    maxPoints = FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS,
+  ): TsunamiObservation[] {
+    return obs.slice(0, maxPoints || Infinity)
+  }
+
+  /**
+   * 第1波（到達時刻・押し引き）を、**どの句にも織り込めなかった観測点**について読み上げる。
+   *
+   * **第1波は訂正される。** 2024 年能登半島地震では佐渡市鷲崎の到達時刻が 16時10分 →
+   * 16時32分 へ 22 分ぶん更新された（`FirstHeight/Revise` = 更新）。一度読んだら二度と
+   * 読まない作りにすると、**誤った時刻を言ったまま訂正が届かない**。
+   *
+   * **`'new'` の側も要る。** 初出の第1波はふつう波高の文か到達確認の文へ織り込まれるが、
+   * **どちらにも入らない観測点がある** —— `FirstHeight` が `Condition`「第１波識別不能」だけ
+   * だった地点が、続報で到達時刻を得る形（テストボタンの久慈港がこれ）。波高が上がらなければ
+   * 波高の文に入らず、`height` を持つので到達確認の文にも入らない。**受け皿が無いと、その地点の
+   * 第1波は一度も声にならず、記録も空のままなので以後の本物の訂正まで永久に拾えなくなる。**
+   *
+   * **助詞は述語で決まる。** 訂正は時刻と押し引きを 1 つの名詞句（「16時32分の押し波」）にして
+   * 「へ更新」で受けるので「の」。初出は動詞が続くので「16時13分**に**押し波を観測」
+   * （{@link tsunamiArrivalToSegments} と同じ形）。
+   *
+   * **時刻を「に」で切り離さないこと。** 「16時32分に押し波へ更新」にすると、訂正されたのが
+   * 到達時刻そのもの（16時10分 → 16時32分）だという事実が文から消えるうえ、「16時32分に更新した」
+   * とも読める。着点を「へ」で受ける規律は 3 群に共通（→ {@link tsunamiMaxHeightTimeToSegments}）。
+   *
+   * **初出でも「最大波高は観測中です」は付けない。** ここへ来る地点は波高を持っているので、
+   * 到達確認の文の末尾をそのまま借りると嘘になる。
+   */
+  function tsunamiFirstWaveToSegments(
+    obs: TsunamiObservation[],
+    mode: 'new' | 'updated',
+    maxPoints = FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS,
+  ): SpeechSegment[] {
+    if (obs.length === 0) return []
+    const shown = selectFirstWaveUpdatesToSpeak(obs, maxPoints)
+    const isUpdate = mode === 'updated'
+    return [
+      plain(isUpdate ? w.tsunami.firstWaveUpdatedLead : w.tsunami.firstWaveArrivedLead),
+      ...observationListSegments(
+        shown,
+        o => {
+          const fw = firstWaveParts(o)
+          // **この分岐へは現状到達しない。** 呼び出し元（`useLiveEventHandler` の `firstWaveChanged`）が
+          // `firstWaveSpokenKey` の成立を要求し、あれは到達時刻が日時として読めることを条件にしている。
+          // 姉妹の 2 群（到達確認・最大波の観測時刻）が持つ「1 件も読めなければ見出しを外す」ガードを
+          // ここに置いていないのはそのため —— 発火しないガードを足しても確かめる手段が無い。
+          // **呼び出し元の絞り込みを緩めるなら、このガードも併せて用意すること。**
+          if (!fw) return isUpdate ? w.tsunami.updatedAtClause(null) : w.tsunami.arrivalConfirmedClause
+          return isUpdate ? w.tsunami.firstWaveUpdatedClause(fw.time, fw.initial) : w.tsunami.firstWaveObservedClause(fw.time, fw.initial)
+        },
+        isUpdate ? w.tsunami.tailUpdated : w.tsunami.tailObserved,
+      ),
+      ...omittedPointsSentence(obs.length, shown.length, isUpdate ? w.tsunami.omittedUpdated : w.tsunami.omittedArrival),
+    ]
+  }
+
+  /**
+   * 観測情報の続報で、読み上げるべき変化が 1 つも無かったときの一文。
+   *
+   * **名乗りだけで終わらせないための断片**（地震情報の `noRegionChangeSegments` と同じ考え方）。
+   * 「津波観測に関する情報。」で切ると聞き手には「何が？」しか残らない。
+   *
+   * **言い切ってよい範囲を波高に限る。** 読み上げが伝えてきた単位は観測点の波高なので、
+   * そこが据え置きであることは正しい。最大波の時刻・到達状況まで含めて「変わりはありません」
+   * と言うと、この文が出る報でも実際には動いていることがある。
+   *
+   * **実配信の標本を持たない。** 2024 年能登半島地震の 26 時間（観測点を載せた報 47 通）を
+   * 走査しても、波高・最大波の時刻・到達確認・欠測のいずれも動かない報は 1 通も無かった。
+   * 構造としては起こりうるので用意してあるが、実際に声になるところは確かめていない。
+   */
+  /**
+   * 観測情報の名乗りだけの断片（「津波観測に関する情報。」）。波高の文を持たず、到達・欠測・第1波などの文だけを読む報の頭に、
+   * 受信処理（`useLiveEventHandler`）が足す。**気象庁の見出し文も在処の文も付けない** —— この報では日本語も見出し文を読まないので、
+   * 置き換える文が無い（在処の文の範囲は {@link tsunamiObservationUpdateToSegments}）
+   */
+  function tsunamiObservationLeadSegments(): SpeechSegment[] {
+    return [plain(w.tsunami.observationInfoLead)]
+  }
+
+  function tsunamiObservationNoChangeSegments(): SpeechSegment[] {
+    return [plain(w.tsunami.observationNoChange)]
+  }
+
+  /**
+   * 観測情報の続報で、読み上げるべき変化は無いが、読んだ波高より下がった観測点があるときの一文。
+   *
+   * **「変わりはありません」とは言えない**（下がったのは変化）ので、波高については何も
+   * 言い切らずに名乗るだけにする。下がった値は声にしない（画面のカードには新しい値が出る）
+   * —— 「津波観測に関する情報が発表されました。」（2026-10-19 ユーザー承認。選んだ選択肢は
+   * 「案 2『嘘の文だけ直す』」、返事の原文「案2で進めて」）。判定は `hasObservedHeightLowered`。
+   */
+  function tsunamiObservationLoweredSegments(): SpeechSegment[] {
+    return [plain(w.tsunami.observationLowered)]
+  }
+
+  /** 満潮時刻の報の名乗り（電文が見出し文を持たないときに使う）。 */
+  const TIDE_REPORT_FALLBACK_HEADLINE = w.tsunami.tideFallbackHeadline
+
+  /**
+   * 各地の満潮時刻・津波到達予想時刻に関する情報の読み上げ。
+   *
+   * **名乗りは気象庁の見出し文をそのまま使う。** この電文の `headline` は
+   * 「各地の満潮時刻と津波到達予想時刻をお知らせします。」で、公式の言い方がそのまま手に入る
+   * （利用者へ出す語は気象庁の表現に揃える決まり → quake-spec.md §8）。読めなければ
+   * 同じ文を定数から補う。
+   *
+   * **続く一文は変化の中身で選ぶ**（判定は `tideReportChange`）。初報は名乗りだけで意味が
+   * 通るので何も足さない ―― まだ一度も伝えていないものを「更新されました」とは言えない。
+   *
+   * **地点名も件数も読まない。** 満潮時刻は 46〜52 地点ぶん載るので読み切れず、件数を言っても
+   * 聞き手にできることが増えない（どこが動いたかはカードで見る。2026-10-21 ユーザー選択「今のまま記録する (Recommended)」）。
+   */
+  function tsunamiTideToSegments(
+    change: TideReportChange,
+    headline?: string,
+  ): SpeechSegment[] {
+    // 見出し文は気象庁が書いた文なので、日時のゼロ埋めと全角の単位を読み上げ向きへ直してから使う
+    // （観測情報の見出しと同じ前処理。2 か所に分けない → {@link speakableHeadline}）。
+    // **末尾の句点を落とさない** —— 下の `tail` が直に続くので、無いと 1 つの文に聞こえる
+    // （{@link endTelegramSentence}。断片へ分けても同じで、逃げ道は無い）。
+    // **気象庁の文を読まない言語は、見出し文を読まずにいつも決まった名乗り（見出し文と同じ内容の定型文の訳）を使う**
+    const headlinePart = (w.common.telegramTextElsewhere === null ? speakableHeadline(headline) : '') || TIDE_REPORT_FALLBACK_HEADLINE
+    const tail = change === 'tide' ? w.tsunami.tide.tide
+      : change === 'arrival' ? w.tsunami.tide.arrival
+      : change === 'arrivalTime' ? w.tsunami.tide.arrivalTime
+      : change === 'none' ? w.tsunami.tide.none
+      : ''
+    return [plain(`${headlinePart}${tail}`)]
+  }
+
+  /** 欠測で読み上げる件数の上限（多いときは渡された並びの先頭から採る）。 */
+  const MISSING_SPEAK_MAX_POINTS = 5
+
+  /**
+   * 欠測のうち**実際に読み上げる分**を選ぶ（渡された並びの先頭から上限まで）。
+   *
+   * **既読として記録する側も必ずこの関数で絞ること**（`useLiveEventHandler` の
+   * `spokenObsMissingRef`）。上限で読まなかった観測点まで既読にすると、その欠測は二度と
+   * 読まれない（到達確認・波高更新と同じ約束）。
+   */
+  function selectMissingToSpeak(
+    obs: readonly TsunamiObservation[],
+    maxPoints = MISSING_SPEAK_MAX_POINTS,
+  ): TsunamiObservation[] {
+    return obs.slice(0, maxPoints || Infinity)
+  }
+
+  /**
+   * 観測データが欠測となった観測点の読み上げ。
+   *
+   * **到達確認（{@link tsunamiArrivalToSegments}）へ混ぜないこと。** あちらは「到達した事実は
+   * 確定していて波高だけがこれから」という文で、欠測の観測点に当てると到達を断定してしまう。
+   *
+   * 文は 2 通りに分かれる。電文は欠測と同時に「これまでの最大波の高さ」を載せることがある
+   * （気象庁 電文解説資料 Ⅱ.12 事例 6）ため、**値を観測できていた観測点はその値も伝える**。
+   * 値を持つ群を先に置き、持たない群を「また、」で継ぐ（区切り方は `joinWithAlso`）。
+   *
+   * **読む順は渡された並びのまま。** 波高更新・到達確認と同じく、呼び出し側がカードの並び
+   * （`sortObservationsForCardDisplay`）で渡すこと。
+   */
+  function tsunamiMissingToSegments(
+    obs: TsunamiObservation[],
+    maxPoints = MISSING_SPEAK_MAX_POINTS,
+  ): SpeechSegment[] {
+    if (obs.length === 0) return []
+    const shown = selectMissingToSpeak(obs, maxPoints)
+    // 「これまでに何を観測できていたか」を言える観測点。**波高の数値だけでなく「微弱」も含める**
+    // （「微弱 欠測」は同 事例 7 の形。カードは波高の欄に「微弱」を出すので、読み上げだけ黙ると
+    // 声を頼りにしている人にその分だけ届かない）。
+    const observed = shown.filter(o => o.height || o.condition?.weak)
+    const unknown = shown.filter(o => !(o.height || o.condition?.weak))
+    const observedClause: SpeechSegment[] = observed.length > 0
+      ? [
+        plain(w.tsunami.missingObservedLead),
+        ...observationDetailSegments(observed, o => (o.height ? observedHeightSuffix(o) : w.tsunami.weakTsunamiAt)),
+        plain(w.tsunami.missingObservedTail),
+      ]
+      : []
+    const missingClause: SpeechSegment[] = unknown.length > 0
+      ? [
+        ...observationDetailSegments(unknown, () => ''),
+        // **場所を示す「で」を付けない。** 欠測は観測点そのものの状態で、その場所で何かが
+        // 起きたわけではない（「◯◯は欠測」が正しい形）。値を観測できていた側の文
+        // （上の `observedClause`）では観測がその場所で起きているので「で」を使う。
+        plain(w.tsunami.missingTail),
+      ]
+      : []
+    return [
+      ...joinWithAlso(observedClause, missingClause),
+      ...omittedPointsSentence(obs.length, shown.length, w.tsunami.omittedMissing),
+    ]
+  }
+
+  function tsunamiMissingToText(obs: TsunamiObservation[], maxPoints = MISSING_SPEAK_MAX_POINTS): string {
+    return joinSegments(tsunamiMissingToSegments(obs, maxPoints))
+  }
+
+  /**
+   * 「観測中」のまま津波警報に相当する津波を観測している観測点を読む上限。
+   *
+   * 沖合の観測点は数が限られるうえ、この状態になるのは大津波警報の発表中だけ。欠測と同じ
+   * 件数に揃えてある（読み上げが長くなりすぎない範囲で、落ちた分は件数で伝える）。
+   */
+  const WARNING_LEVEL_SPEAK_MAX_POINTS = 5
+
+  /**
+   * 読み上げる観測点の絞り込み。
+   *
+   * **既読の記録と文の生成で同じものを通すこと。** 別々に切ると、上限で読まなかった観測点まで
+   * 既読になり、次の報でも読まれない（到達確認・欠測でも同じ規則）。
+   */
+  function selectWarningLevelToSpeak(
+    obs: readonly TsunamiObservation[],
+    maxPoints = WARNING_LEVEL_SPEAK_MAX_POINTS,
+  ): TsunamiObservation[] {
+    return obs.slice(0, maxPoints || Infinity)
+  }
+
+  /**
+   * 「観測中」のまま津波警報に相当する津波を観測している観測点の読み上げ。
+   *
+   * 気象庁が `Revise` に置いた信号（→ `tsunami.ts` の `isWarningLevelWhileObserving`）を伝える。
+   * **波高の数値が無いため、他のどの文にも乗らない** —— 波高更新の文は数値を読み、到達確認の文は
+   * 「到達を確認しました」で到達だけを述べる。この状態を黙って落とすと、資料が「注意する必要が
+   * ある」と名指しした事実が音声から消える。
+   *
+   * **高さは言わない。** 電文が数値を出していないので、アプリが「1m 超」などと補ってはいけない。
+   * 伝えるのは気象庁が言ったことだけ ―― 警報に相当する津波を観測している、という事実。
+   *
+   * **読む順は渡された並びのまま**（呼び出し側がカードの並びで渡す。欠測・到達確認と同じ）。
+   *
+   * **省略件数の助詞は既定（「ほか○地点でも」）。** 主文が「〇〇**では**、〜を観測しています」と
+   * 場所を示しているので、続く一文も場所の「で」を保つ。**欠測の群が「も」へ落とすのは
+   * 観測点そのものの状態を述べるから**で（→ {@link omittedPointsSentence}）、その場所で観測が
+   * 起きているこちらには当てはまらない。
+   */
+  function tsunamiWarningLevelToSegments(
+    obs: TsunamiObservation[],
+    maxPoints = WARNING_LEVEL_SPEAK_MAX_POINTS,
+  ): SpeechSegment[] {
+    if (obs.length === 0) return []
+    const shown = selectWarningLevelToSpeak(obs, maxPoints)
+    return [
+      ...observationDetailSegments(shown, () => ''),
+      plain(w.tsunami.warningLevelTail),
+      ...omittedPointsSentence(obs.length, shown.length, w.tsunami.omittedWarningLevel),
+    ]
+  }
+
+  function tsunamiWarningLevelToText(
+    obs: TsunamiObservation[],
+    maxPoints = WARNING_LEVEL_SPEAK_MAX_POINTS,
+  ): string {
+    return joinSegments(tsunamiWarningLevelToSegments(obs, maxPoints))
+  }
+
+  /**
+   * 臨時情報（調査中）のきっかけ。キーは地震関連情報番号コード（`JMANankai.kindCode`。意味は型の注記）。
+   *
+   * 111・112 は気象庁の発表条件の語（「監視領域内でマグニチュード6.8以上の地震が発生」「ひずみ計での有意な変化」）。
+   * 113 は発表条件の「通常とは異なる現象が観測された場合」から取った。
+   */
+  const NANKAI_INVESTIGATION_TRIGGER: Readonly<Record<string, string>> = w.special.nankaiTrigger
+
+  /** 南海トラフ地震臨時情報（VYSE50/51/52）の読み上げテキストを生成する。 */
+  function nankaiToText(event: JMANankai): string {
+    // **取消と調査終了を混ぜない。** 取消は「その電文を撤回する」だけで、地震の発生可能性に
+    // ついての判断を含まない（電文解説資料 Ⅰ.別紙ウ。→ `JMANankai.retracted`）。ここで
+    // 「通常の範囲内でした」と言うと、**気象庁が発表していない安心情報をアプリが作る**ことになる。
+    // 取り消された事実だけを伝え、状況の断定も行動指示も足さない。
+    //
+    // **取消の理由（電文の `Body/Text`。パーサーは `body` に入れる）も読む**（2026-10-22 ユーザー選択「理由を声にする
+    // (Recommended)」。地震・津波・地震回数の取消と同じ書き方 → `cancelReasonSentence`）。理由は帯の取消の表示と
+    // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+    if (event.retracted) {
+      return withCancelReason(w.special.nankaiRetracted, event.body)
+    }
+    if (event.cancelled || event.kindName === '調査終了') {
+      return w.special.nankaiEnded
+    }
+    if (event.kindName === '調査中') {
+      // **きっかけも読む**（2026-10-22 ユーザー選択「きっかけも読む (Recommended)」、文面は 2026-10-24 ユーザー選択
+      // 「この案でよい (Recommended)」）。きっかけはコード（`kindCode`）にしか出ない。読めない報は従来の文のまま。
+      const trigger = NANKAI_INVESTIGATION_TRIGGER[event.kindCode]
+      return w.special.nankaiInvestigating(trigger)
+    }
+    if (event.kindName === '巨大地震警戒') {
+      return w.special.nankaiMajorWarning
+    }
+    if (event.kindName === '巨大地震注意') {
+      return w.special.nankaiMajorAdvisory
+    }
+    return w.special.nankaiOther
+  }
+
+  /**
+   * 南海トラフ地震関連解説情報（VYSE51=臨時解説 / VYSE52=定例解説）の読み上げテキストを生成する。
+   *
+   * 本文（body）は 1000 字を超えることがあるため読み上げない。何が発表されたかだけを伝え、
+   * 詳細は画面のバナーに委ねる。段階（調査中・巨大地震注意等）を持つ電文ではないので、
+   * 臨時情報（nankaiToText）のような防災対応の呼びかけも付けない。
+   */
+  function nankaiCommentaryToText(event: JMANankaiCommentary): string {
+    // **取消は取り消された事実と理由を読む**（2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む (Recommended)」、
+    // 文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。理由はパーサーが `body` に入れる。
+    if (event.cancelled) return withCancelReason(w.special.commentaryRetracted, event.body)
+    if (event.serialName === '定例解説') {
+      return w.special.commentaryRegular
+    }
+    // 臨時解説の情報名には「（第１号）」のように号数が入る。読み手が経過を追えるので拾う
+    const serial = event.headline.match(/（第(.+?)号）/)?.[1]
+    return w.special.commentary(serial)
+  }
+
+  /**
+   * 地震回数に関する情報（VXSE60）の読み上げテキストを生成する。
+   *
+   * **読むのは総数と有感の数だけ。** 区間は 1 時間ごとに何本も並ぶので、全部読むと数字の羅列に
+   * なって総数が耳に残らない。経過の細かさは画面のカードに委ねる。1 時間ごとの並びと場所を
+   * 読まないことは 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」。
+   *
+   * **場所は言わない。** 電文が場所を構造化して持つのは震源要素のある種別だけで、この電文では
+   * 自由文（`freeText`）の中にしか出てこない。文から地名を抜くと、書き方が変わったときに
+   * 別の語を場所として読み上げる。
+   *
+   * **伝える区間は見出しと同じ関数で選ぶ**（`pickEarthquakeCountSummaryItem`。累積 → 地震回数 →
+   * 最新の１時間地震回数）。電文は「区間ごとの回数」と「初めからの累計」を同じ `Item` の並びで送って
+   * くるので、末尾を無条件に採ると 1 時間ぶんの数字を総数として読みかねない。
+   *
+   * **気象庁が発表しない値（電文の `-1`。型では `null`）の句は言わない**
+   * （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）:
+   *
+   * | 回数 | 有感 | 文 |
+   * |---|---|---|
+   * | あり | あり | 「…までに、地震が5回発生しています。このうち、震度1以上を観測したのは1回です。」 |
+   * | あり | 発表なし | 「…までに、地震が5回発生しています。」 |
+   * | 発表なし | あり | 「…までに、震度1以上を観測した地震は1回です。」 |
+   * | 発表なし | 発表なし | 数の文を言わない（「地震回数に関する情報。」だけ） |
+   *
+   * 区間を選べない報（回数を伴わない発表報・未知の `type` だけの報）も種別名だけを読む。回数を
+   * 伴わない発表報の本文は、気象庁が書いた文として別の発話で読む（部品「本文」`earthquakeCountBody`。
+   * → `telegramTextToSpeak`）。
+   *
+   * @returns 読み上げ文。取消以外では必ず種別名を含む
+   */
+  function earthquakeCountToText(event: JMAEarthquakeCount): string {
+    if (event.cancelled) {
+      // 理由（電文の `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
+      // **地震・津波・EEW の取消と揃える** —— 片方だけ拾うと、
+      // 同じ「取り消した」でも種別によって理由が出たり出なかったりする。理由は帯の取消の表示と
+      // 通知の本文にも出る（→ `utils/specialInfoCancelBand.ts`）。
+      // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+      return withCancelReason(w.special.countRetracted, event.cancelText)
+    }
+    const head = w.special.countLead
+    const total = pickEarthquakeCountSummaryItem(event)
+    if (!total) {
+      // **区間が 1 つも無いのは回数を伴わない発表報なら正常**（本文だけを運ぶ）。区間はあるのに
+      // どれも選べないときだけ記録する —— 区間の種類が増えたのに気づけるように。
+      if (event.items.length > 0) {
+        log.warn(`[tts] 地震回数に関する情報に読める区間がありません（種別名だけ読みます）: ${event.items.map(i => i.type).join('・')}`)
+      }
+      return head
+    }
+    const { number, feltNumber } = total
+    if (number === null && feltNumber === null) return head
+    const span = formatCountSpanForSpeech(total.startTime, total.endTime)
+    if (number === null) return head + w.special.countFeltOnly(span, feltNumber!)
+    const occurred = head + w.special.countOccurred(span, number)
+    if (feltNumber === null) return occurred
+    const felt = feltNumber > 0 ? w.special.countFeltOf(feltNumber) : w.special.countFeltNone
+    return `${occurred}${felt}`
+  }
+
+  /**
+   * 累積区間の期間を読み上げ用の句にする（「9日15時から10日12時まで」）。
+   *
+   * **日付から読む。** 群発の累積は前日以前にさかのぼることが多く（実サンプルは 21 時間）、
+   * 時刻だけだと今日のことなのかが判らない。分は読まない —— 区間の端は毎正時に揃っており、
+   * 「15時00分」と読ませても情報が増えない。
+   *
+   * 日時として読めない値では期間そのものを言わない（「Invalid Date」を音にしないため）。
+   */
+  function formatCountSpanForSpeech(startTime: string, endTime: string): string {
+    const start = new Date(startTime)
+    const end = new Date(endTime)
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return w.special.countSpanUnknown
+    const md = (d: Date) => w.common.dayHour(d.getDate(), d.getHours())
+    return w.special.countSpan(md(start), md(end))
+  }
+
+  /**
+   * 地震・津波に関するお知らせ（VZSE40）の読み上げテキストを生成する。
+   *
+   * **見出し（`Head/Headline/Text`）だけを読む。** 本文は自由文で長く（2026-10-16 13:15 の
+   * 「緊急地震速報（警報）について」は約 300 字）、他の種別と同じく「気象庁が書いた文」として
+   * 別の発話で読む（→ `telegramTextToSpeak`）。ここで本文まで読むと、本文を切る設定が効かない。
+   * 自由付加文（`freeText`）もそちらで本文に続けて読む。
+   *
+   * 取消は他の種別と同じく「取り消された事実」と理由を読む（→ `cancelReasonSentence`）。
+   * 理由は帯の取消の表示と通知の本文にも出る（地震回数と同じ。→ `utils/specialInfoCancelBand.ts`）。
+   */
+  function quakeNoticeToText(event: JMAQuakeNotice): string {
+    if (event.cancelled) {
+      return withCancelReason(w.special.noticeRetracted, event.body)
+    }
+    // 見出しは句点を持たないのが通例だが、付いていても二重にしない
+    const headline = event.headline.trim().replace(/。$/, '')
+    if (!headline) return w.special.noticeLead
+    // **気象庁の文を読まない言語には見出し文を渡さない**（その言語は在処の文を言う。2026-11-18 ユーザー選択「日本語が気象庁の文を
+    // 読む所だけ (Recommended)」）。語表の関数に捨てさせず、ここで決める（捨て忘れても型で止まらないため）
+    return w.special.noticeWithHeadline(w.common.telegramTextElsewhere === null ? headline : null)
+  }
+
+  /** 北海道・三陸沖後発地震注意情報（VYSE60）の読み上げテキストを生成する。 */
+  function kohatsuToText(event: JMAKohatsu): string {
+    // **取消は取り消された事実と理由を伝える**（取消を読むのは 2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」。
+    // 理由を読むのは臨時情報の取消と揃える —— 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。
+    // 後発地震注意情報に「終了」の電文は無いので、`cancelled` が立つのは取消だけ。理由はパーサーが `body` に入れる。
+    if (event.cancelled) return withCancelReason(w.special.kohatsuRetracted, event.body)
+    // **句点は無条件に足さない** —— 気象庁の見出し文は句点で終わることが多く、
+    // 重ねると「。。」になる（→ {@link endTelegramSentence}）。
+    // 気象庁の文を読まない言語には見出し文を渡さない（→ `quakeNoticeToText`）。見出し文が伝えるきっかけの地震は、電文が構造の欄で
+    // 持たないので、その言語では声にできない（在処の文が代わりに入る）。**見出し文が空の報（日本語も読まない報）では在処の文も
+    // 言わない**（2026-11-18 ユーザー選択「日本語が気象庁の文を読む所だけ (Recommended)」）ので、そのときは空の文字列を渡す
+    const headline = endTelegramSentence(event.headline.replace(/北海道・三陸沖後発地震注意情報/g, ''))
+    return w.special.kohatsu(w.common.telegramTextElsewhere === null || headline === '' ? headline : null)
+  }
+
+  // 一次細分区域名のリストのうち、県内全区域が同じ階級で揃っているものを「〇〇県」1件にまとめる。
+  // areaPrefIndex / prefAreaNames が引けない（未読み込み）場合はまとめず区域名をそのまま返す。
+  //
+  // **上位の階級で区域名を出した県はまとめない**（`prefsWithAreaShown`）。震度側の
+  // `aggregateAreaNamesByPref` と同じ理由（上下の階級で粒度が食い違うと県の階級を過小に伝える）。
+  function aggregateLpgmNamesByPref(
+    names: string[],
+    areaPrefIndex: ReadonlyMap<string, string> | null,
+    prefAreaNames: ReadonlyMap<string, ReadonlySet<string>> | null,
+    prefsWithAreaShown: ReadonlySet<string>,
+  ): string[] {
+    if (!areaPrefIndex) return names
+    const byPref = new Map<string, Set<string>>()
+    const noPref: string[] = []
+    for (const name of names) {
+      const pref = areaPrefIndex.get(name)
+      if (!pref) { noPref.push(name); continue }
+      const set = byPref.get(pref) ?? new Set<string>()
+      set.add(name)
+      byPref.set(pref, set)
+    }
+    const result: string[] = [...noPref]
+    for (const [pref, regionNames] of byPref) {
+      const fullSet = prefAreaNames?.get(pref)
+      const isWholePref = fullSet != null && fullSet.size > 0
+        && regionNames.size === fullSet.size && [...regionNames].every(n => fullSet.has(n))
+        && !prefsWithAreaShown.has(pref)
+      if (isWholePref) result.push(pref)
+      else result.push(...regionNames)
+    }
+    return result
+  }
+
+  // 長周期地震動の観測地域テキストを生成する（buildRegionSegments の LPGM 版）
+  function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
+    if (!lpgm.regions || lpgm.regions.length === 0) return ''
+
+    // 階級ごとに地域名をまとめる（降順）。**階級 0 の地域も他の階級と同じ設定で数える**
+    // （2026-10-29 ユーザー承認「他の階級と同じく読む」、語は同日「「階級0を〜で」 (Recommended)」で画面の「階級0」に揃える）。
+    // 最大階級が 0 の報もここへ来る（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・#1201）。
+    // 「必ず読み上げる長周期地震動階級」は 0〜4 を選べる。階級 0 は、階数の範囲に入るか、必ず読む階級に 0 を選んだときに読む。
+    const byClass = new Map<number, string[]>()
+    for (const r of lpgm.regions) {
+      if (!isObservedLpgmClass(r.maxLgInt)) continue
+      const names = byClass.get(r.maxLgInt) ?? []
+      names.push(r.name)
+      byClass.set(r.maxLgInt, names)
+    }
+    const classes = [...byClass.keys()].sort((a, b) => b - a)
+    if (classes.length === 0) return ''
+
+    const stationData = getStationCoordsCache()
+    const areaPrefIndex = getAreaPrefIndexCache()
+    const prefAreaNames = stationData ? prefAreaNamesIndexOf(stationData) : null
+    const regionOrder = stationData ? regionOrderIndexOf(stationData) : null
+
+    const parts: string[] = []
+    const mentioned = new Set<string>()
+    // 上位の階級で区域名を出した県（震度側と同じ持ち回り。理由は aggregateLpgmNamesByPref のコメント）。
+    const prefsWithAreaShown = new Set<string>()
+    // 長周期地震動階級（1〜4）は震度スケールと別軸のため、opts.alwaysReadScale（震度の下限）は
+    // ここでは適用しない。階級側の下限（`alwaysReadLpgmClass`）を別に持つ。
+    // 打ち切りの考え方は震度側（`buildRegionSegments`）と同じ —— 階数以内か、下限以上の階級を読む。
+    // どちらも上位の階級ほど成立しやすいので、両方を外れた時点で以降も外れる。
+    for (let i = 0; i < classes.length; i++) {
+      const cls = classes[i]
+      const withinLevels = i <= opts.intensityLevels
+      const withinAlwaysRead = opts.alwaysReadLpgmClass >= 0 && cls >= opts.alwaysReadLpgmClass
+      if (!withinLevels && !withinAlwaysRead) break
+      const aggregated = aggregateLpgmNamesByPref((byClass.get(cls) ?? []), areaPrefIndex, prefAreaNames, prefsWithAreaShown)
+      // 区域名を出した県を次の階級へ持ち回る。`mentioned` で落とす前に数えるのは、あちらが
+      // 「同じ名前を二度読まない」ための仕組みで、粒度の判断とは別の関心事だから。
+      // 区域名と県名の見分けが areaPrefIndex 頼みである点は震度側と同じ（前提も同じ）。
+      for (const name of aggregated) {
+        const pref = areaPrefIndex?.get(name)
+        if (pref) prefsWithAreaShown.add(pref)
+      }
+      let names = aggregated.filter(n => !mentioned.has(n))
+      if (names.length === 0) continue
+      // 地域数の打ち切りは buildRegionSegments と同じ（許容超過の範囲内は省略せず全地域を読む）
+      let omittedCount = 0
+      if (opts.maxRegions > 0 && names.length > opts.maxRegions + opts.regionTolerance) {
+        omittedCount = names.length - opts.maxRegions
+        names = names.slice(0, opts.maxRegions)
+      }
+      // 読み上げ順は震度側と同じ地理順（北から・県ごと）。長周期地震動の電文には震源座標が無いため、
+      // 上限で切るときの選抜は電文の並び順のまま（震度側のような震源距離での選抜は行わない）。
+      names = sortByRegionOrder(names, regionOrder)
+      names.forEach(n => mentioned.add(n))
+      const omittedRegionSuffix = omittedCount > 0 ? w.quake.regionsOmitted(omittedCount) : ''
+      // 地名どうしは地震情報と同じ区切り（地名の訳がコンマを含む言語は「; 」。2026-11-18 ユーザー選択「この案で入れる (Recommended)」の
+      // 5 節の 1）。2 組目から短く言う言語のために、先頭の組かを渡す
+      parts.push(w.lpgm.classAt(cls, names.map(regionNameToSay).join(w.quake.regionSep) + omittedRegionSuffix, parts.length === 0))
+    }
+
+    if (parts.length === 0) return ''
+    // 助詞「で」の置き方は buildRegionSegments と同じ（末尾のみ）。階級の組の間も地震情報と同じ区切り（日本語はどれも「、」）
+    return parts.join(w.quake.intensityGroupSep(false)) + w.quake.observedTail
+  }
+
+  /** VXSE62 長周期地震動情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
+  function lpgmToText(lpgm: JMALpgm, opts: TtsSpeechOptions, isNew: boolean): string {
+    if (lpgm.cancelled) {
+      // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。理由（電文の
+      // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
+      // 取消で長周期の表示（一覧・バッジ）は消えるが、理由は地震カードの報の一覧にも残る（→ `lpgmRetraction`）。
+      // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+      return withCancelReason(w.lpgm.retracted, lpgm.cancelText)
+    }
+    // 地震の時刻は**発現時刻を先に採る**（地震情報・津波カードと同じ規則）。揃えないと、
+    // 同じ地震について地震情報が「◯時◯分ころ」と読んだ直後に、長周期が 1 分違う時刻を読む。
+    // 気象庁自身も見出し文へ発現時刻を書いており、VXSE62 も例外ではない（実電文の全期間走査で
+    // 確認。→ `docs/spec/tsunami-spec.md` §4）。**`originTime` は空になりえないが**
+    // （パーサーが無ければ電文ごと捨てる）、`arrivalTime` は任意なので `||` で落とす。
+    const time = formatTime(lpgm.arrivalTime || lpgm.originTime)
+    const prefix = reportLead(w.lpgm.label, isNew)
+    // 時刻が日時として読めなければ句ごと落とす。「頃発生した地震で、」だけが残ると文が壊れ、
+    // かといって時刻を読ませると「ナンじナンぷん頃」になる。落としても、この情報の主題
+    // （どこで階級いくつを観測したか）は後半がすべて伝える。
+    const occurrence = time ? w.lpgm.occurredAt(time) : ''
+    const regionText = buildLpgmRegionText(lpgm, opts)
+    if (regionText) {
+      return prefix + occurrence + w.lpgm.regions(regionText)
+    }
+    return prefix + occurrence + w.lpgm.maxClassOnly(lpgm.maxClass)
+  }
+
+  /**
+   * 推計震度分布図（IXAC41）の読み上げ文。
+   *
+   * **一文だけ。名乗りは文の中に入れる。** 地震情報（「地震情報。◯時◯分ごろ、…」）や
+   * 南海トラフ（「南海トラフ地震関連解説情報。…が発表されました。」）は「〈名乗り〉。〈本文〉。」の
+   * 二文だが、あちらは名乗りのあとに続く中身が長い。こちらは伝えることが 1 つしかないので、
+   * 名乗りを分けると同じ語を二度言うことになる。
+   *
+   * **「推計震度分布図」は気象庁の呼称そのもの**なので、これ自体が名乗りとして働く。
+   * 「推計震度分布情報」という名前は使わない —— 気象庁がその名前を使っていない
+   * （資料名は「推計震度分布図作図用データ」、図の名は「推計震度分布図」）。電文の名称に
+   * 合わせる決まりに従う（→ docs/spec/eew-spec.md §3「電文の名称と表示・読み上げ」）。
+   *
+   * 地震そのものの事実（震源・規模・各地の震度）は既に地震情報で読み上げていて、この電文が
+   * 足すのは「その震度の広がりが、気象庁の推計として出そろった」ことだけ。地震発生から
+   * 数分後に届くので、長い文は続報の読み上げを塞ぐ。
+   *
+   * **どの地震の分布かは時刻で言う。** 震度5弱以上が短時間に続くと、別々の地震の分布が
+   * 立て続けに届く。時刻が無いと、いま聞いている分布がどの地震のものか声だけでは分からない。
+   * 読む値は地震発現時刻（`arrivalTime`）で、**地震情報が読む時刻と同じ**（引き当ての鍵でもある
+   * → `matchEstimatedIntensity`）ので、耳の中で先ほどの地震情報と繋がる。
+   *
+   * 名詞句「〇時〇分頃発生した地震」は長周期地震動（{@link lpgmToText}）と同じ。助詞だけ
+   * 「で」ではなく「について」にする —— あちらの述語は「観測しました」で地震が観測の場だが、
+   * こちらは「受信しました」で地震は話題にすぎない（震源要素更新と同じ側）。
+   *
+   * **続報は「更新されました」と言う。** 同じ地震について続報が出る（実電文で 6 分後）。
+   * 言い分けないと、聞き手には同じ報が二度読まれたようにしか聞こえない。長周期地震動が
+   * 「長周期地震動情報。」／「長周期地震動情報が更新されました。」と分けているのと同じ扱い。
+   * 判定は呼び出し側が渡す（→ `isNewEstimatedIntensity`）。
+   *
+   * **推計の最大震度は言わない。** 気象庁が「推計された震度の値は、場合によっては1階級程度
+   * 異なることがあります」と断っており、観測して発表した最大震度と食い違いうる。声で並べると
+   * どちらが発表値か区別できないまま、2 つの「最大震度」が耳に入ることになる。
+   *
+   * **場所も言わない。** 電文が持つのは震央地名の**番号**だけで、名前はアプリの側に無い。
+   *
+   * 声を「受信しました」だけにし、推計の最大震度・場所を言わず画面にも最大を数字で出さないことは
+   * 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（全期間の 110 通で、推計の最大は
+   * 発表の最大と一致 84・1 階級高い 9・低い 0／93 地震、続報で変わった例 0）。
+   *
+   * @param arrivalTime 地震発現時刻。**本体（最大 3MB）ではなくこの値だけを受け取る** ――
+   *   文に要るのはこれ 1 つで、引数を見れば何に依存しているかが分かる
+   * @param isNew 初めて受信した分布なら真。同じ地震の続報なら偽
+   */
+  function estimatedIntensityToText(arrivalTime: string, isNew: boolean): string {
+    // 時刻が日時として読めなければ句ごと落とす。**素で埋めると `null頃` と声に出る** ——
+    // `formatTime` の戻り値は `string | null` だが、テンプレートリテラルは型検査を通る。
+    //
+    // **この句が担うのは「どの地震の分布か」の区別**（分布は別の地震のものへ入れ替わりうるので、
+    // 時刻が無いと声だけでは前の分布と見分けが付かない。→ `docs/spec/quake-spec.md` §8）。
+    // 落とすとその区別を失うが、読めない値を声にするよりはよい。読めなかった事実は
+    // `readDateTime` が記録に残す。
+    return w.special.estimatedIntensity(formatTime(arrivalTime), isNew)
+  }
+
+  /**
+   * 情報の名前（取消の長い理由を別の発話で読むときの前置き `common.cancelReasonLead` に渡す。→ `useLiveEventHandler.ts` の
+   * `speakDeferredCancelReason`）。日本語は電文の情報の名前のまま。地震情報の種類を名指すときは {@link reportNameToSay} で引く
+   */
+  const INFO_NAME = {
+    eew: w.eew.label,
+    quake: w.quake.label.quake,
+    lpgm: w.lpgm.label,
+    earthquakeCount: w.special.countLabel,
+    quakeNotice: w.special.noticeLabel,
+    nankai: w.special.nankaiLabel,
+    nankaiCommentary: w.special.commentaryLabel,
+    kohatsu: w.special.kohatsuLabel,
+  } as const
+
+  /**
+   * 揺れ検知の区域名を声にする名前へ引く。区域は一次細分区域（地名の表の `area`）、海底の「相模湾」は震央地名（`epi`）にある。
+   * どちらにも無ければ日本語の名前のまま（2026-11-17 ユーザー選択「日本語の名前のまま読む (Recommended)」。日本語以外の組では記録を残す）
+   */
+  function kyoshinRegionToSay(name: string): string {
+    if (place.has('area', name)) return place('area', name)
+    if (place.has('epi', name)) return place('epi', name)
+    warnUnknownPlaceName('area', name)
+    return name
+  }
+
+  /**
+   * 強震モニタの揺れ検知の読み上げ文（「〇〇で揺れを検知。」「〇〇でも揺れを検知。」）。`regionName` は日本語の区域名
+   * （`utils/kyoshinRegionName.ts` の `dominantRegionName`）で、決まらなければ null（地名を言わない）
+   */
+  function kyoshinDetectionText(phrase: KyoshinDetectionPhrase): string {
+    const name = phrase.regionName === null ? null : kyoshinRegionToSay(phrase.regionName)
+    return phrase.kind === 'otherRegion' ? w.kyoshin.otherRegion(name) : w.kyoshin.detected(name)
+  }
+
+  /**
+   * 国際津波関連情報（WEPA60）の読み上げ文。初報は名乗り（`common.issued`）、続報（題名の番号が 2 以上）は「更新されました」
+   * （`common.updated`）で始め、本文を続ける（2026-11-06 ユーザー選択「震源つきで評価まで読む (Recommended)」）。
+   *
+   * **日本語の文は中継のプッシュ通知と同じ**（`utils/internationalTsunamiSpeech.ts` の `internationalTsunamiToText`。あちらは中継へ
+   * 写して使うので変えない）。`quakeName` は結んだ地震カードの日本語の震源名で、画面の言語の名前へ引いて読む。
+   * 結べなければ電文の震央の位置を読み、どちらも無ければ震源の句を落とす。英文の本文そのものは読まない
+   */
+  function internationalTsunamiToText(x: JMAInternationalTsunami, quakeName?: string): string {
+    const t = w.internationalTsunami
+    if (x.isCommunicationsTest) return t.communicationsTest
+    const lead = (x.bulletinNumber ?? 1) >= 2 ? w.common.updated(t.label) : w.common.issued(t.label)
+    const name = quakeName?.trim()
+    const evaluations: Readonly<Record<string, string>> = t.evaluation
+    const evaluation = x.evaluation && Object.prototype.hasOwnProperty.call(evaluations, x.evaluation) ? evaluations[x.evaluation] : null
+    if (x.evaluation && evaluation === null) {
+      // 型の外の評価（語表に無い）。評価の句を落として「情報が発表された」で結ぶ。黙ると、評価を言わない理由を追えない
+      warnUnknownInternationalTsunamiEvaluation(() =>
+        log.warn(`[tts] 国際津波関連情報の津波発生の可能性を語表で引けず、評価の句を省いて読みます（言語 ${locale}・値 ${String(x.evaluation)}）`))
+    }
+    return lead + t.body({
+      when: x.originTime ? internationalTsunamiWhen(x.originTime) : null,
+      where: name ? epicenterToSay(name) : x.epicenter ? t.coordinate(x.epicenter.latitude, x.epicenter.longitude) : null,
+      depthKm: x.depthKm !== undefined ? x.depthKm : null,
+      magnitude: x.magnitude !== undefined && Number.isFinite(x.magnitude) ? x.magnitude.toFixed(1) : null,
+      evaluation,
+    })
+  }
+
+  /** 国際津波関連情報の発生時刻（電文の UTC を日本時間で読む）。読めなければ null */
+  function internationalTsunamiWhen(iso: string): string | null {
+    const ms = Date.parse(iso)
+    if (!Number.isFinite(ms)) return null
+    const d = new Date(ms + JST_OFFSET_MS)
+    return w.internationalTsunami.when(d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes())
+  }
+
+  /**
+   * 気象庁が書いた文（本文・付加文）を読み上げ用に整える。
+   *
+   * **改行と全角スペースは落とす。** 自由付加文には全角スペースで桁を揃えた表が入ることがあり、
+   * そのまま渡すと合成エンジンが空白の数だけ間を作る。句読点は残す（文の切れ目そのものなので）。
+   */
+  /**
+   * 落とす定型文の定義。**画面には従来どおり全文を出す**ので、ここで落とすのは声だけ。
+   *
+   * 落とす単位・文字列で判定する理由・コードの役割・既定値の向きは
+   * {@link TELEGRAM_BOILERPLATE_KEYS} に書いた。
+   */
+  interface TelegramBoilerplateSpec {
+    readonly key: TelegramBoilerplateKey
+    /**
+     * 落とす句。**行の中に現れても落とす**（部分一致）。
+     *
+     * 1 行に収まる定型文はこちら。電文は本来 1 文ごとに改行する（解説資料が「複数の固定付加文を
+     * 記載する場合、Text においては改行し」と定めており、実電文の `Code="0256 0262"` も改行区切り）
+     * が、**行で照合する形にすると連結された形を落とせない**。落とした跡は前後の文が繋がる。
+     */
+    readonly phrases?: readonly string[]
+    /**
+     * 落とす行。原文を改行で割り、{@link boilerplateLineKey} を通した形と突き合わせる。
+     *
+     * **複数行にわたる表はこちら。** 句として部分一致で落とすには改行と全角スペースの並びまで
+     * 鍵に含めることになり、気象庁が桁揃えを変えただけで効かなくなる。行ごとに照合すれば空白の
+     * 畳み方に依存しない。
+     */
+    readonly lines?: readonly (string | RegExp)[]
+    /** その文を載せる固定付加文のコード。**落とし漏れの検出にだけ使う。** */
+    readonly codes?: readonly string[]
+  }
+
+  /**
+   * どちらの形でも「**文面はすべて実配信の電文から採る**」。推測で書いた文面を置くと、一致しない
+   * まま「落としているつもり」になる（その形で 1 度踏んでいる。→ {@link TELEGRAM_BOILERPLATE_KEYS}）。
+   */
+
+  const TELEGRAM_BOILERPLATE_SPECS: readonly TelegramBoilerplateSpec[] = [
+    {
+      // 観測点名の `＊` を画面に出している以上その説明も要る（→ quake-spec.md §8「気象庁以外が
+      // 運用する観測点」）が、読み上げでは事情が違う ——
+      //
+      // - **震度を伝える電文のほぼ全てに入る**ので、読むと毎報聞かされる
+      // - **`＊` が音にならない**（合成エンジンは記号を読まず「シルシワ」と読む）ので、
+      //   何と対比しているのかが声だけでは伝わらない
+      //
+      // **文面は種別で違う。** 地震情報のコード 0262 は「震度観測点」・長周期地震動観測情報の
+      // 0263 は「長周期地震動観測点」で、**どちらも要る** —— 以前は 0262 の側だけを落としていて、
+      // 長周期の報が観測点を載せたときだけこの説明が声になっていた。
+      key: 'starMark',
+      phrases: [
+        '＊印は気象庁以外の震度観測点についての情報です。',
+        '＊印は気象庁以外の長周期地震動観測点についての情報です。',
+      ],
+      codes: ['0262', '0263'],
+    },
+    {
+      // アプリは緊急地震速報そのものを画面と音で扱っているので、声にすると二度述べになる。
+      // **同じ文面・同じコードが地震情報にも入る**（実電文の VXSE53 で `0211 0241` の形）。
+      // 地震情報のこの文が乗るのは固定付加文（その他）（`VarComment`）で、そちらは読み上げの
+      // ブロック（`quakeVarComment`）が既定で読む側なので、**この項目を落とす設定のままなら
+      // 地震情報側でも現に落ちる**。文面で落とす形にしてあるので、種別をまたいで揃う。
+      key: 'eewIssued',
+      phrases: ['この地震について、緊急地震速報を発表しています。'],
+      codes: ['0241'],
+    },
+    {
+      // 長周期地震動階級の目安表と、詳細ページの案内。**事象に依らない**（実電文で異なるのは
+      // 案内の URL に入る地震ごとの識別子だけ）。表を声にすると 4 行が一続きに聞こえるため、
+      // 読む側に倒したときは LPGM_CLASS_TABLE_RE が階級と現象表現のあいだへ空白を挟む。
+      key: 'lpgmClassTable',
+      lines: [
+        '各長周期地震動階級に対する簡易な現象表現',
+        // 階級の行。実電文の数字は全角だが半角も受ける（現象表現の語との組でしか当たらないので
+        // 一致が増えても誤爆しない）。語彙は LPGM_CLASS_TABLE_RE と揃える。
+        /^階級[０-９0-9](やや大きな揺れ|非常に大きな揺れ|極めて大きな揺れ|大きな揺れ)$/,
+        // 案内の行。URL は地震ごとに変わるので括弧の中は見ない。
+        /^波形、スペクトル等、本地震の長周期地震動に関する詳細な情報は気象庁の長周期地震動に関する観測情報のウェブサイト\s*[（(][^）)]*[）)]\s*もあわせてご活用ください。$/,
+      ],
+    },
+    {
+      // 予想される津波の高さと被害の対応表。実電文で 307 字あり、読み上げの実測レート
+      // （5.8 字/秒）なら約 53 秒 —— 津波警報等が出るたび、区域と波高を伝えたあとに流れる。
+      // 波高の区分は気象庁の津波警報の段階そのもので、事象によって変わらない。
+      key: 'tsunamiHeightLegend',
+      lines: [
+        '［予想される津波の高さの解説］',
+        '予想される津波が高いほど、より甚大な被害が生じます。',
+        '１０ｍ超 巨大な津波が襲い壊滅的な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。',
+        '１０ｍ 巨大な津波が襲い甚大な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。',
+        '５ｍ 津波が襲い甚大な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。',
+        '３ｍ 標高の低いところでは津波が襲い被害が生じる。木造家屋で浸水被害が発生し、人は津波による流れに巻き込まれる。',
+        '１ｍ 海の中では人は速い流れに巻き込まれる。養殖いかだが流失し小型船舶が転覆する。',
+      ],
+    },
+  ]
+
+  /**
+   * 行の照合キー。前後を削り、内部の空白を 1 つへ畳む。
+   *
+   * **気象庁は桁を揃えるために全角スペースを並べる**（津波の高さの目安は波高と被害説明のあいだに
+   * 3 つ）ので、空白の数へ依存させない。`\s` は全角スペース（U+3000）も含む。
+   */
+  function boilerplateLineKey(line: string): string {
+    return line.replace(/\s+/g, ' ').trim()
+  }
+
+  function matchesBoilerplateLine(spec: TelegramBoilerplateSpec, key: string): boolean {
+    return (spec.lines ?? []).some(line => (typeof line === 'string' ? line === key : line.test(key)))
+  }
+
+  /** その文面が原文に含まれているか（句・行のどちらの形でも見る）。落とし漏れの検出に使う。 */
+  function containsBoilerplate(spec: TelegramBoilerplateSpec, text: string): boolean {
+    if ((spec.phrases ?? []).some(phrase => text.includes(phrase))) return true
+    return text.split('\n').some(line => matchesBoilerplateLine(spec, boilerplateLineKey(line)))
+  }
+
+  /**
+   * 読み上げから定型文を落とす。**設定で「読む」にしている項目は落とさない。**
+   *
+   * **整える処理より前に通す。** 照合の相手は電文の原文（改行と全角スペースが残り、URL も
+   * 付いたまま）で、整えたあとの形を鍵にすると空白の畳み方や URL の落とし方に依存してしまう。
+   */
+  function stripBoilerplate(text: string, reads: TelegramBoilerplateReads): string {
+    const dropped = TELEGRAM_BOILERPLATE_SPECS.filter(spec => !reads[spec.key])
+    if (dropped.length === 0) return text
+    // 行として落とすもの（複数行の表）を先に外し、残った行から句を消す。
+    const kept = text
+      .split('\n')
+      .filter(line => {
+        const key = boilerplateLineKey(line)
+        // 空行は文の区切りとして意味を持つので残す（落とすのは中身のある行だけ）。
+        if (!key) return true
+        return !dropped.some(spec => matchesBoilerplateLine(spec, key))
+      })
+      .join('\n')
+    let out = kept
+    for (const spec of dropped) {
+      for (const phrase of spec.phrases ?? []) out = out.split(phrase).join('')
+    }
+    return out
+  }
+
+  /**
+   * 落とすはずの定型文が、文面が変わって一致しなくなったことに気づくための記録。
+   *
+   * **固定付加文のコードが付いているのに、その文が原文の中に見つからない**ときだけ鳴らす。
+   * 落ちなくなっても症状は「読まれるようになる」だけなので、記録が無いと気づく手掛かりが
+   * どこにもない（`＊` 印の説明で実際にそうなっていた）。
+   *
+   * **落とす設定の項目だけを見る。** 読む側にしてある項目は一致しなくても構わない。
+   * 自由付加文はコードを持たないので、この検出は掛からない（掛けられない）。
+   */
+  function warnUnmatchedBoilerplate(
+    codes: readonly string[] | undefined,
+    text: string | undefined,
+    reads: TelegramBoilerplateReads,
+    label: string,
+  ): void {
+    if (!codes?.length || !text) return
+    for (const spec of TELEGRAM_BOILERPLATE_SPECS) {
+      if (reads[spec.key] || !spec.codes) continue
+      const code = spec.codes.find(c => codes.includes(c))
+      if (!code) continue
+      if (containsBoilerplate(spec, text)) continue
+      boilerplateMismatchGate(`${label}:${spec.key}`, code, (overflowed) => {
+        log.warn(
+          `[tts] ${label} に固定付加文コード ${code} がありますが、読み上げから落とす文面（${spec.key}）と一致しません`
+            + `（文面が変わった可能性があります。この報ではその文も読み上げます）${overflowed ? '（以後は間引きます）' : ''}`,
+        )
+      })
+    }
+  }
+
+  /**
+   * 長周期地震動の自由付加文が載せる「階級と現象表現の対応表」で、階級と現象表現のあいだに
+   * 空白を挟む。原文は画面で表として読める形で、この 2 つのあいだに区切りを持たない。
+   *
+   * ```
+   *  階級１やや大きな揺れ
+   *  階級４極めて大きな揺れ
+   * ```
+   *
+   * **声にすると一続きに聞こえる。** 合成エンジンはここをアクセント句の切れ目としか扱わず、
+   * 間を置かない（実測）。
+   *
+   * **挟むのは空白であって読点ではない。** 合成エンジンが置く間はどちらも同じだが（実測:
+   * 半角スペース・全角スペース・読点・句点のいずれも 0.389〜0.412 秒）、読点は
+   * {@link splitIntoChunks} がチャンクを割る文字でもある。割れた末尾の間はチャンクを詰めて
+   * 鳴らすための足し分（`CHUNK_BREAK_PAUSE` = 0.11 秒）に変わり、**文中の読点より短くなる**
+   * （実機で確認）。空白なら割れないので、文中の間がそのまま入る。
+   *
+   * **鍵を「階級＋数字」だけにしないこと。** 同じ形は文中にも現れ（「長周期地震動階級４を
+   * 観測した地域があります」）、そこへ読点を入れると助詞の前で文が切れる。対応表でしか
+   * 使われない現象表現の語まで含めて照合する。
+   *
+   * 実電文の階級は全角数字（`階級４`）で、半角は観測できていない。それでも鍵に入れているのは、
+   * 一致が増えても誤爆しない（現象表現の語との組でしか当たらない）ため。
+   */
+  const LPGM_CLASS_TABLE_RE = /(階級[０-９0-9])(やや大きな揺れ|非常に大きな揺れ|極めて大きな揺れ|大きな揺れ)/g
+
+  /**
+   * 気象庁が書いた文の日時表記を、読み上げの前に半角・ゼロ埋めなしへ揃える。
+   *
+   * 実電文は**全角でゼロ埋め**する（`１６日０１時２５分`）。合成エンジンは先頭の 0 を桁として
+   * 読むため、そのままでは「ぜろ いちじ」になる（`００分` なら「ぜろ ぜろふん」）。
+   * アプリが自分で組む読み上げ文はゼロ埋めしない（{@link formatDayTime}）ので、この崩れは
+   * **気象庁の文を読む設定を入れたときだけ**起きる。
+   *
+   * **句区切り辞書では手当てできない。** あの辞書は文字列の一致で引くので、全角とゼロ埋めの
+   * 組み合わせまで鍵に持つと日・時・分だけで数百件になる。ここで半角へ揃えておけば、辞書は
+   * 半角の形（`17日`・`0時`）だけで足りる。
+   *
+   * **対象は「1〜2 桁の数字＋日／時／分」に限る。** マグニチュード・震度・波高の数値には触らない。
+   * 単位が続く形（`2時間`・`10分の1`・`2日間`）も一致するが、半角へ直すだけで読みは変わらない。
+   *
+   * **直前が数字なら一致させない**（`(?<![0-9０-９])`）。これが無いと `{1,2}` が 3 桁以上の数字列の
+   * **末尾 2 桁だけ**を拾い、桁を静かに落とす —— `１５０分後` が `１50分後`、`1000分の1` が
+   * `100分の1` に化ける（半角でも起きる）。例外も NaN も出ないので、読み上げを聞くまで気づけない。
+   */
+  const DATETIME_DIGITS_RE = /(?<![0-9０-９])([0-9０-９]{1,2})([日時分])/g
+
+  function normalizeDateTimeForSpeech(text: string): string {
+    const halfWidth = text.replace(DATETIME_DIGITS_RE, (_match, digits: string, unit: string) => {
+      const half = digits.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      return `${Number(half)}${unit}`
+    })
+    // **「1日」の読み直しもここに置く。** この関数を通る 3 経路（本文と付加文・津波観測情報の
+    // 見出し文・取消の理由）すべてで同じ手当てが要る。片方だけに掛けると、同じ「気象庁が書いた文」
+    // なのに読まれる場所によって「ついたち」と「いちにち」に分かれる。
+    return speakableDayInText(halfWidth)
+  }
+
+  /**
+   * 気象庁が書いた文を読み上げへ差し込むときに、末尾へ句点を足す。
+   *
+   * **電文の文が句点で終わるとは限らない。** 控えにある 5 日分の電文では、見出し文 505 件のうち
+   * 29 件が句点以外で終わっていた（緊急地震速報 27・地震・津波に関するお知らせ 1・長周期地震動
+   * 観測情報 1。いずれも「…石川西方沖で地震　北陸で強い揺れ」のように体言で切る）。**そのどれも
+   * 読み上げで見出し文を使わない種別**なので、いま声になる経路では観測できていない ―― 手当ては
+   * 「壊れているから」ではなく「気象庁が句点を保証していないから」置く。
+   *
+   * 足さずに繋ぐと**後ろに続く文との間が丸ごと消える**。各地の満潮時刻の見出し文で実測すると、
+   * 句点があれば「…お知らせします」の後ろに **0.355 秒**の間が入り、無ければ 0 になる
+   * （句数 11・核の位置はどちらも同じ）。**読みも句割りも正常なので、誤読の突き合わせにも
+   * 句割りの判定にも掛からない** —— 崩れるのは間だけ。読点でも同じ 0.355 秒が入るので、
+   * 読点と句点のどちらで継ぐかは音に影響しない（→ docs/spec/tts-sentence-inventory.md §5）。
+   *
+   * 直後に文が来るのは津波観測情報（観測点の文）と各地の満潮時刻（「満潮時刻が更新されました。」）。
+   * **断片列（{@link SpeechSegment}）に分けても逃げられない** —— 合成へ渡る前に
+   * {@link joinSegments} が区切り文字なしで 1 本の文字列へ潰すので、チャンクを割る側が見るのは
+   * 繋がった文字列だけ。**2 つとも同じように間が消える。**
+   *
+   * **気象庁が書いた文を読み上げへ差し込む箇所は、すべてこの述語を通すこと。** 5 箇所あり
+   * （取消の理由・遠地地震の付加文・津波観測情報の見出し文・各地の満潮時刻の見出し文・
+   * 後発地震注意情報の見出し文）、かつては「条件付きで足す」「何もしない」「無条件に足す」の
+   * 3 通りに分かれていた（→ docs/spec/tts-sentence-inventory.md §4-8）。無条件に足す形は
+   * 句点で終わる文を「。。」にする。
+   *
+   * **文末とみなす記号を独自に決めないこと。** {@link SENTENCE_END} から組む。この述語が
+   * 「もう終わっている」と判断した文字は、**下流の 2 つも同じ判断をしていなければならない**
+   * （集合の関係そのものは `ttsPunctuation.ts` が持つ）。
+   *
+   * | 下流 | 揃っていないと |
+   * |---|---|
+   * | `ttsPunctuation.ts` の `CHUNK_BREAK_PUNCTUATION`（チャンクを割る文字） | **チャンクが割れず、この関数が入れようとした 0.355 秒の間がそのまま消える** ―― 直そうとした症状に戻る |
+   * | {@link SENTENCE_END}（既読の単位へ割る文字） | 2 つのブロックが 1 つの既読単位へ融合する。片方だけ変わった続報で鍵ごと未読へ戻り、**既に読んだ分まで読み直す** |
+   *
+   * **`．`（全角ピリオド）を入れてはいけない。** 下流のどちらも見ていないため、上の 2 つが
+   * 同時に起きる。割る側へ足して揃える手も無い ―― `Ｍ７．１` が文の切れ目になる。
+   * **この関数の前身（`cancelReasonSentence` の `／[。．]$／`）が `．` を受け入れており、
+   * そこから引き写したのが誤りの発端だった。** 揃いは
+   * `ttsText.telegramSentenceEnd.test.ts` の安全弁が公開 API 越しに固定している。
+   */
+  function endTelegramSentence(text: string | undefined): string {
+    const trimmed = text?.trim() ?? ''
+    if (!trimmed) return ''
+    return SENTENCE_END_RE.test(trimmed) ? trimmed : `${trimmed}。`
+  }
+
+
+  /**
+   * 津波電文の見出し文を読み上げ向きへ整える。
+   *
+   * 全角数字・全角ｍ・全角ピリオドを半角へ直し（{@link tsunamiHeightToSpeech}）、日時のゼロ埋めと
+   * 「1日」の読みを直し（{@link normalizeDateTimeForSpeech}）、末尾へ句点を足す
+   * （{@link endTelegramSentence}）。半角にしただけでは `01日` が残り、合成エンジンが先頭の 0 を
+   * 桁として読む（「ぜろ いちにち」）。句区切り辞書の `1日`（→ ついたち）も、直前が数字だと当たらない。
+   *
+   * **式を書き写さないこと。** かつて津波観測情報と各地の満潮時刻に同じ式が並んでおり、
+   * **どちらにも句点の手当てが入っていなかった**。1 つにまとめてあれば、新しい箇所もここを
+   * 呼ぶだけで揃う（書き写しの再発は `ttsText.telegramSentenceEnd.test.ts` が落とす）。
+   *
+   * **空白だけの見出し文は空を返す**（呼び出し側のフォールバックへ倒れる）。実電文の経路では
+   * 起きないが、手で組んだテストデータでは起こせる。
+   */
+  function speakableHeadline(headline: string | undefined): string {
+    const trimmed = headline?.trim()
+    if (!trimmed) return ''
+    return endTelegramSentence(normalizeDateTimeForSpeech(tsunamiHeightToSpeech(trimmed)))
+  }
+
+  function normalizeTelegramTextForSpeech(text: string, reads: TelegramBoilerplateReads): string {
+    return normalizeDateTimeForSpeech(stripUrlsForSpeech(stripBoilerplate(text, reads)))
+      .replace(LPGM_CLASS_TABLE_RE, '$1 $2')
+      .replace(/[\r\n\u3000\t]+/g, ' ')
+      .replace(/ {2,}/g, ' ')
+      // 括弧ごと落とした跡に残る「〜 、」「〜 。」を詰める。句読点の顔ぶれは
+      // `ttsPunctuation.ts` の `CHUNK_BREAK_PUNCTUATION`（チャンクを割る文字）と揃えておく
+      .replace(/\s+([\u3001\u3002\uff01\uff1f\u300d\uff09)])/g, '$1')
+      .trim()
+  }
+
+  /**
+   * 読み上げから URL を落とす。
+   *
+   * **音声で URL を伝えても書き取れない。** 長周期地震動観測情報の自由付加文は末尾に詳細ページの
+   * URL を持っており（`https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=…`）、そのまま
+   * 渡すと合成エンジンが 1 文字ずつ読み上げる（実機で確認）。**原文は画面にそのまま出している**
+   * ので、読み上げから落としても情報は失われない。
+   *
+   * **括弧で囲まれていれば括弧ごと落とす** —— URL だけ抜くと「ウェブサイト（）をご活用ください」と
+   * 空の括弧が残り、それも音になる。
+   *
+   * **URL の終わりとみなす文字には、空白・丸括弧に加えて全角の句読点と和文の閉じ括弧も入れる。**
+   * どれも URL の一部になりえないので、入れても URL を切り詰めることはない。入れないと、空白を
+   * 挟まずに句点が続く本文（`…https://example.com/foo。続報があります。`）で句点まで巻き込んで
+   * 消し、**2 つの文が 1 つに繋がる**。実電文の URL は前後に空白がある半角括弧の形なので現状
+   * この形は来ないが、正規表現の側でその前提に頼らない。
+   */
+  function stripUrlsForSpeech(text: string): string {
+    return text
+      .replace(/[\uff08(]\s*https?:\/\/[^\s\uff08\uff09()\u3001\u3002\uff01\uff1f\u300d\u300f\u3015]+\s*[\uff09)]/g, '')
+      .replace(/https?:\/\/[^\s\uff08\uff09()\u3001\u3002\uff01\uff1f\u300d\u300f\u3015]+/g, '')
+  }
+
+  /**
+   * 空でないものだけを句点区切りで繋ぐ。既に句点で終わっているものは重ねない。
+   *
+   * 句点を足す述語は上の 5 箇所と共有する（→ {@link endTelegramSentence}）。
+   */
+  function joinTelegramTexts(
+    parts: readonly (string | undefined)[],
+    reads: TelegramBoilerplateReads,
+  ): string {
+    const kept = parts
+      .map(t => (t ? normalizeTelegramTextForSpeech(t, reads) : ''))
+      .filter(t => t.length > 0)
+    if (kept.length === 0) return ''
+    return kept.map(t => endTelegramSentence(t)).join('')
+  }
+
+  /**
+   * 既読の鍵へ織り込む主題（「どの事象について書かれた文か」）を組む。
+   *
+   * **`ttsFollow.ts` の `telegramTextSubject` とは別物。** 名前も引数の形も似ているが、
+   * あちらは読み上げているあいだ画面のどこを開くかを指す。取り違えても型検査は通るので、混ぜないこと。
+   *
+   * **数えた範囲と件数は、この注記が挙げる事実も含めて
+   * docs/spec/audio-tts-spec.md §6「気象庁が書いた文は最下位の層で読む」が単一情報源。**
+   *
+   * **文字列だけを鍵にすると、別の地震・別の津波でも同じ文なら二度と読まない。**
+   * 気象庁の付加文は同じ文面が続くことが多く、実電文では自由付加文「この地震の付近で地震が
+   * 連続して発生したため…」が別々の地震に同じ文面で入っていた。その但し書きは電文ごとの注記
+   * なので、地震が変われば改めて意味を持つ。
+   *
+   * **同じ事象の続報では同じ値になること。** 電文の識別子（`id`）を混ぜると報ごとに別の鍵になり、
+   * 「＊印は…」のような定型文を報のたびに読む（それを避けるために既読を入れた経緯がある）。
+   *
+   * **地震情報の `eventId` は、同じ地震でも震源決定の前と後で採り直されることがある**
+   * （実例は `utils/quakeMerge.ts` の `isHypocenterPending`。`JMAQuake.eventId` の型定義も
+   * 「同一性判定には使わない」と断っている）。**それでもここで使えるのは、採り直しの境目にいる
+   * 震源決定前の電文（震度速報）が付加文を 1 つも運ばないから** —— 運ばなければ本文が空になり、
+   * この既読へは何も記録されない。**この前提が崩れたら**（震度速報が付加文を運ぶようになったら）、
+   * 同じ地震の注記が境目で二度読まれる。
+   *
+   * **種別も含める。** 同じ `eventId` を持つ地震情報と長周期地震動観測情報が同じ文を載せたとき、
+   * 種別ごとに前置き（「地震情報について、〜」「長周期地震動観測情報について、〜」）が違うため、
+   * 片方だけ読んだ状態で他方を黙らせると前置きだけ聞いた文が残る。
+   *
+   * **事象の識別子を持たない電文では種別だけになる**（＝従来どおり文字列だけで既読）。
+   * 電文は全種別が `EventID` を持つ。地震情報で `EventID` が空のときは、
+   * 呼び出し側が地震の時刻を代わりに渡す。
+   * **それでも欠けたときは黙って旧来の挙動へ戻る**ので、`speakTelegramText` の
+   * 記録に主題を出して気づけるようにしてある。
+   */
+  function telegramTextSpokenSubject(kind: LiveEvent['kind'], eventId: string | undefined): string {
+    return `${kind}:${eventId ?? ''}`
+  }
+
+  /**
+   * 前置きと本文から {@link TelegramTextSpeech} を組む。本文が空なら読み上げない。
+   *
+   * `subject` は既読の鍵へ織り込む（→ {@link telegramTextSpokenSubject}）。読み上げる文そのものは
+   * 変わらない。
+   */
+  function telegramSpeech(prefix: string, body: string, subject: string): TelegramTextSpeech | null {
+    if (!body) return null
+    // 区切りに改行を使えるのは、本文が `normalizeTelegramTextForSpeech` を通って
+    // 改行を空白へ置き換えた後だから（1 文の中に改行は残らない）。**この関数へ正規化前の文字列を
+    // 渡さないこと** —— 渡すと主題と本文の境目が曖昧になり、既読の鍵が衝突するか分裂する
+    // （どちらも例外もログも出ない）。
+    const units = splitTelegramTextUnits(body).map(u => ({ ...u, key: `${subject}\n${u.key}` }))
+    // **気象庁の文を読まない言語（`telegramTextElsewhere` が null でない）は、原文の代わりに文の在処だけを言う**
+    // （2026-11-16 ユーザー選択「読まずに「画面にある」と言う」）。前置きも在処の文に置き換え、本文は空にする。
+    // 既読の鍵（`units` の `key`）は原文の文のまま持つ —— 同じ事象の続報が同じ文を運んでも全部既読で黙り、
+    // 在処を報のたびに言い直さない。新しい文が加わった報でだけ、在処をもう 1 度言う（未読の文の字は空なので、
+    // 繋ぎ直しても在処の文だけになる。→ `useLiveEventHandler.ts` の `speakTelegramText`）
+    const elsewhere = w.common.telegramTextElsewhere
+    if (elsewhere !== null) {
+      return { text: elsewhere, body: '', prefix: elsewhere, units: units.map(u => ({ ...u, text: '' })), subject }
+    }
+    return { text: `${prefix}${body}`, body, prefix, units, subject }
+  }
+
+  /**
+   * 地震情報の固定付加文のうち、「気象庁の発表文」の内訳「固定付加文」で読む分（`quakeForecast`）。
+   *
+   * **津波の一文は除く。** 本体の読み上げが津波の一文を読んでいる（区分を決めたコードの文か、コードが無ければ
+   * 区分の文。→ `domesticTsunamiSegmentOf`）ので、ここで残すと同じ事実を 2 度言う。残るのは 0226「震源の近傍で
+   * 津波発生の可能性があります。」や 0241・0245 の緊急地震速報の文で、定型文の設定（`stripBoilerplate`）は
+   * このあと `joinTelegramTexts` が通す。
+   *
+   * **区分を決めるコードの文は、コードの有無によらず全部除く。** 原文が本体の読む津波の一文と別の報のものに
+   * なる形が 3 つある —— 区分を津波電文から借りた（コードを捨てる）・震源要素更新が区分だけを運んだ
+   * （原文は前の報のまま）・コードを持たない経路。どれも原文に残った津波の文を読むと、本体と食い違う事実を
+   * 続けて言う（「津波警報等を発表中です」のあとに「津波の心配はありません」）。
+   *
+   * コードを持つのに、区分を決めるコードの文が原文に 1 つも無いとき（気象庁が文面を変えた疑い）は、残りをそのまま読み、
+   * 記録をコードごとに間引いて残す。**原文に別のコードの文があるだけなら記録しない** —— 震源要素更新が区分だけを運んだ
+   * 形（原文は前の報のまま）がこれで、文面の変更ではない。
+   *
+   * **呼ぶのは内訳「固定付加文」を読む設定のときだけ**（記録も読む枠についてだけ出す。隣の `warnUnmatchedBoilerplate` と同じ規約）。
+   *
+   * **遠地地震は読まない**（本体の読み上げが固定付加文を全文読む）。
+   */
+  function quakeForecastRemainder(event: JMAQuake): string | undefined {
+    const text = event.forecastText
+    if (!text || event.issue.type === '遠地地震') return undefined
+    warnIfDomesticTsunamiSentenceMissing(event.earthquake.domesticTsunamiCode, text)
+    return withoutDomesticTsunamiSentences(text) || undefined
+  }
+
+  /**
+   * 電文が運ぶ「気象庁が書いた文」を読み上げ文にする。設定で有効にしたときだけ中身を返す。
+   *
+   * **電文本体の読み上げへ足さず、別の発話として最下位の層で読むこと。**
+   * 南海トラフ臨時情報の本文は実電文で 1055 字あり、読み上げは約 3 分に達する
+   * （2024-08-08 の「巨大地震注意」。VOICEVOX の実測で 5.8 字/秒）。臨時情報は津波の等級発表と
+   * 同じ最上位の層にいるので、本体へ足すと**地震情報が最大 90 秒待たされる**
+   * （`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`。あの上限は「合成エンジンが無応答のときだけ効く保険」
+   * として置かれた値で、正常系で発火する前提になっていない）。最下位の層は「何も切らない」ことを
+   * 保証しているので、そこへ置けば本来の情報を塞がない。
+   *
+   * **含めないもの**:
+   * - 参考情報（`appendix`）—— **既定では含めない。** 情報の種類を説明する固定文で、画面でも折りたたみに
+   *   入れている。定型文の設定（`earthquakeInfoAppendix`）で読む側に倒せる（2026-10-23 ユーザー選択
+   *   「設定で読めるようにする (Recommended)」）。並びは本文・次回発表予定の後
+   * - 見出し文（`headline`）—— 型定義が「本文や既読の要素に無い事実は含まない」と断っており、
+   *   読むと本体の読み上げと二度述べになる
+   * - 取消電文の理由 —— 既に本体の読み上げが読んでいる（`cancelReasonSentence`）
+   *
+   * **どのブロックを読むかは設定で選べる**（`opts.telegramTextBlocks`。一覧は
+   * {@link TELEGRAM_TEXT_BLOCK_KEYS}）。全部切れば本文が空になり、この関数は `null` を返す ——
+   * 前置きだけが鳴る形にはならない。
+   *
+   * **前置きで名乗る語は「気象庁の発表文」。設定の窓のトグルのラベルと同じ語にする** ——
+   * 音声だけを聞いている利用者が、いま流れているものがどの設定で切れるのかを辿れるようにするため。
+   * 片方だけ変えないこと。
+   *
+   * **「付加文」とは言わない。** 読む中身は種別で違い、南海トラフ地震臨時情報・同関連解説情報・
+   * 北海道・三陸沖後発地震注意情報の 3 種別は見出し文（要約）・本文・次回発表予定だけで、付加文を
+   * 1 件も読まない（津波も `Body/Text` の本文を含む）。しかも南海トラフの 2 種別は本文が 1000 字を
+   * 超えていちばん長く鳴る（臨時情報 1055 字・関連解説情報 1600 字超。後発地震注意情報の字数は
+   * 確かめていない）。「本文」も同じ理由で使えない（地震情報・長周期・地震回数は付加文しか読まない）。
+   *
+   * **コード内の「発表文」とは別物** —— あちらは津波の等級を全区域ぶん読む文（`tsunamiToSegments`）を
+   * 指す内部用語で、この前置きの語は利用者向け。`grep` で両方が引っかかる。
+   */
+  function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): TelegramTextSpeech | null {
+    // **緊急地震速報の固定付加文は読まない。** 秒を争うため、定型文を挟むと肝心の震度・地域が
+    // 遅れる（画面には出している。→ eew-spec.md §3「固定付加文」）。気象庁の文を読む設定でも読まないのは、
+    // 同じ内容を対象地方と一緒に既に言っているため（2026-10-21 ユーザー承認「読まないまま記録する (Recommended)」）。
+    // 読ませる形にするなら、この設定とは別に「震度・地域を伝えたあとへ確実に回す」仕組みが要る。
+    if (event.kind === 'eew') return null
+    if (!opts.readTelegramText) return null
+
+    // **指定が無いブロックは読む側へ倒す。** 設定を足しただけで、これまで声になっていた文が
+    // 黙って消えないようにするため（テストも 1 件ずつ指定しなくて済む）。
+    const on = (key: TelegramTextBlockKey): boolean => opts.telegramTextBlocks?.[key] ?? true
+    // **定型文の落とし方は既定が「落とす」側。** 向きが上の `on` と逆なのは、`＊` 印の説明が
+    // この設定より前から無条件で落ちていたため（→ `TELEGRAM_BOILERPLATE_DEFAULT_READS`）。
+    const reads = opts.telegramBoilerplate ?? TELEGRAM_BOILERPLATE_DEFAULT_READS
+    /** 読むと決めたブロックだけを残す。 */
+    const pick = (key: TelegramTextBlockKey, text: string | undefined) => (on(key) ? text : undefined)
+
+    switch (event.kind) {
+      case 'quake': {
+        // 取消の報は理由を本体の読み上げが読む。付加文は添えない。
+        // 見るのは `cancelled`（理由は上の EEW 分岐のコメント）。
+        if (event.cancelled) return null
+        // **落とし漏れの検出は、その枠を読む設定のときだけ。** 枠ごと切っているなら定型文も
+        // 声にならないので、一致しなくても困らない。
+        if (on('quakeVarComment')) {
+          warnUnmatchedBoilerplate(event.varCommentCodes, event.varCommentText, reads, '地震情報の固定付加文（その他）')
+        }
+        const body = joinTelegramTexts([
+          on('quakeForecast') ? quakeForecastRemainder(event) : undefined,
+          pick('quakeVarComment', event.varCommentText),
+          pick('quakeFreeText', event.freeText),
+        ], reads)
+        // **`eventId` を持たない地震情報**は、地震の時刻で主題を作る（同じ地震の続報は
+        // 同じ時刻を運ぶ）。`eventId` だけだと全件が `quake:` に潰れ、別の地震の同じ文を二度と読まない。
+        const quakeSubjectId = event.eventId ?? (event.earthquake?.time ? `time:${event.earthquake.time}` : undefined)
+        return telegramSpeech(w.common.telegramTextLead(w.quake.label.quake), body, telegramTextSpokenSubject(event.kind, quakeSubjectId))
+      }
+      case 'tsunami': {
+        // 解除・失効・取消とも `cancelled` が立つ（理由は上の EEW 分岐のコメント）。
+        // **全区域の解除（`lifted`）だけは読む**（2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。
+        // 解除の報は付加文 0107「現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。」
+        // などを載せる。取消（理由は `tsunamiCancelToText` が読む）と失効（電文が無い）は読まない。
+        if (event.cancelled && event.cancelReason !== 'lifted') return null
+        const body = joinTelegramTexts([
+          pick('tsunamiBody', event.bodyText),
+          // 固定付加文は主題ごとに複数ある（避難行動／満潮／沿岸の観測／沖合の観測）。
+          // **1 つの設定でまとめて切る。** 主題を束ねる鍵（`TsunamiWarningComment.key`）は
+          // 電文種別と情報名から実行時に導く値で、固定の一覧を持たない（→ tsunami-spec.md §5
+          // 「固定付加文は主題ごとに束ねる」。あちらも「表示はしない」と断っている）。
+          // 設定の項目にすると、気象庁が情報名の文字列を変えた版で対応が外れる。
+          //
+          // **避難行動の呼びかけは別経路が必ず読む**（`tsunamiToSegments`）ので、ここを切っても
+          // 行動指示が声から消えることはない。
+          ...(on('tsunamiVarComment') ? (event.warningComments ?? []).map(c => c.text) : []),
+          pick('tsunamiFreeText', event.freeText),
+        ], reads)
+        return telegramSpeech(w.common.telegramTextLead(w.tsunami.infoLabel), body, telegramTextSpokenSubject(event.kind, event.eventId))
+      }
+      case 'lpgm': {
+        // **他の種別と同じく明示して弾く。** いまは取消のパースが付加文を 1 つも持たないので
+        // 結果的に空になるが、それは呼び出し元（パーサー）の実装詳細であって、ここの意図
+        // （取消では読まない）はコードから読み取れない。将来あちらが付加文を持つようになった
+        // とき、この経路だけ黙って取消の本文を読む。
+        if (event.data.cancelled) return null
+        if (on('lpgmForecast')) {
+          warnUnmatchedBoilerplate(event.data.forecastCodes, event.data.forecastText, reads, '長周期地震動観測情報の固定付加文')
+        }
+        if (on('lpgmVarComment')) {
+          warnUnmatchedBoilerplate(event.data.varCommentCodes, event.data.varCommentText, reads, '長周期地震動観測情報の固定付加文（その他）')
+        }
+        const body = joinTelegramTexts([
+          pick('lpgmForecast', event.data.forecastText),
+          pick('lpgmVarComment', event.data.varCommentText),
+          pick('lpgmFreeText', event.data.freeFormText),
+        ], reads)
+        return telegramSpeech(w.common.telegramTextLead(w.lpgm.label), body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+      }
+      case 'nankai':
+      case 'nankaiCommentary': {
+        if (event.data.cancelled) return null
+        // 臨時情報と関連解説情報は構造が同じだが、**設定は別に持つ** —— 段階の発表（臨時情報）と
+        // 状況の続報（解説情報）では、聞きたい度合いが違う。
+        const isAdvisory = event.kind === 'nankai'
+        const body = joinTelegramTexts([
+          pick(isAdvisory ? 'nankaiSummary' : 'nankaiCommentarySummary', event.data.summary),
+          pick(isAdvisory ? 'nankaiBody' : 'nankaiCommentaryBody', event.data.body),
+          pick(isAdvisory ? 'nankaiNextAdvisory' : 'nankaiCommentaryNextAdvisory', event.data.nextAdvisory),
+          reads.earthquakeInfoAppendix ? event.data.appendix : undefined,
+        ], reads)
+        const label = isAdvisory ? w.special.nankaiLabel : w.special.commentaryLabel
+        return telegramSpeech(w.common.telegramTextLead(label), body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+      }
+      case 'kohatsu': {
+        if (event.data.cancelled) return null
+        // **`nextAdvisory` は読まない。** この種別の電文に `NextAdvisory` は無く（理由は
+        // `TELEGRAM_TEXT_BLOCK_KEYS` の「北海道・三陸沖後発地震注意情報」）、共有の読み取りを
+        // 通っているぶん型には残るが値は常に空。気象庁が出すようになったら設定キーと併せて戻す。
+        const body = joinTelegramTexts([
+          pick('kohatsuSummary', event.data.summary),
+          pick('kohatsuBody', event.data.body),
+          reads.earthquakeInfoAppendix ? event.data.appendix : undefined,
+        ], reads)
+        return telegramSpeech(w.common.telegramTextLead(w.special.kohatsuLabel), body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+      }
+      case 'earthquakeCount': {
+        if (event.data.cancelled) return null
+        // 本文（`body`）は回数を伴わない発表報だけが運ぶ（2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）。
+        // 並びは他の種別と同じく本文 → 自由付加文。
+        const body = joinTelegramTexts([
+          pick('earthquakeCountBody', event.data.body),
+          pick('earthquakeCountFreeText', event.data.freeText),
+        ], reads)
+        return telegramSpeech(w.common.telegramTextLead(w.special.countLabel), body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+      }
+      case 'quakeNotice': {
+        // 取消は本体の読み上げ（`quakeNoticeToText`）が理由まで読む。本文は添えない。
+        if (event.data.cancelled) return null
+        // **本文は削らずに全文を読む**（題名の行・発表日時・問い合わせ先も含む）。他の種別の本文と
+        // 同じ扱い —— 自由文なので書式が一定せず、行の形で削ると別のお知らせで本題を落としうる。
+        // 聞きたくなければブロックごと切れる（`quakeNoticeBody`）。
+        //
+        // **自由付加文（`freeText`）は本文に続けて同じ発話で読む**（2026-10-19 ユーザー承認
+        // 「本文に続けて出す (推奨)」）。設定のブロックは増やさず本文と同じ `quakeNoticeBody` に従う。
+        const body = joinTelegramTexts([
+          pick('quakeNoticeBody', event.data.body),
+          pick('quakeNoticeBody', event.data.freeText),
+        ], reads)
+        // **主題は `id` で作る。`eventId` ではない。** お知らせの `EventID` は発表時刻の分で、同じ分の別の
+        // お知らせと重なる。`eventId` で作ると、先のお知らせと同じ文（問い合わせ先の行など）が既読として飛ばされる。
+        return telegramSpeech(w.common.telegramTextLead(w.special.noticeLabel), body, telegramTextSpokenSubject(event.kind, event.data.id))
+      }
+      // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
+      case 'estimatedIntensity':
+        return null
+      // 国際津波関連情報の本文は英文で、日本語の声では読めない（読むのは `internationalTsunamiToText` の要約だけ）
+      case 'internationalTsunami':
+        return null
+    }
+  }
+
+  return {
+    locale,
+    createQuakeSpokenState, applySpokenRefs,
+    eewCancelToText, earthquakeCancelToText, earthquakeReportCancelToText, CANCEL_REASON_INLINE_MAX_CHARS, deferredCancelReasonToSpeak,
+    eewAlertToText, EEW_LEAD_PHRASES, EEW_UPGRADE_PHRASE, eewWarningRegionsText, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionToSay,
+    eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, eewLpgmOnlyText, eewIntensityText, voicevoxPreviewTexts,
+    DOMESTIC_TSUNAMI_CODE_SPEECH, domesticTsunamiFactValue, earthquakeToSegments, earthquakeToText,
+    applyTsunamiSpokenRefs, tsunamiExpiryChangeSegments, tsunamiToSegments, tsunamiToText,
+    tsunamiDowngradeToSegments, tsunamiDowngradeToText,
+    tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiAreaGradeChangeToText,
+    tsunamiCancelToText, tsunamiPartialRetractionToText, TSUNAMI_WARNINGS_ETC_NAME,
+    OBS_UPDATE_SPEAK_MAX_POINTS, selectObservationUpdatesToSpeak, tsunamiObservationUpdateToSegments, tsunamiObservationUpdateToText,
+    joinWithAlso,
+    ARRIVAL_SPEAK_MAX_POINTS, selectArrivalsToSpeak, tsunamiArrivalToSegments, tsunamiArrivalToText,
+    MAX_HEIGHT_TIME_SPEAK_MAX_POINTS, selectMaxHeightTimeUpdatesToSpeak, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments,
+    FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS, selectFirstWaveUpdatesToSpeak, tsunamiFirstWaveToSegments,
+    tsunamiObservationLeadSegments, tsunamiObservationNoChangeSegments, tsunamiObservationLoweredSegments, tsunamiTideToSegments,
+    MISSING_SPEAK_MAX_POINTS, selectMissingToSpeak, tsunamiMissingToSegments, tsunamiMissingToText,
+    WARNING_LEVEL_SPEAK_MAX_POINTS, selectWarningLevelToSpeak, tsunamiWarningLevelToSegments, tsunamiWarningLevelToText,
+    nankaiToText, nankaiCommentaryToText, earthquakeCountToText, quakeNoticeToText, kohatsuToText, lpgmToText,
+    estimatedIntensityToText, warnUnmatchedBoilerplate, telegramTextToSpeak,
+    INFO_NAME, reportNameToSay, kyoshinDetectionText, internationalTsunamiToText,
   }
 }
+
+/** 読み上げの関数の組の形（{@link createSpeechText} が返すもの）。 */
+export type SpeechText = ReturnType<typeof createSpeechText>
+
+/**
+ * 日本語の組。**日本語に固定する経路（テスト・参照だけ取る経路）のためのもの**で、画面の言語で読み上げる経路は
+ * 画面の言語の組（`speechTextFor`）を使う（→ {@link createSpeechText}）。
+ */
+export const JA_SPEECH_TEXT: SpeechText = createSpeechText(jaSpeech, JA_PLACE_NAMES, 'ja')
+
+/** 言語ごとに作った組（地名の引きが変わったら作り直す）。 */
+const speechTextByLocale = new Map<Locale, { place: PlaceNameLookup; text: SpeechText }>()
+/** 組を作れなかった言語（作り直さない）。 */
+const speechTextFailed = new Set<Locale>()
+/** 語表が無く日本語で読むことを記録した言語。 */
+const speechTextFallbackLogged = new Set<Locale>()
+/** {@link canBuildSpeechText} で組を作れると確かめた言語。 */
+const speechTextBuildable = new Set<Locale>()
+
+/**
+ * その言語の組を作れるか。**読み上げの言語を決める側（`hooks/useSpeechLocale.ts`）が先に確かめる** —— 作れない言語を
+ * 読み上げの言語に選ぶと、{@link speechTextFor} は日本語の組へ落ちるのに声はその言語のまま、日本語の文を日本語以外の声で読む。
+ *
+ * 地名の引きは組を作るときには呼ばれない（文を組むときに初めて呼ぶ）ので、作れるかは語表だけで決まる。日本語の引きで
+ * 1 度だけ試し、作れた・作れなかったを覚える（本物の引きで作る {@link speechTextFor} と結果は食い違わない）。
+ */
+export function canBuildSpeechText(locale: Locale): boolean {
+  if (locale === 'ja' || speechTextBuildable.has(locale)) return true
+  if (speechTextFailed.has(locale)) return false
+  const words = speechWordsFor(locale)
+  if (!words) return false
+  try {
+    createSpeechText(words, JA_PLACE_NAMES, locale)
+    speechTextBuildable.add(locale)
+    return true
+  } catch (err) {
+    speechTextFailed.add(locale)
+    log.error(`[tts] ${locale} の語表から読み上げの組を作れなかったため、日本語で読みます`, err)
+    return false
+  }
+}
+
+/**
+ * 画面の言語で読み上げる組。**画面の言語の読み上げは、すべてここから引くこと**（→ {@link createSpeechText}）。
+ *
+ * 語表を持たない言語・日本語では日本語の組を返す（地名も日本語のまま。声が日本語なので、訳した地名を混ぜない）。
+ * `place` は画面の言語の地名の引き（`usePlaceNamesRef`）。表を読み込み直すと引きが替わるので、そのとき組も作り直す。
+ */
+export function speechTextFor(locale: Locale, place: PlaceNameLookup): SpeechText {
+  if (locale === 'ja' || speechTextFailed.has(locale)) return JA_SPEECH_TEXT
+  const words = speechWordsFor(locale)
+  if (!words) {
+    // 語表を持たない言語。いまは日本語以外のすべてがここへ来る（正常）。語表の登録漏れに気づけるよう言語ごとに 1 度だけ記録する
+    if (!speechTextFallbackLogged.has(locale)) {
+      speechTextFallbackLogged.add(locale)
+      log.debug(`[tts] ${locale} の読み上げの語表が無いため、日本語で読みます`)
+    }
+    return JA_SPEECH_TEXT
+  }
+  const cached = speechTextByLocale.get(locale)
+  if (cached && cached.place === place) return cached.text
+  try {
+    const text = createSpeechText(words, place, locale)
+    speechTextByLocale.set(locale, { place, text })
+    return text
+  } catch (err) {
+    // 組を作れないと画面ごと落ちる（呼び出しはレンダーの中）。日本語で読み続け、その言語は作り直さない（レンダーごとに投げ直さない）
+    speechTextFailed.add(locale)
+    log.error(`[tts] ${locale} の語表から読み上げの組を作れなかったため、日本語で読みます`, err)
+    return JA_SPEECH_TEXT
+  }
+}
+
+export const {
+  createQuakeSpokenState, applySpokenRefs,
+  eewCancelToText, earthquakeCancelToText, earthquakeReportCancelToText, CANCEL_REASON_INLINE_MAX_CHARS, deferredCancelReasonToSpeak,
+  eewAlertToText, EEW_LEAD_PHRASES, EEW_UPGRADE_PHRASE, eewWarningRegionsText, EEW_WARNING_REGIONS_CLOSING,
+  eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, eewLpgmOnlyText, eewIntensityText, voicevoxPreviewTexts,
+  DOMESTIC_TSUNAMI_CODE_SPEECH, domesticTsunamiFactValue, earthquakeToSegments, earthquakeToText,
+  applyTsunamiSpokenRefs, tsunamiExpiryChangeSegments, tsunamiToSegments, tsunamiToText,
+  tsunamiDowngradeToSegments, tsunamiDowngradeToText,
+  tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiAreaGradeChangeToText,
+  tsunamiCancelToText, tsunamiPartialRetractionToText,
+  OBS_UPDATE_SPEAK_MAX_POINTS, selectObservationUpdatesToSpeak, tsunamiObservationUpdateToSegments, tsunamiObservationUpdateToText,
+  joinWithAlso,
+  ARRIVAL_SPEAK_MAX_POINTS, selectArrivalsToSpeak, tsunamiArrivalToSegments, tsunamiArrivalToText,
+  MAX_HEIGHT_TIME_SPEAK_MAX_POINTS, selectMaxHeightTimeUpdatesToSpeak, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments,
+  FIRST_WAVE_UPDATE_SPEAK_MAX_POINTS, selectFirstWaveUpdatesToSpeak, tsunamiFirstWaveToSegments,
+  tsunamiObservationNoChangeSegments, tsunamiObservationLoweredSegments, tsunamiTideToSegments,
+  MISSING_SPEAK_MAX_POINTS, selectMissingToSpeak, tsunamiMissingToSegments, tsunamiMissingToText,
+  WARNING_LEVEL_SPEAK_MAX_POINTS, selectWarningLevelToSpeak, tsunamiWarningLevelToSegments, tsunamiWarningLevelToText,
+  nankaiToText, nankaiCommentaryToText, earthquakeCountToText, quakeNoticeToText, kohatsuToText, lpgmToText,
+  estimatedIntensityToText, warnUnmatchedBoilerplate, telegramTextToSpeak,
+} = JA_SPEECH_TEXT
