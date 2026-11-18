@@ -537,6 +537,7 @@ export const ko: Messages = {
       unchanged: '(값은 바뀌지 않음)',
       emscNote: '각 기관의 해(EMSC 수집)',
       beachball: '비치볼',
+      viewer: { title: '비치볼과 단층 미끄러짐', pause: '일시 정지', play: '재생', north: '북', east: '동', down: '아래', lowerProjection: '하반구 투영', failed: '그리기에 실패했습니다.' },
       tips: {
         reverse: { text: '단층면을 경계로, 상반이 하반에 대해 밀려 올라갑니다.', src: '일본 기상청 「발진기구해와 단층면」' },
         normal: { text: '단층면을 경계로, 상반(위쪽 암반)이 하반(아래쪽 암반)에 대해 미끄러져 내려갑니다.', src: '일본 기상청 「발진기구해와 단층면」' },

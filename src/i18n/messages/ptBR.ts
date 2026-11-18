@@ -531,6 +531,7 @@ export const ptBR: Messages = {
       unchanged: '(os valores não mudaram)',
       emscNote: 'Soluções de cada agência (reunidas pelo EMSC)',
       beachball: 'Bola de praia',
+      viewer: { title: 'Bola de praia e deslizamento da falha', pause: 'Pausar', play: 'Reproduzir', north: 'N', east: 'L', down: 'Baixo', lowerProjection: 'Projeção do hemisfério inferior', failed: 'Falha ao desenhar.' },
       tips: {
         reverse: { text: 'Tendo o plano de falha como limite, o teto sobe sobre o muro.', src: 'JMA, “Mecanismos focais e planos de falha”' },
         normal: { text: 'Tendo o plano de falha como limite, o teto (a rocha de cima) desce em relação ao muro (a rocha de baixo).', src: 'JMA, “Mecanismos focais e planos de falha”' },

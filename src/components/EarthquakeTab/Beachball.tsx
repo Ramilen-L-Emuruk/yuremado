@@ -47,8 +47,8 @@ export function Beachball({ plane, size }: { plane: NodalPlane; size: number }) 
   return <canvas ref={ref} style={{ width: size, height: size }} className="shrink-0" aria-hidden="true" />
 }
 
-const PUSH = [217, 72, 72] as const
-const PULL = [236, 236, 236] as const
+export const PUSH = [217, 72, 72] as const
+export const PULL = [236, 236, 236] as const
 
 /** 節面からモーメントテンソル（Aki & Richards。x 北・y 東・z 下）を作る */
 export function momentTensor(p: NodalPlane): { xx: number; yy: number; zz: number; xy: number; xz: number; yz: number } {

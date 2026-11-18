@@ -8,6 +8,7 @@ import {
 } from '../../services/relayAnalysis'
 import { formatDateTime, formatDateTimeMin } from '../../utils/formatters'
 import { Beachball } from './Beachball'
+import { FaultViewer3D } from './FaultViewer3D'
 import { DisclosureCaret } from './quakeMotion'
 
 /**
@@ -181,11 +182,16 @@ function VersionsNote({ group }: { group: { latest: FocalSolution; older: FocalS
   )
 }
 
-/** タブの先頭の札: 代表の解の震源球・Mw・断層の型と、どの解か・公表と版 */
-function Lead({ a, source }: { a: QuakeAnalysis; source: AnalysisSource }) {
+/** 表で選んだ解（無い・見つからないときは代表の解）の組 */
+export function chosenGroup<G extends { latest: FocalSolution }>(groups: readonly G[], selectedKey: string | null): G | null {
+  return (selectedKey !== null ? groups.find(g => g.latest.key === selectedKey) : undefined) ?? representativeGroup(groups)
+}
+
+/** タブの先頭の札: 選んだ解（初めは代表の解）の震源球・Mw・断層の型と、どの解か・公表と版 */
+function Lead({ a, source, selectedKey }: { a: QuakeAnalysis; source: AnalysisSource; selectedKey: string | null }) {
   const w = useMessages().quake.analysis
   const groups = groupSolutionVersions(a.solutions.filter(s => s.source === source))
-  const rep = representativeGroup(groups)
+  const rep = chosenGroup(groups, selectedKey)
   if (!rep) return null
   const s = rep.latest
   const depth = s.depthKm != null ? (s.centroid ? w.centroidDepth(String(Math.round(s.depthKm * 10) / 10)) : `${w.depth} ${r0(s.depthKm)} km`) : null
@@ -343,9 +349,16 @@ function columns(w: AnalysisWords, a: QuakeAnalysis): Column[] {
 const WIDE_QUERY = '(min-width: 640px)'
 
 /** 発震機構の表。幅のある画面は 1 解 1 行の表、狭い画面は 1 解 2 行の並び。前の版は「更新 N 件 ▸」で開く */
-export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solutions: readonly FocalSolution[]; withSource: boolean }) {
+export function MechTable({ a, solutions, withSource, selectedKey, onSelect }: {
+  a: QuakeAnalysis; solutions: readonly FocalSolution[]; withSource: boolean
+  /** 3D に出している解の鍵（その行に色を付ける） */
+  selectedKey: string | null
+  /** 行を押す・Enter／Space で、その解を 3D に出す */
+  onSelect: (key: string) => void
+}) {
   const w = useMessages().quake.analysis
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
+  const [hovered, setHovered] = useState<string | null>(null)
   // 表と狭い並びは片方だけ組む（CSS で隠すだけだと、見えない側の節・ホバーの解説まで毎回組み立てる）
   const wide = useMediaQuery(WIDE_QUERY)
   const groups = useMemo(() => groupSolutionVersions(solutions), [solutions])
@@ -380,6 +393,33 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
       {badge(s)}
     </span>
   )
+  // 節面のある解の行だけが選べる（節面の無い解は 3D に出せない）。選んだ行は、おすすめの解の行より明るい色にする（タブの選択と同じ色）
+  // 1 つの解は表の 2 行（解の行とモーメントテンソルの行）を占めるので、ホバーの色は行ごとの CSS ではなく鍵で持ち、2 行そろえて付ける
+  const buildRowProps = (g: (typeof groups)[number]) => {
+    const key = g.latest.key
+    const selectable = g.latest.planes !== null
+    const selected = key === selectedKey
+    const hover = selectable && !selected && hovered === key
+    const pointer = {
+      className: `${selected ? 'bg-[#24303d]' : hover ? 'bg-[#222d3a]' : g.latest.preferred ? 'bg-[#1b2430]' : ''} ${selectable ? 'cursor-pointer' : ''}`.trim() || undefined,
+      onClick: selectable ? () => onSelect(key) : undefined,
+      onMouseEnter: selectable ? () => setHovered(key) : undefined,
+      onMouseLeave: selectable ? () => setHovered(h => (h === key ? null : h)) : undefined,
+    }
+    return {
+      pointer,
+      /** 解の行（フォーカスと Enter／Space を受ける。2 行目のテンソルの行は `pointer` だけ） */
+      main: {
+        ...pointer,
+        tabIndex: selectable ? 0 : undefined,
+        onKeyDown: selectable ? (e: React.KeyboardEvent) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(key) } } : undefined,
+        'aria-current': selected ? ('true' as const) : undefined,
+      },
+    }
+  }
+  // 行ごとに 1 回だけ作り、表の行・テンソルの行・狭い並びで使い回す
+  const rowPropsOf = new Map(groups.map(g => [g, buildRowProps(g)] as const))
+  const rowProps = (g: (typeof groups)[number]) => rowPropsOf.get(g) ?? buildRowProps(g)
   const more = (g: (typeof groups)[number]) => (g.older.length > 0 ? (
     <button type="button" className="ml-1 whitespace-nowrap text-secondary hover:text-white" aria-expanded={open.has(g.latest.key)}
       onClick={(e) => { e.stopPropagation(); toggle(g.latest.key) }}>
@@ -401,7 +441,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
         <tbody>
           {groups.map(g => (
             <Fragment key={g.latest.key}>
-              <tr className={g.latest.preferred ? 'bg-[#1b2430]' : undefined}>
+              <tr {...rowProps(g).main}>
                 <td className="whitespace-nowrap border-t border-border px-2 py-1.5">{head(g.latest)}</td>
                 {tableCols.map(c => <td key={c.key} className="whitespace-nowrap border-t border-border px-2 py-1.5 text-white">{c.value(g.latest) ?? ''}</td>)}
                 {/* 注記は長い言語で幅を越えるので折り返す（「更新 N 件」の釦だけは折り返さない） */}
@@ -409,7 +449,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
               </tr>
               {/* テンソルの 6 成分は列にすると表が窮屈になるので、行の下に表の幅で添える */}
               {tensorCol && tensorCol.value(g.latest) !== null && (
-                <tr className={g.latest.preferred ? 'bg-[#1b2430]' : undefined}>
+                <tr {...rowProps(g).pointer}>
                   <td />
                   <td colSpan={tableCols.length + 1} className="px-2 pb-1.5 pt-0 text-[11px] text-secondary">{tensorCol.head} {tensorCol.value(g.latest)}</td>
                 </tr>
@@ -417,14 +457,14 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
               {open.has(g.latest.key) && g.older.map((o, i) => (
                 // 公表時刻の無い版が並んでも鍵が重ならないよう、並びの番号を添える
                 <Fragment key={`${o.publishedAt ?? o.key}#${i}`}>
-                  <tr className="text-secondary">
+                  <tr {...rowProps(g).pointer} className={`text-secondary ${rowProps(g).pointer.className ?? ''}`}>
                     <td className="px-2 py-1" />
                     {tableCols.map(c => <td key={c.key} className="whitespace-nowrap px-2 py-1">{c.value(o) ?? ''}</td>)}
                     <td />
                   </tr>
                   {/* 前の版のテンソルも、最新の版と同じく行の下に添える（狭い並びの 2 行目と同じく値を落とさない） */}
                   {tensorCol && tensorCol.value(o) !== null && (
-                    <tr className="text-secondary">
+                    <tr {...rowProps(g).pointer} className={`text-secondary ${rowProps(g).pointer.className ?? ''}`}>
                       <td />
                       <td colSpan={tableCols.length + 1} className="px-2 pb-1 pt-0 text-[11px]">{tensorCol.head} {tensorCol.value(o)}</td>
                     </tr>
@@ -439,7 +479,7 @@ export function MechTable({ a, solutions, withSource }: { a: QuakeAnalysis; solu
   ) : (
       <div className="flex flex-col">
         {groups.map(g => (
-          <div key={g.latest.key} className="border-t border-border py-1.5">
+          <div key={g.latest.key} {...rowProps(g).main} className={`border-t border-border py-1.5 ${rowProps(g).main.className ?? ''}`}>
             <div className="flex flex-wrap items-center gap-x-2">
               {head(g.latest)}
               {g.latest.mw != null && <b className="text-white">Mw {g.latest.mw.toFixed(1)}</b>}
@@ -475,16 +515,20 @@ function SecondLine({ s, cols, note, tail }: { s: FocalSolution; cols: readonly 
 export function AgencyPanel({ a, source, children }: { a: QuakeAnalysis; source: AnalysisSource; children: ReactNode }) {
   const w = useMessages().quake.analysis
   const solutions = useMemo(() => a.solutions.filter(s => s.source === source), [a, source])
-  const n = useMemo(() => groupSolutionVersions(solutions).length, [solutions])
+  const groups = useMemo(() => groupSolutionVersions(solutions), [solutions])
+  const n = groups.length
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const chosen = chosenGroup(groups, selectedKey)
   return (
     <div className="flex flex-col gap-2.5">
-      <Lead a={a} source={source} />
+      <Lead a={a} source={source} selectedKey={selectedKey} />
+      {chosen?.latest.planes && <FaultViewer3D planes={chosen.latest.planes} axes={chosen.latest.axes} />}
       <Hypocenter a={a} source={source} />
       <h3 className="m-0 flex items-baseline gap-2 text-xs font-semibold text-white">
         {source === 'emsc' ? w.collected : w.mech}
         <span className="font-normal text-secondary">{source === 'emsc' ? w.collectedCount(n) : w.solutions(n)}</span>
       </h3>
-      <MechTable a={a} solutions={solutions} withSource={false} />
+      <MechTable a={a} solutions={solutions} withSource={false} selectedKey={chosen?.latest.key ?? null} onSelect={setSelectedKey} />
       {children}
     </div>
   )
