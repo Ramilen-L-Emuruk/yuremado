@@ -644,6 +644,7 @@ export const ja = {
       unchanged: '（値は変わっていない）',
       emscNote: '各機関の解（EMSC 収集）',
       beachball: '震源球',
+      viewer: { title: '震源球と断層のずれ', pause: '一時停止', play: '再生', north: '北', east: '東', down: '下', failed: '描画に失敗しました。' },
       // 点線の語の説明（2026-11-16〜17 ユーザー選択「この形で入れる」「この文面で入れる」「この文面で出す」。出典は気象庁・USGS・EMSC・GEOFON 自身の説明の頁）
       tips: {
         reverse: { text: '断層面を境にして、上盤が下盤に対して、のし上がる。', src: '気象庁「発震機構解と断層面」' },

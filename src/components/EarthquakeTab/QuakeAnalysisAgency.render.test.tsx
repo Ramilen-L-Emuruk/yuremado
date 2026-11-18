@@ -24,7 +24,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 describe('MechTable', () => {
   it('幅のある画面は表だけを組み、値の無い列は出さない（EMSC には深さ・届いた時刻があり、観測点は無い）', () => {
     setWide(true)
-    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} />)
+    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} selectedKey={null} onSelect={() => {}} />)
     expect(container.querySelectorAll('table')).toHaveLength(1)
     const heads = [...container.querySelectorAll('th')].map(th => th.textContent)
     expect(heads[0]).toBe('機関')
@@ -38,20 +38,20 @@ describe('MechTable', () => {
 
   it('機関ごとのタブは、隣のタブに同じ値の解がある NEIC・GFZ にだけ「同じ」と添える', () => {
     setWide(true)
-    render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} />)
+    render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} selectedKey={null} onSelect={() => {}} />)
     expect(screen.getAllByText('USGS タブと同一')).toHaveLength(1)
     expect(screen.getAllByText('GEOFON タブと同一')).toHaveLength(1)
   })
 
   it('[対照] 種類ごとの表（全機関が 1 つの表に並ぶ）では「同じ」と添えない', () => {
     setWide(true)
-    render(<MechTable a={a} solutions={a.solutions} withSource />)
+    render(<MechTable a={a} solutions={a.solutions} withSource selectedKey={null} onSelect={() => {}} />)
     expect(screen.queryByText(/タブと同一/)).toBeNull()
   })
 
   it('狭い画面は並びだけを組み、注記は値と同じ「・」でつなぐ', () => {
     setWide(false)
-    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} />)
+    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} selectedKey={null} onSelect={() => {}} />)
     expect(container.querySelectorAll('table')).toHaveLength(0)
     const note = screen.getByText('USGS タブと同一')
     // 直前に区切りの「・」がある（値の並びの続きとして出る。行の頭に「・」だけが浮かない）
@@ -61,7 +61,7 @@ describe('MechTable', () => {
 
   it('見直しの段階は値のある取得元だけ列に出し、テンソルの 6 成分は行の下に添える', () => {
     setWide(true)
-    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'geofon')} withSource={false} />)
+    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'geofon')} withSource={false} selectedKey={null} onSelect={() => {}} />)
     const heads = [...container.querySelectorAll('th')].map(th => th.textContent)
     expect(heads).toContain('状態')
     expect(screen.getByText('手動')).toBeTruthy()
@@ -74,18 +74,18 @@ describe('MechTable', () => {
     // 狭い並びでも、テンソルの頭の語は吹き出しつき（「テンソル」の釦）
     cleanup()
     setWide(false)
-    render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'geofon')} withSource={false} />)
+    render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'geofon')} withSource={false} selectedKey={null} onSelect={() => {}} />)
     expect(screen.getByRole('button', { name: 'テンソル' })).toBeTruthy()
     setWide(true)
     // [対照] EMSC の解は見直しの段階を持たないので、その列は出さない
     cleanup()
-    const emsc = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} />)
+    const emsc = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'emsc')} withSource={false} selectedKey={null} onSelect={() => {}} />)
     expect([...emsc.container.querySelectorAll('th')].map(th => th.textContent)).not.toContain('状態')
   })
 
   it('更新前の版は「更新 N 件」を押したときだけ組む', () => {
     setWide(true)
-    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'usgs')} withSource={false} />)
+    const { container } = render(<MechTable a={a} solutions={a.solutions.filter(s => s.source === 'usgs')} withSource={false} selectedKey={null} onSelect={() => {}} />)
     // 最新の版の行とテンソルの行
     expect(container.querySelectorAll('tbody tr')).toHaveLength(2)
     const more = screen.getByRole('button', { name: /更新 5 件/ })

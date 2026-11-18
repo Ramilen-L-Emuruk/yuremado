@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { OVERLAY_BACKDROP_PAD } from '../../rootFrame'
 import { useLocale, useMessages } from '../../i18n/I18nProvider'
@@ -11,7 +11,8 @@ import {
 import { MMI_ROMAN, mmiColor, mmiIndex } from '../../services/analysisOverlay'
 import { formatDateTime, formatDateTimeMin } from '../../utils/formatters'
 import { CANCEL_FADE_MS, fadeIn } from './quakeMotion'
-import { AgencyPanel, MechTable, sourceName, Term } from './QuakeAnalysisAgency'
+import { FaultViewer3D } from './FaultViewer3D'
+import { AgencyPanel, MechTable, chosenGroup, sourceName, Term } from './QuakeAnalysisAgency'
 
 /**
  * 地震カードに添える海外の機関と気象庁の解析（計画書 項目 98）。カードには要約の 1 行だけを置き、
@@ -275,6 +276,8 @@ export function QuakeAnalysisDialog({ title, analysis: a, onClose }: { title: st
   const w = useMessages().quake.analysis
   const [groupBy, setGroupBy] = useState<GroupBy>(readGroupBy)
   const [kindTab, setKindTab] = useState<'mech' | 'usgs' | 'src'>('mech')
+  // 種類ごとの「発震機構」で 3D に出す解の鍵（無ければ、全機関の代表の解）
+  const [kindSelectedKey, setKindSelectedKey] = useState<string | null>(null)
   const [agencyTab, setAgencyTab] = useState<AnalysisSource>(
     () => ANALYSIS_SOURCES.find(s => a.solutions.some(x => x.source === s)) ?? 'usgs',
   )
@@ -318,6 +321,8 @@ export function QuakeAnalysisDialog({ title, analysis: a, onClose }: { title: st
   }
 
   const groups = groupSolutionVersions(a.solutions)
+  const repKey = useMemo(() => representativeSolution(a)?.key ?? null, [a])
+  const kindChosen = chosenGroup(groups, kindSelectedKey ?? repKey)
   const hasUsgs = Object.values(a.usgs).some(v => v.length > 0)
   const near = a.catalogCheck?.jmaQuakesNearUsgs ?? 0
   const mergedLine = near >= 2 ? <div className="text-[#ef8a1f]">{w.merged(near)}</div> : null
@@ -388,7 +393,8 @@ export function QuakeAnalysisDialog({ title, analysis: a, onClose }: { title: st
           <>
             <EventLine source={agencyTab} state={a.sources[agencyTab]} withEvent={false} />
             {agencyTab === 'usgs' && mergedLine}
-            <AgencyPanel a={a} source={agencyTab}>
+            {/* 機関ごとに 3D の選択・向き・止めた状態を分ける（タブを替えると、その機関の代表の解から始まる） */}
+            <AgencyPanel key={agencyTab} a={a} source={agencyTab}>
               {agencyTab === 'usgs' && hasUsgs && (
                 <>
                   <h3 className="m-0 flex items-baseline gap-2 text-xs font-semibold text-white">{w.impact}<span className="font-normal text-secondary">{w.usgsEstimate}</span></h3>
@@ -399,7 +405,12 @@ export function QuakeAnalysisDialog({ title, analysis: a, onClose }: { title: st
           </>
         ) : (
           <>
-            {kindTab === 'mech' && <MechTable a={a} solutions={a.solutions} withSource />}
+            {kindTab === 'mech' && (
+              <>
+                {kindChosen?.latest.planes && <FaultViewer3D planes={kindChosen.latest.planes} axes={kindChosen.latest.axes} />}
+                <MechTable a={a} solutions={a.solutions} withSource selectedKey={kindChosen?.latest.key ?? null} onSelect={setKindSelectedKey} />
+              </>
+            )}
             {kindTab === 'usgs' && hasUsgs && <UsgsProducts a={a} />}
             {kindTab === 'src' && (
               <div className="flex flex-col gap-1">
