@@ -158,7 +158,7 @@ function renderCard(
       historyView={null}
       onPickHistory={() => {}}
       onReplayQuake={() => {}}
-      replayError={null}
+      replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
     />,
   )
 }

@@ -23,6 +23,8 @@ import { QuakeUnreceivedPointsGL } from './QuakeUnreceivedPointsGL'
 import { QuakeIntensitySurfaceGL } from './QuakeIntensitySurfaceGL'
 import { QuakeEstimatedIntensityGL } from './QuakeEstimatedIntensityGL'
 import { QuakeRegionFillGL } from './QuakeRegionFillGL'
+import { AnalysisOverlayGL } from './AnalysisOverlayGL'
+import { analysisOverlayBounds, type AnalysisOverlay } from '../../services/analysisOverlay'
 import { QuakeHeatmapGL } from './QuakeHeatmapGL'
 import { HypocenterDepthGL } from './HypocenterDepthGL'
 import { HypocenterCatalogGL } from './HypocenterCatalogGL'
@@ -116,6 +118,7 @@ export function JapanMapGL({
   lpgm,
   distributionMode = false,
   unreceivedMode = false,
+  analysisOverlay,
   estimatedIntensity = null,
   tsunamis = [],
   tsunamiSourceQuakes,
@@ -229,6 +232,21 @@ export function JapanMapGL({
     quakeFitZoomPolicy,
     quakeSignature,
   } = useQuakeLayerData(mode, quake, { zoom, aggregateMaxZoom }, lpgm, distributionMode, estimatedIntensity, unreceivedMode)
+  // 海外の機関の解析の重ね（MMI・すべり）を描いているか。描いている間は震度の表現を引っ込める
+  // （未入電と同じ扱い。重ねと震度を同じ画面に置くと、どちらの色を見ているのか混ざる。2026-11-15 選択「引っ込める (Recommended)」）。
+  // **引っ込めるのは重ねを実際に描けてから** —— ボタンを押しただけで引っ込めると、取得中・取得できなかったときに
+  // 震度も重ねも無い地図になり、電文の震度が画面から消える。
+  // **他の追加表示との排他は `quakeOverlay` が型で保証しているが、ここは独立した props なので明示的に見る**
+  const [analysisLoaded, setAnalysisLoaded] = useState<AnalysisOverlay | null>(null)
+  const analysisMode = mode === 'quake' && analysisOverlay !== null && analysisLoaded !== null
+  // 重ねを開いている間は、地図を重ねの範囲へ寄せる（MMI は等値線の全体、すべりは断層の区画の全体。
+  // 2026-11-15 選択「重ねの範囲へ寄せる (Recommended)」）。寄り上限は推計震度分布と同じ深い側。
+  // 閉じたら地震の寄せ先へ戻る（鍵が変わるので寄せ直す）
+  const analysisFit = useMemo(() => {
+    if (!analysisMode || !analysisLoaded) return null
+    const [sw, ne] = analysisOverlayBounds(analysisLoaded)
+    return { positions: [sw, ne] as LatLng[], signature: `A:${analysisLoaded.layer}:${sw.join(',')}:${ne.join(',')}` }
+  }, [analysisMode, analysisLoaded])
   // 気象庁の推計震度分布図を出しているか。**引き当ては呼び出し側の担当**で、ここへ来る時点で
   // 「いま地図が出している地震のもの」に絞られている（→ `estimatedIntensityFor`）。
   //
@@ -256,7 +274,7 @@ export function JapanMapGL({
   // ドットと同じ扱い）。**`distributionMode` との排他は `quakeOverlay` が型で保証しているが、
   // ここは独立した props なので明示的に見る**（lpgm と distributionMode が同じ理由で
   // 両方見られているのと同じ）。
-  const showDistribution = mode === 'quake' && !lpgmActive && !unreceivedMode
+  const showDistribution = mode === 'quake' && !lpgmActive && !unreceivedMode && !analysisMode
     && (!aggregateByRegion || distributionMode)
   // 津波の派生データ（海岸線＋観測棒＋到達確認マーカー＋欠測マーカー）。発報中は全モードで海岸線を
   // 描くため常時計算する。
@@ -341,7 +359,7 @@ export function JapanMapGL({
   // 未入電の印として実際に描く点（`QuakeUnreceivedPointsGL` へ渡すもの）と、描くかどうか。
   // 凡例・重なり判定の合図・描画の 3 か所で同じものを使う（片方だけ直すと食い違う）。
   const drawnUnreceivedMarkers = unreceivedMode || !aggregateByRegion ? unreceivedMarkers : orphanUnreceivedMarkers
-  const unreceivedMarkersVisible = mode === 'quake' && !lpgmActive && !distributionMode
+  const unreceivedMarkersVisible = mode === 'quake' && !lpgmActive && !distributionMode && !analysisMode
 
   // 震度分布モードのあいだは観測点ドットを描かないので、一覧の行から寄せた観測点は地図の上で
   // 当たらない。押した行の吹き出しだけは出す（2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
@@ -608,8 +626,8 @@ export function JapanMapGL({
   // （観測値・リアルタイム・予想はどれも同じ色だが意味が違う）。まとめ方は `buildLegendBlocks`。
   const legendSources: MapLegendSources = {
     quakeIntensity:
-      (mode === 'quake' && aggregateByRegion && !lpgmActive && !distributionMode && !unreceivedMode && regionAggregates.length > 0)
-      || (mode === 'quake' && !aggregateByRegion && !lpgmActive && !unreceivedMode && !distributionMode && stationMarkers.length > 0)
+      (mode === 'quake' && aggregateByRegion && !lpgmActive && !distributionMode && !unreceivedMode && !analysisMode && regionAggregates.length > 0)
+      || (mode === 'quake' && !aggregateByRegion && !lpgmActive && !unreceivedMode && !distributionMode && !analysisMode && stationMarkers.length > 0)
       || (showDistribution && !estimatedIntensityActive && stationMarkers.length > 0)
       // 推計震度分布図も気象庁の震度配色で描く（`QuakeEstimatedIntensityGL` が `getIntensityColor` を通る）。
       || (showDistribution && estimatedIntensityActive),
@@ -617,6 +635,9 @@ export function JapanMapGL({
     realtimeIntensity: mode === 'kyoshin' && kyoshinIndices.length > 0,
     eewIntensity: mode === 'kyoshin' && eewAreaFills.length > 0 && eewLpgmRegionAggregates.length === 0,
     unreceived: unreceivedMarkersVisible && drawnUnreceivedMarkers.length > 0,
+    // 層を出す条件（`AnalysisOverlayGL` は取れた重ねだけを出す）と同じ式。取れるまでは凡例も出さない
+    analysisMmi: analysisMode && analysisLoaded?.layer === 'mmi' ? analysisLoaded.maxMmi : null,
+    analysisSlip: analysisMode && analysisLoaded?.layer === 'slip' ? analysisLoaded.maxSlipM : null,
     lpgm: mode === 'quake' && lpgmActive && (aggregateByRegion ? lpgmRegionAggregates.length > 0 : lpgmMarkers.length > 0),
     eewLpgm: mode === 'kyoshin' && eewLpgmRegionAggregates.length > 0,
     // **予報円はリアルタイム震度モードのときだけ凡例へ出す。** 描画自体は全モードで走るが、
@@ -697,7 +718,7 @@ export function JapanMapGL({
           <QuakeRegionFillGL
             regionAggregates={regionAggregates}
             iconScale={iconScale}
-            visible={mode === 'quake' && aggregateByRegion && !lpgmActive && !distributionMode && !unreceivedMode}
+            visible={mode === 'quake' && aggregateByRegion && !lpgmActive && !distributionMode && !unreceivedMode && !analysisMode}
           />
           {/* 観測点表示のときだけ、その背景に震度の面を敷く（区域塗りとは排他）。
               **気象庁の推計震度分布図が出ているときも敷かない** —— 同じ画面に推定を 2 つ置くと、
@@ -718,9 +739,11 @@ export function JapanMapGL({
           <QuakeIntensityPointsGL
             markers={stationMarkers}
             iconScale={iconScale}
-            visible={mode === 'quake' && !aggregateByRegion && !lpgmActive && !unreceivedMode && !distributionMode}
+            visible={mode === 'quake' && !aggregateByRegion && !lpgmActive && !unreceivedMode && !distributionMode && !analysisMode}
             epicenter={epicenter}
           />
+          {/* 海外の機関の解析の重ね（MMI の等値線・断層のすべり）。開いている間は上の震度の表現を引っ込める */}
+          <AnalysisOverlayGL overlay={mode === 'quake' ? analysisOverlay : null} onLoaded={setAnalysisLoaded} />
           {/* 震度が届いていない観測点の印。**観測値のドットと出す条件が 1 つ違う** ——
               未入電トグルが開いている間は寄り具合に関わらず出す。自動フィットの着地は常に
               区域集約のズーム（gl/camera.ts の fitMaxZoom でキャップされる）なので、
@@ -799,9 +822,9 @@ export function JapanMapGL({
               )}
               {/* 地震モードのカメラフィット（signature 変化時に観測点＋震源へ）。 */}
               <QuakeFitGL
-                signature={quakeSignature}
-                positions={quakeFitPositions}
-                zoomPolicy={quakeFitZoomPolicy}
+                signature={analysisFit ? `${quakeSignature}|${analysisFit.signature}` : quakeSignature}
+                positions={analysisFit ? analysisFit.positions : quakeFitPositions}
+                zoomPolicy={analysisFit ? 'distribution' : quakeFitZoomPolicy}
                 selectionTick={quakeSelectionTick}
                 lastConsumedTickRef={lastConsumedQuakeTickRef}
               />

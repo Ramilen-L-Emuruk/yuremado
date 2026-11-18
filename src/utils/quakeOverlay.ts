@@ -14,6 +14,7 @@
  */
 
 import type { TabId } from '../components/IconNav'
+import type { AnalysisOverlayLayer } from '../services/analysisOverlay'
 
 /**
  * - `lpgm` — 長周期地震動階級。`eventId` は電文の識別子で、`source` は開いた場所
@@ -28,6 +29,11 @@ export type QuakeOverlay =
   | { kind: 'lpgm'; eventId: string; source: 'earthquake' | 'eew' }
   | { kind: 'distribution'; eventKey: string }
   | { kind: 'unreceived'; eventKey: string }
+  /**
+   * 海外の機関の解析の重ね（USGS の推定の揺れ `mmi`・断層のすべり `slip`）。`url` は重ねるファイルの版
+   * （カードが解析の答えから選んで渡す。地図はこれを取って描く）
+   */
+  | { kind: 'analysis'; layer: AnalysisOverlayLayer; eventKey: string; url: string }
 
 /**
  * 長周期の表示をトグルした結果を返す。
@@ -117,6 +123,43 @@ export function toggleUnreceivedOverlay(
 ): QuakeOverlay | null {
   if (prev?.kind === 'unreceived' && prev.eventKey === eventKey) return null
   return { kind: 'unreceived', eventKey }
+}
+
+/**
+ * 解析の重ねをトグルした結果を返す。
+ *
+ * 同じ地震の同じ重ね（MMI／すべり）を開いていれば閉じ、それ以外なら開く（他の追加表示は閉じる）。
+ * **版（`url`）は比べない。** 開いている間に新しい版が届いても、押したら閉じるのがトグルの振る舞い。
+ */
+export function toggleAnalysisOverlay(
+  prev: QuakeOverlay | null,
+  eventKey: string,
+  layer: AnalysisOverlayLayer,
+  url: string,
+): QuakeOverlay | null {
+  if (prev?.kind === 'analysis' && prev.eventKey === eventKey && prev.layer === layer) return null
+  return { kind: 'analysis', layer, eventKey, url }
+}
+
+/**
+ * 解析の重ねを、カードが今出せる版に合わせた結果を返す（カードの地震が消えた・重ねるファイルが無くなった・新しい版が届いた）。
+ *
+ * `url` が `null` なら閉じ、違う版なら差し替える。**他の追加表示・別の地震の重ねは触らない。**
+ */
+export function syncAnalysisOverlay(
+  prev: QuakeOverlay | null,
+  eventKey: string,
+  layer: AnalysisOverlayLayer,
+  url: string | null,
+): QuakeOverlay | null {
+  if (prev?.kind !== 'analysis' || prev.eventKey !== eventKey || prev.layer !== layer) return prev
+  if (url === null) return null
+  return prev.url === url ? prev : { ...prev, url }
+}
+
+/** 解析の重ねだけを閉じた結果を返す（重ねている地震のカードが一覧から消えたとき） */
+export function closeAnalysisOverlay(prev: QuakeOverlay | null): QuakeOverlay | null {
+  return prev?.kind === 'analysis' ? null : prev
 }
 
 /**
@@ -275,7 +318,10 @@ export function decideUnreceivedSpeechOpen(args: {
  */
 function visibleOverlayKey(o: QuakeOverlay | null): string | null {
   if (!o) return null
-  return o.kind === 'lpgm' ? `lpgm:${o.eventId}` : `${o.kind}:${o.eventKey}`
+  if (o.kind === 'lpgm') return `lpgm:${o.eventId}`
+  // MMI とすべりは見た目が違うので分ける。版（url）は含めない（同じ重ねの新しい版で開閉を記録しない）
+  if (o.kind === 'analysis') return `analysis:${o.layer}:${o.eventKey}`
+  return `${o.kind}:${o.eventKey}`
 }
 
 /**

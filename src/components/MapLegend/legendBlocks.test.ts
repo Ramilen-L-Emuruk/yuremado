@@ -234,6 +234,8 @@ const SOLO_SOURCES: { [K in keyof MapLegendSources]: Partial<MapLegendSources> |
   realtimeIntensity: { realtimeIntensity: true },
   eewIntensity: { eewIntensity: true },
   unreceived: { unreceived: true },
+  analysisMmi: { analysisMmi: 8.5 },
+  analysisSlip: { analysisSlip: 6.03 },
   lpgm: { lpgm: true },
   eewLpgm: { eewLpgm: true },
   psWave: { psWave: true },
@@ -376,5 +378,29 @@ describe('ヒートマップの期間の欄', () => {
       '1960 年まで遡ると、記録が揃うのは M 3.0 以上です。それより小さい地震は少なく見えます。',
     )
     expect(heatmapCompletenessNote(null, JA_MESSAGES)).toBeNull()
+  })
+})
+
+describe('海外の機関の解析の重ね', () => {
+  it('MMI は USGS の凡例と同じ 9 段（I・II–III … X+）', () => {
+    const block = buildLegendBlocks(sources({ analysisMmi: 8.5 }), JA_MESSAGES).find(b => b.key === 'mmi')
+    expect(block?.title).toBe('推定の揺れ（MMI・USGS）')
+    if (block?.swatch.kind !== 'scale') throw new Error('段の凡例ではない')
+    expect(block.swatch.cells.map(c => c.label)).toEqual(['I', 'II–III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X+'])
+  })
+
+  it('すべりは 0 から最大（m）までの帯', () => {
+    const block = buildLegendBlocks(sources({ analysisSlip: 6.03 }), JA_MESSAGES).find(b => b.key === 'slip')
+    expect(block?.title).toBe('断層のすべり（m・USGS）')
+    if (block?.swatch.kind !== 'ramp') throw new Error('帯の凡例ではない')
+    expect(block.swatch.ticks.map(t => t.label)).toEqual(['0', '6.0 m'])
+    expect(block.swatch.stops[0].at).toBe(0)
+    expect(block.swatch.stops[block.swatch.stops.length - 1].at).toBe(1)
+  })
+
+  it('[対照] 重ねを出していなければ出さない', () => {
+    const keys = buildLegendBlocks(sources({ quakeIntensity: true }), JA_MESSAGES).map(b => b.key)
+    expect(keys).not.toContain('mmi')
+    expect(keys).not.toContain('slip')
   })
 })

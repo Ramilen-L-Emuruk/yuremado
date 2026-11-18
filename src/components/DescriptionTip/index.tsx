@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { computePlacement, tipMaxWidth, type TipPlacement } from './tipPlacement'
 
 /**
@@ -14,6 +14,20 @@ function rootFontPx(): number {
 
 function currentViewport() {
   return { width: window.innerWidth, height: window.innerHeight }
+}
+
+/**
+ * 吹き出しを収める範囲。既定は画面全体。
+ *
+ * 地図の上に乗る凡例などは、`data-tip-bounds` を持つ枠（地図の領域）の中に居る。地図の領域は
+ * 重なりの文脈を作るので、そこから出た吹き出しは隣のパネルの下に隠れる（凡例の「MMI」の吹き出しで、
+ * 右が約 20px 隠れた）。そうした基準は、その枠の右端・下端までに収める。
+ */
+function boundsFor(anchor: HTMLElement) {
+  const box = anchor.closest<HTMLElement>('[data-tip-bounds]')
+  if (!box) return currentViewport()
+  const r = box.getBoundingClientRect()
+  return { width: Math.min(window.innerWidth, r.right), height: Math.min(window.innerHeight, r.bottom) }
 }
 
 /**
@@ -34,7 +48,11 @@ function anchorRectFor(label: HTMLElement): DOMRect {
 
 interface Props {
   label: string
-  description: string
+  /**
+   * 吹き出しの中身。文のほか、図を添えた中身（解析の窓の断層の型の小図など）も渡せる。
+   * 文でない中身は描くたびに別の値になるので、開いている間の測り直しは文のときだけ中身の変化で行う
+   */
+  description: ReactNode
   /**
    * ラベルの字の色と大きさ（既定は設定の行の `text-white text-sm`）。点線の下線・押せる形はそのまま。
    * 設定の行でない所（地震カードの報の一覧の行など）で、周りの字に合わせるときに渡す。
@@ -59,7 +77,7 @@ export function DescriptionTip({ label, description, labelClassName = 'text-whit
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [pinned, setPinned] = useState(false)
-  const [placement, setPlacement] = useState<TipPlacement | null>(null)
+  const [placement, setPlacement] = useState<(TipPlacement & { maxWidth: number }) | null>(null)
   const anchorRef = useRef<HTMLButtonElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const tipId = useId()
@@ -93,10 +111,12 @@ export function DescriptionTip({ label, description, labelClassName = 'text-whit
     const anchor = anchorRef.current
     const tip = tipRef.current
     if (!anchor || !tip) return
-    const viewport = currentViewport()
+    const viewport = boundsFor(anchor)
     const maxWidth = tipMaxWidth(viewport.width, rootFontPx())
-    setPlacement(computePlacement(anchorRectFor(anchor), tip.offsetHeight, maxWidth, viewport))
-  }, [open, description])
+    setPlacement({ ...computePlacement(anchorRectFor(anchor), tip.offsetHeight, maxWidth, viewport), maxWidth })
+    // 図を添えた中身（文でない ReactNode）は描くたびに別の値になり、依存に入れると測るたびに描き直して止まらない。
+    // そのため文でない中身は、開いている間に変わっても測り直さない（開いたまま中身が変わる場面は、巻く・外を押すで閉じるので起きにくい）
+  }, [open, typeof description === 'string' ? description : null])
 
   // fixed 配置はスクロールに追従しないため、動いたら閉じる（追従させると基準の行が
   // 画面外へ出た後も吹き出しだけが残る）。capture で拾うのは、スクロールするのが
@@ -155,7 +175,8 @@ export function DescriptionTip({ label, description, labelClassName = 'text-whit
           style={{
             left: placement?.left ?? 0,
             top: placement?.top ?? 0,
-            maxWidth: tipMaxWidth(window.innerWidth, rootFontPx()),
+            // 収める範囲が画面より狭いとき（地図の領域の凡例）は、位置を決めたときの幅と同じ幅で折り返す
+            maxWidth: placement?.maxWidth ?? tipMaxWidth(window.innerWidth, rootFontPx()),
             // 位置が決まるまでは見せない。display:none にすると高さが測れなくなる。
             visibility: placement ? 'visible' : 'hidden',
           }}

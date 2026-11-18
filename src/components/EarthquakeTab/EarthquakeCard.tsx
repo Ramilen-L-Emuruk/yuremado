@@ -52,6 +52,9 @@ import { QuakeListRow, TileScaleLabel, quakeTileColors, orAboveWord, orAboveTile
 import { QuakeOpenPin } from './QuakeOpenPin'
 import { hasDomesticQuakeReport, quakeReplayStartMs } from '../../utils/quakeReplayStart'
 import { InternationalTsunamiText } from './InternationalTsunamiText'
+import { QuakeAnalysisSummary } from './QuakeAnalysis'
+import { analysisOverlayUrls, useQuakeAnalysis } from '../../hooks/useQuakeAnalysis'
+import type { AnalysisOverlayLayer } from '../../services/analysisOverlay'
 import { DisclosureCaret, Reveal, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
 import { quakeReportTimeline, formatTimelineTime } from '../../utils/quakeReportTimeline'
 import { quakeHistoryEntries, type QuakeHistoryEntry, type QuakeHistoryInputs } from '../../utils/quakeReportHistory'
@@ -587,6 +590,10 @@ interface Props {
   /** この地震の未入電の一覧を開いているか。 */
   unreceivedActive?: boolean
   onToggleUnreceived?: (eventKey: string) => void
+  /** この地震の解析の重ねで開いているもの（地図の「MMI（USGS）」「すべり」）。無ければ null */
+  analysisLayerActive: AnalysisOverlayLayer | null
+  onToggleAnalysisOverlay: (eventKey: string, layer: AnalysisOverlayLayer, url: string) => void
+  onSyncAnalysisOverlay: (eventKey: string, layer: AnalysisOverlayLayer, url: string | null) => void
   /**
    * 一覧の行をクリックしたときに、その場所へ地図を寄せる（1 点でも範囲でも）。観測点の行は観測点名も渡す
    * （座標が同じ観測点の吹き出しを取り違えないため。範囲の行は `null`）。
@@ -633,6 +640,8 @@ interface Props {
    * **再生中のカードにも出す**（2026-11-08 ユーザー選択「再生中も出す (Recommended)」）。
    */
   onReplay: (eventKey: string, firstReportMs: number | null) => void
+  /** リプレイ中か。解析を再生の時計までに公表された版へ絞る（→ `hooks/useQuakeAnalysis.ts`） */
+  replaying: boolean
 }
 
 /**
@@ -849,9 +858,9 @@ function InternationalTsunamiHeading() {
 export const EarthquakeCard = memo(function EarthquakeCard({
   isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
-  unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
+  unreceivedActive = false, onToggleUnreceived, analysisLayerActive, onToggleAnalysisOverlay, onSyncAnalysisOverlay, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView, showListDate,
-  quake: latestQuake, historyQuake = null, historyInputs = null, historyPickedId = null, onPickHistory, onReplay,
+  quake: latestQuake, historyQuake = null, historyInputs = null, historyPickedId = null, onPickHistory, onReplay, replaying,
 }: Props) {
   const q = useMessages().quake
   const f = useMessages().formats
@@ -870,6 +879,17 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   useEffect(() => { if (!selected) setCollapsed(false) }, [selected])
   useEffect(() => { if (reopenSignal !== 0) setCollapsed(false) }, [reopenSignal])
   const isSelected = selected && !collapsed
+  // 海外の機関と気象庁の解析。開いている間だけ問い合わせ、開くたびに取り直す。報の一覧で前の報を見ていても、問い合わせは最新の報で行う
+  const analysisView = useQuakeAnalysis(latestQuake, isSelected, replaying)
+  // 地図に重ねられる版（中身を取り終えた一番新しい版）。無ければ切り替えを出さない（2026-11-11 選択「地図の切り替えに足す」の「値が無い地震では出さない」）
+  const analysisUrls = useMemo(() => analysisOverlayUrls(analysisView), [analysisView])
+  // 開いている重ねの版を、いま出せる版に合わせる（新しい版が届いた・リプレイで版が戻った・答えが消えた）。
+  // 答えを読んでいる間（loading）は合わせない —— 開き直した直後に閉じてしまう
+  // カードを畳んでいる間は答えを持たない（問い合わせない）ので合わせない —— 畳んだだけで重ねが閉じないように
+  useEffect(() => {
+    if (!isSelected || !analysisLayerActive || analysisView.state === 'loading') return
+    onSyncAnalysisOverlay(eventKey, analysisLayerActive, analysisUrls[analysisLayerActive])
+  }, [isSelected, analysisLayerActive, analysisView.state, analysisUrls, eventKey, onSyncAnalysisOverlay])
   // 取消の覆いを動かすのは、取消でない姿を一度でも描いた後に取消が届いたときの最初の 1 回だけ
   // （開いたカードが取消で閉じた行へ替わると覆いが付け直されるので、2 回目は動かさない）
   const sawUncancelledRef = useRef(!quake.cancelledAt)
@@ -1529,10 +1549,20 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     // 国内の報を持たないカードは最初の報から始めるので、ホバーの文もそう書く（2026-11-08 ユーザー選択「最初の報の30秒前から (Recommended)」）
     const replayTitle = hasDomesticQuakeReport(latestQuake) ? q.replayHint : q.replayHintFirstReport
     const tileBg = getIntensityColor(maxScale)
-    const showObservedSeg = canDrawDistribution || !!lpgmShown
+    const showObservedSeg = canDrawDistribution || !!lpgmShown || analysisUrls.mmi !== null || analysisUrls.slip !== null
     const toObserved = () => {
       if (distributionActive) onToggleDistribution?.(eventKey)
       if (lpgmActiveHere && lpgm) onToggleLpgm?.(lpgm.eventId)
+      if (analysisLayerActive) {
+        const url = analysisUrls[analysisLayerActive]
+        // 版が無くなっていれば閉じる口へ回す（押して閉じる口は版を要る）
+        if (url) onToggleAnalysisOverlay(eventKey, analysisLayerActive, url)
+        else onSyncAnalysisOverlay(eventKey, analysisLayerActive, null)
+      }
+    }
+    const analysisSeg = (layer: AnalysisOverlayLayer, label: string) => {
+      const url = analysisUrls[layer]
+      return url !== null && segButton(label, analysisLayerActive === layer, () => onToggleAnalysisOverlay(eventKey, layer, url))
     }
     // 切り替えの 1 つ。カード全体は <button> ではないが、行の作法（`div role="button"`）に揃える。
     const segButton = (label: string, on: boolean, onClick: () => void, title?: string) => (
@@ -1812,6 +1842,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           </div>
         )}
 
+        <QuakeAnalysisSummary view={analysisView} title={epicenterLabel} />
+
         {/* 国際津波関連情報（WEPA60）。付加文の下に置き（2026-11-01 選択「それぞれ自分の欄を持つ (Recommended)」）、
             報ごとに見出しの行で開閉する。英文だけのカードでは初めから開き、地震情報のカードでは閉じて置く
             （2026-11-05 ユーザー発言「遠地地震とかはそれしか無いから開いていいけど、地震情報はほかに情報があるのに
@@ -1854,8 +1886,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="m-0 font-semibold text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{q.intensities}</h4>
             {showObservedSeg && (
-              <div className="ml-auto flex divide-x divide-border overflow-hidden rounded border border-border" style={{ fontSize: 'var(--qk-fs)' }}>
-                {segButton(q.segment.observed, !distributionActive && !lpgmActiveHere, toObserved)}
+              <div className="ml-auto flex max-w-full flex-wrap divide-x divide-border overflow-hidden rounded border border-border" style={{ fontSize: 'var(--qk-fs)' }}>
+                {segButton(q.segment.observed, !distributionActive && !lpgmActiveHere && !analysisLayerActive, toObserved)}
                 {canDrawDistribution && segButton(
                   distributionState === 'official' ? q.segment.official : q.segment.simple,
                   distributionActive,
@@ -1863,6 +1895,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   distributionState === 'official' ? q.segmentHint.official : q.segmentHint.simple,
                 )}
                 {lpgmShown && segButton(q.segment.lpgm, lpgmActiveHere, () => onToggleLpgm?.(lpgmShown.eventId))}
+                {analysisSeg('mmi', q.segment.mmi)}
+                {analysisSeg('slip', q.segment.slip)}
               </div>
             )}
           </div>

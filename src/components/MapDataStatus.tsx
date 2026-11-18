@@ -3,6 +3,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { subscribeDataLoadStatus, getDataLoadStatus } from '../utils/fetchJson'
 import { useMessages } from '../i18n/I18nProvider'
 import { mapDataFailureText } from '../utils/mapDataStatusText'
+import { getAnalysisOverlayFailure, subscribeAnalysisOverlayStatus } from '../services/analysisOverlay'
 
 /**
  * 「取得中」を出すまでの猶予（ミリ秒）。
@@ -42,18 +43,31 @@ export function MapDataStatus() {
   }, [hasPending])
 
   const failed = status.failed > 0
-  if (!failed && !pendingVisible) return null
+  // 地震カードの「MMI（USGS）」「すべり」で開いた重ねを取れなかった（下地のデータとは別の行。
+  // 2026-11-16 ユーザー選択「その帯に載せる (Recommended)」）
+  const analysisFailure = useSyncExternalStore(subscribeAnalysisOverlayStatus, getAnalysisOverlayFailure, getAnalysisOverlayFailure)
+  const showData = failed || pendingVisible
+  if (!showData && !analysisFailure) return null
 
   return (
-    <div
-      className={`bg-panel/90 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 ${
-        failed ? 'text-amber-300' : 'text-secondary'
-      }`}
-    >
-      {/* 取り直しは取得口（`utils/fetchJson.ts`）が 30 秒から倍々で 5 回行い、諦めたら再読み込みを促す。
-          主節を言い切りで止めて 1 行へ収める形は、地震タブの通知に揃えてある
-          （→ `utils/telegramLoss.ts` の `formatHistoryLossNotice`）。 */}
-      <Marquee text={(failed ? mapDataFailureText(status.failures, t) : t.loadingData) ?? ''} />
-    </div>
+    <>
+      {showData && (
+        <div
+          className={`bg-panel/90 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 ${
+            failed ? 'text-amber-300' : 'text-secondary'
+          }`}
+        >
+          {/* 取り直しは取得口（`utils/fetchJson.ts`）が 30 秒から倍々で 5 回行い、諦めたら再読み込みを促す。
+              主節を言い切りで止めて 1 行へ収める形は、地震タブの通知に揃えてある
+              （→ `utils/telegramLoss.ts` の `formatHistoryLossNotice`）。 */}
+          <Marquee text={(failed ? mapDataFailureText(status.failures, t) : t.loadingData) ?? ''} />
+        </div>
+      )}
+      {analysisFailure && (
+        <div className="bg-panel/90 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 text-amber-300">
+          <Marquee text={t.analysisOverlayFailed(analysisFailure.layer)} />
+        </div>
+      )}
+    </>
   )
 }

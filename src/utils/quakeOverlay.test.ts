@@ -6,6 +6,7 @@ import {
   closeLpgmOverlay, closeEewLpgmOverlay, closeUnreceivedOverlay, closeUnreceivedOverlayFor,
   closeDistributionOverlayOnQuakeReport,
   decideUnreceivedSpeechOpen, shouldCloseOverlayOnSelection,
+  toggleAnalysisOverlay, syncAnalysisOverlay, closeAnalysisOverlay,
 } from './quakeOverlay'
 import type { TabId } from '../components/IconNav'
 
@@ -371,5 +372,51 @@ describe('openLpgmOverlay', () => {
 
   it('安全弁: 別の追加表示を開いていれば、そちらは閉じて長周期へ移る', () => {
     expect(openLpgmOverlay(distribution('k1'), 'e1', 'earthquake')).toEqual(lpgm('e1'))
+  })
+})
+
+describe('解析の重ね（MMI・すべり）も同じ排他に乗る', () => {
+  const mmi = (k: string, url = 'u1'): QuakeOverlay => ({ kind: 'analysis', layer: 'mmi', eventKey: k, url })
+  const slip = (k: string, url = 'u2'): QuakeOverlay => ({ kind: 'analysis', layer: 'slip', eventKey: k, url })
+
+  it('正: 閉じていれば開き、他の追加表示は閉じる', () => {
+    expect(toggleAnalysisOverlay(null, 'k1', 'mmi', 'u1')).toEqual(mmi('k1'))
+    expect(toggleAnalysisOverlay(unreceived('k1'), 'k1', 'mmi', 'u1')).toEqual(mmi('k1'))
+    expect(toggleAnalysisOverlay(lpgm('e1'), 'k1', 'slip', 'u2')).toEqual(slip('k1'))
+  })
+
+  it('同じ地震の同じ重ねを押すと閉じる（版が違っても）', () => {
+    expect(toggleAnalysisOverlay(mmi('k1'), 'k1', 'mmi', 'u9')).toBeNull()
+  })
+
+  it('対照: 重ねの種類か地震が違えば切り替える', () => {
+    expect(toggleAnalysisOverlay(mmi('k1'), 'k1', 'slip', 'u2')).toEqual(slip('k1'))
+    expect(toggleAnalysisOverlay(mmi('k1'), 'k2', 'mmi', 'u1')).toEqual(mmi('k2'))
+  })
+
+  it('版に合わせる: 新しい版へ差し替え、ファイルが無くなれば閉じる', () => {
+    expect(syncAnalysisOverlay(mmi('k1'), 'k1', 'mmi', 'u3')).toEqual(mmi('k1', 'u3'))
+    expect(syncAnalysisOverlay(mmi('k1'), 'k1', 'mmi', null)).toBeNull()
+    const same = mmi('k1')
+    expect(syncAnalysisOverlay(same, 'k1', 'mmi', 'u1')).toBe(same)
+  })
+
+  it('安全弁: 別の地震・別の種類・他の追加表示は版合わせで触らない', () => {
+    const other = mmi('k2')
+    expect(syncAnalysisOverlay(other, 'k1', 'mmi', null)).toBe(other)
+    const s = slip('k1')
+    expect(syncAnalysisOverlay(s, 'k1', 'mmi', null)).toBe(s)
+    const u = unreceived('k1')
+    expect(syncAnalysisOverlay(u, 'k1', 'mmi', null)).toBe(u)
+    expect(closeAnalysisOverlay(u)).toBe(u)
+    expect(closeAnalysisOverlay(mmi('k1'))).toBeNull()
+  })
+
+  it('記録: MMI からすべりへは閉じる・開くの 2 件、同じ重ねの版の差し替えは 0 件', () => {
+    expect(quakeOverlayChangeLog(mmi('k1'), slip('k1'))).toEqual([
+      { overlay: 'analysis', open: false, subject: 'k1' },
+      { overlay: 'analysis', open: true, subject: 'k1' },
+    ])
+    expect(quakeOverlayChangeLog(mmi('k1', 'u1'), mmi('k1', 'u3'))).toEqual([])
   })
 })

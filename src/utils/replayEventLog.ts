@@ -248,6 +248,8 @@ export interface ReplayOverlayEvent extends ReplayEventCommon {
     | 'unreceived'
     /** 長周期地震動の一覧。 */
     | 'lpgm'
+    /** 海外の機関の解析の地図の重ね（USGS の推定の揺れ・断層のすべり）。 */
+    | 'analysis'
     /** 気象庁が書いた文の表示。 */
     | 'telegramText'
     /** 特別情報のためのパネル展開。 */

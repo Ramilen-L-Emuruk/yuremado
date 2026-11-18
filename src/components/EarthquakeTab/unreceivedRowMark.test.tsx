@@ -100,7 +100,7 @@ const renderTab = async (quake: JMAQuake) => {
     historyView={null}
     onPickHistory={() => {}}
     onReplayQuake={() => {}}
-    replayError={null}
+    replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
   />,
   )
   await flushDataEffects()

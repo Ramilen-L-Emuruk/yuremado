@@ -55,6 +55,10 @@ const mapMode = mapTab === 'tsunami' ? 'tsunami'
 **複数のレイヤーで使い回すファクトリは自分のインターフェースへ `id: MapLayerId` を直接持たせる**
 （`gl/depthPointLayer.ts` の `DepthPointLayer` がその形。4 枚がこれを共有する）。
 
+**海外の機関と気象庁の解析の重ね**（計画書 項目 98。描くのは `AnalysisOverlayGL`）の 3 層は、震度の層と同時には出ない（重ねを開いている間は震度の層を引っ込める。→ [`quake-spec.md`](quake-spec.md) §8「海外の機関と気象庁の解析」）。置き場所の理由は次のとおり。
+- `analysis-slip-fill`・`analysis-slip-line`（断層のすべり）は、推計震度分布図と同じく県境（`sub-borders`・`pref-borders`）より背面に置く。面なので、県境が上に見えるように
+- `analysis-mmi-line`（推定の揺れの等値線）は、区域の塗りより前面・県境より前面・プレート境界線（`plate-boundaries`）と活断層線（`active-faults`）より背面に置く。線なので県境に埋もれさせない。震度の点とラベルより背面
+
 **カスタムレイヤーの注意**: MapLibre の `type: 'custom'` レイヤーは `getStyle().layers` に現れない。
 順序確認は `map.style._order` を見る。現状は 8 つ——`kyoshin-subthreshold`・`pswave`・
 `quake-estimated-intensity`・`day-night` と、`gl/depthPointLayer.ts` を共有する
@@ -1277,6 +1281,7 @@ mode は 4 つ（`quake` / `tsunami` / `kyoshin` / `catalog`。§2）。**全モ
 - `QuakeIntensityPointsGL`（観測点ドット）
 - `QuakeUnreceivedPointsGL`（震度が届いていない観測点の印。観測点ドットとは出す条件が 1 つ違い、
   未入電トグルを開いている間は寄り具合に関わらず出す → [`quake-spec.md`](quake-spec.md) §4）
+- `AnalysisOverlayGL`（海外の機関と気象庁の解析の重ね。USGS の推定の揺れ（MMI の等値線）と断層のすべりの区画。重ねを開いている間だけ中身を出す。開いている間は上の区域塗り・観測点・震度の面・推計震度分布・未入電を引っ込める（`JapanMapGL.tsx` の `analysisMode`）→ [`quake-spec.md`](quake-spec.md) §8「海外の機関と気象庁の解析」）
 - `LpgmPointsGL` / `LpgmRegionFillGL`（長周期。観測点の吹き出しは周期ごとの内訳を、
   区域の印の吹き出しはその区域の観測点を並べる。内訳の行の中身と見出しの文はカードの観測点の行と共有する（`lpgmPeriodRows`）→
   [`quake-spec.md`](quake-spec.md) §8「長周期地震動は「どの周期帯が強く出たか」まで出す」）
@@ -3355,6 +3360,10 @@ canvas source へ視野ぶんだけ焼いていた頃は、2 つの限界があ�
 - **半透明で添えるだけの描画物は、主役として扱うモードのときだけ出す。** 予報円と EEW 震源の
   ×印は全モードで描かれるが、リアルタイム震度モード以外では薄く敷いてある（`fullOpacity`）。
   ×印を凡例に入れていないので、予報円もそのモードに限る —— 片方だけ枠を取ると釣り合わない
+- **海外の機関と気象庁の解析の重ね**（`analysisMmi`・`analysisSlip`）は、重ねを開いて取れた間だけ出す。MMI は USGS の凡例と同じ 9 段（I・II–III・IV・V・VI・VII・VIII・IX・X+）、すべりは 0 から最大すべりまでの色の帯（5 色の点を補間）。重ねを開いている間は震度の凡例（`quakeIntensity`・`unreceived`）を出さない（`JapanMapGL` の `legendSources`）。
+  **MMI の見出しは、「MMI」の語が USGS の説明の吹き出しを持つ**（`quake.analysis.tips.mmi`。USGS「The Modified Mercalli Intensity Scale」の原文 3 文の直訳。2026-11-18 ユーザー選択「原文 3 文」）。
+  MMI が 1 つ目のブロックのとき（震度の凡例が出ない重ねの間は通常そうなる。長周期の凡例が同時に出る場面では 2 つ目以降になり、その見出しは開閉を兼ねない `div` の中に「MMI」の語が入る）、その見出しは行全体を開閉に使わず、**右端の ▾ だけを開閉のボタン**にする（ボタンの中にボタンを入れない。2026-11-18 ユーザー選択「見出しの文字は開閉に使わず、▾だけを開閉ボタンにする」）。畳んだ凡例の短い名前「MMI」は行全体が開閉のままで、吹き出しは付けない（開いたときだけ出る）。
+  日本語の 1 文目の語「MM震度」は作った形（気象庁 FAQ の「MM震度階による震度」を縮めた。単独の公的な用例は未測定。2026-11-18 ユーザー発言「じゃあ1文目はMM震度と呼ばれる。でどう。」）。「震度◯相当」は出さない（気象庁 FAQ「MM震度階（改正メルカリ震度階）と気象庁震度階級はどのように対応するのですか？」が「現在では、１対１に対応づけることは難しくなっています」と答えている。手法で最大 1.6 ずれるという報告は検索の要約で見ただけで、原典は読んでいない）
 
 **並べる順だけはモードで決める**（`MapLegendSources.primary`・実体は `JapanMapGL` の
 `LEGEND_PRIMARY_BY_MODE`）。いま見ている画面の主役を先頭へ寄せ、残りの相対順は崩さない。
@@ -4105,4 +4114,6 @@ canvas source へ視野ぶんだけ焼いていた頃は、2 つの限界があ�
 - 2026-11-09: §4「下地を地図の控えへ載せる」に、配信版と比べた実測を足した
 - 2026-11-13: §5 のラベルを、英語・ポルトガル語・スペイン語では県名・区域名の訳で描くようにした（焼く字に訳の字を足した。`public/fonts/M PLUS Rounded 1c/` の全ファイルの合計が 228,202→233,203 バイト）。重なりの判定の幅の見積もりに半角の字と折り返しを入れた
 - 2026-11-15: §5 のラベルを、中国語（簡体・繁体）と韓国語でも県名・区域名の訳で描くようにした。訳は言語ごとの組（Noto Sans SC / TC / KR Black）で焼き、訳の無い名前は M PLUS の組で描く（ラベルごとに `text-font` を選ぶ）。中韓の組 3 つの全ファイルの合計は 552,955 バイト
+- 2026-11-15: §3・§7・§20 に海外の機関と気象庁の解析の重ね（`AnalysisOverlayGL`・層 `analysis-slip-fill`・`analysis-slip-line`・`analysis-mmi-line`・凡例 `analysisMmi`・`analysisSlip`）を足した（計画書 項目 98）
 - 2026-11-16: §6 に「地図の大きさが変わったら、最後の自動フィットをやり直す」を足した。寄り上限を関数でも渡せるようにした（`ZoomCap`）
+- 2026-11-18: §20 の MMI の凡例の見出しに、「MMI」の語へ USGS の説明の吹き出しを付けた。1 つ目のブロックになる MMI の見出しは、行全体でなく右端の ▾ だけを開閉にした。吹き出しは `data-tip-bounds` を持つ枠（地図の領域）の右端・下端に収める（地図の領域は重なりの文脈を作るので、収めないと右のパネルの下に隠れた）

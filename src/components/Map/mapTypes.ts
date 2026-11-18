@@ -8,6 +8,7 @@ import type { ObsUpdateMark } from '../../utils/tsunami'
 import type { MapLegendSources } from '../MapLegend/legendBlocks'
 import type { LatLng } from '../../utils/stationCoords'
 import type { PublicStationMarker } from './PublicStationMarkersGL'
+import type { AnalysisOverlayLayer } from '../../services/analysisOverlay'
 
 // 地図コンポーネントの契約（Props とモード）の単一情報源。
 // Leaflet 版 JapanMap と MapLibre 版 JapanMapGL、両者を出し分ける MapView が
@@ -97,6 +98,11 @@ export interface JapanMapProps {
    * 出すと既定の画では一度も出ない。
    */
   unreceivedMode?: boolean
+  /**
+   * 海外の機関の解析の重ね（地震カードの「MMI（USGS）」「すべり」）。**表示中の地震のものだけ**を渡すこと。
+   * 開いている間は震度の表現を引っ込め、取ったファイル（`services/analysisOverlay.ts`）を重ねる
+   */
+  analysisOverlay: { layer: AnalysisOverlayLayer; url: string } | null
   /**
    * 気象庁の推計震度分布図（IXAC41）。**表示中の地震のものだけ**を渡すこと
    * （引き当ては `estimatedIntensityFor`）。渡すと自前の面の代わりにこちらを敷く。

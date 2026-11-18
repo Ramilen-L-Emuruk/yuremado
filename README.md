@@ -15,6 +15,7 @@ React + TypeScript + MapLibre GL JS で構築されています。
 ## 主な機能
 
 - **地震情報**: 過去の地震カード・観測点別震度・区域塗り・震源マーカーを地図に表示
+- **海外の解析**: 国内の地震カードに、USGS・EMSC・GEOFON と気象庁の解析（発震機構・Mw・被害の見込み・断層のすべり）を添え、推定の揺れ（MMI）とすべりを地図に重ねられます
 - **緊急地震速報（EEW）**: 発報時に予報円・震源・警報区域を表示、気象庁が発表した地域ごとの主要動到達予測をカウントダウン
 - **津波情報**: 大津波警報・警報・注意報・予報を海岸線に色分け、観測情報も併記
 - **リアルタイム震度**: 各地の震度を毎秒更新、震源非依存の揺れ検知エンジン付き
@@ -111,6 +112,8 @@ MIT License（[LICENSE](LICENSE)）。
 
 **データ・地図・フォントの出典**:
 - 地震情報・緊急地震速報・津波情報: 気象庁 — 配信は [DMDATA.JP](https://dmdata.jp/)（開発者が運営する配信サーバーが中継。緊急地震速報の予報は API キーを入れた端末が直接受信）
+- 海外の機関の解析: U.S. Geological Survey（USGS）・EMSC（[SeismicPortal](https://www.seismicportal.eu/)）・GFZ GEOFON（[GEOFON](https://geofon.gfz.de/eqinfo/)）。EMSC と GEOFON の震源は CC BY 4.0（[EMSC の利用条件](https://www.seismicportal.eu/terms.html)・[GEOFON の FAQ](https://geofon.gfz.de/eqinfo/faq/)）
+- 発震機構解（CMT 解・初動解）: 気象庁
 - 公開観測点の波形: 気象庁（JP 網）— 配信は [EarthScope](https://www.earthscope.org/)（NSF NGF）経由（[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja)）
 - 地図データ: 「気象庁 予報区等 GIS データ（都道府県・地震情報／細分区域・津波予報区）」 — GeoJSON 化: [Ichihai1415/JMA-GIS-GeoJSON](https://github.com/Ichihai1415/JMA-GIS-GeoJSON)（CC BY 4.0）
 - 震央地名: 気象庁「地震情報で用いる震央地名」「多言語辞書データ」 — データ整備: [0Quake/JMA_Region](https://github.com/0Quake/JMA_Region)（CC0 1.0）

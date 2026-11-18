@@ -107,7 +107,7 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
     historyView={null}
     onPickHistory={() => {}}
     onReplayQuake={() => {}}
-    replayError={null}
+    replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
   />,
   )
   await flushDataEffects()
@@ -189,7 +189,7 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
         historyView={null}
         onPickHistory={() => {}}
         onReplayQuake={() => {}}
-        replayError={null}
+        replayError={null} replaying={false} analysisOverlay={null} onToggleAnalysisOverlay={() => {}} onSyncAnalysisOverlay={() => {}}
       />,
     )
     expect(findIntensityRow(STATION)).toBeDefined()

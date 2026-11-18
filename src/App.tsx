@@ -110,12 +110,14 @@ import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/e
 import { quakeHistoryEntries, quakeHistoryView, type QuakeHistoryInputs } from './utils/quakeReportHistory'
 import {
   type QuakeOverlay, toggleLpgmOverlay, toggleDistributionOverlay, toggleUnreceivedOverlay,
+  toggleAnalysisOverlay, syncAnalysisOverlay, closeAnalysisOverlay,
   openDistributionOverlay, openLpgmOverlay,
   closeLpgmOverlay, closeEewLpgmOverlay, closeUnreceivedOverlay, closeUnreceivedOverlayFor,
   closeDistributionOverlayOnQuakeReport,
   decideUnreceivedSpeechOpen, shouldCloseOverlayOnSelection, type UnreceivedOpenResult,
   quakeOverlayChangeLog,
 } from './utils/quakeOverlay'
+import { analysisOverlayFailedFor, retryAnalysisOverlay, type AnalysisOverlayLayer } from './services/analysisOverlay'
 import { findEndedTsunami, isTsunamiForecastOnly, tsunamiOverallGrade } from './utils/tsunami'
 import {
   passesQuakeListFilter, quakeListFilterOf, quakeListFilterSettings, quakeListSortOf, keepIfSame, withLatestPinned, wantsAttachedTypes, quakeListMatchedCount,
@@ -433,6 +435,7 @@ export function App() {
   const activeLpgmSource = quakeOverlay?.kind === 'lpgm' ? quakeOverlay.source : null
   const distributionQuakeKey = quakeOverlay?.kind === 'distribution' ? quakeOverlay.eventKey : null
   const unreceivedQuakeKey = quakeOverlay?.kind === 'unreceived' ? quakeOverlay.eventKey : null
+  const analysisOverlay = quakeOverlay?.kind === 'analysis' ? quakeOverlay : null
   // 子タブ（React.memo 化済み）へ props として渡すため useCallback で参照を安定化する
   // （毎レンダー再生成すると memo が破られる）。
   //
@@ -548,6 +551,21 @@ export function App() {
     selectQuake(eventKey)
     applyQuakeOverlay(prev => toggleUnreceivedOverlay(prev, eventKey), '未入電のボタン')
   }, [selectQuake])
+  // 解析の重ね（MMI・すべり）のボタン。重ねるファイルの版はカードが解析の答えから選んで渡す（App は答えを持たない）
+  const toggleAnalysis = useCallback((eventKey: string, layer: AnalysisOverlayLayer, url: string) => {
+    selectQuake(eventKey)
+    // 開いていて取れなかった重ねを押し直したときは、閉じずに取り直す（地図左上の帯の「押し直すと取り直します」。
+    // 2026-11-16 ユーザー選択「その帯に載せる (Recommended)」）
+    if (analysisOverlayFailedFor(url)) {
+      retryAnalysisOverlay(url)
+      return
+    }
+    applyQuakeOverlay(prev => toggleAnalysisOverlay(prev, eventKey, layer, url), layer === 'mmi' ? 'MMI のボタン' : 'すべりのボタン')
+  }, [selectQuake])
+  // 開いている重ねを、カードが今出せる版に合わせる（新しい版が届いた・ファイルが無くなった）
+  const syncAnalysis = useCallback((eventKey: string, layer: AnalysisOverlayLayer, url: string | null) => {
+    applyQuakeOverlay(prev => syncAnalysisOverlay(prev, eventKey, layer, url), '解析の重ねの版が変わった')
+  }, [])
   // EEW カードから長周期の表示を閉じる。**分布は触らない** —— 排他なので開いていないが、
   // この操作の意味は「長周期を閉じる」であって追加表示すべてではない。
   const deactivateLpgm = useCallback(() => {
@@ -1198,7 +1216,7 @@ export function App() {
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateAnalysisQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
@@ -1333,6 +1351,7 @@ export function App() {
     borrowFromTsunami: simulateHypocenterFromTsunami,
     magnitudeFromTsunami: simulateMagnitudeFromTsunami,
     unreceivedQuake:   simulateUnreceivedQuake,
+    analysisQuake:     simulateAnalysisQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
     areaUnreceivedQuake: simulateAreaUnreceivedQuake,
     tsunamiGradeChange: simulateTsunamiGradeChange,
@@ -1359,7 +1378,7 @@ export function App() {
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateAnalysisQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     settings.notifyEnabled, messages,
@@ -1805,6 +1824,13 @@ export function App() {
     if (target?.points.some(p => p.unreceived && p.addr)) return
     applyQuakeOverlay(closeUnreceivedOverlay, '未入電の地点が無くなった')
   }, [filteredEarthquakes, unreceivedQuakeKey])
+  // 解析の重ねは、重ねている地震のカードが一覧から消えたら閉じる（カードが無いと押して閉じられない）
+  const analysisQuakeKey = analysisOverlay?.eventKey ?? null
+  useEffect(() => {
+    if (!analysisQuakeKey) return
+    if (filteredEarthquakes.some(q => quakeEventKey(q) === analysisQuakeKey)) return
+    applyQuakeOverlay(closeAnalysisOverlay, '解析の重ねの地震が一覧から消えた')
+  }, [filteredEarthquakes, analysisQuakeKey])
 
   // cancelledAt（10秒表示中）の EEW は地図・挙動系から除外する
   const activeEEWsNoCancelled = useMemo(
@@ -3029,6 +3055,15 @@ export function App() {
   // 未入電の印を寄り具合に関わらず出すか。**地図が出している地震のものだけ**を見る
   // （分布モードと同じ理由）。
   const mapUnreceivedMode = !!mapQuake && unreceivedQuakeKey === quakeEventKey(mapQuake)
+  // 解析の重ねも、地図が出している地震のものだけを渡す。地震の参照ではなく鍵で見る
+  // （続報で参照が変わるたびに作り直すと、地図が重ねのファイルを取り直す）
+  const mapQuakeKey = mapQuake ? quakeEventKey(mapQuake) : null
+  const mapAnalysisOverlay = useMemo(
+    () => (analysisOverlay && analysisOverlay.eventKey === mapQuakeKey
+      ? { layer: analysisOverlay.layer, url: analysisOverlay.url }
+      : null),
+    [analysisOverlay, mapQuakeKey],
+  )
 
   // 未入電を声に出しているあいだだけ未入電モードを開く（→ `useUnreceivedSpeechFollow`）。
   //
@@ -3426,6 +3461,7 @@ export function App() {
                 lpgm={(mapHistoryView && activeLpgm && activeLpgm.eventId === extractQuakeEventId(mapHistoryView.quake) ? mapHistoryView.lpgm : activeLpgm) ?? undefined}
                 distributionMode={mapDistributionMode}
                 unreceivedMode={mapUnreceivedMode}
+                analysisOverlay={mapAnalysisOverlay}
                 estimatedIntensity={mapEstimatedIntensity}
                 iconScale={settings.mapIconScale}
                 recording={settings.recordingMode}
@@ -3510,7 +3546,7 @@ export function App() {
                 下限を子の下限の合計に合わせ続けなければならず、子が空でも高さを取る。
                 下限は各コンポーネントが自分の外枠に値で書く（`min-height` を書かない子は中身の高さで
                 止まって縮まず、`min-h-0` の子は見出しまで潰れる）。 */}
-            <div className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
+            <div data-tip-bounds className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
               {actionChecklist.state && !checklistOverlay && (
                 <ActionChecklist
                   reason={actionChecklist.state.reason}
@@ -3702,10 +3738,14 @@ export function App() {
                 onReplayQuake={replayQuakeFromCard}
                 // 再生中だけ渡す。弾かれた開始（範囲外）はライブのまま知らせだけが残り、消す口が地震タブに無いため
                 replayError={replayTimeOffset !== null ? replay.error : null}
+                replaying={replayTimeOffset !== null}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}
                 onToggleUnreceived={toggleUnreceived}
+                analysisOverlay={analysisOverlay}
+                onToggleAnalysisOverlay={toggleAnalysis}
+                onSyncAnalysisOverlay={syncAnalysis}
                 onFocusMap={focusMapTarget}
                 speakingTelegramTextSubject={speakingTelegramTextSubject}
                 seismoWaves={quakeWaves}
