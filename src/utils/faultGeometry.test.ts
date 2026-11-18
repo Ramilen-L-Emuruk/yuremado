@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  SLIP_LOOP_MS, SLIP_SHIFT, add, axisVector, blockFaces, clipPolygon, cross, dot, faultFrame, fromScreen, initialView, scale, slipProgress, toScreen, unit, visibleFaces, isDrawableAxis, isDrawablePlane, lowerHemisphereVisibility,
+  BLOCK_CENTRE, SLIP_LOOP_MS, SLIP_SHIFT, add, axisVector, blockFaces, clipPolygon, cross, dot, faultFrame, fromScreen, initialView, scale, slipProgress, toScreen, unit, visibleFaces, isDrawableAxis, isDrawablePlane, lowerHemisphereVisibility,
   type Vec3,
 } from './faultGeometry'
 
@@ -184,12 +184,47 @@ describe('blockFaces', () => {
     })
   })
 
-  it('ずれる前は、上盤の面がすべて断層面の上盤の側にある（対照）', () => {
+  it('ずれる前は、上盤の面がすべて断層面（箱の中心を通る）の上盤の側にある（対照）', () => {
     for (const f of blockFaces(frame, 0)) {
-      const side = f.points.map(p => dot(p, frame.normal))
+      const side = f.points.map(p => dot(add(p, scale(BLOCK_CENTRE, -1)), frame.normal))
       if (f.kind === 'cut') side.forEach(s => expect(Math.abs(s)).toBeLessThan(1e-9))
       else if (f.moving) side.forEach(s => expect(s).toBeGreaterThanOrEqual(-1e-9))
       else side.forEach(s => expect(s).toBeLessThanOrEqual(1e-9))
+    }
+  })
+
+  it('傾いた断層面は箱（立体）の中心を通り、上面の割れ目は上面の真ん中からずれる（正）', () => {
+    const cut = blockFaces(frame, 0).find(f => f.kind === 'cut' && !f.moving)!
+    // 中心は切り口の平面の上にある
+    cut.points.forEach(p => expect(Math.abs(dot(add(p, scale(BLOCK_CENTRE, -1)), frame.normal))).toBeLessThan(1e-9))
+    // 上面（深さ 0）での割れ目の点は、上面の真ん中（原点）を通る線から離れている
+    const onTop = cut.points.filter(p => Math.abs(p[2]) < 1e-9)
+    expect(onTop.length).toBeGreaterThanOrEqual(2)
+    onTop.forEach(p => expect(Math.abs(dot(p, frame.normal))).toBeGreaterThan(0.1))
+  })
+
+  it('垂直な断層面は、中心を通しても上面の真ん中を通ったまま（対照）', () => {
+    const vertical = faultFrame({ strike: 20, dip: 90, rake: 0 })
+    const cut = blockFaces(vertical, 0).find(f => f.kind === 'cut' && !f.moving)!
+    const onTop = cut.points.filter(p => Math.abs(p[2]) < 1e-9)
+    expect(onTop.length).toBeGreaterThanOrEqual(2)
+    onTop.forEach(p => expect(Math.abs(dot(p, vertical.normal))).toBeLessThan(1e-9))
+  })
+
+  it('どの向きの節面でも、切り口と 2 つの塊が欠けず、切り口は箱の中に収まる（安全弁）', () => {
+    const inBox = (p: Vec3) => Math.abs(p[0]) <= 1 + 1e-9 && Math.abs(p[1]) <= 1 + 1e-9 && p[2] >= -1e-9 && p[2] <= BLOCK_CENTRE[2] * 2 + 1e-9
+    for (let strike = 0; strike < 360; strike += 30) {
+      for (const dip of [0, 1, 45, 89, 90]) {
+        for (const rake of [-180, 0, 90, 180]) {
+          const faces = blockFaces(faultFrame({ strike, dip, rake }), 0)
+          const cuts = faces.filter(f => f.kind === 'cut')
+          expect(cuts.filter(f => f.moving)).toHaveLength(1)
+          expect(cuts.filter(f => !f.moving)).toHaveLength(1)
+          cuts.forEach(c => c.points.forEach(p => expect(inBox(p)).toBe(true)))
+          expect(faces.some(f => f.moving && f.kind !== 'cut')).toBe(true)
+          expect(faces.some(f => !f.moving && f.kind !== 'cut')).toBe(true)
+        }
+      }
     }
   })
 

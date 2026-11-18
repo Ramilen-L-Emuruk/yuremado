@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMessages } from '../../i18n/I18nProvider'
 import type { NodalPlane, PrincipalAxes } from '../../services/relayAnalysis'
 import {
-  BLOCK_DEPTH, add, axisVector, blockFaces, clampPitch, cross, dot, faultFrame, initialView, isDrawableAxis, isDrawablePlane, scale, slipProgress,
+  BLOCK_CENTRE, add, axisVector, blockFaces, clampPitch, cross, dot, faultFrame, initialView, isDrawableAxis, isDrawablePlane, scale, slipProgress,
   lowerHemisphereVisibility, toScreen, unit, visibleFaces, type HemisphereVisibility, type Vec3, type ViewAngles,
 } from '../../utils/faultGeometry'
 import { PULL, PUSH, momentTensor } from './Beachball'
@@ -353,7 +353,7 @@ function drawBlock(c: HTMLCanvasElement, cssWidth: number, d: Data, view: ViewAn
   g.clearRect(0, 0, size, size)
   const fr = faultFrame(d.planes[d.plane])
   const P = (v: Vec3): [number, number, number] => {
-    const s = toScreen([v[0], v[1], v[2] - BLOCK_DEPTH / 2], view)
+    const s = toScreen([v[0] - BLOCK_CENTRE[0], v[1] - BLOCK_CENTRE[1], v[2] - BLOCK_CENTRE[2]], view)
     return [centre + s[0] * S, centre - s[1] * S, s[2]]
   }
   for (const face of visibleFaces(blockFaces(fr, progress), fr, view)) {
@@ -369,13 +369,13 @@ function drawBlock(c: HTMLCanvasElement, cssWidth: number, d: Data, view: ViewAn
     g.lineWidth = dpr
     g.stroke()
   }
-  // 上盤のすべる向き（箱の上に浮かべる）
-  const a0v = scale(fr.dip, 0.45)
+  // 上盤のすべる向き（断層面の上、矢印の中点を箱の中心に置く。縦ずれでも箱の上面・底面を越えない）
+  const a0v = add(BLOCK_CENTRE, scale(fr.slip, -0.275))
   const a0 = P(a0v), a1 = P(add(a0v, scale(fr.slip, 0.55)))
   arrow(g, a0[0], a0[1], a1[0], a1[1], SLIP, dpr)
   // 力のかかった向き: P 軸は両側から押す（内向き）、T 軸は両側へ引く（外向き）。取得した軸があるときだけ
   if (d.axes) {
-    const centreV: Vec3 = [0, 0, BLOCK_DEPTH / 2]
+    const centreV = BLOCK_CENTRE
     for (const [ax, inward, col, text] of [[axisVector(d.axes.p), true, AXIS_P, d.words.p], [axisVector(d.axes.t), false, AXIS_T, d.words.t]] as const) {
       for (const sg of [1, -1]) {
         const far = add(centreV, scale(ax, sg * 1.45)), near = add(centreV, scale(ax, sg * 1.05))
