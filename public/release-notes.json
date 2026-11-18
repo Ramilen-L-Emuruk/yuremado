@@ -1,6 +1,98 @@
 {
   "versions": [
     {
+      "version": "7.0.0",
+      "date": "2026-11-18",
+      "added": [
+        {
+          "text": "読み上げを画面の言語（英語・中国語・韓国語・ポルトガル語・スペイン語）で読む機能を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added reading aloud in the screen language (English, Chinese, Korean, Portuguese and Spanish)",
+            "zh-Hans": "新增以画面语言（英语、中文、韩语、葡萄牙语、西班牙语）朗读的功能",
+            "zh-Hant": "新增以畫面語言（英語、中文、韓語、葡萄牙語、西班牙語）朗讀的功能",
+            "ko": "화면 언어(영어·중국어·한국어·포르투갈어·스페인어)로 음성 읽기 기능 추가",
+            "pt-BR": "Adicionada a leitura em voz alta no idioma da tela (inglês, chinês, coreano, português e espanhol)",
+            "es": "Se añadió la lectura en voz alta en el idioma de la pantalla (inglés, chino, coreano, portugués y español)"
+          }
+        },
+        {
+          "text": "地震カードに海外の機関（USGS・EMSC・GEOFON）と気象庁の解析を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added analyses from overseas agencies (USGS, EMSC, GEOFON) and JMA to earthquake cards",
+            "zh-Hans": "地震卡片新增海外机构（USGS、EMSC、GEOFON）与日本气象厅的分析",
+            "zh-Hant": "地震卡片新增海外機構（USGS、EMSC、GEOFON）與日本氣象局的分析",
+            "ko": "지진 카드에 해외 기관(USGS·EMSC·GEOFON)과 일본 기상청의 해석 추가",
+            "pt-BR": "Adicionadas aos cartões de terremoto as análises de agências estrangeiras (USGS, EMSC, GEOFON) e da JMA",
+            "es": "Se añadieron a las tarjetas de terremoto los análisis de agencias extranjeras (USGS, EMSC, GEOFON) y de la JMA"
+          }
+        },
+        {
+          "text": "解析の窓に震源球と断層のずれの 3D 表示を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added a 3D view of the beachball and fault slip to the analysis window",
+            "zh-Hans": "分析窗口新增沙滩球与断层错动的 3D 显示",
+            "zh-Hant": "分析視窗新增沙灘球與斷層錯動的 3D 顯示",
+            "ko": "해석 창에 비치볼과 단층 미끄러짐 3D 표시 추가",
+            "pt-BR": "Adicionada à janela de análise uma visualização 3D da bola de praia e do deslizamento da falha",
+            "es": "Se añadió a la ventana de análisis una vista 3D de la pelota de playa y del deslizamiento de la falla"
+          }
+        },
+        {
+          "text": "地図に USGS の推定の揺れ（MMI）とすべりの重ね表示を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added USGS estimated shaking (MMI) and slip overlays to the map",
+            "zh-Hans": "地图新增 USGS 推算震动（MMI）与滑动的叠加显示",
+            "zh-Hant": "地圖新增 USGS 推算震動（MMI）與滑移的疊加顯示",
+            "ko": "지도에 USGS 추정 흔들림(MMI)과 미끄러짐 겹쳐 표시 추가",
+            "pt-BR": "Adicionadas ao mapa as camadas de tremor estimado (MMI) e de deslizamento do USGS",
+            "es": "Se añadieron al mapa las capas de sacudida estimada (MMI) y de deslizamiento del USGS"
+          }
+        },
+        {
+          "text": "公開観測点の名前の訳を追加",
+          "variant": "both",
+          "translations": {
+            "en": "Added translations of public station names",
+            "zh-Hans": "新增公开观测点名称的翻译",
+            "zh-Hant": "新增公開觀測點名稱的翻譯",
+            "ko": "공개 관측점 이름 번역 추가",
+            "pt-BR": "Adicionadas traduções dos nomes das estações públicas",
+            "es": "Se añadieron traducciones de los nombres de las estaciones públicas"
+          }
+        }
+      ],
+      "fixed": [
+        {
+          "text": "地図の大きさが変わったとき、表示範囲が合わなくなる不具合を修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue where the map view no longer fit after the map was resized",
+            "zh-Hans": "修复地图大小改变后显示范围不再合适的问题",
+            "zh-Hant": "修正地圖大小改變後顯示範圍不再合適的問題",
+            "ko": "지도 크기가 바뀌었을 때 표시 범위가 맞지 않게 되는 문제 수정",
+            "pt-BR": "Corrigido um problema em que a visualização do mapa deixava de se ajustar após o mapa mudar de tamanho",
+            "es": "Se corrigió un error por el que la vista del mapa dejaba de ajustarse después de cambiar el tamaño del mapa"
+          }
+        },
+        {
+          "text": "起動時に読み込む量を減らし、起動を改善",
+          "variant": "both",
+          "translations": {
+            "en": "Improved startup by loading less at launch",
+            "zh-Hans": "减少启动时加载的内容，改进启动",
+            "zh-Hant": "減少啟動時載入的內容，改善啟動",
+            "ko": "시작 시 불러오는 양을 줄여 시작 개선",
+            "pt-BR": "Melhorada a inicialização ao carregar menos dados no início",
+            "es": "Se mejoró el inicio al cargar menos datos al arrancar"
+          }
+        }
+      ]
+    },
+    {
       "version": "6.17.0",
       "date": "2026-11-16",
       "added": [
