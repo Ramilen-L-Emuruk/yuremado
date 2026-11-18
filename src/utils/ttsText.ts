@@ -1,4 +1,4 @@
-import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
+import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter, QuakeRetractedReport, ForeignTsunamiCode } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
@@ -15,7 +15,7 @@ import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
 import { DOMESTIC_TSUNAMI_CODE_TEXT, warnIfDomesticTsunamiSentenceMissing, withoutDomesticTsunamiSentences } from './domesticTsunamiComment'
 import { isObservedLpgmClass } from './lpgm'
 import { TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_TEXT_BLOCK_KEYS, type TelegramBoilerplateKey, type TelegramTextBlockKey } from '../i18n/messageKeys'
-import { jaSpeech, speechWordsFor, type SpeechWords } from '../i18n/speechWords'
+import { jaSpeech, speechWordsFor, type SpeechWords, type QuakeOccurrencePart } from '../i18n/speechWords'
 import { JA_PLACE_NAMES, type PlaceNameLookup } from '../i18n/placeNames'
 import type { Locale } from '../i18n/messages'
 
@@ -407,7 +407,10 @@ export interface TelegramTextUnit {
    * （`rememberTelegramTextAsSpoken`）で書き写しになり、片方を直し忘れれば既読が噛み合わない。
    */
   readonly key: string
-  /** 読み上げに使う形（後ろに続く空白まで含む。すべて繋ぐと元の本文に戻る）。 */
+  /**
+   * 読み上げに使う形（後ろに続く空白まで含む。すべて繋ぐと元の本文に戻る）。気象庁の文を読まない言語の組では空
+   * （→ `TelegramTextSpeech`）
+   */
   readonly text: string
 }
 
@@ -446,6 +449,9 @@ export function splitTelegramTextUnits(body: string): TelegramTextUnit[] {
  * **`topic` を本体の読み上げと同じにしないこと。** 同じ主題だと、到来順の裁き
  * （`overtakenByLaterArrival`）が本体の予約を取り下げてしまう ―― 本文を読むために
  * 肝心の震度を落とすことになる。
+ *
+ * **気象庁の文を読まない言語の組（語表の `telegramTextElsewhere` が null でない）では、`text` と `prefix` が在処の文、
+ * `body` と各 `units` の `text` が空になる**（原文は読まない。鍵は原文の文のまま。→ `createSpeechText` の `telegramSpeech`）
  */
 export interface TelegramTextSpeech {
   /** 読み上げ文（前置き＋本文）。 */
@@ -488,6 +494,15 @@ const warnNoRegionNames = createLogThrottle(NO_REGION_LOG_THROTTLE_MS)
 const reportedUnknownMagnitudeConditions = new Set<string>()
 
 /**
+ * 地名の表に無く、日本語の名前のまま読んだ地名を記録した「言語:種類」。表の欠けは同じ言語・種類で何度も出るので 1 度だけ出す
+ * （日本語の組は表を引かないので出さない）
+ */
+const reportedUnknownPlaceNames = new Set<string>()
+
+/** 取消で名指す情報の名前を語表で引けなかった「言語:種別」（1 度だけ出す） */
+const reportedUnknownReportNames = new Set<string>()
+
+/**
  * 定型文の落とし漏れの記録の間引き。**電文種別 × 項目**を札にし、同じ組は 1 度だけ出す。
  * 上限を超えても黙らせず、そこから先は時間で間引いて出し続ける（→ `logger.ts`）。
  */
@@ -517,7 +532,30 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     for (const kind of ['area', 'pref', 'city', 'station'] as const) {
       if (place.has(kind, name)) return place(kind, name)
     }
+    warnUnknownPlaceName('region', name)
     return name
+  }
+
+  /** 震央地名を声にする名前へ引く。表に無ければ日本語の名前のまま（日本語以外の組では記録を残す） */
+  function epicenterToSay(name: string): string {
+    if (!place.has('epi', name)) warnUnknownPlaceName('epi', name)
+    return place('epi', name)
+  }
+
+  /**
+   * 地名の表で引けず日本語の名前のまま読むことを、言語と種類ごとに 1 度だけ残す。日本語の組は表を引かないので出さない。
+   * 黙ると、表の欠けで日本語の地名が別の言語の声で読まれていることに気づけない
+   */
+  function warnUnknownPlaceName(kind: string, name: string): void {
+    if (locale === 'ja') return
+    // 表がまだ届いていない過渡状態（日本語の引き方で組を作った回）と空の名前は、表の欠けではないので記録しない。
+    // ここで 1 度きりの枠を使うと、表が届いた後の本当の欠けが記録に残らない。中身が空の表は読み込みの検査
+    // （`validatePlaceNameTable`）が止め、引き方は日本語の引き方のままになる
+    if (place === JA_PLACE_NAMES || name.trim() === '') return
+    const key = `${locale}:${kind}`
+    if (reportedUnknownPlaceNames.has(key)) return
+    reportedUnknownPlaceNames.add(key)
+    log.warn(`[tts] 地名の表に無い名前を日本語のまま読みます（言語 ${locale}・種類 ${kind}・最初の名前 ${name}）`)
   }
 
   /** 津波の等級の呼び名。日本語はカードの「等級が移り変わった」行と同じ語（`TSUNAMI_GRADE_NAME`） */
@@ -752,7 +790,8 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     if (names.length === 0) return []
     const segments: SpeechSegment[] = []
     names.forEach((name, i) => {
-      if (i > 0) segments.push(plain(w.common.listSep))
+      // 地名の区切りは `regionSep`（地名の訳がコンマを含む言語で、名前の中のコンマと聞き分けるため）
+      if (i > 0) segments.push(plain(w.quake.regionSep))
       segments.push({ text: regionNameToSay(name), refs: [{ kind: 'quakeRegion', name, scale: 45, unreceived: true }] })
     })
     // 名前を読まなかった分も、この断片が声になれば既読にする（→ `selectRegionNames`）。
@@ -945,7 +984,8 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
         if (isMax) maxPrefixUsed = true
         const segments: SpeechSegment[] = [plain(w.quake.intensityLead(isMax, intensityText(scale)))]
         names.forEach((name, i) => {
-          if (i > 0) segments.push(plain(w.common.listSep))
+          // 地名の区切りは `regionSep`（階級ごとの句の間は `listSep`。→ `toSentence`）
+          if (i > 0) segments.push(plain(w.quake.regionSep))
           // 区域名だけを参照付きの断片にする。読点を含めると、チャンク（読点で切られる）と
           // 断片の境界がずれて引き当てが鈍る。
           segments.push({ text: regionNameToSay(name), refs: [{ kind: 'quakeRegion', name, scale }] })
@@ -972,8 +1012,11 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     const toSentence = (parts: SpeechSegment[][], lead: string): SpeechSegment[] => {
       if (parts.length === 0) return []
       const joined: SpeechSegment[] = lead ? [plain(lead)] : []
+      // 階級と階級の間は語表の `intensityGroupSep`（日本語・中国語・韓国語は句の区切り、英語などは文で切る。
+      // 文で切る言語は、初めて観測した地域の文なら次の文の頭にも「新たに」を置く）
+      const groupSep = w.quake.intensityGroupSep(lead !== '')
       parts.forEach((part, i) => {
-        if (i > 0) joined.push(plain(w.common.listSep))
+        if (i > 0) joined.push(plain(groupSep))
         joined.push(...part)
       })
       joined.push(plain(w.quake.observedTail))
@@ -1061,9 +1104,13 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     if (known) return known
     // 気象庁が語を増やしたときに黙らない。全角の「Ｍ」と全角数字だけを直して読む
     // （前に置く主題部の「マグニチュード」と重ならないよう先頭の「Ｍ」は落とす）。
+    // 日本語以外の組は表記を読まない（→ 語表の `magnitudeConditionUnknown`）ので、記録の文面も読み方に合わせる。
+    // 控えは言語の組で共有するので、最初に出会った組の読み方で 1 度だけ出る
     if (!reportedUnknownMagnitudeConditions.has(desc)) {
       reportedUnknownMagnitudeConditions.add(desc)
-      log.warn(`[tts] 規模の説明に未知の表記があります（そのまま読みます）: ${desc}`)
+      log.warn(w.common.telegramTextElsewhere === null
+        ? `[tts] 規模の説明に未知の表記があります（そのまま読みます）: ${desc}`
+        : `[tts] 規模の説明に未知の表記があります（表記は読まず、数値で発表されていないと言います。言語 ${locale}）: ${desc}`)
     }
     const body = desc.replace(/^[ＭM]/, '').replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
     return w.quake.magnitudeConditionUnknown(body)
@@ -1275,6 +1322,21 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   }
 
   /**
+   * 取り消された報の種別を、語表の情報の名前へ引く。**自前のキーだけを見る**（`hasOwnProperty`。`constructor` のような値で
+   * 継いだ関数に当たらないように。このリポジトリの型の対象は `Object.hasOwn` を持たない）。引けなければ種別の名前（日本語）のまま言い、言語と種別ごとに 1 度だけ記録を残す
+   */
+  function reportNameToSay(issueType: string): string {
+    const table: Readonly<Record<string, string>> = w.quake.reportName
+    if (Object.prototype.hasOwnProperty.call(table, issueType)) return table[issueType]
+    const key = `${locale}:${issueType}`
+    if (!reportedUnknownReportNames.has(key)) {
+      reportedUnknownReportNames.add(key)
+      log.warn(`[tts] 取消で名指す情報の名前を語表で引けないので、種別の名前のまま読みます（言語 ${locale}・種別 ${issueType}）`)
+    }
+    return issueType
+  }
+
+  /**
    * 地震カードの**一部の取消**（震源情報まで進んだカードに震度速報だけの取消が届いた等）の読み上げ。
    * 「23時5分に発表された震度速報は取り消されました。」
    *
@@ -1282,12 +1344,17 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
    * 情報の名前で言い、時刻もその情報の発表時刻にする（2026-10-15 ユーザー承認「情報名で言う（推奨）」）。
    * 理由の文の扱いは全体の取消と同じ（`cancelReasonSentence`）。
    *
+   * 名前は語表の `quake.reportName` で画面の言語の名前へ引く（日本語は電文の種別の名前のまま。ほかの言語は画面の
+   * `quake.issueType` の訳）。表は取り消されうる種別（`QuakeRetractedReport['issueType']`）を全部持つので、引けない名前は
+   * 型の外から来た値だけ —— そのときは渡された名前のまま言う
+   *
    * @param issueType 取り消された情報の種別（取消電文の種別）
    * @param time 取り消された報の発表時刻。読めなければ時刻を言わない
    */
-  function earthquakeReportCancelToText(issueType: string, time: string | null, cancelText?: string): string {
+  function earthquakeReportCancelToText(issueType: QuakeRetractedReport['issueType'], time: string | null, cancelText?: string): string {
     const formatted = time ? formatTime(time) : null
-    const head = formatted ? w.quake.reportCancelledAt(issueType, formatted) : w.quake.reportCancelled(issueType)
+    const name = reportNameToSay(issueType)
+    const head = formatted ? w.quake.reportCancelledAt(name, formatted) : w.quake.reportCancelled(name)
     return withCancelReason(head, cancelText)
   }
 
@@ -1480,7 +1547,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   function eewAlertToText(event: EEWAlert, kind: 'forecast' | 'warning' | 'hypocenterUpdate'): string {
     const name = event.earthquake.hypocenter.name.trim()
     if (!name) return w.eew.leadAlone(EEW_LEAD_PHRASE[kind])
-    return w.eew.leadWithEpicenter(EEW_LEAD_PHRASE[kind], place('epi', name))
+    return w.eew.leadWithEpicenter(EEW_LEAD_PHRASE[kind], epicenterToSay(name))
   }
 
   /**
@@ -1761,27 +1828,57 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
    *
    * 要素ごとに分けるのは、**チャンクが読点で切られる**ため。震源名と深さの間には読点が入るので、
    * ひとつの断片にまとめると「震源名しか鳴っていないのに深さも規模も声になった」と記録される。
+   *
+   * **並び順は語表（`quake.occurrence`）が決める**（2026-11-17 ユーザー選択「言語の側で決める (Recommended)」。英語などは
+   * 「地震が起きた」を先に言い、震源を後から言う）。ここは言える要素の文字列を渡し、返った並びのとおりに、要素は記録つきの
+   * 断片に、語は記録なしの断片にして並べる。数値にならない規模の文（→ magnitudeConditionSentence）も並びの 1 要素
    */
-  function quakeOccurrenceSegments(hypocenter: Hypocenter, opts?: TtsSpeechOptions): SpeechSegment[] {
+  function quakeOccurrenceSegments(
+    hypocenter: Hypocenter,
+    opts: TtsSpeechOptions | undefined,
+    /**
+     * 文の頭から始まるか（前に時刻の句が無い）。真なら先頭の小文字を大文字にする（英語などの「an earthquake …」が名乗りの
+     * 文の後ろで文頭になるため）。大文字と小文字の無い字（日本語・中国語・韓国語）は変わらない
+     */
+    startsSentence: boolean,
+  ): SpeechSegment[] {
+    const segments = quakeOccurrenceParts(hypocenter, opts)
+    if (!startsSentence || segments.length === 0) return segments
+    const [first, ...rest] = segments
+    return [{ ...first, text: first.text.replace(/^\p{Ll}/u, c => c.toUpperCase()) }, ...rest]
+  }
+
+  /** {@link quakeOccurrenceSegments} の中身（文頭の大文字にする前の断片） */
+  function quakeOccurrenceParts(hypocenter: Hypocenter, opts?: TtsSpeechOptions): SpeechSegment[] {
     const tellable = tellableHypocenterFacts(hypocenter, opts)
-    const segments: SpeechSegment[] = []
-    if (tellable.has('hypocenterName')) {
-      segments.push({ text: place('epi', hypocenter.name), refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] })
-      if (tellable.has('depth')) {
-        segments.push(plain(w.quake.hypocenterDepthSep))
-        segments.push({ text: depthSourcePhrase(hypocenter), refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
-      }
-      segments.push(plain(w.quake.hypocenterOf))
-    }
     const magRef: SpeechRef[] = [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter) }]
     const numeric = magnitudePhrase(hypocenter.magnitude)
-    if (tellable.has('magnitude') && numeric) {
-      segments.push({ text: numeric, refs: magRef })
+    const elements: Record<Exclude<QuakeOccurrencePart['kind'], 'text'>, SpeechSegment | null> = {
+      name: tellable.has('hypocenterName')
+        ? { text: epicenterToSay(hypocenter.name), refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] }
+        : null,
+      // 深さは震源名の句の中でしか言わない（→ `tellableHypocenterFacts`。深さが言えるなら震源名もある）
+      depth: tellable.has('depth')
+        ? { text: depthSourcePhrase(hypocenter), refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] }
+        : null,
+      magnitude: tellable.has('magnitude') && numeric ? { text: numeric, refs: magRef } : null,
+      magnitudeSentence: tellable.has('magnitude') && !numeric ? { text: magnitudeConditionSentence(hypocenter), refs: magRef } : null,
     }
-    segments.push(plain(w.quake.occurred))
-    // 数値にならない規模は、句へ差し込まず別の文で伝える（→ magnitudeConditionSentence）。
-    if (tellable.has('magnitude') && !numeric) {
-      segments.push({ text: magnitudeConditionSentence(hypocenter), refs: magRef })
+    const parts = w.quake.occurrence({
+      ...(elements.name ? { name: elements.name.text } : {}),
+      ...(elements.depth ? { depth: elements.depth.text } : {}),
+      ...(elements.magnitude ? { magnitude: elements.magnitude.text } : {}),
+      ...(elements.magnitudeSentence ? { magnitudeSentence: elements.magnitudeSentence.text } : {}),
+    })
+    const segments: SpeechSegment[] = []
+    for (const part of parts) {
+      if (part.kind === 'text') {
+        segments.push(plain(part.text))
+        continue
+      }
+      // 語表が言えない要素を並べたら落とす（言えない要素の記録を付けると、声にしていない事実が既読になる）
+      const element = elements[part.kind]
+      if (element) segments.push(element)
     }
     return segments
   }
@@ -1809,6 +1906,62 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
   function speakableForecast(text: string): string {
     // 直すのは電文の原文（日本語）なので、差し込むのも日本語の文（画面の言語によらない）
     return text.split(DOMESTIC_TSUNAMI_CODE_TEXT['0211']).join(jaSpeech.quake.domesticTsunamiCode['0211'])
+  }
+
+  /**
+   * 遠地地震の付加文を、日本語以外の言語でコードから訳した文の断片にする（在処の文は呼び出し側が続ける）。
+   *
+   * **並びは付加文の原文と同じ順**（2026-11-17 ユーザー選択「原文と同じ順 (Recommended)」）。電文はコードの並びを付加文の
+   * 原文（`forecastText`）の文の並びとして持つので、各コードの文（気象庁のコード表の文。022x 系は日本語の語表の
+   * `quake.foreignTsunamiCode`、国内は `DOMESTIC_TSUNAMI_CODE_TEXT`）が原文のどこに現れるかで並べる。原文に見つからない文は、
+   * 022x 系 → 国内の文の順で後ろへ回す（見つかった文の並びは崩さない）。
+   *
+   * **言う文は、解読が残したコードと、原文の中に見つかったコード表の文の両方**（重なりは 1 つ）。解読がコードを残すようにする前に
+   * 端末へ控えたカードは `foreignTsunamiCodes` の欄を持たない（区分を決めたコードも持たないことがある）が、原文は持つ。
+   *
+   * 国内の文は、区分を決めたコード（カードの欄か、原文に見つかったコード表の文）があればその文。どちらも無く区分が「不明」で
+   * なければ（津波電文から借りた区分）区分の文。区分も「不明」なら言わない
+   */
+  function translatedForecastSegments(event: JMAQuake, forecastOriginal: string): SpeechSegment[] {
+    // 原文に見つからない文の位置。**有限の大きな値にする** —— 無限大どうしの差は NaN になり、比べ方が NaN の扱いに頼ってしまう。
+    // 見つからない文どうしは差が 0 になり、下の並べ替えの次の鍵（022x 系 → 国内の順・元の順）で決まる
+    const NOT_FOUND = Number.MAX_SAFE_INTEGER
+    const positionOf = (sentence: string): number => {
+      const at = forecastOriginal.indexOf(sentence)
+      return at < 0 ? NOT_FOUND : at
+    }
+    const parts: { at: number; fallback: number; segment: SpeechSegment }[] = []
+
+    const foreignCodes = new Set<ForeignTsunamiCode>(event.earthquake.foreignTsunamiCodes ?? [])
+    for (const foreignCode of Object.keys(jaSpeech.quake.foreignTsunamiCode) as ForeignTsunamiCode[]) {
+      if (forecastOriginal.includes(jaSpeech.quake.foreignTsunamiCode[foreignCode])) foreignCodes.add(foreignCode)
+    }
+    for (const foreignCode of foreignCodes) {
+      parts.push({
+        at: positionOf(jaSpeech.quake.foreignTsunamiCode[foreignCode]),
+        fallback: 0,
+        segment: plain(w.quake.foreignTsunamiCode[foreignCode]),
+      })
+    }
+
+    const { domesticTsunami: t, domesticTsunamiCode: cardCode } = event.earthquake
+    // カードにコードが無ければ、原文に見つかったコード表の文のうち最初のもの
+    const textCode = cardCode ?? (Object.keys(DOMESTIC_TSUNAMI_CODE_TEXT) as DomesticTsunamiCode[])
+      .filter(c => forecastOriginal.includes(DOMESTIC_TSUNAMI_CODE_TEXT[c]))
+      .sort((a, b) => positionOf(DOMESTIC_TSUNAMI_CODE_TEXT[a]) - positionOf(DOMESTIC_TSUNAMI_CODE_TEXT[b]))[0]
+    const domestic: SpeechSegment | null = cardCode
+      ? domesticTsunamiSegmentOf(event)
+      : textCode
+        ? { text: DOMESTIC_TSUNAMI_CODE_SPEECH[textCode], refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: domesticTsunamiFactValue(t, textCode) }] }
+        : t !== '不明' ? domesticTsunamiSegmentOf(event) : null
+    if (domestic) {
+      parts.push({ at: textCode ? positionOf(DOMESTIC_TSUNAMI_CODE_TEXT[textCode]) : NOT_FOUND, fallback: 1, segment: domestic })
+    }
+    // 安定な並べ替え: 原文での位置 → 見つからないものは 022x 系 → 国内の順 → 元の順
+    return parts
+      .map((p, i) => ({ ...p, i }))
+      .sort((a, b) => (a.at - b.at) || (a.fallback - b.fallback) || (a.i - b.i))
+      .map(p => p.segment)
   }
 
   /**
@@ -1931,7 +2084,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       tellable.has(fact) && spoken.facts.has(fact) && spoken.facts.get(fact) !== value
 
     if (changed('hypocenterName', hypocenter.name)) {
-      segments.push({ text: w.quake.hypocenterAmended(place('epi', hypocenter.name)), refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] })
+      segments.push({ text: w.quake.hypocenterAmended(epicenterToSay(hypocenter.name)), refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] })
     }
     if (changed('magnitude', magnitudeFactValue(hypocenter))) {
       const value = magnitudeFactValue(hypocenter)
@@ -2237,7 +2390,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       }
       // 時刻が日時として読めなければ句ごと落とす（「ナンじナンぷん頃発生した」と読ませない）。
       // 震源名だけでも文は成立する。
-      const head = plain(w.quake.prominentAmendHead(time, place('epi', hypocenter.name)))
+      const head = plain(w.quake.prominentAmendHead(time, epicenterToSay(hypocenter.name)))
       // 数値にならない規模は「〜に更新されました」の並びへ入れられないので、別の文で後に足す。
       // **ここは初報の形（「マグニチュードは〜」）のまま。** この電文は名乗りと直前の文が既に
       // 「更新」を言っているので、`magnitudeConditionAmendSentence` を使うと 1 回の発話で
@@ -2265,16 +2418,33 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       // （`foreignTsunamiText`）があれば続ける。
       // **空白だけの付加文もここで区分側へ倒れる**（{@link endTelegramSentence} が空を返す）。
       // 原文に 0211 の文があれば、国内の地震情報と同じく括弧書きを除いて読む（{@link speakableForecast}）。
-      const forecast = speakableForecast(endTelegramSentence(event.forecastText))
+      //
+      // **気象庁の文を読まない言語（`telegramTextElsewhere` が null でない）は、付加文と海外への津波の見通しを読まずに
+      // 文の在処を言う**（どちらも気象庁が書いた日本語の文。2026-11-16 ユーザー選択「読まずに「画面にある」と言う」）。
+      // **付加文があるときは、原文の代わりにコードから引く決まった文を訳して読む**。並びは付加文の原文と同じ順
+      // （2026-11-17 ユーザー選択「原文と同じ順 (Recommended)」。→ {@link translatedForecastSegments}）:
+      // - 022x 系の文（2026-11-17 ユーザー選択「022x の文を訳して読む (Recommended)」）
+      // - 国内の津波の文（区分を決めたコードの文。`domesticTsunamiSegmentOf`）。区分は 0229・0230 のような遠地地震の
+      //   コードも丸めた値で、コードの文のほうが付加文の原文（コード表の文そのもの）に近い。コードが無く区分が「不明」なら
+      //   言わない（付加文が 022x 系だけの電文。区分を決める文が原文に無いので、「不明」は気象庁が書いたことではない）。
+      //   既読の鍵は言ったときだけ付く（断片ごと入れないので）
+      // 最後に在処の文（知らないコードの文と、訳さなかった言い回しを受け持つ）。
+      // 付加文が無いときは区分の文を読み、海外への見通しがあれば在処の文を続ける（見通しも無ければ在処の文は言わない）
+      const elsewhere = w.common.telegramTextElsewhere
+      const forecastOriginal = endTelegramSentence(event.forecastText)
       const foreign = endTelegramSentence(event.foreignTsunamiText)
-      const tail: SpeechSegment[] = forecast
-        ? [plain(forecast)]
-        : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(foreign)] : [])]
+      const tail: SpeechSegment[] = elsewhere === null
+        ? (forecastOriginal
+          ? [plain(speakableForecast(forecastOriginal))]
+          : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(foreign)] : [])])
+        : (forecastOriginal
+          ? [...translatedForecastSegments(event, forecastOriginal), plain(elsewhere)]
+          : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(elsewhere)] : [])])
       // 時刻が日時として読めなければ句ごと落とす（上の地震情報と同じ扱い）。
       const dayTime = formatDayTime(event.earthquake.time)
       return [
         plain(`${prefix}${dayTime ? w.common.atAround(dayTime) : ''}`),
-        ...quakeOccurrenceSegments(hypocenter, opts),
+        ...quakeOccurrenceSegments(hypocenter, opts, !dayTime),
         ...tail,
       ]
     }
@@ -2338,7 +2508,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       // 時刻が読めなければ句ごと落とす。この後に続く `quakeOccurrenceSegments` が震源名から
       // 読み始めるので、文としては「地震情報。石川県能登地方で地震が発生しました。」になる。
       plain(`${prefix}${time ? w.common.atAround(time) : ''}`),
-      ...quakeOccurrenceSegments(hypocenter, opts),
+      ...quakeOccurrenceSegments(hypocenter, opts, !time),
       domesticTsunamiSegmentOf(event),
     ]
     if (!isEpicenterOnly) {
@@ -2371,7 +2541,30 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     spoken?: QuakeSpokenState,
     readAllRegions = false,
   ): SpeechSegment[] {
-    return withRegionSnapshotRef(withObservedRef(buildEarthquakeSegments(event, opts, isNew, spoken, readAllRegions), event), event)
+    const built = withElsewhereForUnknownMagnitude(buildEarthquakeSegments(event, opts, isNew, spoken, readAllRegions), event)
+    return withRegionSnapshotRef(withObservedRef(built, event), event)
+  }
+
+  /**
+   * 規模の説明が知らない表記で、その文（「数値で発表されていない」）を言った発話の末尾に、在処の文を 1 度だけ足す
+   * （気象庁の文を読まない言語だけ。2026-11-17 ユーザー選択「数値でないと言い、在処を言う (Recommended)」）。
+   *
+   * **規模の文の中で言わず末尾へ寄せる**のは、遠地地震の付加文の在処の文と 2 度言わないため。発話に在処の文が
+   * 既にあれば足さない。規模の文を言ったかは、規模の既読の鍵を持つ断片があるかで見る（知らない表記の規模は数値でないので、
+   * その鍵を持つのは規模の文だけ）
+   */
+  function withElsewhereForUnknownMagnitude(segments: SpeechSegment[], event: JMAQuake): SpeechSegment[] {
+    const elsewhere = w.common.telegramTextElsewhere
+    if (elsewhere === null || !isUnknownMagnitudeCondition(event.earthquake.hypocenter)) return segments
+    const toldMagnitude = segments.some(s => s.refs.some(r => r.kind === 'quakeFact' && r.fact === 'magnitude'))
+    if (!toldMagnitude || segments.some(s => s.text.includes(elsewhere))) return segments
+    return [...segments, plain(elsewhere)]
+  }
+
+  /** 規模が数値でなく、説明が語表に無い表記か（→ {@link magnitudeConditionPredicate}） */
+  function isUnknownMagnitudeCondition(hypocenter: Hypocenter): boolean {
+    const desc = hypocenter.magnitudeCondition
+    return !!desc && !hasMagnitude(hypocenter.magnitude) && !Object.prototype.hasOwnProperty.call(MAGNITUDE_CONDITION_PREDICATE, desc)
   }
 
   /**
@@ -2678,7 +2871,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
       const lead = index === 0 ? w.tsunami.sourceLead : w.tsunami.sourceLeadOther
       const segments: SpeechSegment[] = [{ text: lead, refs: [follow] }]
       segments.push({
-        text: place('epi', hypocenter.name),
+        text: epicenterToSay(hypocenter.name),
         refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name, sourceIndex: index }, follow],
       })
       if (tellable.has('depth')) {
@@ -2740,7 +2933,7 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     }
 
     if (changed('hypocenterName', hypocenter.name)) {
-      push(w.tsunami.sourceHypocenterAmended(first, place('epi', hypocenter.name)), 'hypocenterName', hypocenter.name)
+      push(w.tsunami.sourceHypocenterAmended(first, epicenterToSay(hypocenter.name)), 'hypocenterName', hypocenter.name)
     }
     const magValue = magnitudeFactValue(hypocenter)
     if (changed('magnitude', magValue)) {
@@ -4672,6 +4865,15 @@ export function createSpeechText(w: SpeechWords, place: PlaceNameLookup, locale:
     // 渡さないこと** —— 渡すと主題と本文の境目が曖昧になり、既読の鍵が衝突するか分裂する
     // （どちらも例外もログも出ない）。
     const units = splitTelegramTextUnits(body).map(u => ({ ...u, key: `${subject}\n${u.key}` }))
+    // **気象庁の文を読まない言語（`telegramTextElsewhere` が null でない）は、原文の代わりに文の在処だけを言う**
+    // （2026-11-16 ユーザー選択「読まずに「画面にある」と言う」）。前置きも在処の文に置き換え、本文は空にする。
+    // 既読の鍵（`units` の `key`）は原文の文のまま持つ —— 同じ事象の続報が同じ文を運んでも全部既読で黙り、
+    // 在処を報のたびに言い直さない。新しい文が加わった報でだけ、在処をもう 1 度言う（未読の文の字は空なので、
+    // 繋ぎ直しても在処の文だけになる。→ `useLiveEventHandler.ts` の `speakTelegramText`）
+    const elsewhere = w.common.telegramTextElsewhere
+    if (elsewhere !== null) {
+      return { text: elsewhere, body: '', prefix: elsewhere, units: units.map(u => ({ ...u, text: '' })), subject }
+    }
     return { text: `${prefix}${body}`, body, prefix, units, subject }
   }
 

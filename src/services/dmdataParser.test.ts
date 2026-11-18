@@ -1076,6 +1076,33 @@ describe('遠地地震に関する情報（VXSE53・Head/Title で識別）', ()
     expect(parseEarthquakeFromXml('VXSE53', xml)!.earthquake.domesticTsunamiCode).toBeUndefined()
   })
 
+  // 022x 系のコードは捨てずに電文の順で残す（日本語以外の読み上げが原文の代わりに訳した文を読む。
+  // 2026-11-17 ユーザー選択「022x の文を訳して読む (Recommended)」）
+  it('022x 系のコードを電文の順に残す（正）', () => {
+    expect(parseEarthquakeFromXml('VXSE53', FOREIGN_XML)!.earthquake.foreignTsunamiCodes).toEqual(['0226'])
+    const chile = FOREIGN_XML.replace('<Code>0226 0230</Code>', '<Code>0221 0228 0229</Code>')
+    const quake = parseEarthquakeFromXml('VXSE53', chile)!
+    expect(quake.earthquake.foreignTsunamiCodes).toEqual(['0221', '0228'])
+    expect(quake.earthquake.domesticTsunamiCode).toBe('0229')
+  })
+
+  it('022x 系だけの付加文でもコードを残し、区分は 不明 のまま（正）', () => {
+    const quake = parseEarthquakeFromXml('VXSE53', FOREIGN_XML.replace('<Code>0226 0230</Code>', '<Code>0226</Code>'))!
+    expect(quake.earthquake.foreignTsunamiCodes).toEqual(['0226'])
+    expect(quake.earthquake.domesticTsunami).toBe('不明')
+  })
+
+  // 対照: 022x 系が無ければ欄を持たない。知らないコードは入れない（安全弁）
+  it('022x 系が無ければ欄を持たず、知らないコードは入れない（対照・安全弁）', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      expect(parseEarthquakeFromXml('VXSE53', FOREIGN_XML.replace('<Code>0226 0230</Code>', '<Code>0229</Code>'))!.earthquake.foreignTsunamiCodes).toBeUndefined()
+      expect(parseEarthquakeFromXml('VXSE53', FOREIGN_XML.replace('<Code>0226 0230</Code>', '<Code>0228 9999</Code>'))!.earthquake.foreignTsunamiCodes).toEqual(['0228'])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   // 安全弁: 0228 は「一般的に、この規模の地震が海域の浅い領域で発生すると…」という一般論で、
   // 日本国内への影響区分ではない。区分に写さないのは 022x 系と同じだが、既知として扱わないと
   // 単独で届いたときに「導出できません」の警告が出る（正常系で鳴らすと警告の価値が下がる）

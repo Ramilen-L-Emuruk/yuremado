@@ -19,6 +19,7 @@ import type {
   IntensityScale,
   DomesticTsunami,
   DomesticTsunamiCode,
+  ForeignTsunamiCode,
   IssueType,
   CorrectType,
   TsunamiArea,
@@ -368,7 +369,8 @@ function warnIfNoIntensityPoints(
 // 津波発生の可能性」・0226「震源の近傍で津波発生の可能性」・0228「一般的に、この規模の地震が
 // 海域の浅い領域で発生すると津波が発生することがある」）を併用する。これらは震源周辺・太平洋側の
 // 状況や一般論を述べるもので日本国内への影響区分ではないため、domesticTsunami には反映しない
-// （付加文の原文は forecastText に保持し、読み上げ側で使う）。
+// （付加文の原文は forecastText に保持し、コードは電文の順に foreignTsunamiCodes へ残す。
+// 日本語以外の読み上げが、原文の代わりにコードから訳した文を読むため）。
 const DOMESTIC_TSUNAMI_BY_CODE: Readonly<Record<DomesticTsunamiCode, DomesticTsunami>> = {
   '0211': '警報等',
   '0212': '若干の海面変動',
@@ -383,6 +385,21 @@ const DOMESTIC_TSUNAMI_BY_CODE: Readonly<Record<DomesticTsunamiCode, DomesticTsu
 
 function isDomesticTsunamiCode(code: unknown): code is DomesticTsunamiCode {
   return typeof code === 'string' && Object.prototype.hasOwnProperty.call(DOMESTIC_TSUNAMI_BY_CODE, code)
+}
+
+/** 022x 系の既知のコード（日本以外への津波の見通し・一般論。→ `ForeignTsunamiCode`） */
+const FOREIGN_TSUNAMI_CODES: readonly ForeignTsunamiCode[] = ['0221', '0222', '0226', '0228']
+
+function isForeignTsunamiCode(code: string): code is ForeignTsunamiCode {
+  return (FOREIGN_TSUNAMI_CODES as readonly string[]).includes(code)
+}
+
+/**
+ * 付加文のコードのうち、022x 系の既知のものを電文の順に返す（重なりは 1 つにまとめる）。知らないコードは入れない
+ * （警告は {@link parseDomesticTsunamiFromComments} が残す）
+ */
+function parseForeignTsunamiCodes(codes: readonly string[]): ForeignTsunamiCode[] {
+  return [...new Set(codes.filter(isForeignTsunamiCode))]
 }
 
 /**
@@ -400,8 +417,7 @@ function parseDomesticTsunamiFromComments(comments: Record<string, unknown>): { 
   //
   // 「1 つでも既知なら黙る」形にしないこと。022x 系は遠地地震で頻出するため、新しいコードが
   // それと同居した電文で構造の変化を丸ごと見逃す。
-  const knownNonDomesticCodes = new Set(['0221', '0222', '0226', '0228'])
-  const unknownCodes = codes.map(String).filter(code => !knownNonDomesticCodes.has(code))
+  const unknownCodes = codes.map(String).filter(code => !isForeignTsunamiCode(code))
   if (unknownCodes.length > 0) {
     log.warn(`[dmdata] 付加文コードから津波区分を導出できません: ${unknownCodes.join(' ')} → 不明`)
   }
@@ -2081,6 +2097,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     ? xmlAll(forecastCommentEl, 'Code').flatMap(el => xmlText(el).split(/\s+/)).filter(Boolean)
     : []
   const { value: domestic, code: domesticCode } = parseDomesticTsunamiFromComments({ forecast: { codes: forecastCodes } })
+  const foreignCodes = parseForeignTsunamiCodes(forecastCodes)
   // 付加文の原文（ForecastComment > Text）。
   const forecastText = extractForecastText(
     forecastCommentEl ? xmlText(xmlQ(forecastCommentEl, 'Text')) : '',
@@ -2138,6 +2155,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       maxScale: maxScale >= 0 ? maxScale as IntensityScale : -1,
       domesticTsunami: domestic,
       ...(domesticCode && { domesticTsunamiCode: domesticCode }),
+      ...(foreignCodes.length > 0 && { foreignTsunamiCodes: foreignCodes }),
     },
     ...(quakeOperationStatus && { operationStatus: quakeOperationStatus }),
     ...(quakeHeadline && { headline: quakeHeadline }),
