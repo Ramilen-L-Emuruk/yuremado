@@ -46,7 +46,15 @@ const RETRY_WINDOW_MS = 30_000
  */
 const MAX_RETRIES = 2
 
-type Props = { children: ReactNode } & (
+type Props = {
+  children: ReactNode
+  /**
+   * 例外を受け止めて代わりの表示を出したときに 1 回呼ぶ（描き直しの確かめでは呼ばない）。
+   * 遅延読込の失敗を［再表示］で読み直せるようにするのに使う（→ `utils/retryableLazy.tsx`）。
+   * **必須にしてある。** 遅延読込を包む境界で渡し忘れると型チェックで落ちる。要らない箇所は `() => {}` を書く
+   */
+  onCatch: () => void
+} & (
   | { variant: 'root' }
   /** @param label 何が表示できないかを利用者へ伝える名前（「地図」「地震情報」など）。 */
   | { variant: 'region'; label: string }
@@ -90,6 +98,7 @@ export class ErrorBoundary extends Component<Props, State> {
       error,
       info.componentStack,
     )
+    this.props.onCatch()
   }
 
   private handleRetry = (): void => {

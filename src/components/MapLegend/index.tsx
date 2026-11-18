@@ -4,7 +4,7 @@ import { readableTextColor } from '../../utils/contrast'
 import { representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
 import { HEATMAP_PERIODS, type HeatmapPeriod } from '../../utils/quakeHeatmap'
 import { useMessages } from '../../i18n/I18nProvider'
-import { Term } from '../EarthquakeTab/QuakeAnalysisAgency'
+import { Term } from '../EarthquakeTab/analysisTerm'
 
 // 地図へ重ねる凡例。中身を決めるのは legendBlocks.ts で、ここは描くだけ。
 //

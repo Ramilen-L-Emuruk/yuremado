@@ -4521,7 +4521,10 @@ WebSocket の受信（`ws.onEvent`）。理由: 片方に個別に書くと、�
 - `src/hooks/useQuakeLayerData.ts` — 描画データ生成・区域集約
 - `src/components/EarthquakeTab/index.tsx` — カード一覧
 - `src/components/EarthquakeTab/EarthquakeCard.tsx` — カード表示
-- `src/components/EarthquakeTab/QuakeAnalysis.tsx` — 海外の機関と気象庁の解析の要約の行と窓
+- `src/components/EarthquakeTab/QuakeAnalysis.tsx` — 海外の機関と気象庁の解析の要約の行（窓（［詳しく ›］で開く解析の窓）は押されてから読む）
+- `src/components/EarthquakeTab/QuakeAnalysisDialog.tsx` — 解析の窓（機関ごと・種類ごとの切り替え、USGS の被害と揺れ）
+- `src/components/EarthquakeTab/QuakeAnalysisAgency.tsx` — 解析の窓の機関ごとのタブの中身（代表の解・震源・発震機構の表）。解析の窓だけが使う
+- `src/components/EarthquakeTab/analysisTerm.tsx` — 点線の語（`Term`）と機関の名前。窓の外（要約の行・地図の凡例）からも使うので窓とは分けてある
 - `src/components/EarthquakeTab/Beachball.tsx` — 発震機構の図
 - `src/components/EarthquakeTab/FaultViewer3D.tsx` — 震源球と断層のずれの 3D（解析の窓）
 - `src/utils/faultGeometry.ts` — 3D の幾何（断層面の枠組み・向きの変換・箱の切り分け・ずれの時間変化・描く面の並び）
@@ -5235,3 +5238,4 @@ WebSocket の受信（`ws.onEvent`）。理由: 片方に個別に書くと、�
 - 2026-11-17: §8 の解析の窓の語と吹き出しを、取得元の頁の文と語へ合わせた（気象庁はです・ますの原文のまま引き、英語の原文は訳して原文に無い説明を外した。札は原語の preferred、version は「更新」、札・見出しは熟語に）。窓の幅を 76rem の下限から中身に合わせて広げ、表の見出しを折り返さないようにした
 - 2026-11-17: 固定付加文の 022x 系のコードを捨てずに `earthquake.foreignTsunamiCodes` へ残すようにした（区分には今までどおり反映しない。日本語以外の読み上げが訳した文を読むため。2026-11-17 ユーザー選択「022x の文を訳して読む (Recommended)」）。震度速報の続報では付加文の原文と同じ側から採る
 - 2026-11-18: §8 の解析の窓の代表の解の下に、震源球と断層のずれの 3D（ドラッグで回る 3D の震源球と、上盤がずれて元へ戻るのを繰り返す箱、P 軸・T 軸の矢印）を足し、発震機構の表の行を押すとその解を 3D に出すようにした
+- 2026-11-18: 解析の窓を、［詳しく ›］を押したときに読む別のファイル（`QuakeAnalysisDialog.tsx`）へ分けた（起動時のチャンクが事前キャッシュの予算を超えたため。[`settings-pwa-spec.md`](settings-pwa-spec.md) §5「上限の手前で止める」）。§11 の関連実装ファイルを足した。見た目と動きは変えていない

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
+import { Suspense, useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
 import { useLocale, useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
@@ -44,8 +44,9 @@ import { RealtimeTab } from './components/RealtimeTab'
 import { resetEewForecastChangeSeen } from './utils/eewForecastChangeSeen'
 import { useEewSpeakingCard } from './hooks/useEewSpeakingCard'
 import { TsunamiTab } from './components/TsunamiTab'
-import { SettingsTab } from './components/SettingsTab'
 import { SettingsDialog } from './components/SettingsTab/SettingsDialog'
+import { retryableLazy } from './utils/retryableLazy'
+import { useMountWhenIdle } from './hooks/useMountWhenIdle'
 import { prefetchTestData } from './utils/testDataLoader'
 import { TelegramTab } from './components/TelegramTab'
 import { CatalogTab } from './components/CatalogTab'
@@ -170,6 +171,18 @@ import { buildEewDockItems, buildTsunamiDockItem, homePrefectureCode } from './u
 import { usePrefectures } from './hooks/usePrefectures'
 import { PREFECTURES } from './data/prefectureCodes'
 import { TSUNAMI_ZONE_PREFECTURES } from './data/tsunamiZonePrefectures'
+
+/**
+ * 設定の窓の中身。**起動時のチャンクとは別のファイルにし、起動の後の手空き（それより先に開かれたらそのとき）に読む**
+ * （起動時のチャンクに載せると事前キャッシュの 1 ファイルの予算を超える。
+ * → `docs/spec/settings-pwa-spec.md` §5「上限の手前で止める」）。読み込みに失敗したら、包んでいる
+ * `ErrorBoundary`（region）が窓の中だけを差し替え、受け止めたときに `reset` するので［再表示］で読み込みからやり直す
+ * （→ `retryableLazy`）
+ */
+/** 設定の窓の中身を手空きで置くまでの待ちと、手が空かないときの上限（→ `useMountWhenIdle` の呼び出し） */
+const SETTINGS_IDLE_DELAY_MS = 5_000
+const SETTINGS_IDLE_TIMEOUT_MS = 10_000
+const SettingsTab = retryableLazy(() => import('./components/SettingsTab').then((m) => ({ default: m.SettingsTab })))
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -312,6 +325,12 @@ export function App() {
   // 写しは `changeSettingsOpen` が先回りで書き、確定した値はここで追いかける。描画のたびに書き戻すと、
   // 窓の開け閉めがまだ載っていない別の更新の描画が、先回りで書いた値を古い値へ戻しうる。
   const settingsOpenRef = useRef(settingsOpen)
+  // 設定の窓の中身（`SettingsTab`）を置いたか。起動の後の手空きで読んで隠したまま置き、それより先に開かれたら
+  // 開いたその描画で置く。以後は閉じても外さずに隠す（→ `SettingsDialog`）。
+  // 待ちは 5 秒。起動直後は地図の初回の描画・履歴の取得・生成データの読み込みが重なるので、そこへ中身の組み立て
+  // （200 ms 級のフレーム）を足さない。手が空かなくても 10 秒で置く —— 置くのを先延ばしにし続けると、初めて開いた
+  // ときに組み立ての重さが戻る（2026-11-18 ユーザー選択「起動の後の手空きで組んでおく (Recommended)」）
+  const settingsMounted = useMountWhenIdle(settingsOpen, SETTINGS_IDLE_DELAY_MS, SETTINGS_IDLE_TIMEOUT_MS)
   useLayoutEffect(() => {
     settingsOpenRef.current = settingsOpen
   }, [settingsOpen])
@@ -1290,9 +1309,8 @@ export function App() {
   // **押されてから読むと待ちが入る。** その待ちのあいだに初回履歴取得の応答が割り込むと、
   // いま流したテスト電文が上書きされうる（履歴の取り込みは表示中のイベントを置き換える）。
   //
-  // **`SettingsTab` 側の mount では駄目。** 設定の窓は閉じている間も中身を外さずに隠すだけなので、
-  // `SettingsTab` の `useEffect` は起動時に走ってしまい、分割した意味が無くなる
-  // （実際にそうなっていて、初回表示で 864 KB の chunk を取りに行っていた）。
+  // **`SettingsTab` 側の mount では駄目。** 設定の窓は一度開いた後は閉じても中身を外さずに隠すだけなので、
+  // `SettingsTab` の `useEffect` は置いたときに 1 度しか走らず、置くのは起動の後の手空き（開く前）なので、開いた合図にならない。
   useEffect(() => {
     if (settingsOpen) prefetchTestData()
   }, [settingsOpen])
@@ -3447,7 +3465,7 @@ export function App() {
                 行動チェックリスト・特別情報バナーは境界の外に残す——中へ入れると地図と一緒に消える。
                 **MapLibre のカスタムレイヤーが描画ループ（rAF）で投げた例外はここへ届かない**。
                 そちらは各レイヤーの render() を包んで utils/renderHealth.ts へ報告する側の担当。 */}
-            <ErrorBoundary variant="region" label={messages.errorScreen.mapLabel}>
+            <ErrorBoundary variant="region" label={messages.errorScreen.mapLabel} onCatch={() => {}}>
               <MapView
                 mode={mapMode}
                 publicStationMarkers={publicStationMarkers}
@@ -3696,7 +3714,7 @@ export function App() {
             {/* **タブごとに境界を置く。** 6 タブは常時マウントで `invisible` を付け外ししている
                 だけなので、1 つのタブが投げた例外は境界が無ければ App ごと巻き込む。ここで
                 受け止めれば、落ちたタブ以外はそのまま見られる。 */}
-            <ErrorBoundary variant="region" label={tabNames.earthquake}>
+            <ErrorBoundary variant="region" label={tabNames.earthquake} onCatch={() => {}}>
               <EarthquakeTab
                 shown={activeTab === 'earthquake'}
                 earthquakes={filteredEarthquakes}
@@ -3755,7 +3773,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'realtime' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.realtime}>
+            <ErrorBoundary variant="region" label={tabNames.realtime} onCatch={() => {}}>
               <RealtimeTab
                 eews={eewsForPanel}
                 kyoshinV2Detections={kyoshinV2.detections}
@@ -3771,7 +3789,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'tsunami' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.tsunami}>
+            <ErrorBoundary variant="region" label={tabNames.tsunami} onCatch={() => {}}>
               <TsunamiTab
                 tsunamis={tsunamis}
                 earthquakes={allQuakeCards /* 原因地震は地震タブの絞りによらず引く */}
@@ -3796,7 +3814,7 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'catalog' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.catalog}>
+            <ErrorBoundary variant="region" label={tabNames.catalog} onCatch={() => {}}>
               <CatalogTab
                 index={catalogIndex}
                 filter={catalogFilter}
@@ -3818,42 +3836,46 @@ export function App() {
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'telegrams' ? ' invisible pointer-events-none' : ''}`}>
-            <ErrorBoundary variant="region" label={tabNames.telegrams}>
+            <ErrorBoundary variant="region" label={tabNames.telegrams} onCatch={() => {}}>
               <TelegramTab telegramLog={telegramLog} onClear={clearTelegramLog} active={activeTab === 'telegrams'} />
             </ErrorBoundary>
           </div>
           </div>
         </div>
 
-        {/* 設定は窓（2026-10-27 ユーザー承認）。閉じている間も中身を外さずに隠す（→ `SettingsDialog`） */}
+        {/* 設定は窓（2026-10-27 ユーザー承認）。中身は起動の後の手空き（それより先に開かれたらそのとき）に読んで置き、閉じている間も外さずに隠す（→ `SettingsDialog`） */}
         {usageConsentOpen && <UsageConsentDialog onAnswer={answerUsageConsent} />}
         {quakeReplayConfirmAt !== null && <QuakeReplayConfirmDialog onAnswer={answerQuakeReplayConfirm} />}
         <SettingsDialog open={settingsOpen} onClose={closeSettings} returnFocusRef={settingsButtonRef}>
-            <ErrorBoundary variant="region" label={tabNames.settings}>
-              <SettingsTab
-                settings={settings}
-                onUpdate={updateSetting}
-                arrivalTokenStatus={arrivalTokenStatus}
-                forecastKeyStatus={forecastKeyStatus}
-                forecastKeyRelayRejected={forecastKeyRelayRejected}
-                relayForecastLive={relayForecastLive}
-                onReplaceSettings={replaceSettings}
-                dmdataConnectionStatus={connectionStatus}
-                relayUpstream={relayUpstream}
-                keyForecastStatus={keyForecastStatus}
-                dmdataClassifications={dmdataClassifications}
-                onTest={countedTestHandlers}
-                kyoshinTimeOffset={replayTimeOffset}
-                kyoshinInputDateTime={kyoshinInputDateTime}
-                onSetKyoshinInputDateTime={setKyoshinInputDateTime}
-                replayIsFetching={replay.isFetching}
-                replayError={replay.error}
-                onStartReplay={startReplayCounted}
-                onStopReplay={replay.stop}
-                historicalArchives={historicalArchives}
-                historicalArchivesLoading={historicalArchivesLoading}
-                seismoUnreadableCount={seismo.unreadableCount}
-              />
+            <ErrorBoundary variant="region" label={tabNames.settings} onCatch={SettingsTab.reset}>
+              {settingsMounted && (
+                <Suspense fallback={null}>
+                  <SettingsTab
+                    settings={settings}
+                    onUpdate={updateSetting}
+                    arrivalTokenStatus={arrivalTokenStatus}
+                    forecastKeyStatus={forecastKeyStatus}
+                    forecastKeyRelayRejected={forecastKeyRelayRejected}
+                    relayForecastLive={relayForecastLive}
+                    onReplaceSettings={replaceSettings}
+                    dmdataConnectionStatus={connectionStatus}
+                    relayUpstream={relayUpstream}
+                    keyForecastStatus={keyForecastStatus}
+                    dmdataClassifications={dmdataClassifications}
+                    onTest={countedTestHandlers}
+                    kyoshinTimeOffset={replayTimeOffset}
+                    kyoshinInputDateTime={kyoshinInputDateTime}
+                    onSetKyoshinInputDateTime={setKyoshinInputDateTime}
+                    replayIsFetching={replay.isFetching}
+                    replayError={replay.error}
+                    onStartReplay={startReplayCounted}
+                    onStopReplay={replay.stop}
+                    historicalArchives={historicalArchives}
+                    historicalArchivesLoading={historicalArchivesLoading}
+                    seismoUnreadableCount={seismo.unreadableCount}
+                  />
+                </Suspense>
+              )}
             </ErrorBoundary>
         </SettingsDialog>
 
