@@ -531,7 +531,7 @@ export const es: Messages = {
       unchanged: '(los valores no cambiaron)',
       emscNote: 'Soluciones de cada agencia (recopiladas por el EMSC)',
       beachball: 'Pelota de playa',
-      viewer: { title: 'Pelota de playa y deslizamiento de la falla', pause: 'Pausar', play: 'Reproducir', north: 'N', east: 'E', down: 'Abajo', failed: 'Error al dibujar.' },
+      viewer: { title: 'Pelota de playa y deslizamiento de la falla', pause: 'Pausar', play: 'Reproducir', north: 'N', east: 'E', down: 'Abajo', lowerProjection: 'Proyección del hemisferio inferior', failed: 'Error al dibujar.' },
       tips: {
         reverse: { text: 'Con el plano de falla como límite, el bloque de techo sube sobre el bloque de piso.', src: 'JMA, «Mecanismos focales y planos de falla»' },
         normal: { text: 'Con el plano de falla como límite, el bloque de techo (la roca de arriba) baja respecto al bloque de piso (la roca de abajo).', src: 'JMA, «Mecanismos focales y planos de falla»' },

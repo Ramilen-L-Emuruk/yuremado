@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  SLIP_LOOP_MS, SLIP_SHIFT, add, axisVector, blockFaces, clipPolygon, cross, dot, faultFrame, fromScreen, initialView, scale, slipProgress, toScreen, unit, visibleFaces, isDrawableAxis, isDrawablePlane,
+  SLIP_LOOP_MS, SLIP_SHIFT, add, axisVector, blockFaces, clipPolygon, cross, dot, faultFrame, fromScreen, initialView, scale, slipProgress, toScreen, unit, visibleFaces, isDrawableAxis, isDrawablePlane, lowerHemisphereVisibility,
   type Vec3,
 } from './faultGeometry'
 
@@ -116,6 +116,34 @@ describe('slipProgress', () => {
   it('ひと巡りで同じ値に戻る（負の時刻でも）', () => {
     expect(slipProgress(1234)).toBeCloseTo(slipProgress(1234 + SLIP_LOOP_MS), 9)
     expect(slipProgress(-100)).toBeCloseTo(slipProgress(SLIP_LOOP_MS - 100), 9)
+  })
+})
+
+describe('lowerHemisphereVisibility（上半球を消した球で見える点）', () => {
+  const down: Vec3 = [0, 0, 1], up: Vec3 = [0, 0, -1]
+
+  it('上半球の点は、どの向きからでも見えない（正）', () => {
+    for (const view of [{ yaw: 0, pitch: Math.PI / 2 }, { yaw: 1, pitch: 0.3 }, { yaw: 2, pitch: -1 }]) {
+      expect(lowerHemisphereVisibility(up, view)).toBe('hidden')
+      expect(lowerHemisphereVisibility([0.3, 0.2, -0.9], view)).toBe('hidden')
+    }
+  })
+
+  it('真上から見下ろすと、下半球は内側が全部見える（表の震源球と同じ並び。真下も縁の水平の点も）', () => {
+    const view = { yaw: 0, pitch: Math.PI / 2 }
+    expect(lowerHemisphereVisibility(down, view)).toBe('visible')
+    expect(lowerHemisphereVisibility([1, 0, 0], view)).toBe('visible')
+    expect(lowerHemisphereVisibility(unit([0.5, 0.5, 0.7]), view)).toBe('visible')
+  })
+
+  it('真下から見上げると、下半球の外側が見える', () => {
+    expect(lowerHemisphereVisibility(down, { yaw: 0, pitch: -Math.PI / 2 })).toBe('visible')
+  })
+
+  it('横から見ると、手前の下半球は見え、その奥の下半球は手前に隠れる（対照）', () => {
+    const view = { yaw: 0, pitch: 0 }
+    expect(lowerHemisphereVisibility([-0.6, 0, 0.8], view)).toBe('visible')
+    expect(lowerHemisphereVisibility([0.6, 0, 0.8], view)).toBe('occluded')
   })
 })
 

@@ -527,7 +527,7 @@ export const zhHans: Messages = {
       unchanged: '（数值未变）',
       emscNote: '各机构的解（EMSC 收集）',
       beachball: '沙滩球',
-      viewer: { title: '沙滩球与断层错动', pause: '暂停', play: '播放', north: '北', east: '东', down: '下', failed: '绘制失败。' },
+      viewer: { title: '沙滩球与断层错动', pause: '暂停', play: '播放', north: '北', east: '东', down: '下', lowerProjection: '下半球投影', failed: '绘制失败。' },
       tips: {
         reverse: { text: '以断层面为界，上盘相对下盘向上冲。', src: '日本气象厅《震源机制解与断层面》' },
         normal: { text: '以断层面为界，上盘（上方岩体）相对下盘（下方岩体）向下滑动。', src: '日本气象厅《震源机制解与断层面》' },

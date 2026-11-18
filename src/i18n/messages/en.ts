@@ -531,7 +531,7 @@ export const en: Messages = {
       unchanged: '(values unchanged)',
       emscNote: 'Moment tensors collected at the EMSC',
       beachball: 'Beachball',
-      viewer: { title: 'Beachball and fault slip', pause: 'Pause', play: 'Play', north: 'N', east: 'E', down: 'Down', failed: 'Drawing failed.' },
+      viewer: { title: 'Beachball and fault slip', pause: 'Pause', play: 'Play', north: 'N', east: 'E', down: 'Down', lowerProjection: 'Lower-hemisphere projection', failed: 'Drawing failed.' },
       tips: {
         reverse: { text: 'With the fault plane as the boundary, the hanging wall rides up relative to the footwall.', src: 'JMA, “Focal mechanisms and fault planes”' },
         normal: { text: 'With the fault plane as the boundary, the hanging wall (the rock above) slides down relative to the footwall (the rock below).', src: 'JMA, “Focal mechanisms and fault planes”' },

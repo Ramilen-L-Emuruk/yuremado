@@ -42,6 +42,23 @@ export function axisVector(a: PrincipalAxis): Vec3 {
   return [Math.cos(az) * Math.cos(pl), Math.sin(az) * Math.cos(pl), Math.sin(pl)]
 }
 
+/** 上半球を消した球で、球面の 1 点（単位ベクトル）が見えるか */
+export type HemisphereVisibility = 'visible' | 'occluded' | 'hidden'
+
+/**
+ * 上半球（上向きの方向）を消した球の、下半球の点の見え方。上半球の点は見えない（`hidden`）。下半球の手前の面の点は見え（`visible`）、
+ * 奥の面の点は、同じ画素の手前の面が上半球（消してある）なら内側が見え（`visible`）、下半球なら手前に隠れる（`occluded`）。
+ * 真上から見下ろすと、下半球の内側が全部見える（表の震源球の図と同じ並び）
+ */
+export function lowerHemisphereVisibility(v: Vec3, view: ViewAngles): HemisphereVisibility {
+  if (v[2] < 0) return 'hidden'
+  const s = toScreen(v, view)
+  // 縁（奥行きがほぼ 0）の点は、丸めの向きで見え方が変わらないよう、手前の面として扱う
+  if (s[2] >= -1e-9) return 'visible'
+  const zFront = Math.sqrt(Math.max(0, 1 - s[0] * s[0] - s[1] * s[1]))
+  return fromScreen([s[0], s[1], zFront], view)[2] < 0 ? 'visible' : 'occluded'
+}
+
 /** 見る向き。yaw は上下の軸まわり、pitch は東西の軸まわり（正で上から見下ろす） */
 export interface ViewAngles { yaw: number; pitch: number }
 

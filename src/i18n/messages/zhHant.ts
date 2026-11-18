@@ -527,7 +527,7 @@ export const zhHant: Messages = {
       unchanged: '（數值未變）',
       emscNote: '各機構的解（EMSC 收集）',
       beachball: '沙灘球',
-      viewer: { title: '沙灘球與斷層錯動', pause: '暫停', play: '播放', north: '北', east: '東', down: '下', failed: '繪製失敗。' },
+      viewer: { title: '沙灘球與斷層錯動', pause: '暫停', play: '播放', north: '北', east: '東', down: '下', lowerProjection: '下半球投影', failed: '繪製失敗。' },
       tips: {
         reverse: { text: '以斷層面為界，上盤相對下盤往上推。', src: '日本氣象局〈震源機制解與斷層面〉' },
         normal: { text: '以斷層面為界，上盤（上方岩體）相對下盤（下方岩體）往下滑動。', src: '日本氣象局〈震源機制解與斷層面〉' },

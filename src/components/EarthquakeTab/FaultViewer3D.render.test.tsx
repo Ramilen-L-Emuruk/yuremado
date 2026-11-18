@@ -35,6 +35,35 @@ function stubFrames() {
   }
 }
 
+/**
+ * 大きさを知らせる口と、描画面の代わりの偽の 2D 文脈を差し替える（jsdom は大きさ 0 で描かないので、描く経路へ入れるため）。
+ * 偽の文脈は、描き始め（`clearRect`）からの線の点（`moveTo`・`lineTo`）をキャンバスごとにためる。戻り値はキャンバス → 点の並び
+ */
+function fakeCanvases(): Map<unknown, number[][]> {
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private cb: (entries: unknown[]) => void) {}
+    observe(target: Element) { act(() => { this.cb([{ target, contentRect: { width: 200 } }]) }) }
+    disconnect() {}
+  })
+  const paths = new Map<unknown, number[][]>()
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
+    const pts: number[][] = []
+    paths.set(this, pts)
+    const own: Record<string, unknown> = {
+      createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }),
+      clearRect: () => { pts.length = 0 },
+    }
+    return new Proxy(own, {
+      get(target, prop: string) {
+        if (prop in target) return target[prop]
+        return (...args: number[]) => { if (prop === 'moveTo' || prop === 'lineTo') pts.push(args.map(v => Math.round(v * 100) / 100)); return undefined }
+      },
+      set() { return true },
+    }) as unknown as CanvasRenderingContext2D
+  } as never)
+  return paths
+}
+
 beforeEach(() => { stubReducedMotion(false) })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -80,6 +109,68 @@ describe('FaultViewer3D', () => {
     frames.flush(3)
     fireEvent.keyDown(screen.getByRole('img', { name: '震源球と断層のずれ' }), { key: 'ArrowRight' })
     expect(frames.flush(1)).toBe(0)
+  })
+
+  it('「断層面解1」「断層面解2」で、断層として出す節面を切り替える（初めは 1。選んだほうだけが押された状態。正と対照）', () => {
+    const frames = stubFrames()
+    render(<FaultViewer3D planes={planes} axes={axes} />)
+    const one = screen.getByRole('button', { name: '断層面解1' }), two = screen.getByRole('button', { name: '断層面解2' })
+    expect(one.getAttribute('aria-pressed')).toBe('true')
+    expect(two.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(two)
+    expect(one.getAttribute('aria-pressed')).toBe('false')
+    expect(two.getAttribute('aria-pressed')).toBe('true')
+    // 切り替えても、動きの止め・動かしは変わらない（一時停止のボタンはそのまま）
+    expect(screen.getByRole('button', { name: '一時停止' })).toBeTruthy()
+    // 再び 1 を押すと戻る
+    fireEvent.click(one)
+    expect(one.getAttribute('aria-pressed')).toBe('true')
+    expect(two.getAttribute('aria-pressed')).toBe('false')
+    frames.flush(1)
+  })
+
+  it('選んだ節面が、箱の形（描く線）に効く。断層面解2 では箱が変わり、解1 に戻すと元と同じになる（配線の固定）', () => {
+    const frames = stubFrames()
+    stubReducedMotion(true)
+    const paths = fakeCanvases()
+    const { container } = render(<FaultViewer3D planes={planes} axes={axes} />)
+    frames.flush(3)
+    const block = container.querySelectorAll('canvas')[1]
+    // 箱を描いた回の点の全部を、指紋にする
+    const all = (): string => JSON.stringify(paths.get(block))
+    const before = all()
+    expect(before.length).toBeGreaterThan(2)
+    fireEvent.click(screen.getByRole('button', { name: '断層面解2' }))
+    frames.flush(3)
+    const second = all()
+    expect(second).not.toBe(before)
+    fireEvent.click(screen.getByRole('button', { name: '断層面解1' }))
+    frames.flush(3)
+    expect(all()).toBe(before)
+  })
+
+  it('「下半球投影」は初めは押されていなくて（上半球が出ている）、押すと上半球が消え、球の線が下半球の分だけになる（正と対照・戻せる）', () => {
+    const frames = stubFrames()
+    stubReducedMotion(true)
+    const paths = fakeCanvases()
+    const { container } = render(<FaultViewer3D planes={planes} axes={axes} />)
+    frames.flush(3)
+    const ball = container.querySelectorAll('canvas')[0]
+    const pointCount = () => (paths.get(ball) ?? []).length
+    const button = screen.getByRole('button', { name: '下半球投影' })
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+    const shown = pointCount()
+    expect(shown).toBeGreaterThan(0)
+    fireEvent.click(button)
+    frames.flush(3)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    const hidden = pointCount()
+    // 上半球の分の節面の線が減る（下半球の分だけの線になる）
+    expect(hidden).toBeLessThan(shown)
+    fireEvent.click(button)
+    frames.flush(3)
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+    expect(pointCount()).toBe(shown)
   })
 
   it('矢印キーで回してもキーは外へ伝わらない（窓の Esc や Tab の処理に混ざらない）', () => {
