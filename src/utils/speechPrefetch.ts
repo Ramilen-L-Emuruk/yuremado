@@ -1,11 +1,6 @@
 import type { LiveEvent } from '../types/earthquake'
 import type { ReplayPayload } from '../types/replay'
-import {
-  earthquakeToSegments, earthquakeCancelToText, tsunamiToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText,
-  eewAlertToText, eewCancelToText, lpgmToText, nankaiToText, nankaiCommentaryToText,
-  kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, telegramTextToSpeak,
-  type TtsSpeechOptions,
-} from './ttsText'
+import type { SpeechText, TtsSpeechOptions } from './ttsText'
 import { joinSegments } from './ttsFollow'
 import { isPartialTsunamiRetraction } from './tsunami'
 import { log } from './logger'
@@ -47,7 +42,7 @@ import { log } from './logger'
  * @param payload リプレイのキューに積まれた電文
  * @param opts 読み上げのオプション（`ttsRegionOptions(settings)` と同じもの）
  */
-export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOptions): string[] {
+export function speculativeSpeechTexts(st: SpeechText, payload: ReplayPayload, opts: TtsSpeechOptions): string[] {
   const texts: string[] = []
   const add = (text: string | null | undefined) => { if (text) texts.push(text) }
 
@@ -56,23 +51,23 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
       const event = payload.event
       if (event.kind === 'quake') {
         // 取消の報は本体が理由を読む。発表報は既読なし（＝通しの文）で組む。
-        if (event.cancelled) add(earthquakeCancelToText(event.earthquake?.time ?? null, event.cancelText))
-        else add(joinSegments(earthquakeToSegments(event, opts, true)))
+        if (event.cancelled) add(st.earthquakeCancelToText(event.earthquake?.time ?? null, event.cancelText))
+        else add(joinSegments(st.earthquakeToSegments(event, opts, true)))
       } else if (event.kind === 'tsunami') {
         // 津波情報・沖合の観測だけの取消は、解除・誤報取消とは別の文を読む（→ `useLiveEventHandler` の一部取消の分岐）。
         if (isPartialTsunamiRetraction(event)) {
-          if (event.headType === 'VTSE51' || event.headType === 'VTSE52') add(tsunamiPartialRetractionToText(event.headType))
-        } else if (event.cancelled) add(tsunamiCancelToText(event.cancelReason, event.cancelText))
-        else add(joinSegments(tsunamiToSegments(event, undefined, undefined, opts)))
+          if (event.headType === 'VTSE51' || event.headType === 'VTSE52') add(st.tsunamiPartialRetractionToText(event.headType))
+        } else if (event.cancelled) add(st.tsunamiCancelToText(event.cancelReason, event.cancelText))
+        else add(joinSegments(st.tsunamiToSegments(event, undefined, undefined, opts)))
       } else if (event.kind === 'eew') {
         // 取消の頭の文は第 1 報の時刻を言うが、この電文 1 通からは分からない（受信の記憶にしか無い）。
         // 時刻抜きで組み、当たるのは理由の文の側だけ。
-        if (event.cancelled) add(eewCancelToText(event, null))
+        if (event.cancelled) add(st.eewCancelToText(event, null))
         // **区分（予報／警報／震源更新）は渡す値を選ばない。** 第 1 フェーズの文は
         // 「切り出し語＋震源名で地震。」の形で、切り出し語は 3 通りとも独立したチャンクになり
         // **起動時の作り置き（`warmFixedPhrases`）が既に焼いている**。残る「〇〇で地震。」の
         // チャンクは区分に依らず同じなので、どれか 1 つで焼けば足りる。
-        else add(eewAlertToText(event, 'warning'))
+        else add(st.eewAlertToText(event, 'warning'))
       }
       break
     }
@@ -80,30 +75,30 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
       // 最大階級 0 の発表も読むので焼く（→ `useEarthquakes.ts` の `lpgmNotifiable`）。
       // 初報・続報で文頭が変わるだけ。**2 通りとも焼く** —— 真偽 1 つの分岐に投機の精度を
       // 賭ける理由がなく、外した側の損は控えの 1 件ぶんに収まる。
-      add(lpgmToText(payload.data, opts, true))
-      add(lpgmToText(payload.data, opts, false))
+      add(st.lpgmToText(payload.data, opts, true))
+      add(st.lpgmToText(payload.data, opts, false))
       break
     case 'nankai':
-      add(nankaiToText(payload.data))
+      add(st.nankaiToText(payload.data))
       break
     case 'nankaiCommentary':
-      add(nankaiCommentaryToText(payload.data))
+      add(st.nankaiCommentaryToText(payload.data))
       break
     case 'kohatsu':
-      add(kohatsuToText(payload.data))
+      add(st.kohatsuToText(payload.data))
       break
     case 'earthquakeCount':
-      add(earthquakeCountToText(payload.data))
+      add(st.earthquakeCountToText(payload.data))
       break
     case 'estimatedIntensity':
-      add(estimatedIntensityToText(payload.data.arrivalTime, true))
-      add(estimatedIntensityToText(payload.data.arrivalTime, false))
+      add(st.estimatedIntensityToText(payload.data.arrivalTime, true))
+      add(st.estimatedIntensityToText(payload.data.arrivalTime, false))
       break
     case 'quakeNotice':
       // **読み上げを切っている端末（既定）でも焼く。** ここは種別ごとの読み上げ設定を受け取らない
       // （南海トラフ関連解説情報の設定も同じく見ていない）。お知らせは数日に 1 通も無いので、
       // 読まれない 1 通ぶんを焼くことの損失は小さい。
-      add(quakeNoticeToText(payload.data))
+      add(st.quakeNoticeToText(payload.data))
       break
     case 'internationalTsunami':
       // **先に焼かない。** 読む文は受けた瞬間の地震カードの震源名で変わる（結べなければ座標。→ `internationalTsunamiToText`）ので、
@@ -114,7 +109,7 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
   // 気象庁が書いた文は最下位の層で別の発話として読まれる（→ audio-tts-spec.md §6）。
   // **本体とは別に焼くこと。** 1 つの文字列へ繋ぐと、実際に鳴るときのチャンクの割れ目が
   // 変わって控えが当たらない。
-  add(telegramTextToSpeak(toLiveEvent(payload), opts)?.text)
+  add(st.telegramTextToSpeak(toLiveEvent(payload), opts)?.text)
 
   return texts
 }
@@ -147,9 +142,9 @@ function toLiveEvent(payload: Exclude<ReplayPayload, { kind: 'internationalTsuna
  * 以降の投機が走らなくなる。読み上げ文の組み立ては電文の中身次第で例外を出しうる
  * （実データにしか無い形は必ずある）ので、1 通ずつ受け止めて次へ進む。
  */
-export function speculativeSpeechTextsSafe(payload: ReplayPayload, opts: TtsSpeechOptions): string[] {
+export function speculativeSpeechTextsSafe(st: SpeechText, payload: ReplayPayload, opts: TtsSpeechOptions): string[] {
   try {
-    return speculativeSpeechTexts(payload, opts)
+    return speculativeSpeechTexts(st, payload, opts)
   } catch (err) {
     log.debug('[VoiceVox] 投機の文を組めなかった（この電文は先に焼かない）', { kind: payload.kind, err })
     return []

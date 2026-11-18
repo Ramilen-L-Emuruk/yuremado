@@ -15,14 +15,14 @@ import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLa
 import type { RelayUpstreamStatus } from '../../services/dmdata'
 import { useMessages } from '../../i18n/I18nProvider'
 import { LOCALE_LOAD_FAILED_EN, LOCALE_LOAD_FAILED_JA, LOCALES, type LocaleSetting, type Messages } from '../../i18n/messages'
-import { useLocaleLoadFailed } from '../../i18n/I18nProvider'
+import { useLocaleLoadFailed, useLocale, usePlaceNames } from '../../i18n/I18nProvider'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, intensityLabel, intensityShortLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
 import { kyoshinIndexLabelText, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { readableTextColor } from '../../utils/contrast'
 import { playAlertSound, playCountdownBeep, playKyoshinUpdateSound, unlockAudio } from '../../utils/alertSound'
 import { checkVoicevoxAvailable, clearVoicevoxDown, fetchVoicevoxSpeakers, isValidVoicevoxUrl, speakSequentially, VOICEVOX_URL_DEBOUNCE_MS, type VoicevoxSpeaker } from '../../utils/voicevox'
-import { voicevoxPreviewTexts } from '../../utils/ttsText'
+import { speechTextFor, type SpeechText } from '../../utils/ttsText'
 import { log } from '../../utils/logger'
 import { serverDate, getServerClockOffsetMs } from '../../utils/clock'
 import type { HistoricalArchiveIndex } from '../../types/historicalArchive'
@@ -1085,10 +1085,10 @@ function TestButton({ color, onClick, children, disabled }: {
  * `speakSequentially` が Promise を返す前に起きるため `catch` に入らず、押しても無音のまま
  * 画面には何も出ない。
  */
-async function speakVoicevoxPreview(baseUrl: string, speakerId: number, volume: number): Promise<void> {
+async function speakVoicevoxPreview(speechText: SpeechText, baseUrl: string, speakerId: number, volume: number): Promise<void> {
   // 試聴は VOICEVOX をもう一度試す（「繋がらない」の印が残ったままだと、VOICEVOX が直っていても端末の声で鳴る）
   clearVoicevoxDown()
-  await speakSequentially(baseUrl, voicevoxPreviewTexts(), speakerId, volume)
+  await speakSequentially(baseUrl, speechText.voicevoxPreviewTexts(), speakerId, volume)
 }
 
 // 震度別の色付き小ボタン（通知音テスト用）。表記と色は強震モニタのインデックスから引く
@@ -1369,6 +1369,8 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   const w = m.settings
   const fw = m.formats
   const localeLoadFailed = useLocaleLoadFailed()
+  // 試聴は本番の読み上げと同じ組（画面の言語）で組む
+  const speechText = speechTextFor(useLocale(), usePlaceNames())
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -1653,7 +1655,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               {/* 試聴は今の声で読む（VOICEVOX に繋がらなければ端末の声へ落ちるのも本番と同じ）。通信先はデバウンス後の URL（下の VOICEVOX の試聴と同じ理由） */}
               <TestButton color="blue" onClick={() => {
                 unlockAudio()
-                speakVoicevoxPreview(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                speakVoicevoxPreview(speechText, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
                   .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
               }}>{w.common.preview}</TestButton>
             </div>
@@ -1781,7 +1783,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                       文字列を書くと、緊急地震速報の文型を変えたとき試聴だけ古い形で残る。 */}
                   <TestButton color="blue" onClick={() => {
                     unlockAudio()
-                    speakVoicevoxPreview(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                    speakVoicevoxPreview(speechText, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
                       .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
                   }}>{w.common.preview}</TestButton>
                 </Row>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, type TabId } from './components/IconNav'
-import { useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
+import { useLocale, useMessages, useMessagesRef, usePlaceNames, usePlaceNamesRef } from './i18n/I18nProvider'
 import { useApplyLocaleSetting } from './i18n/useApplyLocaleSetting'
 import { historicalArchiveLabel } from './utils/historicalArchiveLabel'
 import { JA_MESSAGES } from './i18n/messages'
@@ -128,7 +128,7 @@ import { loadTtsStationReadings } from './utils/ttsStationReadings'
 import { loadTtsEpicenterAccents } from './utils/ttsEpicenterAccents'
 import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed, setSpeechVoice, clearVoicevoxDown } from './utils/voicevox'
 import { unlockSystemSpeech } from './utils/systemSpeech'
-import { EEW_LEAD_PHRASES } from './utils/ttsText'
+import { speechTextFor } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataReplayInitialEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
@@ -225,6 +225,8 @@ export function App() {
   const messagesRef = useMessagesRef()
   // 同じく、通知の本文の地名を呼ばれた時点の言語で訳すための参照
   const placeNamesRef = usePlaceNamesRef()
+  // 緊急地震速報の切り出し語（読み上げの作り置き）。本番の読み上げと同じ画面の言語の組から採る
+  const speechLeadPhrases = speechTextFor(useLocale(), placeNames).EEW_LEAD_PHRASES
   const tabNames = messages.nav
   // 設定の言語を画面へ渡す（端末に合わせるときは、端末の言語の変化も追う）
   useApplyLocaleSetting(settings.locale)
@@ -1476,8 +1478,9 @@ export function App() {
       log.debug('[VoiceVox] 切り出し語の作り置きをスキップ (接続先の URL が不正)')
       return
     }
-    warmFixedPhrases(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, EEW_LEAD_PHRASES)
-  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl, settings.voicevoxSpeakerId])
+    // 切り出し語は本番の読み上げと同じ組（画面の言語）から採る（組が違うと作り置きが当たらない）
+    warmFixedPhrases(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases)
+  }, [settings.ttsEnabled, settings.ttsVoice, debouncedVoicevoxUrl, settings.voicevoxSpeakerId, speechLeadPhrases])
 
   // 録画中は合成待ちの予算を緩める（→ `RECORDING_SYNTH_BUDGET_MS`）。負荷で音が途切れた
   // ぶんだけ予算が削られるため、既定のままだと長い文の後半が落ちる。

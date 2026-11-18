@@ -8,7 +8,7 @@ import { ja } from './messages/ja'
  */
 export type Messages = Widen<typeof ja>
 
-type Widen<T> =
+export type Widen<T> =
   T extends string ? string
   : T extends (...args: infer A) => string ? (...args: A) => string
   : { readonly [K in keyof T]: Widen<T[K]> }
