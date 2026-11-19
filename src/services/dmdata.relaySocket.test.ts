@@ -3,8 +3,8 @@
 // 中継（yuremado-relay）の WebSocket へ繋ぐ形（docs/relay-server-design.md §6.1）。
 //
 // 中継は DMDATA と同じ `start`・`data`・`ping` を送るので、受け方は鍵で繋ぐときと同じ `DmdataWebSocket` を使う。
-// 違うのは繋ぎ方（札をサブプロトコルに載せ、チケットを払い出さない）と、中継だけの知らせ 2 つ
-// （`relay-status`・`relay-active-eew`）。
+// 違うのは繋ぎ方（札をサブプロトコルに載せ、チケットを払い出さない）と、中継だけの知らせ
+// （`relay-status`・`relay-active-eew`・`relay-analysis-updated`）。
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
 vi.mock('../utils/logger', async (importOriginal) => ({
@@ -17,6 +17,7 @@ import { DmdataWebSocket, type DmdataEvent, type RelayActiveEew, type RelayUpstr
 import { RelayTokenError, type RelayTokenStore } from './relayEndpoint'
 import { errorText } from '../utils/localizedError'
 import { resetNotifyQuietWhileOpenForTest, setNotifyQuietWhileOpen, setPushQuietBinding } from './notifyQuietWhileOpen'
+import { subscribeAnalysisUpdated } from './analysisUpdates'
 
 async function drain() {
   for (let i = 0; i < 20; i++) await Promise.resolve()
@@ -175,6 +176,27 @@ describe('DmdataWebSocket: 中継へ繋ぐ', () => {
         { connected: true, disconnectedAtMs: null },
       ])
     } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 正: 解析の更新の知らせを、その地震を待つカードへ渡す。形の違う知らせは渡さない（安全弁）
+  it('relay-analysis-updated を読んで、その地震を待つものへ渡す', async () => {
+    const { ws } = setup()
+    const seen: string[] = []
+    const off = subscribeAnalysisUpdated('20240101161010', () => seen.push('noto'))
+    const offOther = subscribeAnalysisUpdated('20240101161800', () => seen.push('other'))
+    try {
+      ws.connect()
+      await drain()
+      FakeWs.last?.receive({ type: 'relay-analysis-updated', eventIds: ['20240101161010'] })
+      FakeWs.last?.receive({ type: 'relay-analysis-updated', eventIds: '20240101161800' })
+      FakeWs.last?.receive({ type: 'relay-analysis-updated', eventIds: ['2024010116'] })
+      await drain()
+      expect(seen).toEqual(['noto'])
+    } finally {
+      off()
+      offOther()
       ws.disconnect()
     }
   })
