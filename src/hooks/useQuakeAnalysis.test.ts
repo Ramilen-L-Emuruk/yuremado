@@ -10,12 +10,15 @@ const h = vi.hoisted(() => ({
   read: vi.fn(),
   write: vi.fn(async () => true),
   now: vi.fn(() => Date.parse('2030-01-01T00:00:00Z')),
+  // 線の時計。既定は地震から 7 日より後（線をすべて越えていて、線では訊き直さない）
+  live: vi.fn(() => Date.parse('2030-01-01T00:00:00Z')),
 }))
 vi.mock('../services/relayAnalysis', async (orig) => ({ ...(await orig<object>()), fetchQuakeAnalysis: h.fetch }))
 vi.mock('../utils/analysisDb', () => ({ readAnalysis: h.read, writeAnalysis: h.write }))
-vi.mock('../utils/clock', async (orig) => ({ ...(await orig<object>()), serverNow: h.now }))
+vi.mock('../utils/clock', async (orig) => ({ ...(await orig<object>()), serverNow: h.now, liveServerNow: h.live }))
 
-import { analysisQueryOf, useQuakeAnalysis } from './useQuakeAnalysis'
+import { publishAnalysisUpdated } from '../services/analysisUpdates'
+import { ANALYSIS_LINE_SLACK_MS, analysisQueryOf, nextAnalysisRefreshMs, useQuakeAnalysis } from './useQuakeAnalysis'
 
 const quake = (over: Record<string, unknown> = {}): JMAQuake => ({
   kind: 'quake',
@@ -33,6 +36,7 @@ const analysis = parseQuakeAnalysis(noto)
 
 beforeEach(() => {
   h.read.mockResolvedValue(null)
+  h.live.mockReturnValue(Date.parse('2030-01-01T00:00:00Z'))
 })
 afterEach(() => {
   vi.clearAllMocks()
@@ -117,5 +121,106 @@ describe('useQuakeAnalysis', () => {
     await waitFor(() => expect(result.current.state).toBe('ready'))
     const v = result.current as Extract<typeof result.current, { state: 'ready' }>
     expect(v.analysis.solutions).toHaveLength(15)
+  })
+})
+
+const EVENT_MS = Date.parse('2024-01-01T16:10:00+09:00')
+const MIN = 60_000
+
+describe('nextAnalysisRefreshMs', () => {
+  it('次の線の 1 分半後を返す（正）', () => {
+    expect(nextAnalysisRefreshMs(EVENT_MS, EVENT_MS)).toBe(EVENT_MS + 10 * MIN + ANALYSIS_LINE_SLACK_MS)
+    expect(nextAnalysisRefreshMs(EVENT_MS, EVENT_MS + 20 * MIN)).toBe(EVENT_MS + 30 * MIN + ANALYSIS_LINE_SLACK_MS)
+  })
+
+  it('その時刻ちょうどなら次の線へ進む（対照）', () => {
+    expect(nextAnalysisRefreshMs(EVENT_MS, EVENT_MS + 10 * MIN + ANALYSIS_LINE_SLACK_MS)).toBe(EVENT_MS + 30 * MIN + ANALYSIS_LINE_SLACK_MS)
+  })
+
+  it('7 日の線を過ぎたら訊き直さない（安全弁）', () => {
+    expect(nextAnalysisRefreshMs(EVENT_MS, EVENT_MS + 7 * 1440 * MIN + ANALYSIS_LINE_SLACK_MS)).toBeNull()
+  })
+})
+
+describe('useQuakeAnalysis: 開いている間の問い合わせ直し', () => {
+  it('この地震の知らせが来たら問い合わせ直す（正）', async () => {
+    h.fetch.mockResolvedValue({ kind: 'ok', analysis, raw: noto })
+    const { result } = renderHook(() => useQuakeAnalysis(quake(), true, false))
+    await waitFor(() => expect(result.current.state).toBe('ready'))
+    act(() => publishAnalysisUpdated(['20240101161010']))
+    // 問い合わせ直す間も、前の答えを出したまま
+    expect(result.current.state).toBe('ready')
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(2))
+    // 開いたままの訊き直しでは控えを読み直さない（画面の答えのほうが新しい）
+    expect(h.read).toHaveBeenCalledTimes(1)
+  })
+
+  it('訊き直しに失敗しても、出していた答えを出したままにする（安全弁）', async () => {
+    h.fetch.mockResolvedValueOnce({ kind: 'ok', analysis, raw: noto }).mockResolvedValue({ kind: 'error', message: 'status=503' })
+    const { result } = renderHook(() => useQuakeAnalysis(quake(), true, false))
+    await waitFor(() => expect(result.current.state).toBe('ready'))
+    act(() => publishAnalysisUpdated(['20240101161010']))
+    await waitFor(() => expect(result.current).toMatchObject({ state: 'ready', refreshFailed: true }))
+  })
+
+  it('別の地震の知らせ・閉じたカードへの知らせでは問い合わせない（対照）', async () => {
+    h.fetch.mockResolvedValue({ kind: 'ok', analysis, raw: noto })
+    const { result, rerender } = renderHook(({ open }) => useQuakeAnalysis(quake(), open, false), { initialProps: { open: true } })
+    await waitFor(() => expect(result.current.state).toBe('ready'))
+    act(() => publishAnalysisUpdated(['20240101161800']))
+    rerender({ open: false })
+    act(() => publishAnalysisUpdated(['20240101161010']))
+    await act(async () => {})
+    expect(h.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('問い合わせの途中に知らせが続いたら、終わってから 1 回だけ問い合わせ直す（安全弁）', async () => {
+    let finish!: (v: unknown) => void
+    h.fetch.mockReturnValueOnce(new Promise(r => { finish = r })).mockResolvedValue({ kind: 'ok', analysis, raw: noto })
+    const { result } = renderHook(() => useQuakeAnalysis(quake(), true, false))
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1))
+    act(() => {
+      publishAnalysisUpdated(['20240101161010'])
+      publishAnalysisUpdated(['20240101161010'])
+    })
+    // 途中の問い合わせを打ち切らない
+    expect((h.fetch.mock.calls[0][1] as AbortSignal).aborted).toBe(false)
+    await act(async () => finish({ kind: 'ok', analysis, raw: noto }))
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current).toMatchObject({ state: 'ready', refreshing: false }))
+    await act(async () => {})
+    expect(h.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  describe('線', () => {
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
+    afterEach(() => vi.useRealTimers())
+
+    it('開いたまま 10 分の線を越えたら問い合わせ直す（正）・その手前では訊かない（対照）', async () => {
+      h.fetch.mockResolvedValue({ kind: 'ok', analysis, raw: noto })
+      const due = EVENT_MS + 10 * MIN + ANALYSIS_LINE_SLACK_MS
+      h.live.mockReturnValue(due - 1000)
+      renderHook(() => useQuakeAnalysis(quake(), true, false))
+      await act(async () => {})
+      expect(h.fetch).toHaveBeenCalledTimes(1)
+      await act(async () => { vi.advanceTimersByTime(999) })
+      expect(h.fetch).toHaveBeenCalledTimes(1)
+      h.live.mockReturnValue(due)
+      await act(async () => { vi.advanceTimersByTime(1) })
+      await act(async () => {})
+      expect(h.fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('閉じたら線の待ちを外す（安全弁）', async () => {
+      h.fetch.mockResolvedValue({ kind: 'ok', analysis, raw: noto })
+      const due = EVENT_MS + 10 * MIN + ANALYSIS_LINE_SLACK_MS
+      h.live.mockReturnValue(due - 1000)
+      const { rerender } = renderHook(({ open }) => useQuakeAnalysis(quake(), open, false), { initialProps: { open: true } })
+      await act(async () => {})
+      rerender({ open: false })
+      h.live.mockReturnValue(due)
+      await act(async () => { vi.advanceTimersByTime(1000) })
+      expect(h.fetch).toHaveBeenCalledTimes(1)
+    })
   })
 })

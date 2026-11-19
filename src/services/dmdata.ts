@@ -23,6 +23,7 @@ import { DmdataApiKeyError, dmdataApiKeyMessage } from '../utils/dmdataApiKey'
 import { dmdataKeyEndpoint, type DmdataEndpoint } from './dmdataEndpoint'
 import { RELAY_ORIGIN, RelayTokenError, type RelayTokenStore } from './relayEndpoint'
 import { answerPushProbe, attachRelaySocket } from './notifyQuietWhileOpen'
+import { publishAnalysisChecked, publishAnalysisUpdated, readAnalysisUpdated } from './analysisUpdates'
 import { fetchJsonOutcome, outcomeJson, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText } from './telegramBody'
 import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
@@ -1116,6 +1117,16 @@ export class DmdataWebSocket {
     }
     if (msg.type === 'relay-active-eew' && this.relay !== null) {
       await this.handleRelayActiveEew(msg)
+      return
+    }
+    if (msg.type === 'relay-analysis-updated' && this.relay !== null) {
+      const ids = readAnalysisUpdated(msg)
+      if (ids) publishAnalysisUpdated(ids)
+      else log.warn('[relay] 解析の更新の知らせを読めませんでした')
+      return
+    }
+    if (msg.type === 'relay-analysis-checked' && this.relay !== null) {
+      publishAnalysisChecked()
       return
     }
     if (msg.type === 'error') {
