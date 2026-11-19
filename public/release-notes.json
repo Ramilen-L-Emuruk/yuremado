@@ -1,6 +1,50 @@
 {
   "versions": [
     {
+      "version": "7.1.0",
+      "date": "2026-11-19",
+      "added": [
+        {
+          "text": "地震カードを開いたままでも、解析の更新が自動で反映されるように改善",
+          "variant": "both",
+          "translations": {
+            "en": "Improved earthquake cards so analysis updates appear automatically while a card is open",
+            "zh-Hans": "改进地震卡片：展开卡片时，分析的更新会自动显示",
+            "zh-Hant": "改善地震卡片：展開卡片時，分析的更新會自動顯示",
+            "ko": "지진 카드를 열어 둔 상태에서도 해석 업데이트가 자동으로 반영되도록 개선",
+            "pt-BR": "Melhorado o cartão de terremoto: com o cartão aberto, as atualizações da análise agora aparecem automaticamente",
+            "es": "Se mejoró la tarjeta de terremoto: con la tarjeta abierta, las actualizaciones del análisis se muestran automáticamente"
+          }
+        }
+      ],
+      "fixed": [
+        {
+          "text": "iPhone で通知からアプリを開くと、タップした位置とずれた場所が反応する不具合を修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue on iPhone where, after opening the app from a notification, taps responded at a shifted position",
+            "zh-Hans": "修复在 iPhone 上从通知打开应用后，点按位置与响应位置不一致的问题",
+            "zh-Hant": "修正在 iPhone 上從通知開啟應用程式後，點按位置與回應位置不一致的問題",
+            "ko": "iPhone에서 알림으로 앱을 열면 탭한 위치와 어긋난 곳이 반응하는 문제 수정",
+            "pt-BR": "Corrigido um problema no iPhone em que, ao abrir o app por uma notificação, os toques respondiam em uma posição deslocada",
+            "es": "Se corrigió un error en el iPhone por el que, al abrir la app desde una notificación, los toques respondían en una posición desplazada"
+          }
+        },
+        {
+          "text": "iPhone で読み上げを切にしていても、他のアプリの再生が止まる不具合を修正",
+          "variant": "both",
+          "translations": {
+            "en": "Fixed an issue on iPhone where playback in other apps stopped even with reading aloud turned off",
+            "zh-Hans": "修复在 iPhone 上即使关闭朗读，其他应用的播放仍会停止的问题",
+            "zh-Hant": "修正在 iPhone 上即使關閉朗讀，其他應用程式的播放仍會停止的問題",
+            "ko": "iPhone에서 음성 읽기를 꺼 두어도 다른 앱의 재생이 멈추는 문제 수정",
+            "pt-BR": "Corrigido um problema no iPhone em que a reprodução em outros apps era interrompida mesmo com a leitura em voz alta desativada",
+            "es": "Se corrigió un error en el iPhone por el que se detenía la reproducción en otras apps aunque la lectura en voz alta estuviera desactivada"
+          }
+        }
+      ]
+    },
+    {
       "version": "7.0.1",
       "date": "2026-11-18",
       "added": [],
