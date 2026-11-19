@@ -1568,6 +1568,13 @@ export function App() {
   // 時報（→ hooks/useTimeSignal.ts）。読み上げの接続先は作り置きと同じく、入力が落ち着いた値を使う。文は読み上げの言語で組む
   useTimeSignal(settings, debouncedVoicevoxUrl, speechLocale)
 
+  // 端末の声の有効化（空の発話）を要るのは、読み上げが有効で、普段から端末の声で読む人だけ（声が端末の声・読み上げの言語が日本語以外・VOICEVOX の
+  // 接続先が URL として成り立たない。どれも `routesToSystemVoice` と文の言語の分かれ道で必ず端末の声になる）。iPhone では発話を始めた瞬間に、
+  // 他アプリ（YouTube など）の再生が止まる（実機で、混ぜる指定にしても止まることを確かめた）ので、それ以外の操作では渡さない
+  // （2026-11-19 ユーザー承認。VOICEVOX が繋がらないときの切り替えのためには有効化しない）
+  const needSystemSpeechUnlock = settings.ttsEnabled
+    && (settings.ttsVoice === 'system' || speechLocale !== 'ja' || !isValidVoicevoxUrl(debouncedVoicevoxUrl))
+
   // ブラウザの自動再生制限に対応: 利用者の操作で音声を有効化する
   useEffect(() => {
     // 効果音も端末の声も、ブラウザが操作と数える瞬間（指を離したとき・クリック・キー入力）に有効化する。指で触れた瞬間の pointerdown は
@@ -1580,9 +1587,9 @@ export function App() {
       return () => UNLOCK_EVENTS.forEach(t => window.removeEventListener(t, handler))
     }
     const unwatchSound = watch(unlockAudio)
-    const unwatchSpeech = watch(unlockSystemSpeech)
+    const unwatchSpeech = needSystemSpeechUnlock ? watch(unlockSystemSpeech) : () => {}
     return () => { unwatchSound(); unwatchSpeech() }
-  }, [])
+  }, [needSystemSpeechUnlock])
 
   // 国際津波関連情報の結び付けは、絞る前の全カードで 1 回だけ作る（→ `internationalTsunamiIndex`）。付く地震カードの無い報は、
   // ここで英文だけのカードにして差し込む。状態の一覧には入れないので、カードを足しても音・読み上げ・通知は起きない（報そのものは受けたときに useEarthquakes から流す）
