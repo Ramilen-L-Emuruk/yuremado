@@ -14,6 +14,7 @@ import { log } from './utils/logger'
 import { installFrameProfiler } from './utils/frameProfiler'
 import { installGlobalErrorLog } from './utils/globalErrorLog'
 import { installSpeechCacheProbe } from './utils/speechAudioCache'
+import { installPageScrollReset } from './utils/pageScrollReset'
 import { startAppUpdate } from './services/appUpdateRegister'
 import { currentAppUpdater } from './services/appUpdate'
 
@@ -30,6 +31,10 @@ installGlobalErrorLog()
 // 合成済みチャンクの控えと投機の効きを外から読めるようにする（`window.__speechCache()`）。
 // 呼び口を生やすだけで、何も記録し始めない（統計は控え側が常時数えている）。
 installSpeechCacheProbe()
+
+// iOS で通知から開いたあと、文書がスクロールして描画と当たり判定がずれることがある。0 でなくなったら 0 へ戻す
+// （理由は utils/pageScrollReset.ts、実測は docs/spec/architecture-spec.md 規則 5）。
+installPageScrollReset(window)
 
 // サービスワーカーを登録し、新しい版の検出と適用を始める。新しい版は見つけても自分からは有効にならず、
 // いつ適用するかは App.tsx が決める（発表中・再生中・入力中は待つ。→ services/appUpdate.ts）。
